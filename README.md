@@ -1,4 +1,4 @@
-# AI Career Intelligence Mentor - MVP1
+# AI Career Intelligence Mentor - MVP
 
 ## Project Overview
 The AI Career Intelligence Mentor is an AI-powered platform designed to provide personalized career guidance, skills gap analysis, and tailored learning paths. This repository contains the Phase 0 foundational setup for the Minimum Viable Product (MVP).
