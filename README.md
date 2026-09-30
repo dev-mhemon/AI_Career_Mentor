@@ -15,7 +15,7 @@ See `docs/architecture` and the foundational design documents (`PRD`, `SAD`, `UI
 ## Setup Instructions
 
 ### Prerequisites
-- Node.js (v20 or higher)
+- Node.js (v24 or higher)
 - npm (v10 or higher)
 - Docker Desktop
 - Git
