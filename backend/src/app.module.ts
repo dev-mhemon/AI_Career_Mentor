@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { AuthModule } from './auth/auth.module.js';
 import { User } from './users/entities/user.entity.js';
 import { InvitationCode } from './invitation-codes/entities/invitation-code.entity.js';
 
@@ -26,6 +28,10 @@ import { InvitationCode } from './invitation-codes/entities/invitation-code.enti
       }),
       inject: [ConfigService],
     }),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60000, limit: 10 }],
+    }),
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
