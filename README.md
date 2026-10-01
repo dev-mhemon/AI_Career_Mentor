@@ -21,11 +21,13 @@ See `docs/architecture` and the foundational design documents (`PRD`, `SAD`, `UI
 - Git
 
 ### 1. Environment Configuration
-Copy the placeholder environment file to set up your local variables:
+The project uses separate environment files for Docker, Backend, and Frontend. Copy the placeholder environment files to set up your local variables:
 ```bash
 cp .env.example .env
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 ```
-*(Update `.env` with actual secrets as needed; never commit `.env` to source control)*
+*(Update `.env` files with actual secrets as needed; never commit `.env` files to source control)*
 
 ### 2. Database Setup
 Start the local PostgreSQL development environment via Docker:

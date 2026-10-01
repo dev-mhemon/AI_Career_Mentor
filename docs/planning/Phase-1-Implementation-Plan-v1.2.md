@@ -138,7 +138,7 @@ Backend APIs strictly focus on application-level logic. Authentication endpoints
 
 ## 5. Security Considerations
 
-*   **Supabase JWT Validation**: The NestJS backend must cryptographically verify the signature of Supabase-issued JWTs using the Supabase project JWT secret.
+*   **Supabase JWT Validation**: The NestJS backend must verify the signature of Supabase-issued ES256 JWTs using the Supabase JWKS endpoint. It must also validate token expiry, issuer, and audience.
 *   **NestJS Guards**:
     *   `AuthGuard`: Validates the JWT and attaches the `supabase_uid` to the request.
     *   `RoleGuard`: Ensures the user possesses the required application role.
@@ -152,7 +152,7 @@ Backend APIs strictly focus on application-level logic. Authentication endpoints
 
 ## 6. Implementation Order
 
-1.  **Supabase project configuration**: Create project, configure OAuth providers, define JWT secrets, and evaluate phone OTP constraints.
+1.  **Supabase project configuration**: Create project, configure OAuth providers, obtain project URL for JWKS, and evaluate phone OTP constraints.
 2.  **Backend Auth Guard**: Implement NestJS JWT validation guard and request context population.
 3.  **Database entities**: Create Prisma/TypeORM schemas for `User` and `InvitationCode` and run migrations.
 4.  **Database Seeding (Temp Method)**: Create database seed scripts to generate initial `InvitationCode` records.
@@ -192,7 +192,8 @@ The following items are strictly **NOT** part of Phase 1 and must be deferred to
 ## Architecture Decision Summary
 
 *   **Authentication Provider**: Supabase Auth.
-*   **Token Strategy**: Supabase-issued JWTs passed to the backend via `Authorization: Bearer` headers.
+*   **Token Strategy**: Supabase-issued ES256 JWTs passed to the backend via `Authorization: Bearer` headers.
+*   **JWT Verification Method**: Supabase JWKS endpoint/public key verification. Validates ES256 signatures, token expiry, issuer, and audience.
 *   **OAuth Approach**: Google and Facebook OAuth implemented natively through Supabase Auth (no custom OAuth implementation).
 *   **Phone OTP Approach**: Use Supabase phone authentication if it aligns with project constraints. If not, fallback to the SAD decision (WhatsApp OTP as primary, low-cost SMS OTP provider as fallback). No new providers.
 *   **User Synchronization Strategy**: Frontend-triggered synchronization (`POST /api/auth/sync`) to simplify MVP architecture and reduce webhook dependencies.

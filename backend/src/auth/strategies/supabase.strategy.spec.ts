@@ -3,19 +3,22 @@ import { SupabaseStrategy } from './supabase.strategy.js';
 import type { SupabaseJwtPayload } from '../interfaces/supabase-jwt-payload.interface.js';
 
 describe('SupabaseStrategy', () => {
-  it('should throw if SUPABASE_JWT_SECRET is not set', () => {
+  it('should throw if SUPABASE_URL is not set', () => {
     const configService = {
       get: vi.fn().mockReturnValue(undefined),
     } as unknown as ConfigService;
 
     expect(() => new SupabaseStrategy(configService)).toThrow(
-      'SUPABASE_JWT_SECRET is not set',
+      'SUPABASE_URL is not set',
     );
   });
 
-  it('should construct successfully with a valid secret', () => {
+  it('should construct successfully with a valid SUPABASE_URL', () => {
     const configService = {
-      get: vi.fn().mockReturnValue('test-secret-at-least-32-chars-long'),
+      get: vi.fn((key: string) => {
+        if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
+        return undefined;
+      }),
     } as unknown as ConfigService;
 
     expect(() => new SupabaseStrategy(configService)).not.toThrow();
@@ -23,7 +26,10 @@ describe('SupabaseStrategy', () => {
 
   it('should extract supabase_uid, email, and phone from payload', () => {
     const configService = {
-      get: vi.fn().mockReturnValue('test-secret-at-least-32-chars-long'),
+      get: vi.fn((key: string) => {
+        if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
+        return undefined;
+      }),
     } as unknown as ConfigService;
 
     const strategy = new SupabaseStrategy(configService);
@@ -46,7 +52,10 @@ describe('SupabaseStrategy', () => {
 
   it('should default email and phone to null when absent', () => {
     const configService = {
-      get: vi.fn().mockReturnValue('test-secret-at-least-32-chars-long'),
+      get: vi.fn((key: string) => {
+        if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
+        return undefined;
+      }),
     } as unknown as ConfigService;
 
     const strategy = new SupabaseStrategy(configService);

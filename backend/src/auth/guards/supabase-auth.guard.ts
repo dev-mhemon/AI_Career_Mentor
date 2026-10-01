@@ -1,12 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 
 /**
  * Guard that triggers the 'supabase' Passport strategy.
  * Rejects requests with missing, invalid, or expired JWTs (401).
- *
- * Plan v1.2 §5: AuthGuard validates the JWT and attaches the
- * supabase_uid to the request.
  */
 @Injectable()
-export class SupabaseAuthGuard extends AuthGuard('supabase') {}
+export class SupabaseAuthGuard extends AuthGuard('supabase') {
+  private readonly logger = new Logger(SupabaseAuthGuard.name);
+
+  handleRequest(err: any, user: any, info: any) {
+    if (info) {
+      this.logger.warn(`JWT Verification Failed: ${info.message || info}`);
+    }
+    if (err || !user) {
+      throw err || new UnauthorizedException();
+    }
+    return user;
+  }
+}
