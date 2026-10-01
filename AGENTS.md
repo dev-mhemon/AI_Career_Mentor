@@ -33,7 +33,7 @@ Rules for using them:
 
 ## 3. Current phase
 
-**Active phase: Phase 0 — Project Foundation** *(update this line at the start of each phase)*
+**Active phase: Phase 1 — Authentication & Access Control** *(update this line at the start of each phase)*
 
 - Work only on tasks belonging to the active phase in the Implementation Plan.
 - Do not begin, stub, or "prepare" work for later phases.
