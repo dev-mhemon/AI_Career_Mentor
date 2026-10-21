@@ -2,20 +2,23 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ProfilePatch, LearningPatch, AliasInput } from './profile.dto.js';
-import { missingFields } from '../auth/services/auth.service.js';
+import { missingFields } from '../common/profile-completeness.js';
 describe('Foundation validation', () => {
   it('requires no artificial skills for None', () => {
     expect(
-      missingFields({
-        current_role_title: 'Student',
-        education: 'BSc',
-        experience_level: 'beginner',
-        learning_preference: 'mixed',
-        preferred_daily_hours: 1,
-        timezone: 'Asia/Dhaka',
-        existing_skills_none: true,
-        self_reported_skill_ids: [],
-      }),
+      missingFields(
+        {
+          current_role_title: 'Student',
+          education: 'BSc',
+          experience_level: 'beginner',
+          learning_preference: 'mixed',
+          preferred_daily_hours: 1,
+          timezone: 'Asia/Dhaka',
+          existing_skills_none: true,
+          self_reported_skill_ids: [],
+        },
+        true,
+      ),
     ).toEqual([]);
   });
   it('rejects fractional non-half-hour settings', async () => {

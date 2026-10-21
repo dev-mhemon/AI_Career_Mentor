@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { EntityManager, QueryFailedError } from 'typeorm';
 import { DatabaseService } from './database.service.js';
 import { fail } from '../../common/http.js';
+import { profileComplete } from '../../common/profile-completeness.js';
 import { features } from '../policy.js';
 export interface JwtIdentity {
   sub: string;
@@ -171,7 +172,7 @@ export class AuthService {
         'Application account not found; bootstrap a verified Auth session first',
       );
     const [p] = await db.query(
-      `SELECT p.*,pr.learning_preference FROM public.user_profiles p LEFT JOIN public.user_preferences pr USING(user_id) WHERE p.user_id=$1`,
+      `SELECT p.*,pr.learning_preference,EXISTS(SELECT 1 FROM public.career_goals g WHERE g.user_id=p.user_id AND g.status='confirmed') AS has_confirmed_goal FROM public.user_profiles p LEFT JOIN public.user_preferences pr USING(user_id) WHERE p.user_id=$1`,
       [id],
     );
     const effective_access: Record<string, boolean> = {};
@@ -188,30 +189,10 @@ export class AuthService {
     );
     return {
       user,
-      profile_complete: !!p && profileComplete(p),
+      profile_complete: !!p && profileComplete(p, !!p.has_confirmed_goal),
       focus_roadmap_id: focus?.id || null,
       effective_access,
       can_delete_account: true,
     };
   }
-}
-export function missingFields(p: Record<string, any>): string[] {
-  return [
-    'current_role_title',
-    'education',
-    'experience_level',
-    'learning_preference',
-    'preferred_daily_hours',
-    'timezone',
-  ]
-    .filter((k) => !p[k])
-    .map((k) => (k === 'current_role_title' ? 'current_role' : k))
-    .concat(
-      p.existing_skills_none || p.self_reported_skill_ids?.length
-        ? []
-        : ['existing_skills'],
-    );
-}
-export function profileComplete(p: Record<string, any>): boolean {
-  return missingFields(p).length === 0;
 }

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { DatabaseService } from '../auth/services/database.service.js';
-import { missingFields } from '../auth/services/auth.service.js';
+import { missingFields } from '../common/profile-completeness.js';
 import { fail } from '../common/http.js';
 import type {
   AliasInput,
@@ -52,8 +52,8 @@ export class ProfileService {
       timezone: p.timezone,
       timezone_detected: p.timezone_detected,
       active_career_goal_ids: goals.map((g: any) => g.id),
-      profile_complete: missingFields(p).length === 0,
-      missing_fields: missingFields(p),
+      profile_complete: missingFields(p, goals.length > 0).length === 0,
+      missing_fields: missingFields(p, goals.length > 0),
       unresolved_skills,
       progress_initialization:
         progress ||
