@@ -1,0 +1,2 @@
+PASS: 009_boundaries.test.sql, 27 assertions
+PASS: 21 first forwards; 185 TAP; 21 downs; 21 reapply; 185 post-reapply TAP; boundaries + concurrency. Evidence: /workspace/AI_Career_Mentor/artifacts/database/2026-10-21T17-53-39.040Z

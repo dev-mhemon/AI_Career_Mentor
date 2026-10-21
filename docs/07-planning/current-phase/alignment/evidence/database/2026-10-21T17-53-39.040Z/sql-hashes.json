@@ -1,0 +1,378 @@
+{
+  "catalog_lock": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78",
+  "source_C06_sha256": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+  "method": "Same extraction and wrapping as the existing extract-db.mjs; no SQL was newly executed by the reviewer",
+  "files": [
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/000_extensions.sql",
+      "sha256": "cff0d8ed3e5cfb1ef8d337d275b5a270055b117ccf81b5aeac5d81abd4f7b49b",
+      "bytes": 554,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/001_enums.sql",
+      "sha256": "c39c1714f076040e1b32215f70f42ce201d6858c8dd498df437bce837bd018ce",
+      "bytes": 4172,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/002_identity.sql",
+      "sha256": "1315b83a18c6c8be39fd04110d6bb2760c00b23c71cba7080adb23a815e4dbdc",
+      "bytes": 2085,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/003_profiles.sql",
+      "sha256": "c61aee486328ff7d34922fe02eb060d8605ba69284504f933a7b04110ed8a486",
+      "bytes": 1942,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/004_career_intelligence.sql",
+      "sha256": "2f370f1928ea336a64816a2209b7703bbbfa15ec7ecb5a4d968151c560c4184d",
+      "bytes": 4753,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/005_roadmap.sql",
+      "sha256": "4306727bdbd4ed5b7967f431538bc0d59b675ee561960b79c70df938bb35bd10",
+      "bytes": 7458,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/006_learning.sql",
+      "sha256": "3b4327b70dd78c635e2a15e5af9abd0937fff963ce8096c32e7d4d19781915c5",
+      "bytes": 4344,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/007_assessment.sql",
+      "sha256": "8a7b8e6e98e69cfb0df78ce751938ff345ea90ea1fd7658da95c5af6fe61083f",
+      "bytes": 7730,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/008_progress.sql",
+      "sha256": "3d197b0bf36d5ce35c4bce4bbda382267a33dd66349c44b4247d6d4d21ddba03",
+      "bytes": 2725,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/009_ai_mentor.sql",
+      "sha256": "57197d8a67d6eaacccb35c468eb583f8817c19e05169f66a01d7bd47d64b8e79",
+      "bytes": 3673,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/010_ai_operations.sql",
+      "sha256": "b9cb12687f62305a6f9c36d65f49b735d1e91725a222142a2ff7c687bc371277",
+      "bytes": 5211,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/011_technology_intelligence.sql",
+      "sha256": "6ebbe08325109e4049a525fe7754b53835b21d09397dc6a71e26dd2bbc29e925",
+      "bytes": 4182,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/012_administration.sql",
+      "sha256": "a6ae44c06439846aeb814d1416b8c6ad910123aa0a950dd9de18d51d84c9e6ee",
+      "bytes": 4095,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/013_constraints.sql",
+      "sha256": "4da82c9f536ab647e44d9d7c973dfd789a0f16c5b06ec4e080cd2632b82e8dd0",
+      "bytes": 2612,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/014_indexes.sql",
+      "sha256": "c6474f45d2b1e70e2826dd100918066cb1a7b31d8ffd5ef90c7cd13caa4d43d9",
+      "bytes": 10216,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/015_functions.sql",
+      "sha256": "c996122f14a0c95c89caf8a4f0965f8cbeb231b091495b5bb4505e5ef6f1c851",
+      "bytes": 17184,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/016_triggers.sql",
+      "sha256": "e464110c775004d75bd61ceec92d7031c41063084b4698c2239a3533ab32ea54",
+      "bytes": 6856,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/017_rls.sql",
+      "sha256": "927f2802e87802fef995ce8125e9f846ae3b160ebd9ccb6bb58b2a62a7f9dff6",
+      "bytes": 9600,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/018_seed.sql",
+      "sha256": "e35c5b3e4e476980bdffceaad8cd44864f71471480a07e7e26fc890583c5ef4c",
+      "bytes": 4060,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/019_tests.sql",
+      "sha256": "d42f838d7c7b8545fe54f270725bd5cb4e59508ec0541c31a5c9822797bdfddb",
+      "bytes": 4218,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "forward",
+      "path": "supabase/migrations/020_gaps_and_alignment.sql",
+      "sha256": "69c3f8a93927447a4cf78fa0ec042cbdc7752703b8213a3443f9fd3c44d4a7ae",
+      "bytes": 12298,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/001_schema.test.sql",
+      "sha256": "cd5a42abd00ab275e119ff54da84ae8a6c31ede7fc0c875b305a822b8171608a",
+      "bytes": 4315,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/002_constraints.test.sql",
+      "sha256": "d1fef78e79b2e0d18b1bc12954822945df80593f1b6c68329904436a120d2525",
+      "bytes": 4752,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/003_rls_security.test.sql",
+      "sha256": "a212581198d0602e5cdfb0e56d0b9fb693b19368812f8c2f953bea7d81473c8e",
+      "bytes": 5239,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/004_trigger_behavior.test.sql",
+      "sha256": "bc3f50ec18a1fa37e6202c0d7fc4a37ea9abafd368aea7d9d9fe340741f9a00b",
+      "bytes": 4425,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/005_ai_usage.test.sql",
+      "sha256": "a3b8ae5607a7ea2773f2ff4864db03743740bc1cce135af4ea93b2b2fa14fde1",
+      "bytes": 3247,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/006_roadmap_integrity.test.sql",
+      "sha256": "d5ebb90d567b75396ca19ead53b7f187c3ecc23625c49ccf2fbf6075c1b86851",
+      "bytes": 5423,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/007_retention.test.sql",
+      "sha256": "bcc15552463becfdd1e733a49c7d3fe0b9b3224ebd425cb4c9e2340e181e7223",
+      "bytes": 6042,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "tests",
+      "path": "supabase/tests/database/008_gaps.test.sql",
+      "sha256": "9a85d35d48e955d8a4f0076dc3d43ab29271042a1c6c3316d8ae4e1d8c927774",
+      "bytes": 4813,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/020_down.sql",
+      "sha256": "b400333b4dcfcda79483e38eff6a3cad9df5a66a0aea7553274fdf6648f651e3",
+      "bytes": 2346,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/019_down.sql",
+      "sha256": "4e6b9172b913316593637349257c045185b2855aae45e04ec0c1e84585b95849",
+      "bytes": 57,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/018_down.sql",
+      "sha256": "072b2cc3e3ae0ff64b1a51e76cdcb56f3ac7fe8df2206c6ea1cf336d4a090e35",
+      "bytes": 1401,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/017_down.sql",
+      "sha256": "9960d446b72e4e3aa3852956b0ee8ff33d12b5284386f55e62dc070b375a61f2",
+      "bytes": 2304,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/016_down.sql",
+      "sha256": "dc11d390967aaf7876c43f6dfdc9ca72fcfdc40c24059cf74594001b76793116",
+      "bytes": 3101,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/015_down.sql",
+      "sha256": "25da64b2883f0b949ca9beda40771d4c448cccc2a43dd513fea7834dc5cfdbf7",
+      "bytes": 1501,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/014_down.sql",
+      "sha256": "50b0ab5614069038136226fd37d5e2010cebf02c09e2c3d139d7b52d24f11b4f",
+      "bytes": 241,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/013_down.sql",
+      "sha256": "87883d9ce71d95cc760e93c719026f9a9458e28aa728fde2e220a6de78a187ba",
+      "bytes": 1604,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/012_down.sql",
+      "sha256": "e6671729040dd0b6c7fca8ef8eb0a1d0b3aaf68fa00231244efd42cc971c3bcd",
+      "bytes": 168,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/011_down.sql",
+      "sha256": "ebbdbc74410a4d6e1a932e5bc6d748625ba214eeaaea602769d438a8b8df043d",
+      "bytes": 207,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/010_down.sql",
+      "sha256": "c7ddbac8603c1ebc0cb9cb9d14e663faf6c42f78660e7d4cf5017b3abb4391af",
+      "bytes": 123,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/009_down.sql",
+      "sha256": "e1e3c47b28a84a1dc968760f5bf412f4a663dcea479f5747d41ec42de9873f0b",
+      "bytes": 135,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/008_down.sql",
+      "sha256": "445176ce50e48317a701294ef2c48f8be060d1ad9f7d08030e5faa988ac47c2d",
+      "bytes": 115,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/007_down.sql",
+      "sha256": "a92524b864ead579096efbd329793be78642d3f7530760e8126febe61563a1d6",
+      "bytes": 145,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/006_down.sql",
+      "sha256": "e5fdcafb369fe67328ec59ff49c7866aec2b06cc8fb956b2f2a371d684ccd1e7",
+      "bytes": 125,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/005_down.sql",
+      "sha256": "83bcc0f56bb88db2ef37ba7976f87f2bc54293da7d51dd62ebec825e835455a6",
+      "bytes": 153,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/004_down.sql",
+      "sha256": "3770a51f2cc55f8bba201f79f55d1cb166ca38ce3a1d4a131a9719a2e8361307",
+      "bytes": 169,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/003_down.sql",
+      "sha256": "343fe1f9620175d429a7dc60d2067d2622e654347797df226d6cb2bb383b3625",
+      "bytes": 83,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/002_down.sql",
+      "sha256": "dbd76ce65fdb2b5357362122b106e663f2ffbb92feb629d2eac5a954065bd9a5",
+      "bytes": 78,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/001_down.sql",
+      "sha256": "f90a538ccec0bcf9dffb46a969a88a8bf1e5970e4f41d729168bf58059821ab5",
+      "bytes": 991,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "down",
+      "path": "supabase/rollbacks/000_down.sql",
+      "sha256": "9d94b4e2d98532afecd5a4949b59d0d96ee17aede4735dd9f007d8aa01e6c6cb",
+      "bytes": 155,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "extra",
+      "path": "scripts/db/test-upgrade.sh",
+      "sha256": "07a0b86f63846a901ed7848ecc1b251fab6191a83f62f64d281413ea5bb2387e",
+      "bytes": 803,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "extra",
+      "path": "scripts/db/perf/seed_volume.sql",
+      "sha256": "68567da7ac1159922a45c3171344e7f06d37b14433447bd53bb5f88b205181fb",
+      "bytes": 5224,
+      "source": "docs/C06_DMS.md"
+    },
+    {
+      "kind": "extra",
+      "path": "scripts/db/perf/explain_checks.sql",
+      "sha256": "c15d9a92a32ae63072fdf1729766682af2e7ea96518d34f50593bec95320351f",
+      "bytes": 3215,
+      "source": "docs/C06_DMS.md"
+    }
+  ]
+}

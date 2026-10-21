@@ -1,0 +1,26 @@
+[
+  {
+    "path": "evidence/clean-checkout/clean-frontend-build.log",
+    "raw_sha256": "d92ae0cacf66ed1be5eedf1ffeb7b2008e294c5dccd883fb7cf370c06b9dcfc1",
+    "review_copy_sha256": "ae24165e91a84ac56e76ba252e9f5f6996eecc34d9e6be0ea6bceccd7120b987",
+    "transformation": "strip terminal trailing space/tab/CR per line; original workspace artifact retained"
+  },
+  {
+    "path": "evidence/clean-checkout/clean-final-frontend-build.log",
+    "raw_sha256": "1cc5077e7e1b34840b8dbbe8c9674982184141fb7f2a74d4b92257a597e16d76",
+    "review_copy_sha256": "f250376d38cc219ac1ab0c2eadc5c8f5a458b956dcf08188f4c6ff7113986d99",
+    "transformation": "strip terminal trailing space/tab/CR per line; original workspace artifact retained"
+  },
+  {
+    "path": "evidence/checks/frontend-build.log",
+    "raw_sha256": "4ddfb0f4793f65c33bd10a1cca07bdef2e25da37fff02e5469e6b5dab60dd9aa",
+    "review_copy_sha256": "24fda23e87d589d9d3455f9c2943a732ab858840979c6b88784f3becaa8cf8f4",
+    "transformation": "strip terminal trailing space/tab/CR per line; original workspace artifact retained"
+  },
+  {
+    "path": "evidence/checks/frontend-production-build.log",
+    "raw_sha256": "1038df0f70ef99e6eeced34ed8eadaed0db519b623588bfb11cebc550c9891ba",
+    "review_copy_sha256": "4d8d8085f892d20000e39af1925f581bec118cca0b894ed20ebd2e27c2f0638d",
+    "transformation": "strip terminal trailing space/tab/CR per line; original workspace artifact retained"
+  }
+]

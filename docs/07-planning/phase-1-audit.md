@@ -1,0 +1,20 @@
+# Phase 1 alignment audit
+
+Base: live phase1-restart foundation merge `4dffb54835f62f806accbb883a2cf6557c30bcdf`; parent feature fix `d307bba6` preserves OAuth next_step and RoleOptionDTO rationale. All uploaded sources are baseline-equal; no schema delta or applied-history rewrite. Historical raw evidence moved byte-identically to current-phase/foundation, immutable package stayed at its original path.
+
+| Finding | Source | Correction | Regression scope |
+|---|---|---|---|
+| F1 completeness | C01 §7/14; C05 §14.3/15.3 | Shared helper; education optional; explicit None valid; confirmed active goal required; /auth/me and /profile consistent. Basic access not completeness-gated. | Every required field, no education, None, goal absence/confirmation; real HTTP parity |
+| F2 goal confirmation | C05 §3/13.2/EP-C01/EP-C05; C09 Screen11 | roadmap_generator guard plus feature recheck in the write transaction; existing owner reads unaffected; status/ownership remain enforced. | Feature revoked after guard; global OFF/user override; foreign/admin ownership; no mutation on denial |
+| F3 foreground activity | C01 §39; C05 R24 | Server-time coalesced monotonic update in successful profile/preferences/settings/alias/goal write transaction; explicit bootstrap retained. Passive reads/failure/rollback do not advance. | Passive reads, validation rejection, success/coalescing/future timestamp; transaction failure |
+| F4 errors | C05 §4/15.1/16; C09 §6 | Nested field/code/message details; timezone/skill/malformed-id contracts; request IDs; safe unknown errors; client preserves details/retry fields including 401. | Nested names, unsafe500,401/422/429 metadata, malformed body, actual HTTP codes |
+
+Existing phone flow now uses SMS consistently; no WhatsApp fallback is advertised. This does not implement or certify a Bangladesh SMS adapter. Broader auth remains transitional. Known privacy gap: the transitional verification flow still puts contact identifiers in query parameters; R18 session-draft routing remains explicit backlog, not complete. No provider success or full authentication contract is claimed.
+
+Complete [82-entry endpoint coverage](current-phase/alignment/endpoint-coverage.json) and [25-screen coverage](current-phase/alignment/screen-coverage.json) classify every catalog entry. Transitional POST /auth/sync is additional compatibility, not a C05 catalog route. Partial health output lacks full C05 version/time/queue checks; tracked separately. Existing actual frontend folder structure is preserved; no empty future controller/service/module or application directories created.
+
+Remaining implementation: Auth A01–A09/A11–A12 canonical APIs, Bangladesh SMS/verified social/secure linking/contact/recovery; Redis shared rate limits/lockout/idempotency and 401 refresh integration; deletion receipt/outbox/worker/failure matrix; career creation/clarification/edit/discontinue and catalog list; all roadmap/daily-plan/quiz/practice/progress/mentor/tech/feedback/jobs/admin workflows; PWA, Bangla component system/accessibility, full25screens, R17 preparing routing, R18 private verification draft. AI gateway/prompts/approval/privacy/synthetic benchmarks, worker leases/fencing and scheduler remain future work. No new endpoint is invented to satisfy a diagram count.
+
+Remaining runtime/release gates: full Auth providers and data-handling approvals, deletion/RLS fault matrix, purge timing and recovery, load/performance/connection budget, PITR/backup restore, production destination/secrets/security and owner acceptance. R32 **in_progress / partially_executed**; R33 **optional/deferred**. Source adoption and local PASS are not acceptance. CI runs on the delivered head/base must be checked separately; unavailable checks stay blocked.
+
+See [execution plan](master-execution-plan.md), [governance](../00-governance/START-HERE.md), [inventory](current-phase/alignment/file-inventory.json), [handoff](current-phase/alignment/HANDOFF_BN.md) and [runbook](../09-operations/runbook.md).

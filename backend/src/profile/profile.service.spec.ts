@@ -50,3 +50,27 @@ describe('C05 career goal response contract', () => {
     },
   );
 });
+
+describe('C05 EP-C05 transaction feature boundary', () => {
+  it('rejects a feature disabled after the request guard without confirming a goal', async () => {
+    const query = vi.fn().mockResolvedValue([{ enabled: false }]);
+    const transaction = vi.fn((_id, operation) => operation({ query }));
+    const service = new ProfileService({
+      transaction,
+    } as unknown as DatabaseService);
+    await expect(
+      service.confirm('owner', 'goal', {
+        canonical_role_id: 'role',
+        target_level: 'mid',
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'FEATURE_DISABLED' },
+      status: 403,
+    });
+    expect(
+      query.mock.calls.some(([sql]) =>
+        sql.includes('UPDATE public.career_goals'),
+      ),
+    ).toBe(false);
+  });
+});

@@ -257,7 +257,6 @@ try {
     async () => {
       const p = await api("/profile", tokens[0], "PATCH", {
         current_role: " Student ",
-        education: "BSc",
         experience_level: "beginner",
         existing_skills: [
           { name: "Foundation Skill" },
@@ -294,7 +293,12 @@ try {
         preferred_daily_hours: 1.5,
       });
       assert.equal(p.status, 200, JSON.stringify(p.error));
-      assert.equal(p.data.profile_complete, true);
+      assert.equal(p.data.profile_complete, false);
+      assert.deepEqual(p.data.missing_fields, ["active_career_goal_ids"]);
+      assert.equal(
+        (await api("/auth/me", tokens[0])).data.profile_complete,
+        false,
+      );
       assert.equal(p.data.existing_skills.length, 0);
       assert.equal(
         (
@@ -312,6 +316,152 @@ try {
         ).status,
         422,
       );
+    },
+  );
+  await check(
+    "C05 error details retain nested paths, endpoint codes and request IDs",
+    async () => {
+      const invalid = await api("/profile", tokens[0], "PATCH", {
+        existing_skills: [{ name: "" }],
+      });
+      assert.equal(invalid.status, 422);
+      assert(
+        invalid.error.details.some(
+          (d) =>
+            d.field === "existing_skills.0.name" &&
+            typeof d.code === "string" &&
+            typeof d.message === "string",
+        ),
+      );
+      assert(!JSON.stringify(invalid.error).includes("constraints"));
+      assert.equal(
+        (
+          await api("/profile/learning-settings", tokens[0], "PATCH", {
+            timezone: "Bad/Zone",
+          })
+        ).error.code,
+        "INVALID_TIMEZONE",
+      );
+      assert.equal(
+        (
+          await api("/profile/skill-alias-interpretations", tokens[0], "POST", {
+            input: "missing",
+            skill_id: randomUUID(),
+          })
+        ).error.code,
+        "SKILL_NOT_FOUND",
+      );
+      assert.equal(
+        (await api("/career/goals/not-a-uuid", tokens[0])).status,
+        400,
+      );
+    },
+  );
+  await check(
+    "foreground success coalesces; reads, failed work and future timestamps do not advance activity",
+    async () => {
+      await db.query(
+        "UPDATE public.users SET last_active_at=now()-interval '10 minutes' WHERE id=$1",
+        [users[0]],
+      );
+      const stamp = async () =>
+        (
+          await db.query(
+            "SELECT last_active_at FROM public.users WHERE id=$1",
+            [users[0]],
+          )
+        ).rows[0].last_active_at;
+      const old = await stamp();
+      await api("/auth/me", tokens[0]);
+      await api("/profile", tokens[0]);
+      assert.deepEqual(await stamp(), old);
+      await api("/profile/preferences", tokens[0], "PATCH", {
+        learning_preference: "invalid",
+      });
+      assert.deepEqual(await stamp(), old);
+      assert.equal(
+        (
+          await api("/profile/preferences", tokens[0], "PATCH", {
+            learning_preference: "reading",
+          })
+        ).status,
+        200,
+      );
+      const current = await stamp();
+      assert(current > old);
+      await api("/profile/learning-settings", tokens[0], "PATCH", {
+        preferred_daily_hours: 2,
+      });
+      assert.deepEqual(await stamp(), current);
+      await db.query(
+        "UPDATE public.users SET last_active_at=now()+interval '1 hour' WHERE id=$1",
+        [users[0]],
+      );
+      const future = await stamp();
+      await api("/profile/preferences", tokens[0], "PATCH", {
+        learning_preference: "mixed",
+      });
+      assert.deepEqual(await stamp(), future);
+    },
+  );
+  await check(
+    "activity persistence failure rolls back the successful-looking profile edit and leaks no SQL",
+    async () => {
+      const name = "alignment_activity_" + randomUUID().replaceAll("-", "");
+      await db.query(
+        "UPDATE public.users SET last_active_at=now()-interval '10 minutes' WHERE id=$1",
+        [users[0]],
+      );
+      const before = (
+        await db.query("SELECT last_active_at FROM public.users WHERE id=$1", [
+          users[0],
+        ])
+      ).rows[0].last_active_at;
+      const preference = (
+        await db.query(
+          "SELECT learning_preference FROM public.user_preferences WHERE user_id=$1",
+          [users[0]],
+        )
+      ).rows[0].learning_preference;
+      await db.query(
+        `CREATE FUNCTION private.${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic private SQL details'; END $$`,
+      );
+      await db.query(
+        `CREATE TRIGGER ${name} BEFORE UPDATE OF last_active_at ON public.users FOR EACH ROW WHEN (NEW.id='${users[0]}'::uuid) EXECUTE FUNCTION private.${name}()`,
+      );
+      try {
+        const reply = await api("/profile/preferences", tokens[0], "PATCH", {
+          learning_preference: preference === "reading" ? "visual" : "reading",
+        });
+        assert.equal(reply.status, 500);
+        assert.equal(reply.error.message, "Internal server error");
+        assert(
+          !JSON.stringify(reply.error).includes(
+            "synthetic private SQL details",
+          ),
+        );
+        assert.equal(
+          (
+            await db.query(
+              "SELECT learning_preference FROM public.user_preferences WHERE user_id=$1",
+              [users[0]],
+            )
+          ).rows[0].learning_preference,
+          preference,
+        );
+        assert.deepEqual(
+          (
+            await db.query(
+              "SELECT last_active_at FROM public.users WHERE id=$1",
+              [users[0]],
+            )
+          ).rows[0].last_active_at,
+          before,
+        );
+      } finally {
+        await db.query(`DROP TRIGGER ${name} ON public.users`);
+        await db.query(`DROP FUNCTION private.${name}()`);
+      }
     },
   );
   await check(
@@ -385,6 +535,73 @@ try {
     );
   }
   await check(
+    "goal confirmation obeys global and per-user roadmap access while existing reads remain available",
+    async () => {
+      const previous = (
+        await db.query(
+          "SELECT enabled FROM public.feature_controls WHERE feature_key='roadmap_generator'",
+        )
+      ).rows[0].enabled;
+      try {
+        await db.query(
+          "UPDATE public.feature_controls SET enabled=false WHERE feature_key='roadmap_generator'",
+        );
+        await db.query(
+          "INSERT INTO public.user_access_overrides(user_id,feature_key,enabled) VALUES($1,'roadmap_generator',true)",
+          [users[0]],
+        );
+        const body = { canonical_role_id: role, target_level: "mid" };
+        assert.equal(
+          (
+            await api(
+              "/career/goals/" + goals[0] + "/confirm",
+              tokens[0],
+              "POST",
+              body,
+            )
+          ).error.code,
+          "FEATURE_DISABLED",
+        );
+        assert.equal(
+          (await api("/career/goals/" + goals[0], tokens[0])).status,
+          200,
+        );
+        assert.equal((await api("/profile", tokens[0])).status, 200);
+        await db.query(
+          "UPDATE public.feature_controls SET enabled=true WHERE feature_key='roadmap_generator'",
+        );
+        await db.query(
+          "UPDATE public.user_access_overrides SET enabled=false WHERE user_id=$1 AND feature_key='roadmap_generator'",
+          [users[0]],
+        );
+        assert.equal(
+          (
+            await api(
+              "/career/goals/" + goals[0] + "/confirm",
+              tokens[0],
+              "POST",
+              body,
+            )
+          ).status,
+          403,
+        );
+        assert.equal(
+          (await api("/career/goals/" + goals[0], tokens[0])).data.status,
+          "awaiting_confirmation",
+        );
+      } finally {
+        await db.query(
+          "DELETE FROM public.user_access_overrides WHERE user_id=$1 AND feature_key='roadmap_generator'",
+          [users[0]],
+        );
+        await db.query(
+          "UPDATE public.feature_controls SET enabled=$1 WHERE feature_key='roadmap_generator'",
+          [previous],
+        );
+      }
+    },
+  );
+  await check(
     "foreign goal path returns 404, even for platform admin",
     async () => {
       await db.query("INSERT INTO public.admin_users(user_id) VALUES($1)", [
@@ -441,6 +658,14 @@ try {
         { canonical_role_id: role, target_level: "mid" },
       );
       assert.equal(r.status, 200);
+      const profileState = (await api("/profile", tokens[0])).data;
+      assert.equal(profileState.education, null);
+      assert.equal(profileState.profile_complete, true);
+      assert.deepEqual(profileState.missing_fields, []);
+      assert.equal(
+        (await api("/auth/me", tokens[0])).data.profile_complete,
+        true,
+      );
       let rows = (
         await db.query("SELECT * FROM public.skill_progress WHERE user_id=$1", [
           users[0],

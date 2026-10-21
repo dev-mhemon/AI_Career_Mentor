@@ -9,6 +9,7 @@ export class DatabaseService {
     userId: string | null,
     operation: (db: EntityManager) => Promise<T>,
     active = true,
+    foreground = false,
   ): Promise<T> {
     return this.source.transaction('READ COMMITTED', async (db) => {
       await db.query('SET LOCAL ROLE service_role');
@@ -26,7 +27,16 @@ export class DatabaseService {
         if (active && account.status !== 'active')
           fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
       }
-      return operation(db);
+      const result = await operation(db);
+      if (userId && foreground) {
+        // C05 R24: server time; serialized, coalesced and committed with the successful action.
+        await db.query(
+          `UPDATE public.users SET last_active_at=GREATEST(COALESCE(last_active_at,'-infinity'::timestamptz),clock_timestamp())
+          WHERE id=$1 AND (last_active_at IS NULL OR last_active_at <= clock_timestamp()-interval '5 minutes')`,
+          [userId],
+        );
+      }
+      return result;
     });
   }
 }

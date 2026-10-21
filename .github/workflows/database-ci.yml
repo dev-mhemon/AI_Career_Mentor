@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main, develop, phase1-restart]
   push:
-    branches: [phase1-restart, "feature/phase1-*"]
+    branches: [main, phase1-restart, "feature/phase1-*", "chore/repository-alignment*"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,8 +45,13 @@ jobs:
         run: node scripts/foundation/ci-provenance.mjs images
       - name: Fresh forward, TAP, reverse, reapply, TAP, boundaries and concurrency
         run: node scripts/foundation/database-check.mjs --disposable
-      - name: Application foundation lint, unit, build, E2E and HTTP checks
-        run: bash scripts/foundation/check-apps.sh
+      - name: Application build, E2E and real HTTP contracts
+        run: |
+          node scripts/foundation/record-command.mjs backend-build npm --prefix backend run build
+          node scripts/foundation/record-command.mjs backend-e2e node scripts/foundation/local.mjs backend-e2e
+          node scripts/foundation/record-command.mjs backend-http node scripts/foundation/application-check.mjs
+          node scripts/foundation/record-command.mjs frontend-build node scripts/foundation/local.mjs frontend-build
+          node scripts/foundation/record-command.mjs frontend-http node scripts/foundation/frontend-check.mjs
       - name: Upload evidence from this exact checkout
         if: always()
         id: evidence

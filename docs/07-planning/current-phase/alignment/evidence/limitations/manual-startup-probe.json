@@ -1,0 +1,5 @@
+{
+  "outcome": "initial ad-hoc assertion failed",
+  "cause": "Expected Sign in instead of actual Sign In; HTTP200 and backend health had succeeded",
+  "resolution": "Inspected actual screen; permanent frontend smoke now asserts exact headings and login fields; current run passed"
+}

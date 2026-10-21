@@ -1,0 +1,15 @@
+{
+  "implementation_head_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+  "checked_out_tested_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+  "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+  "worktree_status": "",
+  "command": [
+    "npm",
+    "--prefix",
+    "frontend",
+    "test"
+  ],
+  "started": "2026-10-21T17:57:46.422Z",
+  "finished": "2026-10-21T17:57:49.001Z",
+  "exit_code": 0
+}

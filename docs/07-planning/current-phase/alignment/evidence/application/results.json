@@ -1,0 +1,103 @@
+{
+  "source_commit": null,
+  "executed_at": "2026-10-21T17:55:51.434Z",
+  "checks": [
+    {
+      "name": "missing and malformed bearer rejected",
+      "status": "passed"
+    },
+    {
+      "name": "missing application mapping fails closed before bootstrap",
+      "status": "passed"
+    },
+    {
+      "name": "live Auth bootstrap maps exact UUID and ignores metadata role",
+      "status": "passed"
+    },
+    {
+      "name": "bootstrap is idempotent and creates one profile/provider",
+      "status": "passed"
+    },
+    {
+      "name": "contact collisions fail closed with 409 and preserve both UUID mappings",
+      "status": "passed"
+    },
+    {
+      "name": "auth/me reads without foreground activity writes",
+      "status": "passed"
+    },
+    {
+      "name": "provider mismatch rejected using live identities",
+      "status": "passed"
+    },
+    {
+      "name": "profile validation rejects unknowns, blanks, overlong names and None plus skills",
+      "status": "passed"
+    },
+    {
+      "name": "profile aliases defer progress until confirmed level; uncertain alias has no artificial skill",
+      "status": "passed"
+    },
+    {
+      "name": "None is valid, clears self-reported skills, and profile completion is deterministic",
+      "status": "passed"
+    },
+    {
+      "name": "C05 error details retain nested paths, endpoint codes and request IDs",
+      "status": "passed"
+    },
+    {
+      "name": "foreground success coalesces; reads, failed work and future timestamps do not advance activity",
+      "status": "passed"
+    },
+    {
+      "name": "activity persistence failure rolls back the successful-looking profile edit and leaks no SQL",
+      "status": "passed"
+    },
+    {
+      "name": "user alias is atomic, deduplicated, private and never promoted globally",
+      "status": "passed"
+    },
+    {
+      "name": "canonical, validated global and user aliases resolve without cross-user leakage",
+      "status": "passed"
+    },
+    {
+      "name": "goal confirmation obeys global and per-user roadmap access while existing reads remain available",
+      "status": "passed"
+    },
+    {
+      "name": "foreign goal path returns 404, even for platform admin",
+      "status": "passed"
+    },
+    {
+      "name": "role mismatch and invalid level cannot confirm",
+      "status": "passed"
+    },
+    {
+      "name": "goal confirmation initializes chosen level only and preserves stronger evidence",
+      "status": "passed"
+    },
+    {
+      "name": "repeat confirmation is invalid; fourth active goal blocked",
+      "status": "passed"
+    },
+    {
+      "name": "suspension is immediate, bootstrap preserves it, auth/me exposes all access false",
+      "status": "passed"
+    },
+    {
+      "name": "signed tokens reject expired/issuer/audience/subject tampering",
+      "status": "passed"
+    },
+    {
+      "name": "unverified contact metadata cannot assert verification",
+      "status": "passed"
+    },
+    {
+      "name": "deleted Auth identity cannot be re-provisioned with an old token",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

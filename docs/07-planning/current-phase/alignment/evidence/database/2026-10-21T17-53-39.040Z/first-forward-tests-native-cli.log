@@ -1,0 +1,32 @@
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/001_schema.test.sql ............. ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/002_constraints.test.sql ........ ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/003_rls_security.test.sql ....... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/004_trigger_behavior.test.sql ... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/005_ai_usage.test.sql ........... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/006_roadmap_integrity.test.sql .. ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/007_retention.test.sql .......... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/008_gaps.test.sql ............... ok
+All tests successful.
+Files=8, Tests=185,  0 wallclock secs ( 0.04 usr  0.02 sys +  0.05 cusr  0.04 csys =  0.15 CPU)
+Result: PASS
+Connecting to local database...
+3.36: Pulling from supabase/pg_prove
+dcccee43ad5d: Pulling fs layer
+06d62d0de6d7: Pulling fs layer
+a22cb17b3b93: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+4f4fb700ef54: Waiting
+a22cb17b3b93: Download complete
+dcccee43ad5d: Verifying Checksum
+dcccee43ad5d: Download complete
+dcccee43ad5d: Pull complete
+4f4fb700ef54: Verifying Checksum
+4f4fb700ef54: Download complete
+06d62d0de6d7: Verifying Checksum
+06d62d0de6d7: Download complete
+06d62d0de6d7: Pull complete
+a22cb17b3b93: Pull complete
+4f4fb700ef54: Pull complete
+Digest: sha256:eda7c5e68719e9c8287e78c017118407b48df904a51c935f5ab6098b8c0bc6bc
+Status: Downloaded newer image for supabase/pg_prove:3.36
+docker.io/supabase/pg_prove:3.36

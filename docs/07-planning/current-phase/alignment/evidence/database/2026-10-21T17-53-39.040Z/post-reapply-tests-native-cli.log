@@ -1,0 +1,12 @@
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/001_schema.test.sql ............. ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/002_constraints.test.sql ........ ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/003_rls_security.test.sql ....... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/004_trigger_behavior.test.sql ... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/005_ai_usage.test.sql ........... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/006_roadmap_integrity.test.sql .. ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/007_retention.test.sql .......... ok
+/workspace/AI_Career_Mentor/.local/foundation/supabase/tests/database/008_gaps.test.sql ............... ok
+All tests successful.
+Files=8, Tests=185,  0 wallclock secs ( 0.03 usr  0.02 sys +  0.06 cusr  0.03 csys =  0.14 CPU)
+Result: PASS
+Connecting to local database...

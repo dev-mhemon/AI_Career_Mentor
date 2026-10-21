@@ -1,0 +1,11 @@
+# Open issues and decisions
+
+- R32 remains **in_progress / partially_executed**. Owner/release acceptance is pending. R33 is **optional/deferred**. Preserve original issue records and raw evidence under the reviewed baseline and historical foundation directory.
+- Toolchain: SAD §3/ADR-004 and AI SD examples say pnpm/Jest; actual locked/tested repository uses npm/Vitest. Owner alignment task explicitly preserves this toolchain. No framework/package-manager upgrade.
+- Stale source claims: immutable specs say DMS never executed, certify static-only checks and sometimes use incorrect family/function/assertion prose. Current execution records supersede those historical execution claims only; do not edit uploaded bytes. C06 adopted SQL/hash gates control installed objects.
+- C05 §14.3 profile JSON shows profile_complete=false/missing learning_preference despite a populated preference. Follow normative §14.3 completeness rule, not that inconsistent illustrative state. Education is optional, confirmed active goal required; incomplete profiles keep basic access (C01 §7/14).
+- C05 EP-C05 has Gate:write without repeating feature key. Resolve inherited career module context from EP-C01 and C09 Screen11: roadmap_generator. Enforce guard plus transaction recheck. Existing goal/profile reads keep no feature gate.
+- F1–F4 corrections are scoped in the audit. Preserve OAuth next_step and nullable RoleOptionDTO rationale from d307bba6.
+- Current transitional frontend Auth SDK flows are not the complete C05 Auth API. Bangladesh local SMS adapter, all provider/privacy/rate-limit validations and remaining Auth/account routes require later implementation. Removing WhatsApp-first assumptions does not certify a configured local SMS provider.
+- Antigravity is unavailable in this machine. Manual shared-rule loading is required until its actual installed version/discovery settings are verified. No unverified ignore or rule adapter enforcement is claimed.
+- Initial GitHub REST reads returned Forbidden; subsequent branch push, PR#2 creation and run-list operations succeeded. Foundation merge and checkpoint CI success verified; exact final head/base CI remains a separate gate, reported in PR checks/artifacts. api.github.com addition is saved in the environment draft; saving alone does not prove enforcement.

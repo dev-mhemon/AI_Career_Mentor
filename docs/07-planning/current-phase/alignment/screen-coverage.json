@@ -1,0 +1,152 @@
+[
+  {
+    "screen": 1,
+    "title": "Landing Page (`/`)",
+    "status": "Partial transitional foundation",
+    "accepted": false
+  },
+  {
+    "screen": 2,
+    "title": "Login (`/login`)",
+    "status": "Partial transitional foundation",
+    "accepted": false
+  },
+  {
+    "screen": 3,
+    "title": "Registration (`/register`)",
+    "status": "Partial transitional foundation",
+    "accepted": false
+  },
+  {
+    "screen": 4,
+    "title": "Verification (`/verify`)",
+    "status": "Partial transitional foundation",
+    "accepted": false
+  },
+  {
+    "screen": 5,
+    "title": "Password Recovery (`/forgot-password`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 6,
+    "title": "Password Reset (`/reset-password`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 7,
+    "title": "Profile Setup (`/onboarding/profile`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 8,
+    "title": "Skills Input (`/onboarding/skills`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 9,
+    "title": "Learning Preferences (`/onboarding/preferences`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 10,
+    "title": "Career Goal Analysis (`/onboarding/goal`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 11,
+    "title": "AI Interpretation & Career Level Confirmation (`/onboarding/clarify`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 12,
+    "title": "Roadmap Confirmation \u2014 Draft Review, Revision & Lock (`/roadmaps/[id]/draft`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 13,
+    "title": "Dashboard (`/dashboard`)",
+    "status": "Partial transitional foundation",
+    "accepted": false
+  },
+  {
+    "screen": 14,
+    "title": "Career Profile (`/career-profile`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 15,
+    "title": "Roadmap View, Merge Diff & Undo (`/roadmaps/[id]`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 16,
+    "title": "Daily Tasks / Daily Plan (`/daily-plan`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 17,
+    "title": "Learning Hub \u2014 Today Experience (`/today`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 18,
+    "title": "Quiz Practice & AI Practice Review (`/quiz/[attemptId]`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 19,
+    "title": "Learning Progress (`/progress`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 20,
+    "title": "AI Career Mentor Chat (`/mentor`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 21,
+    "title": "Personalized Daily Technology Updates (`/tech-updates`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 22,
+    "title": "Account & Settings (`/settings`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 23,
+    "title": "Admin Dashboard & Usage Telemetry (`/admin`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 24,
+    "title": "Admin User Management (`/admin/users`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "screen": 25,
+    "title": "Admin Feature Controls (`/admin/features`)",
+    "status": "Specified / Planned",
+    "accepted": false
+  }
+]

@@ -1,1 +1,11 @@
 planning/reviewed-baseline/** -text
+# Preserve uploaded specification bytes (including CRLF) across checkout.
+docs/01-product/PRD.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/02-architecture/SAD.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/03-domain/DDD.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/04-database/DIS.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/05-api/API-Specification.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/04-database/DMS.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/04-database/validation-report.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/02-architecture/AI-System-Design.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+docs/01-product/UIUX-Specification.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

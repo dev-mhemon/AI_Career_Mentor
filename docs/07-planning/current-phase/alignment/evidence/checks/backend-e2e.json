@@ -1,0 +1,14 @@
+{
+  "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+  "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+  "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+  "worktree_status": "",
+  "command": [
+    "node",
+    "scripts/foundation/local.mjs",
+    "backend-e2e"
+  ],
+  "started": "2026-10-21T17:54:54.588Z",
+  "finished": "2026-10-21T17:54:56.993Z",
+  "exit_code": 0
+}

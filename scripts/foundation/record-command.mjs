@@ -1,6 +1,29 @@
 import { redact } from "./redact.mjs";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync, execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+const git = (...args) => {
+  try {
+    return execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+};
+const event = process.env.GITHUB_EVENT_PATH
+  ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"))
+  : {};
+const identity = {
+  implementation_head_sha:
+    event.pull_request?.head?.sha || git("rev-parse", "HEAD"),
+  checked_out_tested_sha: git("rev-parse", "HEAD"),
+  base_sha:
+    event.pull_request?.base?.sha ||
+    process.env.ALIGNMENT_BASE_SHA ||
+    git("rev-parse", "--verify", "origin/phase1-restart"),
+  worktree_status: git("status", "--porcelain"),
+};
 const [name, command, ...args] = process.argv.slice(2);
 if (!name || !command || !/^[a-z0-9-]+$/.test(name))
   throw Error("Expected safe label and command");
@@ -19,6 +42,7 @@ writeFileSync(
   `artifacts/checks/${name}.json`,
   JSON.stringify(
     {
+      ...identity,
       command: [command, ...args],
       started,
       finished: new Date().toISOString(),

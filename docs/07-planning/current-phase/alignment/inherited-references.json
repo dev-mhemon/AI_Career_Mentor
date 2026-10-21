@@ -1,0 +1,777 @@
+[
+  {
+    "source": "docs/02-architecture/SAD.md",
+    "reference": ".github/workflows/database-ci.yml",
+    "classification": "existing repository path"
+  },
+  {
+    "source": "docs/02-architecture/SAD.md",
+    "reference": "000_extensions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/02-architecture/SAD.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/02-architecture/SAD.md",
+    "reference": "explain_checks.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "000_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "000_extensions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "001_enums.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "002_identity.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "003_profiles.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "004_career_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "005_roadmap.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "006_learning.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "007_assessment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "008_progress.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "009_ai_mentor.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "010_ai_operations.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "011_technology_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "012_administration.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "014_indexes.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "017_rls.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "020_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/03-domain/DDD.md",
+    "reference": "AI_Career_Intelligence_Mentor_DMS_v1.2.2.md",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "000_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "000_extensions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "001_enums.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "001_schema.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "002_constraints.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "002_identity.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "003_profiles.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "003_rls_security.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "004_career_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "004_trigger_behavior.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "005_ai_usage.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "005_roadmap.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "006_learning.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "006_roadmap_integrity.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "007_assessment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "007_retention.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "008_gaps.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "008_progress.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "009_ai_mentor.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "010_ai_operations.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "011_technology_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "012_administration.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "013_constraints.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "014_indexes.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "015_functions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "016_triggers.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "017_rls.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "018_seed.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "019_tests.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "AI_Career_Intelligence_Mentor_DMS_v1.2.2.md",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "supabase/rollbacks/020_down.sql",
+    "classification": "existing repository path"
+  },
+  {
+    "source": "docs/04-database/DIS.md",
+    "reference": "supabase/seed.sql",
+    "classification": "inherited unavailable/planned reference; does not authorize fabricating contents"
+  },
+  {
+    "source": "docs/05-api/API-Specification.md",
+    "reference": "002_identity.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/05-api/API-Specification.md",
+    "reference": "007_assessment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/05-api/API-Specification.md",
+    "reference": "010_ai_operations.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/05-api/API-Specification.md",
+    "reference": "015_functions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/05-api/API-Specification.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "./scripts/db/check-migration-order.sh",
+    "classification": "inherited unavailable/planned reference; does not authorize fabricating contents"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": ".github/workflows/database-ci.yml",
+    "classification": "existing repository path"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "000_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "000_extensions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "001_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "001_enums.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "001_schema.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "002_constraints.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "002_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "002_identity.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "003_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "003_profiles.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "003_rls_security.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "004_career_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "004_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "004_trigger_behavior.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "005_ai_usage.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "005_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "005_roadmap.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "006_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "006_learning.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "006_roadmap_integrity.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "007_assessment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "007_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "007_retention.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "008_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "008_gaps.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "008_progress.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "009_ai_mentor.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "009_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "010_ai_operations.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "010_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "011_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "011_technology_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "012_administration.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "012_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "013_constraints.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "013_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "014_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "014_indexes.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "015_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "015_functions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "016_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "016_triggers.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "017_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "017_rls.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "018_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "018_seed.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "019_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "019_tests.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "020_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/DMS.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": ".github/workflows/database-ci.yml",
+    "classification": "existing repository path"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "000_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "000_extensions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "001_enums.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "001_schema.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "002_constraints.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "002_identity.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "003_profiles.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "003_rls_security.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "004_career_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "004_trigger_behavior.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "005_ai_usage.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "005_roadmap.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "006_learning.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "006_roadmap_integrity.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "007_assessment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "007_retention.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "008_gaps.test.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "008_progress.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "009_ai_mentor.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "010_ai_operations.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "011_technology_intelligence.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "012_administration.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "013_constraints.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "014_indexes.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "015_functions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "016_triggers.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "017_rls.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "018_seed.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "019_tests.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "020_down.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "06_AI_Career_Intelligence_Mentor_DMS_v1.2.2.md",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "database-ci.yml",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "scripts/db/test-failure-handling.sh",
+    "classification": "inherited fixing-toolkit reference; see context-map"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "scripts/db/test-fresh-install.sh",
+    "classification": "inherited fixing-toolkit reference; see context-map"
+  },
+  {
+    "source": "docs/04-database/validation-report.md",
+    "reference": "scripts/db/test-upgrade.sh",
+    "classification": "inherited fixing-toolkit reference; see context-map"
+  },
+  {
+    "source": "docs/02-architecture/AI-System-Design.md",
+    "reference": "000_extensions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/02-architecture/AI-System-Design.md",
+    "reference": "015_functions.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/02-architecture/AI-System-Design.md",
+    "reference": "018_seed.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/02-architecture/AI-System-Design.md",
+    "reference": "020_gaps_and_alignment.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  },
+  {
+    "source": "docs/02-architecture/AI-System-Design.md",
+    "reference": "DMS 005_roadmap.sql",
+    "classification": "historical source/SQL filename alias; see context-map and C06 catalog"
+  }
+]
