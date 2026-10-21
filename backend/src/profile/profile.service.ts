@@ -222,6 +222,13 @@ export class ProfileService {
   }
   async confirm(id: string, goalId: string, input: ConfirmGoal) {
     return this.database.transaction(id, async (db) => {
+      // C05 EP-C05/C09 Screen11: the guard's earlier transaction is not the write boundary.
+      const [access] = await db.query(
+        "SELECT private.effective_feature_access($1,'roadmap_generator') AS enabled",
+        [id],
+      );
+      if (!access?.enabled)
+        fail(403, 'FEATURE_DISABLED', 'Roadmap generation access is disabled');
       const [g] = await db.query(
         'SELECT * FROM public.career_goals WHERE id=$2 AND user_id=$1 FOR UPDATE',
         [id, goalId],

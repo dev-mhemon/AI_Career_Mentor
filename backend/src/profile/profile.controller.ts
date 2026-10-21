@@ -9,6 +9,7 @@ import {
   Req,
   HttpCode,
 } from '@nestjs/common';
+import { Policy } from '../auth/policy.js';
 import { ProfileService } from './profile.service.js';
 import {
   AliasInput,
@@ -50,7 +51,10 @@ export class ProfileController {
   ) {
     return this.profiles.readGoal(req.user.sub, id);
   }
-  @Post('career/goals/:id/confirm') @HttpCode(200) confirm(
+  @Post('career/goals/:id/confirm')
+  @HttpCode(200)
+  @Policy({ feature: 'roadmap_generator' })
+  confirm(
     @Req() req: any,
     @Param('id', new ParseUUIDPipe({ errorHttpStatusCode: 422 })) id: string,
     @Body() input: ConfirmGoal,
