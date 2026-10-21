@@ -40,7 +40,22 @@ try {
   for (const route of ["/login", "/register", "/verify"]) {
     const r = await fetch("http://127.0.0.1:3203" + route);
     assert.equal(r.status, 200);
-    assert((await r.text()).length > 100);
+    const html = await r.text();
+    const expected = {
+      "/login": "Sign In",
+      "/register": "Create Account",
+      "/verify": "Verify Account",
+    };
+    assert(
+      html.includes(expected[route]),
+      `Expected application content for ${route}`,
+    );
+    if (route === "/login") {
+      assert(
+        html.includes('name="email"') && html.includes('name="password"'),
+        "Actual login fields render",
+      );
+    }
     results.push({ route, status: r.status });
   }
   const r = await fetch("http://127.0.0.1:3203/dashboard", {
