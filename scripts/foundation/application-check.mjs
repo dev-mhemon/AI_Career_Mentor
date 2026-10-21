@@ -405,6 +405,66 @@ try {
     },
   );
   await check(
+    "activity persistence failure rolls back the successful-looking profile edit and leaks no SQL",
+    async () => {
+      const name = "alignment_activity_" + randomUUID().replaceAll("-", "");
+      await db.query(
+        "UPDATE public.users SET last_active_at=now()-interval '10 minutes' WHERE id=$1",
+        [users[0]],
+      );
+      const before = (
+        await db.query("SELECT last_active_at FROM public.users WHERE id=$1", [
+          users[0],
+        ])
+      ).rows[0].last_active_at;
+      const preference = (
+        await db.query(
+          "SELECT learning_preference FROM public.user_preferences WHERE user_id=$1",
+          [users[0]],
+        )
+      ).rows[0].learning_preference;
+      await db.query(
+        `CREATE FUNCTION private.${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic private SQL details'; END $$`,
+      );
+      await db.query(
+        `CREATE TRIGGER ${name} BEFORE UPDATE OF last_active_at ON public.users FOR EACH ROW WHEN (NEW.id='${users[0]}'::uuid) EXECUTE FUNCTION private.${name}()`,
+      );
+      try {
+        const reply = await api("/profile/preferences", tokens[0], "PATCH", {
+          learning_preference: preference === "reading" ? "visual" : "reading",
+        });
+        assert.equal(reply.status, 500);
+        assert.equal(reply.error.message, "Internal server error");
+        assert(
+          !JSON.stringify(reply.error).includes(
+            "synthetic private SQL details",
+          ),
+        );
+        assert.equal(
+          (
+            await db.query(
+              "SELECT learning_preference FROM public.user_preferences WHERE user_id=$1",
+              [users[0]],
+            )
+          ).rows[0].learning_preference,
+          preference,
+        );
+        assert.deepEqual(
+          (
+            await db.query(
+              "SELECT last_active_at FROM public.users WHERE id=$1",
+              [users[0]],
+            )
+          ).rows[0].last_active_at,
+          before,
+        );
+      } finally {
+        await db.query(`DROP TRIGGER ${name} ON public.users`);
+        await db.query(`DROP FUNCTION private.${name}()`);
+      }
+    },
+  );
+  await check(
     "user alias is atomic, deduplicated, private and never promoted globally",
     async () => {
       for (let i = 0; i < 2; i++) {
