@@ -1,1 +1,11 @@
 planning/reviewed-baseline/** -text
+# Preserve uploaded specification bytes (including CRLF) across checkout.
+docs/01-product/PRD.md -text
+docs/02-architecture/SAD.md -text
+docs/03-domain/DDD.md -text
+docs/04-database/DIS.md -text
+docs/05-api/API-Specification.md -text
+docs/04-database/DMS.md -text
+docs/04-database/validation-report.md -text
+docs/02-architecture/AI-System-Design.md -text
+docs/01-product/UIUX-Specification.md -text
