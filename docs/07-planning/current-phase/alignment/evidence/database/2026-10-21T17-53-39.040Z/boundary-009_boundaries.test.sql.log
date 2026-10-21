@@ -1,0 +1,53 @@
+BEGIN
+1..27
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ok 1 - 32768-byte input accepted
+ok 2 - 32769-byte input denied
+ok 3 - Input must be an object
+SET
+{"sub":"99999999-0000-0000-0000-000000000001","role":"authenticated"}
+ok 4 - Private queue input cannot be read by its client owner
+ok 5 - Active account sees own goal
+RESET
+UPDATE 1
+SET
+ok 6 - Global off denies generation
+ok 7 - Feature off preserves existing goal read
+RESET
+UPDATE 1
+SET
+ok 8 - Suspended account loses goal read
+ok 9 - Suspended account loses profile read
+ok 10 - Suspended account loses effective access
+RESET
+UPDATE 1
+ok 11 - Report threshold below 2 rejected
+ok 12 - Report threshold above 1000 rejected
+ok 13 - Fraction threshold rejected
+ok 14 - String threshold rejected
+ok 15 - Nondefault report threshold 2 accepted
+ok 16 - Retention above cap rejected
+ok 17 - Zero retention rejected
+ok 18 - Frozen product cap rejected
+ok 19 - Retention executes
+ok 20 - Unsummarized expired parent deleted
+ok 21 - Live reply survives with NULL parent
+ok 22 - Old unfinished request purged by creation time
+INSERT 0 1
+CREATE FUNCTION
+CREATE TRIGGER
+ok 23 - Injected child cascade failure aborts deletion
+ok 24 - Auth identity restored after failure
+ok 25 - Completion tombstone also rolled back
+ok 26 - Child profile restored after failure
+DROP TRIGGER
+DELETE 1
+ok 27 - Successful deletion completes retained tombstone
+ROLLBACK

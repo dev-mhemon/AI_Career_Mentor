@@ -2354,7 +2354,7 @@
       "reference_impact": "Imports/scripts/maintained links inspected; see validation report",
       "validation": "app lint/tests/build/HTTP or maintained link/workflow checks as applicable; execution outcome in validation report",
       "original_sha256": "6a77aa1bf64018e476d19f087e51dd0cd1a61e00a0b9ed2d5b2c4647d179eead",
-      "final_sha256": "ea3940a30b85a63b5e965099bf726d9695dda8c05fab89f8e95088abc51faaef"
+      "final_sha256": "9668880d04aae09f4f14d05aaf6e7af0d9697ab302cc875995ad6279cb218376"
     },
     {
       "original": "frontend/src/lib/api/client.ts",
@@ -2365,7 +2365,7 @@
       "reference_impact": "Imports/scripts/maintained links inspected; see validation report",
       "validation": "app lint/tests/build/HTTP or maintained link/workflow checks as applicable; execution outcome in validation report",
       "original_sha256": "1b7e0da9b60c1791e2ad3895af665a1ae3b5620908e6abc7b9f50dc402d3db47",
-      "final_sha256": "b379d4e5119c3f529aaa3b128bd9fef3441970c1a8b5a3505cfa1664d0be87b5"
+      "final_sha256": "81c138908a208c04c2c00a3df7ccf11197003cd82697c031f4947c6e92900549"
     },
     {
       "original": "frontend/src/lib/auth/actions.test.ts",
@@ -4477,7 +4477,7 @@
       "reference_impact": "Imports/scripts/maintained links inspected; see validation report",
       "validation": "app lint/tests/build/HTTP or maintained link/workflow checks as applicable; execution outcome in validation report",
       "original_sha256": "97b606c2d0d77efbbd846e4bbe31d08b3ab8d6a3dac7ec983991415f2dfcae7e",
-      "final_sha256": "4482f9215947bf04349495c47d6241503f45baefaa45014673e96b0f3bd5537f"
+      "final_sha256": "05c9488df415a9f7e4b78c26e29b7b7c5a798b720c1e34439dd84b84226eec4f"
     },
     {
       "original": "scripts/foundation/boundary-check.mjs",
@@ -4548,13 +4548,13 @@
     {
       "original": "scripts/foundation/frontend-check.mjs",
       "destination": "scripts/foundation/frontend-check.mjs",
-      "decision": "keep",
-      "reason": "Preserve working application/framework/toolchain source and coverage",
+      "decision": "update",
+      "reason": "Current authority/setup/workflow or focused existing behavior contract correction",
       "replacement": "scripts/foundation/frontend-check.mjs",
       "reference_impact": "Imports/scripts/maintained links inspected; see validation report",
       "validation": "app lint/tests/build/HTTP or maintained link/workflow checks as applicable; execution outcome in validation report",
       "original_sha256": "dd7b33c3d61150947296b21daff6c86596f676f6ce26ba107e50467cc6724509",
-      "final_sha256": "dd7b33c3d61150947296b21daff6c86596f676f6ce26ba107e50467cc6724509"
+      "final_sha256": "730c977c0ee6f6fedcfeff716e8af933061a9ddf654345725937c4ad3912d34d"
     },
     {
       "original": "scripts/foundation/install.sh",

@@ -1,0 +1,64 @@
+{
+  "recorded_at": "2026-10-21T17:57:20.214Z",
+  "execution_environment": "local",
+  "implementation_head_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+  "checked_out_tested_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+  "base_sha": null,
+  "github_sha": null,
+  "github_ref": null,
+  "event_name": null,
+  "run_id": null,
+  "run_attempt": null,
+  "run_url": null,
+  "worktree_status": "",
+  "node": "v24.19.0",
+  "docker_server": "28.4.0",
+  "docker_driver": "vfs",
+  "images": [
+    {
+      "service": "db",
+      "image_reference": "supabase/postgres:17.11.0.004",
+      "image_id": "sha256:a19acfeef14a1e023c8d670e2249963fbf7c2e12f3758c4c407f48942f3fbe79",
+      "repo_digests": [],
+      "onboarding_customization_labels": [
+        "mentor.onboarding.flattened"
+      ]
+    },
+    {
+      "service": "auth",
+      "image_reference": "supabase/gotrue:v2.197.0",
+      "image_id": "sha256:3ac7f0c43c2f5dc60a49465c34e17db469f1e764edab875f46042efea906aeb8",
+      "repo_digests": [],
+      "onboarding_customization_labels": [
+        "mentor.onboarding.local-health-proxy"
+      ]
+    },
+    {
+      "service": "kong",
+      "image_reference": "library/kong:2.8.1",
+      "image_id": "sha256:3cefb958bcd694597b65adc00053a762b1f9a6df3c6031af528d052d75a64e1a",
+      "repo_digests": [
+        "kong@sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d"
+      ],
+      "onboarding_customization_labels": []
+    },
+    {
+      "service": "rest",
+      "image_reference": "postgrest/postgrest:v16.4",
+      "image_id": "sha256:1ad5f2ea5501150ec9c7953ae9bf04111ced39a53ca01fc0f08af6d0b7ba67be",
+      "repo_digests": [
+        "postgrest/postgrest@sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df"
+      ],
+      "onboarding_customization_labels": []
+    },
+    {
+      "service": "inbucket",
+      "image_reference": "axllent/mailpit:v1.31.3",
+      "image_id": "sha256:1ce65b9a2daa2a01cf4f226dbd4b3758b5b9fe686c2f471cf979273a389aab91",
+      "repo_digests": [
+        "axllent/mailpit@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d"
+      ],
+      "onboarding_customization_labels": []
+    }
+  ]
+}

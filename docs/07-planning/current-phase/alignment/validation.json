@@ -1,0 +1,372 @@
+{
+  "recorded_at_utc": "2026-10-21T18:04:32.331996+00:00",
+  "repository": "dev-mhemon/AI_Career_Mentor",
+  "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+  "implementation_head_sha": "1fdc6c98c87fe959ba976e767199892999dd598f",
+  "branch": "chore/repository-alignment",
+  "pr_url": "https://github.com/dev-mhemon/AI_Career_Mentor/pull/2",
+  "checks": [
+    {
+      "label": "alignment-invariants",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "python3",
+        "scripts/alignment/verify.py"
+      ],
+      "started": "2026-10-21T17:53:30.768Z",
+      "finished": "2026-10-21T17:53:30.863Z",
+      "exit_code": 0
+    },
+    {
+      "label": "backend-build",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "run",
+        "build"
+      ],
+      "started": "2026-10-21T17:54:46.866Z",
+      "finished": "2026-10-21T17:54:52.793Z",
+      "exit_code": 0
+    },
+    {
+      "label": "backend-e2e",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "node",
+        "scripts/foundation/local.mjs",
+        "backend-e2e"
+      ],
+      "started": "2026-10-21T17:54:54.588Z",
+      "finished": "2026-10-21T17:54:56.993Z",
+      "exit_code": 0
+    },
+    {
+      "label": "backend-http",
+      "implementation_head_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+      "checked_out_tested_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "node",
+        "scripts/foundation/application-check.mjs"
+      ],
+      "started": "2026-10-21T17:55:48.599Z",
+      "finished": "2026-10-21T17:55:51.447Z",
+      "exit_code": 0
+    },
+    {
+      "label": "backend-lint",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "run",
+        "lint"
+      ],
+      "started": "2026-10-21T17:54:38.032Z",
+      "finished": "2026-10-21T17:54:43.135Z",
+      "exit_code": 0
+    },
+    {
+      "label": "backend-unit",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "test"
+      ],
+      "started": "2026-10-21T17:54:43.226Z",
+      "finished": "2026-10-21T17:54:46.789Z",
+      "exit_code": 0
+    },
+    {
+      "label": "current-install",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "bash",
+        "scripts/foundation/install.sh"
+      ],
+      "started": "2026-10-21T17:53:36.769Z",
+      "finished": "2026-10-21T17:53:58.552Z",
+      "exit_code": 0
+    },
+    {
+      "label": "database-lifecycle",
+      "implementation_head_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "checked_out_tested_sha": "3857af82390fb3eb953929fda67cf6e54009e9d4",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "node",
+        "scripts/foundation/database-check.mjs",
+        "--disposable"
+      ],
+      "started": "2026-10-21T17:53:38.641Z",
+      "finished": "2026-10-21T17:54:21.951Z",
+      "exit_code": 0
+    },
+    {
+      "label": "f1-unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "test"
+      ],
+      "started": "2026-10-21T17:40:34.569Z",
+      "finished": "2026-10-21T17:40:37.869Z",
+      "exit_code": 0
+    },
+    {
+      "label": "f2-unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "test"
+      ],
+      "started": "2026-10-21T17:41:06.488Z",
+      "finished": "2026-10-21T17:41:09.801Z",
+      "exit_code": 0
+    },
+    {
+      "label": "f3-unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "test"
+      ],
+      "started": "2026-10-21T17:41:42.182Z",
+      "finished": "2026-10-21T17:41:46.385Z",
+      "exit_code": 0
+    },
+    {
+      "label": "f4-backend-unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "backend",
+        "test"
+      ],
+      "started": "2026-10-21T17:42:57.322Z",
+      "finished": "2026-10-21T17:42:59.940Z",
+      "exit_code": 0
+    },
+    {
+      "label": "f4-frontend-unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "frontend",
+        "test"
+      ],
+      "started": "2026-10-21T17:42:59.986Z",
+      "finished": "2026-10-21T17:43:04.242Z",
+      "exit_code": 0
+    },
+    {
+      "label": "frontend-build",
+      "implementation_head_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "checked_out_tested_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "node",
+        "scripts/foundation/local.mjs",
+        "frontend-build"
+      ],
+      "started": "2026-10-21T17:57:50.954Z",
+      "finished": "2026-10-21T17:57:55.065Z",
+      "exit_code": 0
+    },
+    {
+      "label": "frontend-http",
+      "implementation_head_sha": "1fdc6c98c87fe959ba976e767199892999dd598f",
+      "checked_out_tested_sha": "1fdc6c98c87fe959ba976e767199892999dd598f",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "M docs/07-planning/current-phase/alignment/file-inventory.json\n?? docs/07-planning/current-phase/alignment/evidence/\n?? docs/07-planning/current-phase/alignment/inherited-references.json",
+      "command": [
+        "node",
+        "scripts/foundation/frontend-check.mjs"
+      ],
+      "started": "2026-10-21T18:00:29.936Z",
+      "finished": "2026-10-21T18:00:30.598Z",
+      "exit_code": 0
+    },
+    {
+      "label": "frontend-lint",
+      "implementation_head_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "checked_out_tested_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "npm",
+        "--prefix",
+        "frontend",
+        "run",
+        "lint"
+      ],
+      "started": "2026-10-21T17:57:49.051Z",
+      "finished": "2026-10-21T17:57:50.906Z",
+      "exit_code": 0
+    },
+    {
+      "label": "frontend-production-build",
+      "command": [
+        "npm",
+        "--prefix",
+        "frontend",
+        "run",
+        "build"
+      ],
+      "started": "2026-10-21T17:48:04.259Z",
+      "finished": "2026-10-21T17:48:12.865Z",
+      "exit_code": 0
+    },
+    {
+      "label": "frontend-unit",
+      "implementation_head_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "checked_out_tested_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "npm",
+        "--prefix",
+        "frontend",
+        "test"
+      ],
+      "started": "2026-10-21T17:57:46.422Z",
+      "finished": "2026-10-21T17:57:49.001Z",
+      "exit_code": 0
+    },
+    {
+      "label": "repeatable-start",
+      "implementation_head_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "checked_out_tested_sha": "fac739aef5c52a64c7c35d945250ae5c19b083b5",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "M docs/07-planning/current-phase/alignment/file-inventory.json\n?? docs/07-planning/current-phase/alignment/evidence/\n?? docs/07-planning/current-phase/alignment/inherited-references.json",
+      "command": [
+        "node",
+        "scripts/foundation/local.mjs",
+        "start"
+      ],
+      "started": "2026-10-21T17:59:03.842Z",
+      "finished": "2026-10-21T17:59:05.062Z",
+      "exit_code": 0
+    },
+    {
+      "label": "sms-frontend-unit",
+      "command": [
+        "npm",
+        "--prefix",
+        "frontend",
+        "test"
+      ],
+      "started": "2026-10-21T17:45:17.872Z",
+      "finished": "2026-10-21T17:45:22.191Z",
+      "exit_code": 0
+    },
+    {
+      "label": "upstream-postgres-pull",
+      "command": [
+        "docker",
+        "pull",
+        "docker.io/supabase/postgres:17.11.0.004"
+      ],
+      "started": "2026-10-21T17:43:19.223Z",
+      "finished": "2026-10-21T17:45:50.085Z",
+      "exit_code": 1
+    },
+    {
+      "label": "workflow-validation",
+      "implementation_head_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+      "checked_out_tested_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+      "base_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+      "worktree_status": "",
+      "command": [
+        "/workspace/alignment-tools/actionlint/actionlint",
+        "-shellcheck=",
+        "-pyflakes="
+      ],
+      "started": "2026-10-21T17:57:20.139Z",
+      "finished": "2026-10-21T17:57:20.152Z",
+      "exit_code": 0
+    }
+  ],
+  "baseline": {
+    "original_manifest_entries": 179,
+    "forward": 21,
+    "rollback": 21,
+    "original_test_suites": 8,
+    "uploaded_active_documents": 9,
+    "all_hashes_unchanged": true
+  },
+  "local_results": {
+    "backend_unit": 46,
+    "frontend_unit": 38,
+    "backend_e2e": 1,
+    "real_auth_http_scenario_groups": 24,
+    "first_and_post_reapply_tap_assertions_each": 185,
+    "extra_boundary_assertions": 27,
+    "separate_session_concurrency": "passed",
+    "clean_checkout": "locked install/hash checkout verification/build/new private runtime startup/HTTP passed; same local Docker daemon with declared VFS image adaptations"
+  },
+  "foundation_merge_ci": {
+    "head_sha": "4dffb54835f62f806accbb883a2cf6557c30bcdf",
+    "event": "push",
+    "conclusion": "success",
+    "run_url": "https://github.com/dev-mhemon/AI_Career_Mentor/actions/runs/39626684725"
+  },
+  "remote_checkpoint_ci": [
+    {
+      "head_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+      "event": "push",
+      "conclusion": "success",
+      "run_url": "https://github.com/dev-mhemon/AI_Career_Mentor/actions/runs/39648223741"
+    },
+    {
+      "head_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+      "event": "push",
+      "conclusion": "success",
+      "run_url": "https://github.com/dev-mhemon/AI_Career_Mentor/actions/runs/39648224347"
+    }
+  ],
+  "delivered_head_ci": "Final documentation/evidence commit triggers new runs; inspect PR check links/CI artifacts for exact delivered head and base. Prior checkpoint success is not a substitute.",
+  "R32": {
+    "status": "in_progress",
+    "runtime_status": "partially_executed",
+    "accepted": false
+  },
+  "R33": {
+    "disposition": "optional_deferred"
+  },
+  "production_ready": false,
+  "owner_release_acceptance": false,
+  "merged": false,
+  "deployed": false,
+  "main_promotion": "pending reviewed alignment merge into phase1-restart"
+}
