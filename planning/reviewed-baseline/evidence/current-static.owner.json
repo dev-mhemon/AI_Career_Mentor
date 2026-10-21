@@ -1,0 +1,1250 @@
+{
+  "timestamp": "2026-10-20T14:22:28.313Z",
+  "mode": "docs",
+  "node": "v24.19.0",
+  "command": "node scripts/verify-suite.mjs --mode docs",
+  "catalog_lock": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78",
+  "tested_sha256": {
+    "C01": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+    "C02": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+    "C03": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+    "C04": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+    "C05": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+    "C06": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+    "C07": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+    "C08": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+    "C09": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7"
+  },
+  "checkpoint": "B10",
+  "checks": [
+    {
+      "check_id": "V00:C01-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C01-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C01-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C02-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C02-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C02-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C03-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C03-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C03-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C04-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C04-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C04-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C05-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C05-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C05-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C06-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C06-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C06-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C07-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C07-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C07-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C08-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C08-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C08-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:C09-utf8",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Fatal UTF-8 decoding completed"
+    },
+    {
+      "check_id": "V00:C09-CRLF",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "No line-ending normalization"
+    },
+    {
+      "check_id": "V00:C09-fences",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Balanced fenced blocks"
+    },
+    {
+      "check_id": "V00:frozen-PRD",
+      "issue_id": "V00",
+      "outcome": "pass",
+      "detail": "Frozen PRD byte-identical"
+    },
+    {
+      "check_id": "R01:fresh-strategy-mirrors",
+      "issue_id": "R01",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R02:eight-leading-indexes",
+      "issue_id": "R02",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R02:pre019-and-final-counts",
+      "issue_id": "R02",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R03:all-TS-blocks-parse",
+      "issue_id": "R03",
+      "outcome": "pass",
+      "detail": "Node TypeScript syntax stripping only; no application typecheck"
+    },
+    {
+      "check_id": "R04:21-real-rollback-bodies",
+      "issue_id": "R04",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R10:active-owner-shared-tech",
+      "issue_id": "R10",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R11:permitted-human-QA",
+      "issue_id": "R11",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "N02:reply-set-null",
+      "issue_id": "N02",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R26:config-guard-and-ceilings",
+      "issue_id": "R26",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R27:pre-insert-serialization",
+      "issue_id": "R27",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R12:private-bounded-input",
+      "issue_id": "R12",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R13:atomic-claim-fence-recovery",
+      "issue_id": "R13",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R08:summary-independent-physical-and-read-cutoff",
+      "issue_id": "R08",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R09:creation-clock-and-fixture",
+      "issue_id": "R09",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R05:atomic-trigger-and-reverse",
+      "issue_id": "R05",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R14:loss-barrier-and-key-collision",
+      "issue_id": "R14",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R06:receipt-and-no-false401",
+      "issue_id": "R06",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R35:bounded-service-only-outbox",
+      "issue_id": "R35",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R07:deferred-real-level-progress",
+      "issue_id": "R07",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R24:foreground-only-activity",
+      "issue_id": "R24",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R25:date-ownership-and-pending-DTO",
+      "issue_id": "R25",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R31:auth-TTL-and-metadata",
+      "issue_id": "R31",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R18:identifier-not-URL",
+      "issue_id": "R18",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R17:wait-result-ID",
+      "issue_id": "R17",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R15:SSE-wire-and-postcommit",
+      "issue_id": "R15",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R29:four-complete-DTOs",
+      "issue_id": "R29",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R30:UTC-zero-filled-series",
+      "issue_id": "R30",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R34:independent-capabilities-and-ID",
+      "issue_id": "R34",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "N01:gated-preview",
+      "issue_id": "N01",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R16:five-local-states",
+      "issue_id": "R16",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R23:version-aware-PITR",
+      "issue_id": "R23",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R22:operational-bodies-present",
+      "issue_id": "R22",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R19:physical-authority-and-nullability",
+      "issue_id": "R19",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R20:least-privilege-actual-count",
+      "issue_id": "R20",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R28:actual-API-inventory",
+      "issue_id": "R28",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "E01:constraint-specific-FK-exceptions",
+      "issue_id": "E01",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R21:truthful-evidence",
+      "issue_id": "R21",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "R21:no-obsolete-counters-or-certificates",
+      "issue_id": "R21",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "X02:all-state-user-FK-index",
+      "issue_id": "X02",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "X02:DIS-DMS-index-alignment",
+      "issue_id": "X02",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "X03:deletion-user-FK-index",
+      "issue_id": "X03",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "X03:inventory-and-count-alignment",
+      "issue_id": "X03",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "X03:original-FK-gates-retained",
+      "issue_id": "X03",
+      "outcome": "pass",
+      "detail": ""
+    },
+    {
+      "check_id": "X01:uniqueness-fixture-isolated",
+      "issue_id": "X01",
+      "outcome": "pass",
+      "detail": ""
+    }
+  ],
+  "inventory": {
+    "tables": [
+      "users",
+      "user_auth_providers",
+      "user_profiles",
+      "user_preferences",
+      "career_roles",
+      "skill_categories",
+      "skills",
+      "skill_aliases",
+      "skill_dependencies",
+      "career_goals",
+      "roadmaps",
+      "roadmap_versions",
+      "roadmap_items",
+      "roadmap_merges",
+      "roadmap_merge_items",
+      "topics",
+      "learning_resources",
+      "daily_plans",
+      "daily_plan_items",
+      "quizzes",
+      "quiz_questions",
+      "quiz_attempts",
+      "quiz_answers",
+      "practice_reviews",
+      "learning_evidence",
+      "skill_progress",
+      "achievement_history",
+      "conversations",
+      "messages",
+      "conversation_summaries",
+      "ai_context_records",
+      "ai_models",
+      "prompt_versions",
+      "ai_requests",
+      "ai_generations",
+      "technology_categories",
+      "technologies",
+      "technology_sources",
+      "technology_updates",
+      "user_update_relevance",
+      "update_delivery_history",
+      "admin_users",
+      "system_configurations",
+      "feature_controls",
+      "user_access_overrides",
+      "admin_audit_logs",
+      "user_ratings",
+      "content_reports",
+      "account_deletion_requests",
+      "user_skill_aliases"
+    ],
+    "enums": [
+      "user_status",
+      "auth_provider",
+      "experience_level",
+      "career_level",
+      "content_status",
+      "alias_status",
+      "goal_status",
+      "roadmap_status",
+      "roadmap_version_state",
+      "roadmap_version_origin",
+      "item_priority",
+      "skill_gap_type",
+      "merge_status",
+      "merge_origin",
+      "merge_op",
+      "resource_type",
+      "plan_status",
+      "plan_item_status",
+      "question_type",
+      "question_difficulty",
+      "attempt_status",
+      "performance_level",
+      "review_status",
+      "learning_state",
+      "evidence_source",
+      "progress_event_type",
+      "message_role",
+      "ui_language",
+      "conversation_context",
+      "ai_context_type",
+      "ai_task",
+      "job_status",
+      "job_kind",
+      "ai_validation_status",
+      "release_status",
+      "action_timing",
+      "relevance_level",
+      "technology_source_type",
+      "update_state",
+      "feature_key",
+      "admin_role",
+      "rating_target",
+      "report_target",
+      "report_reason",
+      "deletion_request_status"
+    ],
+    "indexes": [
+      {
+        "name": "idx_users_status_created",
+        "table": "users",
+        "columns": "status, created_at DESC"
+      },
+      {
+        "name": "idx_users_last_active",
+        "table": "users",
+        "columns": "last_active_at"
+      },
+      {
+        "name": "idx_career_roles_name_trgm",
+        "table": "career_roles",
+        "columns": "name extensions.gin_trgm_ops"
+      },
+      {
+        "name": "idx_skill_categories_parent",
+        "table": "skill_categories",
+        "columns": "parent_id"
+      },
+      {
+        "name": "idx_skills_category",
+        "table": "skills",
+        "columns": "category_id"
+      },
+      {
+        "name": "idx_skills_name_trgm",
+        "table": "skills",
+        "columns": "canonical_name extensions.gin_trgm_ops"
+      },
+      {
+        "name": "idx_skill_aliases_norm_trgm",
+        "table": "skill_aliases",
+        "columns": "alias_normalized extensions.gin_trgm_ops"
+      },
+      {
+        "name": "idx_skill_dependencies_dep",
+        "table": "skill_dependencies",
+        "columns": "depends_on_skill_id"
+      },
+      {
+        "name": "idx_career_goals_user_status",
+        "table": "career_goals",
+        "columns": "user_id, status, created_at DESC"
+      },
+      {
+        "name": "idx_career_goals_proposed_role",
+        "table": "career_goals",
+        "columns": "proposed_role_id"
+      },
+      {
+        "name": "idx_career_goals_confirmed_role",
+        "table": "career_goals",
+        "columns": "confirmed_role_id"
+      },
+      {
+        "name": "idx_roadmaps_user_status",
+        "table": "roadmaps",
+        "columns": "user_id, status"
+      },
+      {
+        "name": "idx_roadmaps_role",
+        "table": "roadmaps",
+        "columns": "canonical_role_id"
+      },
+      {
+        "name": "idx_roadmaps_current_version",
+        "table": "roadmaps",
+        "columns": "current_version_id"
+      },
+      {
+        "name": "idx_roadmap_versions_user",
+        "table": "roadmap_versions",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_roadmap_versions_merge",
+        "table": "roadmap_versions",
+        "columns": "merge_id"
+      },
+      {
+        "name": "idx_roadmap_versions_base",
+        "table": "roadmap_versions",
+        "columns": "base_version_id"
+      },
+      {
+        "name": "idx_roadmap_items_user",
+        "table": "roadmap_items",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_roadmap_items_skill",
+        "table": "roadmap_items",
+        "columns": "skill_id"
+      },
+      {
+        "name": "idx_roadmap_items_topic",
+        "table": "roadmap_items",
+        "columns": "topic_id"
+      },
+      {
+        "name": "idx_roadmap_items_lineage",
+        "table": "roadmap_items",
+        "columns": "lineage_id"
+      },
+      {
+        "name": "idx_roadmap_merges_roadmap_status",
+        "table": "roadmap_merges",
+        "columns": "roadmap_id, status, created_at DESC"
+      },
+      {
+        "name": "idx_roadmap_merges_user",
+        "table": "roadmap_merges",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_roadmap_merges_base_version",
+        "table": "roadmap_merges",
+        "columns": "base_version_id"
+      },
+      {
+        "name": "idx_roadmap_merges_result_version",
+        "table": "roadmap_merges",
+        "columns": "result_version_id"
+      },
+      {
+        "name": "idx_roadmap_merge_items_user",
+        "table": "roadmap_merge_items",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_roadmap_merge_items_topic",
+        "table": "roadmap_merge_items",
+        "columns": "topic_id"
+      },
+      {
+        "name": "idx_topics_skill_level_status",
+        "table": "topics",
+        "columns": "skill_id, career_level, status"
+      },
+      {
+        "name": "idx_learning_resources_topic",
+        "table": "learning_resources",
+        "columns": "topic_id"
+      },
+      {
+        "name": "idx_daily_plans_user",
+        "table": "daily_plans",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_daily_plans_version",
+        "table": "daily_plans",
+        "columns": "roadmap_version_id"
+      },
+      {
+        "name": "idx_daily_plan_items_open",
+        "table": "daily_plan_items",
+        "columns": "plan_id, day_no, sort_order"
+      },
+      {
+        "name": "idx_daily_plan_items_user",
+        "table": "daily_plan_items",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_daily_plan_items_topic",
+        "table": "daily_plan_items",
+        "columns": "topic_id"
+      },
+      {
+        "name": "idx_daily_plan_items_merge",
+        "table": "daily_plan_items",
+        "columns": "reconciled_by_merge_id"
+      },
+      {
+        "name": "idx_quizzes_topic_status",
+        "table": "quizzes",
+        "columns": "topic_id, status"
+      },
+      {
+        "name": "idx_quiz_attempts_user_status",
+        "table": "quiz_attempts",
+        "columns": "user_id, status"
+      },
+      {
+        "name": "idx_quiz_attempts_user_submitted",
+        "table": "quiz_attempts",
+        "columns": "user_id, submitted_at DESC"
+      },
+      {
+        "name": "idx_quiz_attempts_quiz",
+        "table": "quiz_attempts",
+        "columns": "quiz_id"
+      },
+      {
+        "name": "idx_quiz_attempts_retry_of",
+        "table": "quiz_attempts",
+        "columns": "retry_of_attempt_id"
+      },
+      {
+        "name": "idx_quiz_answers_user",
+        "table": "quiz_answers",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_quiz_answers_question",
+        "table": "quiz_answers",
+        "columns": "question_id"
+      },
+      {
+        "name": "idx_quiz_answers_raw_expiry",
+        "table": "quiz_answers",
+        "columns": "raw_text_expires_at"
+      },
+      {
+        "name": "idx_practice_reviews_attempt",
+        "table": "practice_reviews",
+        "columns": "attempt_id"
+      },
+      {
+        "name": "idx_practice_reviews_user",
+        "table": "practice_reviews",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_practice_reviews_question",
+        "table": "practice_reviews",
+        "columns": "question_id"
+      },
+      {
+        "name": "idx_practice_reviews_open",
+        "table": "practice_reviews",
+        "columns": "review_status, created_at"
+      },
+      {
+        "name": "idx_learning_evidence_user_skill_level",
+        "table": "learning_evidence",
+        "columns": "user_id, skill_id, career_level, occurred_at DESC"
+      },
+      {
+        "name": "idx_learning_evidence_skill",
+        "table": "learning_evidence",
+        "columns": "skill_id"
+      },
+      {
+        "name": "idx_learning_evidence_topic",
+        "table": "learning_evidence",
+        "columns": "topic_id"
+      },
+      {
+        "name": "idx_learning_evidence_roadmap",
+        "table": "learning_evidence",
+        "columns": "roadmap_id"
+      },
+      {
+        "name": "idx_skill_progress_user_state",
+        "table": "skill_progress",
+        "columns": "user_id, learning_state"
+      },
+      {
+        "name": "idx_skill_progress_skill",
+        "table": "skill_progress",
+        "columns": "skill_id"
+      },
+      {
+        "name": "idx_achievement_history_user_time",
+        "table": "achievement_history",
+        "columns": "user_id, occurred_at DESC"
+      },
+      {
+        "name": "idx_achievement_history_user_skill_time",
+        "table": "achievement_history",
+        "columns": "user_id, skill_id, occurred_at DESC"
+      },
+      {
+        "name": "idx_achievement_history_skill",
+        "table": "achievement_history",
+        "columns": "skill_id"
+      },
+      {
+        "name": "idx_conversations_user_last",
+        "table": "conversations",
+        "columns": "user_id, last_message_at DESC NULLS LAST"
+      },
+      {
+        "name": "idx_conversations_roadmap",
+        "table": "conversations",
+        "columns": "roadmap_id"
+      },
+      {
+        "name": "idx_conversations_topic",
+        "table": "conversations",
+        "columns": "topic_id"
+      },
+      {
+        "name": "idx_messages_conversation_created",
+        "table": "messages",
+        "columns": "conversation_id, created_at"
+      },
+      {
+        "name": "idx_messages_expires",
+        "table": "messages",
+        "columns": "expires_at"
+      },
+      {
+        "name": "idx_messages_user",
+        "table": "messages",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_messages_reply_to",
+        "table": "messages",
+        "columns": "reply_to_message_id"
+      },
+      {
+        "name": "idx_conversation_summaries_user",
+        "table": "conversation_summaries",
+        "columns": "user_id"
+      },
+      {
+        "name": "idx_ai_context_records_valid_until",
+        "table": "ai_context_records",
+        "columns": "valid_until"
+      },
+      {
+        "name": "idx_ai_models_routing",
+        "table": "ai_models",
+        "columns": "fallback_rank"
+      },
+      {
+        "name": "idx_ai_requests_user_status",
+        "table": "ai_requests",
+        "columns": "user_id, status"
+      },
+      {
+        "name": "idx_ai_requests_queue",
+        "table": "ai_requests",
+        "columns": "available_at"
+      },
+      {
+        "name": "idx_ai_requests_created",
+        "table": "ai_requests",
+        "columns": "created_at"
+      },
+      {
+        "name": "idx_ai_requests_feature_created",
+        "table": "ai_requests",
+        "columns": "feature_key, created_at"
+      },
+      {
+        "name": "idx_ai_requests_finished",
+        "table": "ai_requests",
+        "columns": "finished_at"
+      },
+      {
+        "name": "idx_ai_requests_model",
+        "table": "ai_requests",
+        "columns": "model_id"
+      },
+      {
+        "name": "idx_ai_requests_prompt",
+        "table": "ai_requests",
+        "columns": "prompt_version_id"
+      },
+      {
+        "name": "idx_ai_requests_subject",
+        "table": "ai_requests",
+        "columns": "subject_type, subject_id"
+      },
+      {
+        "name": "idx_ai_generations_task_created",
+        "table": "ai_generations",
+        "columns": "task, created_at"
+      },
+      {
+        "name": "idx_ai_generations_model",
+        "table": "ai_generations",
+        "columns": "model_id"
+      },
+      {
+        "name": "idx_ai_generations_prompt",
+        "table": "ai_generations",
+        "columns": "prompt_version_id"
+      },
+      {
+        "name": "idx_ai_generations_request",
+        "table": "ai_generations",
+        "columns": "request_id"
+      },
+      {
+        "name": "idx_technologies_category",
+        "table": "technologies",
+        "columns": "category_id"
+      },
+      {
+        "name": "idx_technologies_skill",
+        "table": "technologies",
+        "columns": "skill_id"
+      },
+      {
+        "name": "idx_technology_updates_fetched",
+        "table": "technology_updates",
+        "columns": "fetched_at DESC"
+      },
+      {
+        "name": "idx_technology_updates_technology",
+        "table": "technology_updates",
+        "columns": "technology_id"
+      },
+      {
+        "name": "idx_technology_updates_source",
+        "table": "technology_updates",
+        "columns": "source_id"
+      },
+      {
+        "name": "idx_user_update_relevance_user_computed",
+        "table": "user_update_relevance",
+        "columns": "user_id, computed_at DESC"
+      },
+      {
+        "name": "idx_user_update_relevance_update",
+        "table": "user_update_relevance",
+        "columns": "update_id"
+      },
+      {
+        "name": "idx_user_update_relevance_roadmap",
+        "table": "user_update_relevance",
+        "columns": "focus_roadmap_id"
+      },
+      {
+        "name": "idx_update_delivery_update",
+        "table": "update_delivery_history",
+        "columns": "update_id"
+      },
+      {
+        "name": "idx_user_access_overrides_feature",
+        "table": "user_access_overrides",
+        "columns": "feature_key, enabled"
+      },
+      {
+        "name": "idx_admin_audit_logs_actor_time",
+        "table": "admin_audit_logs",
+        "columns": "actor_id, created_at DESC"
+      },
+      {
+        "name": "idx_admin_audit_logs_target_time",
+        "table": "admin_audit_logs",
+        "columns": "target_user_id, created_at DESC"
+      },
+      {
+        "name": "idx_admin_audit_logs_action_time",
+        "table": "admin_audit_logs",
+        "columns": "action, created_at DESC"
+      },
+      {
+        "name": "idx_roadmap_versions_ai_generation",
+        "table": "roadmap_versions",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_roadmap_merges_ai_generation",
+        "table": "roadmap_merges",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_topics_ai_generation",
+        "table": "topics",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_quizzes_ai_generation",
+        "table": "quizzes",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_practice_reviews_ai_generation",
+        "table": "practice_reviews",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_messages_ai_generation",
+        "table": "messages",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_conversation_summaries_ai_generation",
+        "table": "conversation_summaries",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_technology_updates_ai_generation",
+        "table": "technology_updates",
+        "columns": "ai_generation_id"
+      },
+      {
+        "name": "idx_user_ratings_target",
+        "table": "user_ratings",
+        "columns": "target_type, target_id"
+      },
+      {
+        "name": "idx_content_reports_target",
+        "table": "content_reports",
+        "columns": "target_type, target_id"
+      },
+      {
+        "name": "idx_user_skill_aliases_skill",
+        "table": "user_skill_aliases",
+        "columns": "skill_id"
+      },
+      {
+        "name": "idx_account_deletion_requests_user",
+        "table": "account_deletion_requests",
+        "columns": "user_id"
+      }
+    ],
+    "functions": [
+      {
+        "name": "update_updated_at_column",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "validate_user_ownership",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "validate_roadmap_transition",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "enforce_active_roadmap_limit",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "guard_roadmap_version_immutability",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "validate_ai_request_status",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "calculate_total_tokens",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "calculate_ai_cost",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "cleanup_expired_ai_context",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "cleanup_expired_retention",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "prevent_row_modification",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "prevent_achievement_modification",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "prevent_audit_log_changes",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "validate_skill_progress_change",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "validate_profile_timezone",
+        "definer": false,
+        "empty_search_path": true
+      },
+      {
+        "name": "close_merge_undo_window",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "touch_conversation",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "is_admin",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "effective_feature_access",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "admin_usage_summary",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "complete_deletion_on_user_delete",
+        "definer": true,
+        "empty_search_path": true
+      },
+      {
+        "name": "evaluate_content_report_threshold",
+        "definer": true,
+        "empty_search_path": true
+      }
+    ],
+    "triggers": 68
+  },
+  "extracted": {
+    "forward": [
+      "000_extensions.sql",
+      "001_enums.sql",
+      "002_identity.sql",
+      "003_profiles.sql",
+      "004_career_intelligence.sql",
+      "005_roadmap.sql",
+      "006_learning.sql",
+      "007_assessment.sql",
+      "008_progress.sql",
+      "009_ai_mentor.sql",
+      "010_ai_operations.sql",
+      "011_technology_intelligence.sql",
+      "012_administration.sql",
+      "013_constraints.sql",
+      "014_indexes.sql",
+      "015_functions.sql",
+      "016_triggers.sql",
+      "017_rls.sql",
+      "018_seed.sql",
+      "019_tests.sql",
+      "020_gaps_and_alignment.sql"
+    ],
+    "tests": [
+      "001_schema.test.sql",
+      "002_constraints.test.sql",
+      "003_rls_security.test.sql",
+      "004_trigger_behavior.test.sql",
+      "005_ai_usage.test.sql",
+      "006_roadmap_integrity.test.sql",
+      "007_retention.test.sql",
+      "008_gaps.test.sql"
+    ],
+    "down": [
+      "020_down.sql",
+      "019_down.sql",
+      "018_down.sql",
+      "017_down.sql",
+      "016_down.sql",
+      "015_down.sql",
+      "014_down.sql",
+      "013_down.sql",
+      "012_down.sql",
+      "011_down.sql",
+      "010_down.sql",
+      "009_down.sql",
+      "008_down.sql",
+      "007_down.sql",
+      "006_down.sql",
+      "005_down.sql",
+      "004_down.sql",
+      "003_down.sql",
+      "002_down.sql",
+      "001_down.sql",
+      "000_down.sql"
+    ],
+    "extra": [
+      "scripts/db/test-upgrade.sh",
+      "scripts/db/perf/seed_volume.sql",
+      "scripts/db/perf/explain_checks.sql"
+    ]
+  },
+  "scope": "finite static contract checks and TypeScript syntax only; database/application runtime NOT EXECUTED",
+  "outcome": "pass",
+  "runtime_status": "not_run"
+}

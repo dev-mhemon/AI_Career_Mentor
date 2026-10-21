@@ -1,0 +1,23 @@
+BEGIN
+1..11
+CREATE FUNCTION
+
+
+INSERT 0 1
+INSERT 0 1
+ok 1 - Cross-user child record insert is rejected by ownership validation trigger
+ok 2 - Owner can insert roadmap_version for own roadmap
+ok 3 - Modifying immutable roadmap_versions summary throws IMMUTABLE_ROW
+ok 4 - Illegal state transition draft -> restored is rejected
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ok 5 - Direct UPDATE on learning_evidence is rejected
+ok 6 - Direct DELETE on learning_evidence is rejected
+INSERT 0 1
+ok 7 - Direct DELETE on admin_audit_logs is rejected
+ok 8 - Direct UPDATE on admin_audit_logs is rejected
+ok 9 - Account deletion cleanly cascades through append-only tables without trigger error
+ok 10 - All user learning evidence was purged with account
+ok 11 - Audit log row was preserved with actor_id nulled (compliance retention)
+ROLLBACK

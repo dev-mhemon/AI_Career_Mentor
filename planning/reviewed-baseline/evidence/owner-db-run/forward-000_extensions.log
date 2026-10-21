@@ -1,0 +1,10 @@
+BEGIN
+CREATE SCHEMA
+CREATE SCHEMA
+REVOKE
+GRANT
+CREATE EXTENSION
+CREATE EXTENSION
+DO
+COMMIT
+psql:C:/Users/mehed/Music/AI_Career_Mentor_Fixing_Handoff/validation/db-2026-10-20T14-45-22.768Z/forward-000_extensions.sql:3: NOTICE:  schema "extensions" already exists, skipping

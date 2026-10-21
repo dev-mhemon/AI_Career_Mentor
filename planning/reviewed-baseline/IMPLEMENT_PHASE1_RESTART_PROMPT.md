@@ -1,0 +1,36 @@
+# Execute the AI Career Mentor Phase 1 restart
+
+Work in the actual application repository. Use the attached reviewed baseline as the specification/evidence input. Continue the authorized foundation work autonomously; ask only about a material decision that cannot be resolved from the repository, frozen product scope, or accepted D001. Do not ask again whether the legacy data must be kept.
+
+Read the repository's applicable AGENTS.md and manifests first. Then read all nine C01–C09 documents to establish context, followed by AI_Career_Mentor_Final_Review_BN.md, review/reviewed-status.json, review/review-checks.json and the actual execution evidence. Do not apply old patches again. Respect the document precedence chain: C01 freezes product scope; C06 is the physical SQL authority; use the API contract for endpoint behavior. The historical audit report, if available, explains fixes but cannot override the current corrected bytes.
+
+## Accepted decisions and verified starting point
+
+- D001: all four legacy TypeORM migrations ran on the old standalone Docker PostgreSQL 15. No legacy database/data transfer or preservation is required. Never replay those migrations into the fresh Supabase chain or overlay DMS on their incompatible users schema.
+- Supabase is both Auth and primary application PostgreSQL storage. It is not merely an Auth service attached to the old database.
+- Nine documents match corrected B10/X02/X03 release hashes. The PRD is byte-identical to the frozen baseline.
+- Catalog lock: d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78.
+- Owner DB evidence: 21 fresh forwards, 185 emitted pgTAP assertions, 21 rollbacks, and 21 forward reapply all passed. The reviewer inspected uploaded SQL/logs and reran the 72 finite static checks, without running a database in the reviewer environment.
+- Separate owner console output reports Supabase CLI reset/test PASS (8 files, 185 assertions). Raw CLI log/history and exact CLI directory hashes were not uploaded. CI evidence is pending.
+- The runner overwrites first-forward logs during reapply and does not run tests again on that reapplied state. Retain this limitation rather than pretending the old evidence is stronger.
+- Physical inventory: 50 tables, 45 enums, 103 secondary indexes, 22 private functions (10 DEFINER + 12 INVOKER), 68 triggers. API inventory means 82 catalog entries/81 HTTP routes specified, not implemented.
+- R32 remains partially executed/open. R33 is optional/deferred. No owner release sign-off or production readiness has been established.
+
+## Deliver the foundation in dependency order
+
+1. Inspect existing backend/frontend/config/migrations/CI. Classify reusable scaffolding and incompatible legacy assumptions. Make the smallest coherent changes in an isolated working branch or checkout, preserving unrelated user edits. Do not reset or delete a database, volume or hosted project merely because its old data is unnecessary.
+2. Integrate the exact reviewed 000–020 forwards under supabase/migrations, down files only under supabase/rollbacks, and the existing eight suites under supabase/tests/database. Compare file hashes against review/package-manifest.json. Preserve the approved baseline's bytes, ordering and SQL authority. Disable any ORM auto-synchronization or legacy startup migration runner that would mutate this schema. Choose transaction-capable data access consistent with the docs; do not assume a client SDK can execute multi-statement transactions or session advisory locks by itself.
+3. Set up actual repository Supabase configuration and a reproducible database CI job, including .github/workflows/database-ci.yml as required by C02 ADR-020. Use pinned/tested tooling or document a justified change. Run actual local checks where available and CI on the exact commit when the connected repository permits it. Capture version, command, timestamps, exit codes, emitted TAP counts and artifacts. A prepared workflow file is not a CI pass. Without callable repository/CI access, complete the reviewable workflow/config/code and state precisely that remote execution remains pending.
+4. Implement a harness that preserves first-forward, reverse, reapply and post-reapply-test evidence separately. Existing passed tests need rerunning when integrating the baseline into the actual repository/new execution path. Avoid repeating unchanged checks without a concrete reason. Run relevant new boundary tests; do not weaken the original FK coverage query or E01 exemptions.
+5. Before exposing protected features, add executable tests for active/suspended/feature-off RLS behavior, input size/private queue reads, configuration bounds, unsummarized message expiry, parent/reply SET NULL, old unfinished requests, successful and injected-failure deletion transactions. Use actual separate database connections for concurrency cases; sequential inserts do not establish report-threshold concurrency.
+6. Build the minimal Auth/account foundation using the exact auth.users/public.users mapping, JWT verification, server account-status checks and AccessGuard rules. Keep service credentials on the server. Demonstrate ownership isolation and documented backend-mediated writes. Preserve privacy: platform admin access does not imply permission to read private mentor chats or AI context.
+7. Implement profile/alias/goal-level confirmation behavior only as required for this foundation slice, including deferred level-scoped progress. Use actual tests for the completed slice. Do not claim all 81 routes, UI, provider, worker or scheduler features are done as part of this first delivery.
+8. Reconcile live issue/evidence state additively. R32 coarse status can be in_progress with runtime_status=partially_executed and named sub-gates; R33 may remain pending with disposition optional_deferred. Preserve original records and do not mark every patched issue fully runtime-tested. Do not change immutable catalog-locked source tools or baseline documents casually to update a runtime verdict.
+
+Once a migration version has been adopted/applied in a target, preserve its migration history and checksums. Make later schema changes through reviewed forward migrations. If a new baseline defect appears, stop that failing path, retain logs, diagnose it, and create an explicit correction/version with fresh validation; never make a failing test disappear by changing its expected result without a justified contract change.
+
+## Completion and reporting
+
+Deliver a concrete foundation change with a concise Bangla report: files changed and purpose; exact baseline hashes/commit; implementation and test commands/results; CI run/artifact link if actually executed; any integration issue found; and the ordered next tasks. Create or update the repository evidence ledger without fabricating acceptance.
+
+Keep separate: SPECIFIED, STATICALLY CHECKED, IMPLEMENTED, EXECUTED and ACCEPTED. Runtime/application/security/provider/performance/PITR gates that need later features remain explicit. Do not convert patch count, assertion count, or this review into a percentage or a production certificate. No deployment, external messaging, or owner release approval is requested by this task.

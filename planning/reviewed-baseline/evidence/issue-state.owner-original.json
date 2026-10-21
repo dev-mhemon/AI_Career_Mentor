@@ -1,0 +1,780 @@
+{
+  "schema_version": 1,
+  "phase": "documentation_patched_static_checks_scoped_runtime_unexecuted",
+  "issues": {
+    "V00": {
+      "status": "closed",
+      "reason": "All nine original hashes reverified when preparing the pack; no specification edits applied.",
+      "decision_refs": [],
+      "changed_documents": [],
+      "evidence_files": [
+        "evidence/pack_integrity.json"
+      ],
+      "checkpoint": null,
+      "runtime_status": "not_run"
+    },
+    "R01": {
+      "status": "patched",
+      "reason": "D001 selects amended pre-release Supabase baseline based on explicit owner confirmation. Finish strategy mirrors in C02/C04/C06/C07 before full R01 closure; no more deployment-history input is needed for this selected path.",
+      "decision_refs": [
+        "D001"
+      ],
+      "changed_documents": [
+        "C02",
+        "C04",
+        "C06",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/c4ad20bf-e9a2-4910-91b4-65636dd71da7/journal.json",
+        ".autopatcher/runs/c4ad20bf-e9a2-4910-91b4-65636dd71da7/verification.json"
+      ],
+      "checkpoint": "c4ad20bf-e9a2-4910-91b4-65636dd71da7",
+      "runtime_status": "not_run",
+      "decision_status": "resolved",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R02": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/4727eb18-788c-45fc-8cac-197fb251ec64/journal.json",
+        ".autopatcher/runs/4727eb18-788c-45fc-8cac-197fb251ec64/verification.json"
+      ],
+      "checkpoint": "4727eb18-788c-45fc-8cac-197fb251ec64",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R03": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/4727eb18-788c-45fc-8cac-197fb251ec64/journal.json",
+        ".autopatcher/runs/4727eb18-788c-45fc-8cac-197fb251ec64/verification.json"
+      ],
+      "checkpoint": "4727eb18-788c-45fc-8cac-197fb251ec64",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R04": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/4727eb18-788c-45fc-8cac-197fb251ec64/journal.json",
+        ".autopatcher/runs/4727eb18-788c-45fc-8cac-197fb251ec64/verification.json"
+      ],
+      "checkpoint": "4727eb18-788c-45fc-8cac-197fb251ec64",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R10": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C07",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/journal.json",
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/verification.json"
+      ],
+      "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R11": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C08",
+        "C02",
+        "C05",
+        "C07",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/journal.json",
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/verification.json"
+      ],
+      "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "N02": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C03",
+        "C07",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/journal.json",
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/verification.json"
+      ],
+      "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R26": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/journal.json",
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/verification.json"
+      ],
+      "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R27": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C02",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/journal.json",
+        ".autopatcher/runs/692fd8b4-0af2-43f9-a586-963b2562718c/verification.json"
+      ],
+      "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R12": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/journal.json",
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/verification.json"
+      ],
+      "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R13": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C08",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C06",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/journal.json",
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/verification.json"
+      ],
+      "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R08": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C03",
+        "C04",
+        "C05",
+        "C08",
+        "C02",
+        "C07",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/journal.json",
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/verification.json"
+      ],
+      "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R09": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C03",
+        "C05",
+        "C08",
+        "C02",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/journal.json",
+        ".autopatcher/runs/060ef617-1c92-426e-9326-5b63dbcc940e/verification.json"
+      ],
+      "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R05": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C05",
+        "C02",
+        "C03",
+        "C04",
+        "C07",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/journal.json",
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/verification.json"
+      ],
+      "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R14": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C02",
+        "C04",
+        "C05",
+        "C06",
+        "C07",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/journal.json",
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/verification.json"
+      ],
+      "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R06": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C02",
+        "C05",
+        "C09",
+        "C03",
+        "C06",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/journal.json",
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/verification.json"
+      ],
+      "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R35": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C05",
+        "C02",
+        "C03",
+        "C07",
+        "C08",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/journal.json",
+        ".autopatcher/runs/424421da-8501-45f5-83a9-5609322f6cb0/verification.json"
+      ],
+      "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R07": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C05",
+        "C02",
+        "C03",
+        "C09",
+        "C06",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/journal.json",
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/verification.json"
+      ],
+      "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R24": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C05",
+        "C02",
+        "C08",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/journal.json",
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/verification.json"
+      ],
+      "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R25": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C02",
+        "C03",
+        "C05",
+        "C06",
+        "C07",
+        "C08",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/journal.json",
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/verification.json"
+      ],
+      "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R31": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C02",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/journal.json",
+        ".autopatcher/runs/748123c8-fe09-4943-91cb-57cd3cff3727/verification.json"
+      ],
+      "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R18": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C09",
+        "C05"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R17": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C09",
+        "C05",
+        "C08"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R15": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C02",
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R29": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R30": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C05",
+        "C07",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R34": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C09",
+        "C05"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "N01": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C09",
+        "C05"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R16": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C09",
+        "C05"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/journal.json",
+        ".autopatcher/runs/94af8e90-9d41-4702-9243-d95107ab29d6/verification.json"
+      ],
+      "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R23": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R22": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R19": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C03",
+        "C04"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R20": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C03",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R28": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C04",
+        "C05",
+        "C08",
+        "C09",
+        "C02",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "E01": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R21": {
+      "status": "patched",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [
+        "C04",
+        "C06",
+        "C07",
+        "C02",
+        "C03",
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/journal.json",
+        ".autopatcher/runs/bb8c853a-0116-4d59-a4af-0d512be4e581/verification.json"
+      ],
+      "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581",
+      "runtime_status": "not_run",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "closure_scope": "documentation candidate; product runtime separate"
+    },
+    "R32": {
+      "status": "blocked_environment",
+      "reason": "Product database/application evidence is not established by static document patching.",
+      "decision_refs": [],
+      "changed_documents": [],
+      "evidence_files": [],
+      "checkpoint": null,
+      "runtime_status": "not_run"
+    },
+    "R33": {
+      "status": "pending",
+      "reason": "",
+      "decision_refs": [],
+      "changed_documents": [],
+      "evidence_files": [],
+      "checkpoint": null,
+      "runtime_status": "not_run"
+    },
+    "X02": {
+      "status": "patched",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "runtime_status": "not_run",
+      "closure_scope": "documentation candidate; product runtime separate",
+      "changed_documents": [
+        "C06",
+        "C04"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/2786b3d6-373b-4304-8ad7-5d1b9d8f702a/journal.json",
+        ".autopatcher/runs/2786b3d6-373b-4304-8ad7-5d1b9d8f702a/verification.json"
+      ],
+      "checkpoint": "2786b3d6-373b-4304-8ad7-5d1b9d8f702a"
+    },
+    "X03": {
+      "status": "patched",
+      "specification_status": "finite_static_checks_passed; inspect issue diff",
+      "runtime_status": "not_run",
+      "closure_scope": "documentation candidate; product runtime separate",
+      "changed_documents": [
+        "C02",
+        "C03",
+        "C04",
+        "C06",
+        "C07"
+      ],
+      "evidence_files": [
+        ".autopatcher/runs/2786b3d6-373b-4304-8ad7-5d1b9d8f702a/journal.json",
+        ".autopatcher/runs/2786b3d6-373b-4304-8ad7-5d1b9d8f702a/verification.json"
+      ],
+      "checkpoint": "2786b3d6-373b-4304-8ad7-5d1b9d8f702a"
+    }
+  }
+}

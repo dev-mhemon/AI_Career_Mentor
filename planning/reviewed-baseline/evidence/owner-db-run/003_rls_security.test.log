@@ -1,0 +1,40 @@
+BEGIN
+1..16
+CREATE FUNCTION
+
+
+
+INSERT 0 1
+INSERT 0 2
+INSERT 0 2
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+SET
+{"sub" : "cccccccc-0000-0000-0000-00000000000a", "role" : "authenticated"}
+ok 1 - Alice sees exactly her own career goal
+ok 2 - Alice cannot see Bob career goal
+ok 3 - Alice cannot see Bob mentor messages
+ok 4 - Direct client INSERT on career_goals is denied
+ok 5 - Direct client UPDATE on career_goals is denied
+ok 6 - Client DELETE privilege is entirely revoked
+ok 7 - Alice can read her own user_profile
+ok 8 - Direct client UPDATE on user_profiles is blocked per ADR-019 (must use NestJS API)
+ok 9 - Direct client access to quiz_questions answer keys is denied
+ok 10 - Approved shared topic is readable
+ok 11 - Draft shared topic is hidden from client
+{"sub" : "cccccccc-0000-0000-0000-00000000000c", "role" : "authenticated"}
+ok 12 - Admin can query all user accounts for administration
+ok 13 - CRITICAL PRIVACY: Admin CANNOT read private mentor messages (PRD §51)
+ok 14 - CRITICAL PRIVACY: Admin CANNOT read user conversations
+ok 15 - CRITICAL PRIVACY: Admin CANNOT read AI context memory records
+RESET
+UPDATE 1
+SET
+{"sub" : "cccccccc-0000-0000-0000-00000000000c", "role" : "authenticated"}
+ok 16 - Suspended admin immediately loses elevated multi-user read privileges
+RESET
+ROLLBACK
