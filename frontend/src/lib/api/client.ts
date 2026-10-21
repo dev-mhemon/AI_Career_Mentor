@@ -22,12 +22,21 @@ function getApiBaseUrl(): string {
 
 // ─── Error Types ──────────────────────────────────────────────
 
+export interface FieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly statusCode: number,
     message: string,
     public readonly code?: string,
     public readonly requestId?: string,
+    public readonly details: FieldError[] = [],
+    public readonly retryable = false,
+    public readonly retryAfterSeconds: number | null = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -35,8 +44,15 @@ export class ApiError extends Error {
 }
 
 export class UnauthorizedError extends ApiError {
-  constructor(message = 'Unauthorized') {
-    super(401, message);
+  constructor(
+    message = 'Unauthorized',
+    code?: string,
+    requestId?: string,
+    details: FieldError[] = [],
+    retryable = false,
+    retryAfterSeconds: number | null = null,
+  ) {
+    super(401, message, code, requestId, details, retryable, retryAfterSeconds);
     this.name = 'UnauthorizedError';
   }
 }
@@ -81,24 +97,58 @@ async function apiFetch<T>(
       },
     });
   } catch {
-    throw new NetworkError(`Failed to reach backend at ${url}. Is the server running?`);
+    throw new NetworkError('Unable to reach the server. Please try again.');
   }
 
-  if (response.status === 401) {
-    throw new UnauthorizedError();
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
   }
-
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
+    const error = body?.error;
+    const code = typeof error?.code === 'string' ? error.code : undefined;
+    const requestId =
+      typeof error?.requestId === 'string'
+        ? error.requestId
+        : response.headers?.get('X-Request-Id') || undefined;
+    const details: FieldError[] =
+      response.status < 500 && Array.isArray(error?.details)
+        ? error.details.filter(
+            (d: FieldError) =>
+              typeof d?.field === 'string' &&
+              typeof d?.code === 'string' &&
+              typeof d?.message === 'string',
+          )
+        : [];
+    const retryable =
+      typeof error?.retryable === 'boolean'
+        ? error.retryable
+        : [429, 502, 503, 504].includes(response.status);
+    const retryAfterSeconds =
+      Number.isInteger(error?.retryAfterSeconds) && error.retryAfterSeconds >= 0
+        ? error.retryAfterSeconds
+        : null;
+    const message =
+      response.status >= 500
+        ? 'Service temporarily unavailable. Please try again.'
+        : typeof error?.message === 'string'
+          ? error.message
+          : 'Request rejected';
+    if (response.status === 401)
+      throw new UnauthorizedError(message, code, requestId, details, retryable, retryAfterSeconds);
     throw new ApiError(
       response.status,
-      body?.error?.message || response.statusText,
-      body?.error?.code,
-      body?.error?.requestId,
+      message,
+      code,
+      requestId,
+      details,
+      retryable,
+      retryAfterSeconds,
     );
   }
-  const body = await response.json();
-  if (body.success !== true || !('data' in body))
+  if (body?.success !== true || !('data' in body))
     throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');
   return body.data as T;
 }

@@ -64,7 +64,7 @@ describe('API Client', () => {
       await expect(syncUser(MOCK_TOKEN)).rejects.toThrow(NetworkError);
     });
 
-    it('throws ApiError with backend message on non-401 errors', async () => {
+    it('hides unsafe server messages while preserving error identity', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
@@ -77,7 +77,7 @@ describe('API Client', () => {
       });
 
       await expect(syncUser(MOCK_TOKEN)).rejects.toThrow(
-        new ApiError(500, 'Database connection failed', 'INTERNAL_ERROR'),
+        new ApiError(500, 'Service temporarily unavailable. Please try again.', 'INTERNAL_ERROR'),
       );
     });
   });
@@ -115,6 +115,40 @@ describe('API Client', () => {
       });
 
       await expect(getMe(MOCK_TOKEN)).rejects.toThrow(ApiError);
+    });
+  });
+});
+
+describe('C05 error contract preservation', () => {
+  it.each([401, 422, 429])('preserves details and retry metadata for HTTP %s', async (status) => {
+    const error = {
+      code: status === 401 ? 'TOKEN_EXPIRED' : 'VALIDATION_FAILED',
+      message: 'Request rejected',
+      requestId: 'request-id',
+      details: [
+        { field: 'existing_skills.0.name', code: 'VALIDATION_FAILED', message: 'Field invalid' },
+      ],
+      retryable: true,
+      retryAfterSeconds: 17,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status,
+      json: async () => ({ success: false, error }),
+    });
+    await expect(getMe(MOCK_TOKEN)).rejects.toMatchObject({ statusCode: status, ...error });
+  });
+  it('does not expose raw HTML errors or backend URL', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw Error('private response');
+      },
+    });
+    await expect(getMe(MOCK_TOKEN)).rejects.toMatchObject({
+      message: 'Service temporarily unavailable. Please try again.',
+      retryable: true,
     });
   });
 });

@@ -115,6 +115,13 @@ export class ProfileService {
             422,
             'VALIDATION_FAILED',
             'None cannot be combined with existing skills',
+            [
+              {
+                field: 'existing_skills',
+                code: 'VALIDATION_FAILED',
+                message: 'None cannot be combined with existing skills',
+              },
+            ],
           );
         if (input.existing_skills_none) skillIds = [];
         const none =
@@ -174,7 +181,7 @@ export class ProfileService {
           "SELECT id FROM public.skills WHERE id=$1 AND status='approved' AND deleted_at IS NULL",
           [input.skill_id],
         );
-        if (!skill) fail(404, 'RESOURCE_NOT_FOUND', 'Skill not found');
+        if (!skill) fail(404, 'SKILL_NOT_FOUND', 'Skill not found');
         const [p] = await db.query(
           'SELECT self_reported_skill_ids FROM public.user_profiles WHERE user_id=$1 FOR UPDATE',
           [id],
@@ -183,7 +190,13 @@ export class ProfileService {
           ...new Set<string>([...p.self_reported_skill_ids, input.skill_id]),
         ];
         if (ids.length > 100)
-          fail(422, 'VALIDATION_FAILED', 'At most 100 skills');
+          fail(422, 'VALIDATION_FAILED', 'At most 100 skills', [
+            {
+              field: 'existing_skills',
+              code: 'VALIDATION_FAILED',
+              message: 'At most 100 skills',
+            },
+          ]);
         await db.query(
           `INSERT INTO public.user_skill_aliases(user_id,input_alias,alias_normalized,skill_id) VALUES($1,$2,lower($2),$3) ON CONFLICT(user_id,alias_normalized) DO UPDATE SET skill_id=excluded.skill_id,input_alias=excluded.input_alias`,
           [id, input.input, input.skill_id],

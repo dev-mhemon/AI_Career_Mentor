@@ -11,16 +11,55 @@ import {
 } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import type { ValidationError } from 'class-validator';
 import { randomUUID } from 'node:crypto';
 import { map } from 'rxjs/operators';
+export interface FieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+class ContractException extends HttpException {}
+export function validationDetails(
+  errors: ValidationError[],
+  prefix = '',
+): FieldError[] {
+  return errors.flatMap((error) => {
+    const field = prefix ? `${prefix}.${error.property}` : error.property;
+    return [
+      ...Object.keys(error.constraints || {}).map((constraint) => ({
+        field,
+        code:
+          constraint === 'isTimeZone'
+            ? 'INVALID_TIMEZONE'
+            : constraint === 'isIn'
+              ? 'INVALID_ENUM_VALUE'
+              : 'VALIDATION_FAILED',
+        message:
+          constraint === 'isTimeZone'
+            ? 'Choose a valid IANA timezone'
+            : 'Field has an invalid value',
+      })),
+      ...validationDetails(error.children || [], field),
+    ];
+  });
+}
 export function fail(
   status: number,
   code: string,
   message: string,
-  details?: unknown,
+  details?: FieldError[],
+  retryable?: boolean,
+  retryAfterSeconds?: number,
 ): never {
-  throw new HttpException(
-    { code, message, ...(details ? { details } : {}) },
+  throw new ContractException(
+    {
+      code,
+      message,
+      details: details || [],
+      retryable: retryable ?? [429, 502, 503, 504].includes(status),
+      retryAfterSeconds: retryAfterSeconds ?? null,
+    },
     status,
   );
 }
@@ -31,7 +70,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const status = error instanceof HttpException ? error.getStatus() : 500;
     const body = error instanceof HttpException ? error.getResponse() : null;
     const coded =
-      typeof body === 'object' && body && 'code' in body
+      error instanceof ContractException &&
+      typeof body === 'object' &&
+      body &&
+      'code' in body
         ? body
         : {
             code:
@@ -50,9 +92,20 @@ export class ApiExceptionFilter implements ExceptionFilter {
             message:
               status === 500 ? 'Internal server error' : 'Request rejected',
           };
+    if (
+      'retryAfterSeconds' in coded &&
+      typeof coded.retryAfterSeconds === 'number'
+    )
+      response.setHeader('Retry-After', coded.retryAfterSeconds);
     response.status(status).json({
       success: false,
-      error: { ...coded, requestId: response.getHeader('X-Request-Id') },
+      error: {
+        details: [],
+        retryable: [429, 502, 503, 504].includes(status),
+        retryAfterSeconds: null,
+        ...coded,
+        requestId: response.getHeader('X-Request-Id'),
+      },
     });
   }
 }
@@ -72,7 +125,10 @@ export class EnvelopeInterceptor implements NestInterceptor {
 }
 export function configureHttp(app: INestApplication) {
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
-  app.enableCors({ origin: true, exposedHeaders: ['X-Request-Id'] });
+  app.enableCors({
+    origin: true,
+    exposedHeaders: ['X-Request-Id', 'Retry-After'],
+  });
   app.use((_req: Request, res: Response, next: () => void) => {
     res.setHeader('X-Request-Id', randomUUID());
     next();
@@ -84,18 +140,21 @@ export function configureHttp(app: INestApplication) {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      exceptionFactory: (errors) =>
-        new HttpException(
+      exceptionFactory: (errors) => {
+        const details = validationDetails(errors);
+        return new ContractException(
           {
-            code: 'VALIDATION_FAILED',
+            code: details.some((d) => d.code === 'INVALID_TIMEZONE')
+              ? 'INVALID_TIMEZONE'
+              : 'VALIDATION_FAILED',
             message: 'Invalid request',
-            details: errors.map((e) => ({
-              field: e.property,
-              constraints: e.constraints,
-            })),
+            details,
+            retryable: false,
+            retryAfterSeconds: null,
           },
           422,
-        ),
+        );
+      },
     }),
   );
 }
