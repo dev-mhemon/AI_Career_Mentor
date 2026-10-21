@@ -126,10 +126,11 @@ async function apiFetch<T>(
       typeof error?.retryable === 'boolean'
         ? error.retryable
         : [429, 502, 503, 504].includes(response.status);
-    const retryAfterSeconds =
-      Number.isInteger(error?.retryAfterSeconds) && error.retryAfterSeconds >= 0
-        ? error.retryAfterSeconds
-        : null;
+    const headerRetry = response.headers?.get('Retry-After');
+    const retryValue =
+      error?.retryAfterSeconds ??
+      (headerRetry && /^\d+$/.test(headerRetry) ? Number(headerRetry) : null);
+    const retryAfterSeconds = Number.isInteger(retryValue) && retryValue >= 0 ? retryValue : null;
     const message =
       response.status >= 500
         ? 'Service temporarily unavailable. Please try again.'

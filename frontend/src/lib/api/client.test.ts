@@ -152,3 +152,20 @@ describe('C05 error contract preservation', () => {
     });
   });
 });
+
+it('preserves a server Retry-After header when optional body metadata is absent', async () => {
+  mockFetch.mockResolvedValueOnce({
+    ok: false,
+    status: 429,
+    headers: new Headers({ 'Retry-After': '12', 'X-Request-Id': 'header-id' }),
+    json: async () => ({
+      success: false,
+      error: { code: 'RATE_LIMITED', message: 'Request rejected' },
+    }),
+  });
+  await expect(getMe(MOCK_TOKEN)).rejects.toMatchObject({
+    retryAfterSeconds: 12,
+    requestId: 'header-id',
+    retryable: true,
+  });
+});
