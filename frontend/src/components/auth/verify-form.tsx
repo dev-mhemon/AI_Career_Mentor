@@ -1,22 +1,18 @@
-"use client";
+'use client';
 
-import { useActionState, useState, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import {
-  verifyOtpAction,
-  resendOtpAction,
-  type AuthActionResult,
-} from "@/lib/auth/actions";
+import { useActionState, useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
 
 function VerifyFormContent() {
   const searchParams = useSearchParams();
-  const typeParam = searchParams.get("type") as "email" | "phone" | null;
-  const identifierParam = searchParams.get("identifier");
+  const typeParam = searchParams.get('type') as 'email' | 'phone' | null;
+  const identifierParam = searchParams.get('identifier');
 
-  const [state, formAction, isPending] = useActionState<
-    AuthActionResult,
-    FormData
-  >(verifyOtpAction, {});
+  const [state, formAction, isPending] = useActionState<AuthActionResult, FormData>(
+    verifyOtpAction,
+    {},
+  );
 
   const [cooldown, setCooldown] = useState(0);
   const [resendError, setResendError] = useState<string | null>(null);
@@ -30,21 +26,19 @@ function VerifyFormContent() {
     }
   }, [cooldown]);
 
-  const handleResend = async (fallbackToSms = false) => {
+  const handleResend = async () => {
     if (!typeParam || !identifierParam || cooldown > 0) return;
 
     setIsResending(true);
     setResendError(null);
     setResendSuccess(null);
 
-    const resendType = fallbackToSms ? "phone_sms_fallback" : typeParam;
-
-    const result = await resendOtpAction(resendType, identifierParam);
+    const result = await resendOtpAction(typeParam, identifierParam);
 
     if (result.error) {
       setResendError(result.error);
     } else {
-      setResendSuccess("Verification code sent successfully.");
+      setResendSuccess('Verification code sent successfully.');
       setCooldown(60);
     }
     setIsResending(false);
@@ -59,9 +53,9 @@ function VerifyFormContent() {
   }
 
   const instructionText =
-    typeParam === "email"
-      ? "Enter the verification code sent to your email."
-      : "Enter the verification code sent to your WhatsApp.";
+    typeParam === 'email'
+      ? 'Enter the verification code sent to your email.'
+      : 'Enter the verification code sent to your phone via SMS.';
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,7 +89,7 @@ function VerifyFormContent() {
           disabled={isPending}
           className="mt-2 h-11 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
         >
-          {isPending ? "Verifying..." : "Verify Code"}
+          {isPending ? 'Verifying...' : 'Verify Code'}
         </button>
       </form>
 
@@ -103,26 +97,15 @@ function VerifyFormContent() {
         <button
           type="button"
           disabled={cooldown > 0 || isResending}
-          onClick={() => handleResend(false)}
+          onClick={() => handleResend()}
           className="text-sm font-medium text-foreground underline underline-offset-4 hover:text-foreground/80 disabled:opacity-50"
         >
           {isResending
-            ? "Sending..."
+            ? 'Sending...'
             : cooldown > 0
               ? `Resend code in ${cooldown}s`
-              : "Resend verification code"}
+              : 'Resend verification code'}
         </button>
-
-        {typeParam === "phone" && (
-          <button
-            type="button"
-            disabled={cooldown > 0 || isResending}
-            onClick={() => handleResend(true)}
-            className="text-sm font-medium text-foreground/60 underline underline-offset-4 hover:text-foreground/80 disabled:opacity-50"
-          >
-            Send via SMS instead
-          </button>
-        )}
 
         {resendError && (
           <p role="alert" className="text-sm text-red-600 text-center">
