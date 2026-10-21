@@ -1,0 +1,12 @@
+{
+  "command": [
+    "npm",
+    "--prefix",
+    "/tmp/mentor-foundation-clean/backend",
+    "run",
+    "build"
+  ],
+  "started": "2026-10-21T10:08:18.157Z",
+  "finished": "2026-10-21T10:08:42.482Z",
+  "exit_code": 0
+}

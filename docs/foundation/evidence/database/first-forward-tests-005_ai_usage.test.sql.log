@@ -1,0 +1,18 @@
+BEGIN
+1..10
+CREATE FUNCTION
+
+INSERT 0 1
+INSERT 0 1
+ok 1 - total_units correctly computed by calculate_total_tokens trigger
+ok 2 - cost_usd correctly derived from model prices by calculate_ai_cost trigger
+ok 3 - Duplicate idempotency key for same user is rejected
+ok 4 - Transition queued -> preparing succeeds
+ok 5 - preparing state automatically sets started_at timestamp and increments attempt_count
+ok 6 - Transition preparing -> succeeded succeeds
+ok 7 - succeeded state sets finished_at and clears lock
+ok 8 - Terminal state succeeded cannot transition back to queued
+ok 9 - Failed AI request without error_code is rejected
+INSERT 0 1
+ok 10 - Retryable failed request can transition back to queued
+ROLLBACK

@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-10-21T10:09:08.529034+00:00",
+  "checks": [
+    {
+      "name": "backend-health",
+      "url": "http://127.0.0.1:3200/health",
+      "status": 200
+    },
+    {
+      "name": "frontend-login",
+      "url": "http://127.0.0.1:3201/login",
+      "status": 200
+    }
+  ],
+  "startup": "bash scripts/foundation/cloud.sh backend / frontend; private logs outside checkout",
+  "backend_restarted_after_final_build": true
+}

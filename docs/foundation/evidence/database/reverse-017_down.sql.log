@@ -1,0 +1,65 @@
+BEGIN
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DROP POLICY
+DO
+DO
+COMMIT
+NOTICE:  policy "user_auth_providers_owner_insert" for relation "public.user_auth_providers" does not exist, skipping
+NOTICE:  policy "user_auth_providers_owner_update" for relation "public.user_auth_providers" does not exist, skipping
+NOTICE:  policy "career_goals_owner_insert" for relation "public.career_goals" does not exist, skipping
+NOTICE:  policy "career_goals_owner_update" for relation "public.career_goals" does not exist, skipping
+NOTICE:  policy "roadmaps_owner_insert" for relation "public.roadmaps" does not exist, skipping
+NOTICE:  policy "roadmaps_owner_update" for relation "public.roadmaps" does not exist, skipping
+NOTICE:  policy "roadmap_versions_owner_insert" for relation "public.roadmap_versions" does not exist, skipping
+NOTICE:  policy "roadmap_versions_owner_update" for relation "public.roadmap_versions" does not exist, skipping
+NOTICE:  policy "roadmap_items_owner_insert" for relation "public.roadmap_items" does not exist, skipping
+NOTICE:  policy "roadmap_items_owner_update" for relation "public.roadmap_items" does not exist, skipping
+NOTICE:  policy "roadmap_merges_owner_insert" for relation "public.roadmap_merges" does not exist, skipping
+NOTICE:  policy "roadmap_merges_owner_update" for relation "public.roadmap_merges" does not exist, skipping
+NOTICE:  policy "roadmap_merge_items_owner_insert" for relation "public.roadmap_merge_items" does not exist, skipping
+NOTICE:  policy "roadmap_merge_items_owner_update" for relation "public.roadmap_merge_items" does not exist, skipping
+NOTICE:  policy "daily_plans_owner_insert" for relation "public.daily_plans" does not exist, skipping
+NOTICE:  policy "daily_plans_owner_update" for relation "public.daily_plans" does not exist, skipping
+NOTICE:  policy "daily_plan_items_owner_insert" for relation "public.daily_plan_items" does not exist, skipping
+NOTICE:  policy "daily_plan_items_owner_update" for relation "public.daily_plan_items" does not exist, skipping
+NOTICE:  policy "quiz_attempts_owner_insert" for relation "public.quiz_attempts" does not exist, skipping
+NOTICE:  policy "quiz_attempts_owner_update" for relation "public.quiz_attempts" does not exist, skipping
+NOTICE:  policy "quiz_answers_owner_insert" for relation "public.quiz_answers" does not exist, skipping
+NOTICE:  policy "quiz_answers_owner_update" for relation "public.quiz_answers" does not exist, skipping
+NOTICE:  policy "practice_reviews_owner_insert" for relation "public.practice_reviews" does not exist, skipping
+NOTICE:  policy "practice_reviews_owner_update" for relation "public.practice_reviews" does not exist, skipping
+NOTICE:  policy "learning_evidence_owner_insert" for relation "public.learning_evidence" does not exist, skipping
+NOTICE:  policy "learning_evidence_owner_update" for relation "public.learning_evidence" does not exist, skipping
+NOTICE:  policy "skill_progress_owner_insert" for relation "public.skill_progress" does not exist, skipping
+NOTICE:  policy "skill_progress_owner_update" for relation "public.skill_progress" does not exist, skipping
+NOTICE:  policy "achievement_history_owner_insert" for relation "public.achievement_history" does not exist, skipping
+NOTICE:  policy "achievement_history_owner_update" for relation "public.achievement_history" does not exist, skipping
+NOTICE:  policy "conversations_owner_insert" for relation "public.conversations" does not exist, skipping
+NOTICE:  policy "conversations_owner_update" for relation "public.conversations" does not exist, skipping
+NOTICE:  policy "messages_owner_insert" for relation "public.messages" does not exist, skipping
+NOTICE:  policy "messages_owner_update" for relation "public.messages" does not exist, skipping
+NOTICE:  policy "conversation_summaries_owner_insert" for relation "public.conversation_summaries" does not exist, skipping
+NOTICE:  policy "conversation_summaries_owner_update" for relation "public.conversation_summaries" does not exist, skipping
+NOTICE:  policy "ai_context_records_owner_insert" for relation "public.ai_context_records" does not exist, skipping
+NOTICE:  policy "ai_context_records_owner_update" for relation "public.ai_context_records" does not exist, skipping
+NOTICE:  policy "ai_requests_owner_insert" for relation "public.ai_requests" does not exist, skipping
+NOTICE:  policy "ai_requests_owner_update" for relation "public.ai_requests" does not exist, skipping
+NOTICE:  policy "user_update_relevance_owner_insert" for relation "public.user_update_relevance" does not exist, skipping
+NOTICE:  policy "user_update_relevance_owner_update" for relation "public.user_update_relevance" does not exist, skipping
+NOTICE:  policy "update_delivery_history_owner_insert" for relation "public.update_delivery_history" does not exist, skipping
+NOTICE:  policy "update_delivery_history_owner_update" for relation "public.update_delivery_history" does not exist, skipping
+NOTICE:  policy "user_access_overrides_owner_insert" for relation "public.user_access_overrides" does not exist, skipping
+NOTICE:  policy "user_access_overrides_owner_update" for relation "public.user_access_overrides" does not exist, skipping

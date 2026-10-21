@@ -1,3 +1,17 @@
+# AI Career Mentor — Phase 1 restart
+
+The active source is `phase1-restart`; this foundation is developed on `feature/phase1-foundation`. The immutable reviewed handoff is [START_HERE_BN.md](planning/reviewed-baseline/START_HERE_BN.md).
+
+Use the [reproducible setup and check commands](docs/foundation/STARTUP.md) for the Supabase application database and both applications. Install matching npm dependencies with `bash scripts/foundation/install.sh`. Do not run the legacy TypeORM migration chain or the old standalone database as the Phase 1 database.
+
+See [foundation decisions](docs/foundation/DECISIONS.md), [runtime evidence/status](docs/foundation/runtime-status.json) and [implementation report](docs/foundation/IMPLEMENTATION_BN.md). R32 remains partially open; no production acceptance or publication is claimed.
+
+---
+
+## Historical scaffold instructions
+
+These describe the pre-restart standalone PostgreSQL scaffold and are retained for context only. The Phase 1 startup instructions above take precedence.
+
 # AI Career Intelligence Mentor - MVP
 
 ## Project Overview

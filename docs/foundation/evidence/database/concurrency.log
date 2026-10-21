@@ -1,0 +1,1 @@
+PASS: two independent READ COMMITTED sessions, lock-before-insert, threshold=2, duplicate rejected, transaction rollback preserved count

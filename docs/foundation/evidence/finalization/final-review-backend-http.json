@@ -1,0 +1,9 @@
+{
+  "command": [
+    "node",
+    "scripts/foundation/application-check.mjs"
+  ],
+  "started": "2026-10-21T12:23:23.966Z",
+  "finished": "2026-10-21T12:23:34.466Z",
+  "exit_code": 0
+}

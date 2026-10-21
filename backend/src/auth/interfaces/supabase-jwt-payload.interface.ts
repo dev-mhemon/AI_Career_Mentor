@@ -3,8 +3,9 @@
  * Only the fields we actually consume are declared.
  */
 export interface SupabaseJwtPayload {
-  /** Supabase user ID — becomes our supabase_uid. */
+  /** Supabase user ID — is the application user primary key. */
   sub: string;
+  app_metadata?: { provider?: string };
 
   /** Email claim (may be absent for phone-only users). */
   email?: string;

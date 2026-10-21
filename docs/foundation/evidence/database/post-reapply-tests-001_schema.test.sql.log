@@ -1,0 +1,113 @@
+BEGIN
+1..110
+ok 1 - All 50 required tables exist in public schema
+ok 2 - All 45 domain enum types exist
+ok 3 - Table public.account_deletion_requests has a primary key
+ok 4 - Table public.achievement_history has a primary key
+ok 5 - Table public.admin_audit_logs has a primary key
+ok 6 - Table public.admin_users has a primary key
+ok 7 - Table public.ai_context_records has a primary key
+ok 8 - Table public.ai_generations has a primary key
+ok 9 - Table public.ai_models has a primary key
+ok 10 - Table public.ai_requests has a primary key
+ok 11 - Table public.career_goals has a primary key
+ok 12 - Table public.career_roles has a primary key
+ok 13 - Table public.content_reports has a primary key
+ok 14 - Table public.conversation_summaries has a primary key
+ok 15 - Table public.conversations has a primary key
+ok 16 - Table public.daily_plan_items has a primary key
+ok 17 - Table public.daily_plans has a primary key
+ok 18 - Table public.feature_controls has a primary key
+ok 19 - Table public.learning_evidence has a primary key
+ok 20 - Table public.learning_resources has a primary key
+ok 21 - Table public.messages has a primary key
+ok 22 - Table public.practice_reviews has a primary key
+ok 23 - Table public.prompt_versions has a primary key
+ok 24 - Table public.quiz_answers has a primary key
+ok 25 - Table public.quiz_attempts has a primary key
+ok 26 - Table public.quiz_questions has a primary key
+ok 27 - Table public.quizzes has a primary key
+ok 28 - Table public.roadmap_items has a primary key
+ok 29 - Table public.roadmap_merge_items has a primary key
+ok 30 - Table public.roadmap_merges has a primary key
+ok 31 - Table public.roadmap_versions has a primary key
+ok 32 - Table public.roadmaps has a primary key
+ok 33 - Table public.skill_aliases has a primary key
+ok 34 - Table public.skill_categories has a primary key
+ok 35 - Table public.skill_dependencies has a primary key
+ok 36 - Table public.skill_progress has a primary key
+ok 37 - Table public.skills has a primary key
+ok 38 - Table public.system_configurations has a primary key
+ok 39 - Table public.technologies has a primary key
+ok 40 - Table public.technology_categories has a primary key
+ok 41 - Table public.technology_sources has a primary key
+ok 42 - Table public.technology_updates has a primary key
+ok 43 - Table public.topics has a primary key
+ok 44 - Table public.update_delivery_history has a primary key
+ok 45 - Table public.user_access_overrides has a primary key
+ok 46 - Table public.user_auth_providers has a primary key
+ok 47 - Table public.user_preferences has a primary key
+ok 48 - Table public.user_profiles has a primary key
+ok 49 - Table public.user_ratings has a primary key
+ok 50 - Table public.user_skill_aliases has a primary key
+ok 51 - Table public.user_update_relevance has a primary key
+ok 52 - Table public.users has a primary key
+ok 53 - RLS is enabled on table public.account_deletion_requests
+ok 54 - RLS is enabled on table public.achievement_history
+ok 55 - RLS is enabled on table public.admin_audit_logs
+ok 56 - RLS is enabled on table public.admin_users
+ok 57 - RLS is enabled on table public.ai_context_records
+ok 58 - RLS is enabled on table public.ai_generations
+ok 59 - RLS is enabled on table public.ai_models
+ok 60 - RLS is enabled on table public.ai_requests
+ok 61 - RLS is enabled on table public.career_goals
+ok 62 - RLS is enabled on table public.career_roles
+ok 63 - RLS is enabled on table public.content_reports
+ok 64 - RLS is enabled on table public.conversation_summaries
+ok 65 - RLS is enabled on table public.conversations
+ok 66 - RLS is enabled on table public.daily_plan_items
+ok 67 - RLS is enabled on table public.daily_plans
+ok 68 - RLS is enabled on table public.feature_controls
+ok 69 - RLS is enabled on table public.learning_evidence
+ok 70 - RLS is enabled on table public.learning_resources
+ok 71 - RLS is enabled on table public.messages
+ok 72 - RLS is enabled on table public.practice_reviews
+ok 73 - RLS is enabled on table public.prompt_versions
+ok 74 - RLS is enabled on table public.quiz_answers
+ok 75 - RLS is enabled on table public.quiz_attempts
+ok 76 - RLS is enabled on table public.quiz_questions
+ok 77 - RLS is enabled on table public.quizzes
+ok 78 - RLS is enabled on table public.roadmap_items
+ok 79 - RLS is enabled on table public.roadmap_merge_items
+ok 80 - RLS is enabled on table public.roadmap_merges
+ok 81 - RLS is enabled on table public.roadmap_versions
+ok 82 - RLS is enabled on table public.roadmaps
+ok 83 - RLS is enabled on table public.skill_aliases
+ok 84 - RLS is enabled on table public.skill_categories
+ok 85 - RLS is enabled on table public.skill_dependencies
+ok 86 - RLS is enabled on table public.skill_progress
+ok 87 - RLS is enabled on table public.skills
+ok 88 - RLS is enabled on table public.system_configurations
+ok 89 - RLS is enabled on table public.technologies
+ok 90 - RLS is enabled on table public.technology_categories
+ok 91 - RLS is enabled on table public.technology_sources
+ok 92 - RLS is enabled on table public.technology_updates
+ok 93 - RLS is enabled on table public.topics
+ok 94 - RLS is enabled on table public.update_delivery_history
+ok 95 - RLS is enabled on table public.user_access_overrides
+ok 96 - RLS is enabled on table public.user_auth_providers
+ok 97 - RLS is enabled on table public.user_preferences
+ok 98 - RLS is enabled on table public.user_profiles
+ok 99 - RLS is enabled on table public.user_ratings
+ok 100 - RLS is enabled on table public.user_skill_aliases
+ok 101 - RLS is enabled on table public.user_update_relevance
+ok 102 - RLS is enabled on table public.users
+ok 103 - Every foreign key column has a leading index
+ok 104 - All 103 secondary indexes exist
+ok 105 - preferred_daily_hours is numeric(3,1)
+ok 106 - learning_state is enum learning_state
+ok 107 - ai_requests.status is NOT NULL
+ok 108 - default_user_enabled defaults to true
+ok 109 - roadmaps.career_goal_id points to career_goals.id
+ok 110 - No job_ready column exists in skill_progress (PRD §36)
+ROLLBACK

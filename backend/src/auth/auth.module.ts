@@ -1,32 +1,24 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { PassportModule } from '@nestjs/passport';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { User } from '../users/entities/user.entity.js';
 import { SupabaseStrategy } from './strategies/supabase.strategy.js';
 import { AuthService } from './services/auth.service.js';
 import { AuthController } from './controllers/auth.controller.js';
-
-/**
- * AuthModule — Phase 1 Authentication & Access Control.
- *
- * Wires together:
- *  - PassportModule for JWT validation
- *  - SupabaseStrategy for token verification
- *  - AuthService for business logic
- *  - AuthController for HTTP endpoints
- *  - TypeOrmModule for User repository
- *
- * Guards (SupabaseAuthGuard, StatusGuard, RolesGuard) are not
- * registered as global providers — they are applied via
- * @UseGuards() on the controller to keep scope explicit.
- */
+import { SupabaseAuthGuard } from './guards/supabase-auth.guard.js';
+import { AccessGuard } from './guards/access.guard.js';
+import { DatabaseService } from './services/database.service.js';
+import { ProfileController } from '../profile/profile.controller.js';
+import { ProfileService } from '../profile/profile.service.js';
 @Module({
-  imports: [
-    PassportModule.register({ defaultStrategy: 'supabase' }),
-    TypeOrmModule.forFeature([User]),
+  imports: [PassportModule.register({ defaultStrategy: 'supabase' })],
+  controllers: [AuthController, ProfileController],
+  providers: [
+    SupabaseStrategy,
+    AuthService,
+    DatabaseService,
+    ProfileService,
+    { provide: APP_GUARD, useClass: SupabaseAuthGuard },
+    { provide: APP_GUARD, useClass: AccessGuard },
   ],
-  controllers: [AuthController],
-  providers: [SupabaseStrategy, AuthService],
-  exports: [AuthService],
 })
 export class AuthModule {}

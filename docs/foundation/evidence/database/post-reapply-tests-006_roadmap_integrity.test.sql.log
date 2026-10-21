@@ -1,0 +1,30 @@
+BEGIN
+1..6
+CREATE FUNCTION
+
+CREATE FUNCTION
+
+
+
+ok 1 - 4th active roadmap is rejected by enforce_active_roadmap_limit trigger
+UPDATE 1
+ok 2 - Creating a 3rd active roadmap after archiving one succeeds
+SELECT 2
+SET CONSTRAINTS
+UPDATE 2
+INSERT 0 2
+UPDATE 1
+ok 3 - Setting second focus roadmap violates unique partial index uq_roadmaps_one_focus
+SELECT 1
+INSERT 0 1
+ok 4 - At most one open proposed merge per roadmap (uq_roadmap_merges_one_open)
+UPDATE 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ok 5 - Undo window is open on freshly accepted merge
+INSERT 0 1
+ok 6 - Starting learning on reconciled plan item automatically closes merge undo window (PRD §21)
+ROLLBACK
