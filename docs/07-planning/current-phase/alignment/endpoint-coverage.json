@@ -1,0 +1,494 @@
+[
+  {
+    "id": "EP-A01",
+    "title": "Register",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A02",
+    "title": "Verify Email",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A03",
+    "title": "Verify Phone",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A04",
+    "title": "Resend Verification Code",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A05",
+    "title": "Login",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A06",
+    "title": "Logout",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A07",
+    "title": "Refresh Session",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A08",
+    "title": "Forgot Password (request code)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A09",
+    "title": "Reset Password (confirm)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A10",
+    "title": "OAuth Session Bootstrap (Google / Facebook)",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-A11",
+    "title": "Link Social Identity",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A12",
+    "title": "Add Contact (email or phone)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-A13",
+    "title": "Current User and Effective Access",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-X01",
+    "title": "Request Account Deletion",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-X02",
+    "title": "Get Deletion Status",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-P01",
+    "title": "Get Profile",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-P02",
+    "title": "Update Profile",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-P03",
+    "title": "Update Preferences",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-P04",
+    "title": "Update Learning Settings",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-P05",
+    "title": "Answer Skill Alias Clarification",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-C01",
+    "title": "Create Career Goal",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-C02",
+    "title": "List Career Goals",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-C03",
+    "title": "Get Career Goal",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-C04",
+    "title": "Answer Clarification",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-C05",
+    "title": "Confirm Goal and Career Level",
+    "status": "Implemented foundation slice",
+    "accepted": false
+  },
+  {
+    "id": "EP-C06",
+    "title": "Edit Unconfirmed Goal",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-C07",
+    "title": "Discontinue Career Goal",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R01",
+    "title": "Generate Roadmap Draft",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R02",
+    "title": "List Roadmaps",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R03",
+    "title": "Get Roadmap",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R04",
+    "title": "Request Draft Revision",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R05",
+    "title": "Lock Roadmap (accept draft)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R06",
+    "title": "List Roadmap Versions",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R07",
+    "title": "Get Roadmap Version",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R08",
+    "title": "Create Merge Proposal (user-requested)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R09",
+    "title": "List Merge Proposals",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R10",
+    "title": "Get Merge Proposal",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R11",
+    "title": "Accept Merge",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R12",
+    "title": "Reject Merge",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R13",
+    "title": "Undo Last Merge",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R14",
+    "title": "Set Focus Roadmap",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-R15",
+    "title": "Archive Roadmap",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L01",
+    "title": "Get Daily Plan",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L02",
+    "title": "Create Daily Plan",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L03",
+    "title": "Rebuild Daily Plan",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L04",
+    "title": "Get Today",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L05",
+    "title": "List Topics",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L06",
+    "title": "Get Topic",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-L07",
+    "title": "List Learning Resources",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q01",
+    "title": "Generate (or fetch) Quiz Attempt",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q02",
+    "title": "Get Quiz Attempt (resume)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q03",
+    "title": "Start Quiz",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q04",
+    "title": "Save Answers (autosave)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q05",
+    "title": "Submit Quiz",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q06",
+    "title": "Get Quiz Result",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-Q07",
+    "title": "Retry Quiz",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-PR01",
+    "title": "List Reviews for an Attempt",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-PR02",
+    "title": "Get Review Feedback",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-PR03",
+    "title": "Trigger / Retry Review",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-G01",
+    "title": "Get Progress",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-G02",
+    "title": "Get Skill Progress Detail",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-G03",
+    "title": "Get Progress History",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-G04",
+    "title": "Record Evidence \u2014 INTERNAL (not an HTTP endpoint)",
+    "status": "Specified internal only / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-M01",
+    "title": "Create Conversation",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-M02",
+    "title": "List Conversations",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-M03",
+    "title": "Send Message",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-M04",
+    "title": "Get History",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-T01",
+    "title": "List Technology Updates",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-T02",
+    "title": "Get Technology Update",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-T03",
+    "title": "Mark Update Viewed",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-F01",
+    "title": "Submit Rating (1\u20135)",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-F02",
+    "title": "Submit Report",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-J01",
+    "title": "Get Job Status",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD01",
+    "title": "List Users",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD02",
+    "title": "Get User",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD03",
+    "title": "Suspend / Reactivate User",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD04",
+    "title": "List Global Features",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD05",
+    "title": "Set Global Feature",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD06",
+    "title": "Set Per-User Feature Access",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD07",
+    "title": "List Audit Logs",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-AD08",
+    "title": "Aggregate Usage Counts",
+    "status": "Specified / Planned",
+    "accepted": false
+  },
+  {
+    "id": "EP-H01",
+    "title": "Health",
+    "status": "Implemented partial health; full C05 checks/version/time pending",
+    "accepted": false
+  }
+]

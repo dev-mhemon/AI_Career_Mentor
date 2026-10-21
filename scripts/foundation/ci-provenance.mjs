@@ -27,6 +27,8 @@ const data = {
   execution_environment: github ? "github_actions" : "local",
   implementation_head_sha: implementation,
   checked_out_tested_sha: head,
+  base_sha:
+    event.pull_request?.base?.sha || process.env.ALIGNMENT_BASE_SHA || null,
   github_sha: process.env.GITHUB_SHA || null,
   github_ref: process.env.GITHUB_REF || null,
   event_name: process.env.GITHUB_EVENT_NAME || null,
