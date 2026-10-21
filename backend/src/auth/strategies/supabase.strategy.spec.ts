@@ -24,7 +24,7 @@ describe('SupabaseStrategy', () => {
     expect(() => new SupabaseStrategy(configService)).not.toThrow();
   });
 
-  it('should extract supabase_uid, email, and phone from payload', () => {
+  it('returns only verified subject, never contact claims', () => {
     const configService = {
       get: vi.fn((key: string) => {
         if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
@@ -34,7 +34,7 @@ describe('SupabaseStrategy', () => {
 
     const strategy = new SupabaseStrategy(configService);
     const payload: SupabaseJwtPayload = {
-      sub: 'supa-uid-1',
+      sub: '11111111-1111-4111-8111-111111111111',
       email: 'test@example.com',
       phone: '+1234567890',
       exp: Math.floor(Date.now() / 1000) + 3600,
@@ -43,14 +43,10 @@ describe('SupabaseStrategy', () => {
 
     const result = strategy.validate(payload);
 
-    expect(result).toEqual({
-      supabase_uid: 'supa-uid-1',
-      email: 'test@example.com',
-      phone: '+1234567890',
-    });
+    expect(result).toEqual({ sub: payload.sub });
   });
 
-  it('should default email and phone to null when absent', () => {
+  it('accepts the subject without contact claims', () => {
     const configService = {
       get: vi.fn((key: string) => {
         if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
@@ -60,17 +56,13 @@ describe('SupabaseStrategy', () => {
 
     const strategy = new SupabaseStrategy(configService);
     const payload: SupabaseJwtPayload = {
-      sub: 'supa-uid-2',
+      sub: '22222222-2222-4222-8222-222222222222',
       exp: Math.floor(Date.now() / 1000) + 3600,
       iat: Math.floor(Date.now() / 1000),
     };
 
     const result = strategy.validate(payload);
 
-    expect(result).toEqual({
-      supabase_uid: 'supa-uid-2',
-      email: null,
-      phone: null,
-    });
+    expect(result).toEqual({ sub: payload.sub });
   });
 });

@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/tmp/actionlint",
+    ".github/workflows/database-ci.yml"
+  ],
+  "started": "2026-10-21T10:02:31.884Z",
+  "finished": "2026-10-21T10:02:31.903Z",
+  "exit_code": 0
+}

@@ -1,0 +1,19 @@
+
+> backend@0.0.1 test:e2e
+> vitest run --config ./vitest.config.e2e.ts
+
+
+ RUN  v5.0.3 /workspace/AI_Career_Mentor/backend
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  12:25:34
+   Duration  5.19s (import 66%, transform 21%, tests 11%, worker 1%)
+
+The plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option. You can remove the plugin and set resolve.tsconfigPaths: true in your Vite config instead.
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

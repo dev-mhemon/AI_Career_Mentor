@@ -1,21 +1,32 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
-
-/**
- * Guard that triggers the 'supabase' Passport strategy.
- * Rejects requests with missing, invalid, or expired JWTs (401).
- */
+import { fail } from '../../common/http.js';
+import type { AccessPolicy } from '../policy.js';
 @Injectable()
 export class SupabaseAuthGuard extends AuthGuard('supabase') {
-  private readonly logger = new Logger(SupabaseAuthGuard.name);
-
-  handleRequest(err: any, user: any, info: any) {
-    if (info) {
-      this.logger.warn(`JWT Verification Failed: ${info.message || info}`);
-    }
-    if (err || !user) {
-      throw err || new UnauthorizedException();
-    }
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
+  canActivate(context: ExecutionContext) {
+    const p = this.reflector.getAllAndOverride<AccessPolicy>('access-policy', [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (p?.public) return true;
+    return super.canActivate(context);
+  }
+  handleRequest(err: any, user: any, info: any, context: ExecutionContext) {
+    if (err || !user)
+      fail(
+        401,
+        !context.switchToHttp().getRequest().headers.authorization
+          ? 'AUTH_REQUIRED'
+          : info?.name === 'TokenExpiredError'
+            ? 'TOKEN_EXPIRED'
+            : 'INVALID_TOKEN',
+        'A valid Auth session is required',
+      );
     return user;
   }
 }

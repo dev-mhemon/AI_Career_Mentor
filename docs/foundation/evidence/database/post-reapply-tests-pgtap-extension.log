@@ -1,0 +1,2 @@
+CREATE EXTENSION
+NOTICE:  extension "pgtap" already exists, skipping

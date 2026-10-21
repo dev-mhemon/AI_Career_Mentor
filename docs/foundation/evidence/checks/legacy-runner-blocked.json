@@ -1,0 +1,12 @@
+{
+  "command": [
+    "npm",
+    "--prefix",
+    "backend",
+    "run",
+    "migration:show"
+  ],
+  "started": "2026-10-21T10:03:12.145Z",
+  "finished": "2026-10-21T10:03:19.093Z",
+  "exit_code": 1
+}

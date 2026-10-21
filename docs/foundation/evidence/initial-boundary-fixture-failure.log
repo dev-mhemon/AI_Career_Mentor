@@ -1,0 +1,12 @@
+BEGIN
+1..27
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ERROR:  invalid input value for enum job_status: "running"
+LINE 1: ...999999-0000-0000-0000-000000000001','mentor_chat','running',...
+                                                             ^

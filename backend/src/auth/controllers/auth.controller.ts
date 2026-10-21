@@ -1,71 +1,40 @@
-import {
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  NotFoundException,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
-import { SupabaseAuthGuard } from '../guards/supabase-auth.guard.js';
-import { StatusGuard } from '../guards/status.guard.js';
-import { RolesGuard } from '../guards/roles.guard.js';
-import { CurrentUser } from '../decorators/current-user.decorator.js';
-import { SkipStatusCheck } from '../decorators/skip-status-check.decorator.js';
+import { Body, Controller, Get, HttpCode, Post, Req } from '@nestjs/common';
 import { AuthService } from '../services/auth.service.js';
-import type { JwtIdentity } from '../services/auth.service.js';
-import { UserResponseDto } from '../dtos/user-response.dto.js';
-
-/**
- * Authentication endpoints.
- *
- * Plan v1.3 defines two routes:
- *  - POST /api/auth/sync
- *  - GET  /api/auth/me
- *
- * Both require a valid Supabase JWT (SupabaseAuthGuard).
- * StatusGuard and RolesGuard run after auth for standard routes;
- * the auth routes use @SkipStatusCheck() so newly authenticated
- * users can still call them before having a full active profile.
- */
+import { Policy } from '../policy.js';
+import { OAuthSession } from '../../profile/profile.dto.js';
 @Controller('auth')
-@UseGuards(SupabaseAuthGuard, StatusGuard, RolesGuard)
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
-
-  /**
-   * POST /api/auth/sync
-   *
-   * Frontend-triggered user synchronisation.
-   * Creates a local User record on first call; updates
-   * Supabase-controlled fields on subsequent calls.
-   * Does NOT require an existing local User (the strategy
-   * returns the raw JWT identity, not a DB entity).
-   */
+  constructor(private readonly auth: AuthService) {}
+  /** Transitional adapter used by the existing email/phone UI; not an additional C05 catalog claim. */
   @Post('sync')
-  @HttpCode(HttpStatus.OK)
-  @SkipStatusCheck()
-  async sync(@CurrentUser() identity: JwtIdentity): Promise<UserResponseDto> {
-    const user = await this.authService.syncUser(identity);
-    return UserResponseDto.fromEntity(user);
+  @HttpCode(200)
+  @Policy({ bootstrap: true })
+  sync(@Req() req: any) {
+    return this.auth.bootstrap(req.user, req.headers.authorization);
   }
-
-  /**
-   * GET /api/auth/me
-   *
-   * Returns the current application-level user.
-   */
-  @Get('me')
-  @SkipStatusCheck()
-  async me(@CurrentUser() identity: JwtIdentity): Promise<UserResponseDto> {
-    const user = await this.authService.findBySupabaseUid(
-      identity.supabase_uid,
+  @Post('oauth/session')
+  @HttpCode(200)
+  @Policy({ bootstrap: true })
+  async oauth(@Req() req: any, @Body() input: OAuthSession) {
+    const me = await this.auth.bootstrap(
+      req.user,
+      req.headers.authorization,
+      input.provider,
     );
-    if (!user) {
-      throw new NotFoundException(
-        'User not found. Please call /api/auth/sync first.',
-      );
-    }
-    return UserResponseDto.fromEntity(user);
+    return {
+      user: me.user,
+      profile_complete: me.profile_complete,
+      verified_contact_required: !me.user.verified_contact,
+      next_step: !me.user.verified_contact
+        ? 'add_verified_contact'
+        : me.profile_complete
+          ? 'app_home'
+          : 'profile_setup',
+    };
+  }
+  @Get('me')
+  @Policy({ allowSuspended: true })
+  me(@Req() req: any) {
+    return this.auth.me(req.user.sub);
   }
 }

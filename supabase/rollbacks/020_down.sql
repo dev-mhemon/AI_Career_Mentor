@@ -1,0 +1,30 @@
+BEGIN;
+DELETE FROM public.system_configurations WHERE config_key IN (
+  'quality.report_auto_hide_threshold','roadmap.soft_size_max_topics',
+  'ai_quota.roadmap_drafts_per_24h','ai_quota.mentor_messages_per_24h');
+DROP POLICY IF EXISTS user_skill_aliases_owner_select        ON public.user_skill_aliases;
+DROP POLICY IF EXISTS account_deletion_requests_owner_select ON public.account_deletion_requests;
+DROP POLICY IF EXISTS content_reports_owner_select           ON public.content_reports;
+DROP POLICY IF EXISTS user_ratings_owner_select              ON public.user_ratings;
+CREATE POLICY user_profiles_owner_insert ON public.user_profiles FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+CREATE POLICY user_profiles_owner_update ON public.user_profiles FOR UPDATE TO authenticated USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+CREATE POLICY user_preferences_owner_insert ON public.user_preferences FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+CREATE POLICY user_preferences_owner_update ON public.user_preferences FOR UPDATE TO authenticated USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+GRANT INSERT, UPDATE ON public.user_profiles, public.user_preferences TO authenticated;
+DROP TRIGGER IF EXISTS trg_content_reports_threshold            ON public.content_reports;
+DROP TRIGGER IF EXISTS trg_content_reports_append_only          ON public.content_reports;
+DROP TRIGGER IF EXISTS trg_user_skill_aliases_updated_at        ON public.user_skill_aliases;
+DROP TRIGGER IF EXISTS trg_account_deletion_requests_updated_at ON public.account_deletion_requests;
+DROP TRIGGER IF EXISTS trg_user_ratings_updated_at              ON public.user_ratings;
+DROP TRIGGER IF EXISTS trg_users_complete_deletion ON public.users;
+DROP FUNCTION IF EXISTS private.complete_deletion_on_user_delete();
+DROP FUNCTION IF EXISTS private.evaluate_content_report_threshold();
+DROP TABLE IF EXISTS public.user_skill_aliases;
+DROP TABLE IF EXISTS public.account_deletion_requests;
+DROP TABLE IF EXISTS public.content_reports;
+DROP TABLE IF EXISTS public.user_ratings;
+DROP TYPE IF EXISTS public.deletion_request_status;
+DROP TYPE IF EXISTS public.report_reason;
+DROP TYPE IF EXISTS public.report_target;
+DROP TYPE IF EXISTS public.rating_target;
+COMMIT;

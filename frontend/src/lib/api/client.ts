@@ -26,23 +26,25 @@ export class ApiError extends Error {
   constructor(
     public readonly statusCode: number,
     message: string,
+    public readonly code?: string,
+    public readonly requestId?: string,
   ) {
     super(message);
-    this.name = "ApiError";
+    this.name = 'ApiError';
   }
 }
 
 export class UnauthorizedError extends ApiError {
-  constructor(message = "Unauthorized") {
+  constructor(message = 'Unauthorized') {
     super(401, message);
-    this.name = "UnauthorizedError";
+    this.name = 'UnauthorizedError';
   }
 }
 
 export class NetworkError extends Error {
-  constructor(message = "Network request failed") {
+  constructor(message = 'Network request failed') {
     super(message);
-    this.name = "NetworkError";
+    this.name = 'NetworkError';
   }
 }
 
@@ -52,10 +54,10 @@ export interface UserResponse {
   id: string;
   email: string | null;
   phone: string | null;
-  role: "USER" | "ADMIN";
-  status: "ACTIVE" | "SUSPENDED";
-  created_at: string;
-  updated_at: string;
+  role: 'USER' | 'ADMIN';
+  status: 'active' | 'suspended';
+  linked_providers: string[];
+  verified_contact: boolean;
 }
 
 // ─── Core Fetch Wrapper ──────────────────────────────────────
@@ -70,17 +72,16 @@ async function apiFetch<T>(
   let response: Response;
   try {
     response = await fetch(url, {
+      cache: 'no-store',
       ...options,
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
         ...options.headers,
       },
     });
   } catch {
-    throw new NetworkError(
-      `Failed to reach backend at ${url}. Is the server running?`,
-    );
+    throw new NetworkError(`Failed to reach backend at ${url}. Is the server running?`);
   }
 
   if (response.status === 401) {
@@ -88,17 +89,18 @@ async function apiFetch<T>(
   }
 
   if (!response.ok) {
-    let message: string;
-    try {
-      const body = await response.json();
-      message = body.message || body.error || response.statusText;
-    } catch {
-      message = response.statusText;
-    }
-    throw new ApiError(response.status, message);
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      response.status,
+      body?.error?.message || response.statusText,
+      body?.error?.code,
+      body?.error?.requestId,
+    );
   }
-
-  return response.json() as Promise<T>;
+  const body = await response.json();
+  if (body.success !== true || !('data' in body))
+    throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');
+  return body.data as T;
 }
 
 // ─── Auth API Functions ──────────────────────────────────────
@@ -108,9 +110,10 @@ async function apiFetch<T>(
  * Syncs the authenticated Supabase user to the local NestJS database.
  */
 export async function syncUser(accessToken: string): Promise<UserResponse> {
-  return apiFetch<UserResponse>("/auth/sync", accessToken, {
-    method: "POST",
+  const data = await apiFetch<{ user: UserResponse }>('/auth/sync', accessToken, {
+    method: 'POST',
   });
+  return data.user;
 }
 
 /**
@@ -118,5 +121,6 @@ export async function syncUser(accessToken: string): Promise<UserResponse> {
  * Returns the current application-level user (role, status).
  */
 export async function getMe(accessToken: string): Promise<UserResponse> {
-  return apiFetch<UserResponse>("/auth/me", accessToken);
+  const data = await apiFetch<{ user: UserResponse }>('/auth/me', accessToken);
+  return data.user;
 }

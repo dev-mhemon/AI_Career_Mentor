@@ -1,0 +1,10 @@
+{
+  "command": [
+    "node",
+    "scripts/foundation/local.mjs",
+    "backend-e2e"
+  ],
+  "started": "2026-10-21T12:25:30.180Z",
+  "finished": "2026-10-21T12:25:39.752Z",
+  "exit_code": 0
+}

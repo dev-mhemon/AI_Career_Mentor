@@ -1,0 +1,67 @@
+name: Phase 1 database foundation
+on:
+  pull_request:
+    branches: [main, develop, phase1-restart]
+  push:
+    branches: [phase1-restart, "feature/phase1-*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MENTOR_LOCAL_DIR: ${{ github.workspace }}/.local/foundation
+      FOUNDATION_ARTIFACTS: ${{ github.workspace }}/artifacts/database
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: docker.io
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - uses: supabase/setup-cli@v1
+        with:
+          version: "2.121.0"
+      - name: Install locked dependencies
+        run: |
+          npm ci --prefix backend
+          npm ci --prefix frontend
+      - name: Record exact checkout and implementation head
+        run: node scripts/foundation/ci-provenance.mjs checkout
+      - name: Pull upstream images from the registry
+        run: |
+          docker pull docker.io/supabase/postgres:17.11.0.004
+          docker pull docker.io/supabase/gotrue:v2.197.0
+      - name: Verify immutable handoff and start dedicated disposable stack
+        run: node scripts/foundation/local.mjs start
+      - name: Verify upstream service image provenance
+        run: node scripts/foundation/ci-provenance.mjs images
+      - name: Fresh forward, TAP, reverse, reapply, TAP, boundaries and concurrency
+        run: node scripts/foundation/database-check.mjs --disposable
+      - name: Application foundation lint, unit, build, E2E and HTTP checks
+        run: bash scripts/foundation/check-apps.sh
+      - name: Upload evidence from this exact checkout
+        if: always()
+        id: evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Record artifact link
+        if: always()
+        env:
+          EVIDENCE_URL: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          printf 'Foundation evidence: %s\n' "$EVIDENCE_URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop only disposable foundation stack
+        if: always()
+        run: node scripts/foundation/local.mjs stop

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -18,8 +18,6 @@ import type { SupabaseJwtPayload } from '../interfaces/supabase-jwt-payload.inte
  */
 @Injectable()
 export class SupabaseStrategy extends PassportStrategy(Strategy, 'supabase') {
-  private readonly logger = new Logger(SupabaseStrategy.name);
-
   constructor(configService: ConfigService) {
     let supabaseUrl = configService.get<string>('SUPABASE_URL');
     if (!supabaseUrl) {
@@ -54,25 +52,14 @@ export class SupabaseStrategy extends PassportStrategy(Strategy, 'supabase') {
             return done(new Error('Invalid JWT format'));
           }
           const header = JSON.parse(Buffer.from(parts[0], 'base64').toString());
-          let kid = header.kid;
-
-          if (!kid) {
-            // If Supabase token lacks a kid, fetch keys and use the first one
-            const keys = (await client.getKeys()) as any[];
-            if (!keys || keys.length === 0) {
-              return done(new Error('No keys found in Supabase JWKS'));
-            }
-            kid = keys[0].kid;
-          }
+          const kid = header.kid;
+          if (typeof kid !== 'string' || header.alg !== 'ES256')
+            return done(new Error('Invalid JWT header'));
 
           const signingKey = await client.getSigningKey(kid);
           const publicKey = signingKey.getPublicKey();
           done(null, publicKey);
         } catch (err: any) {
-          const statusCode = err.status || err.statusCode || 'unknown';
-          this.logger.error(
-            `JWKS Fetch Error (HTTP Status: ${statusCode}) - ${err.message}`,
-          );
           done(err);
         }
       },
@@ -88,10 +75,19 @@ export class SupabaseStrategy extends PassportStrategy(Strategy, 'supabase') {
    * this to req.user.
    */
   validate(payload: SupabaseJwtPayload) {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        payload.sub,
+      ) ||
+      !Number.isFinite(payload.exp) ||
+      payload.exp <= Date.now() / 1000
+    )
+      throw new UnauthorizedException();
     return {
-      supabase_uid: payload.sub,
-      email: payload.email ?? null,
-      phone: payload.phone ?? null,
+      sub: payload.sub,
+      ...(payload.app_metadata?.provider
+        ? { authProvider: payload.app_metadata.provider }
+        : {}),
     };
   }
 }

@@ -1,0 +1,23 @@
+{
+  "executed_at": "2026-10-21T12:25:43.841Z",
+  "status": "passed",
+  "checks": [
+    {
+      "route": "/login",
+      "status": 200
+    },
+    {
+      "route": "/register",
+      "status": 200
+    },
+    {
+      "route": "/verify",
+      "status": 200
+    },
+    {
+      "route": "/dashboard",
+      "status": 307,
+      "location": "/login"
+    }
+  ]
+}
