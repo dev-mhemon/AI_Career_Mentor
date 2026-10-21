@@ -1,0 +1,12 @@
+PASS: 179 reviewed entries; integrated SQL 21 forward / 21 rollback / 8 test files, byte-identical
+npm warn deprecated tsconfck@3.1.6: unmaintained
+
+added 502 packages in 37s
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+npm warn deprecated eslint@9.39.5: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
+added 461 packages in 55s

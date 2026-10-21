@@ -1,0 +1,10 @@
+{
+  "command": [
+    "docker",
+    "pull",
+    "docker.io/supabase/postgres:17.11.0.004"
+  ],
+  "started": "2026-10-21T17:43:19.223Z",
+  "finished": "2026-10-21T17:45:50.085Z",
+  "exit_code": 1
+}

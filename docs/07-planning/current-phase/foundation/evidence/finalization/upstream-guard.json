@@ -1,0 +1,6 @@
+{
+  "scope": "Local negative test of CI image-provenance enforcement, not a GitHub run",
+  "expected": "Refuse onboarding-customized image",
+  "exit_code": 1,
+  "result": "passed_expected_rejection"
+}

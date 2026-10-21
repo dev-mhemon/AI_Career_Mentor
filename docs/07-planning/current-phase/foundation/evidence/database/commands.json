@@ -1,0 +1,981 @@
+[
+  {
+    "stage": "baseline-verification",
+    "command": [
+      "python3",
+      "scripts/foundation/verify-baseline.py"
+    ],
+    "started": "2026-10-21T09:55:43.126Z",
+    "finished": "2026-10-21T09:55:43.206Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "tool-version",
+    "command": [
+      "/workspace/.mentor-tools/node_modules/.bin/supabase",
+      "--version",
+      "--workdir",
+      "/workspace/.mentor-foundation"
+    ],
+    "started": "2026-10-21T09:55:43.269Z",
+    "finished": "2026-10-21T09:55:44.310Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-reset",
+    "command": [
+      "/workspace/.mentor-tools/node_modules/.bin/supabase",
+      "db",
+      "reset",
+      "--local",
+      "--no-seed",
+      "--workdir",
+      "/workspace/.mentor-foundation"
+    ],
+    "started": "2026-10-21T09:55:44.310Z",
+    "finished": "2026-10-21T09:58:03.609Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-history",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:03.610Z",
+    "finished": "2026-10-21T09:58:04.110Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-native-cli",
+    "command": [
+      "/workspace/.mentor-tools/node_modules/.bin/supabase",
+      "test",
+      "db",
+      "/workspace/.mentor-foundation/supabase/tests/database",
+      "--workdir",
+      "/workspace/.mentor-foundation"
+    ],
+    "started": "2026-10-21T09:58:04.136Z",
+    "finished": "2026-10-21T09:58:16.057Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-pgtap-extension",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:16.060Z",
+    "finished": "2026-10-21T09:58:16.702Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-001_schema.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:16.702Z",
+    "finished": "2026-10-21T09:58:17.892Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-002_constraints.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:17.894Z",
+    "finished": "2026-10-21T09:58:18.568Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-003_rls_security.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:18.568Z",
+    "finished": "2026-10-21T09:58:19.917Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-004_trigger_behavior.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:19.918Z",
+    "finished": "2026-10-21T09:58:20.550Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-005_ai_usage.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:20.552Z",
+    "finished": "2026-10-21T09:58:21.014Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-006_roadmap_integrity.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:21.032Z",
+    "finished": "2026-10-21T09:58:22.252Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-007_retention.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:22.261Z",
+    "finished": "2026-10-21T09:58:22.920Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "first-forward-tests-008_gaps.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:22.921Z",
+    "finished": "2026-10-21T09:58:23.962Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-020_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:23.963Z",
+    "finished": "2026-10-21T09:58:24.240Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-019_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:24.240Z",
+    "finished": "2026-10-21T09:58:24.470Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-018_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:24.471Z",
+    "finished": "2026-10-21T09:58:24.776Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-017_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:24.776Z",
+    "finished": "2026-10-21T09:58:25.039Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-016_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:25.040Z",
+    "finished": "2026-10-21T09:58:25.316Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-015_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:25.317Z",
+    "finished": "2026-10-21T09:58:25.585Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-014_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:25.587Z",
+    "finished": "2026-10-21T09:58:26.218Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-013_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:26.224Z",
+    "finished": "2026-10-21T09:58:26.504Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-012_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:26.505Z",
+    "finished": "2026-10-21T09:58:26.849Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-011_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:26.850Z",
+    "finished": "2026-10-21T09:58:27.127Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-010_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:27.130Z",
+    "finished": "2026-10-21T09:58:27.762Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-009_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:27.767Z",
+    "finished": "2026-10-21T09:58:28.106Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-008_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:28.106Z",
+    "finished": "2026-10-21T09:58:28.409Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-007_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:28.410Z",
+    "finished": "2026-10-21T09:58:28.630Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-006_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:28.631Z",
+    "finished": "2026-10-21T09:58:28.878Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-005_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:28.879Z",
+    "finished": "2026-10-21T09:58:29.109Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-004_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:29.110Z",
+    "finished": "2026-10-21T09:58:29.317Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-003_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:29.317Z",
+    "finished": "2026-10-21T09:58:29.534Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-002_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:29.535Z",
+    "finished": "2026-10-21T09:58:29.769Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-001_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:29.769Z",
+    "finished": "2026-10-21T09:58:29.976Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-000_down.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:29.977Z",
+    "finished": "2026-10-21T09:58:30.291Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-empty-public",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:30.291Z",
+    "finished": "2026-10-21T09:58:30.545Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reverse-clear-approved-history",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:30.546Z",
+    "finished": "2026-10-21T09:58:30.768Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reapply",
+    "command": [
+      "/workspace/.mentor-tools/node_modules/.bin/supabase",
+      "migration",
+      "up",
+      "--local",
+      "--workdir",
+      "/workspace/.mentor-foundation"
+    ],
+    "started": "2026-10-21T09:58:30.769Z",
+    "finished": "2026-10-21T09:58:38.669Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "reapply-history",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:38.689Z",
+    "finished": "2026-10-21T09:58:39.559Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-native-cli",
+    "command": [
+      "/workspace/.mentor-tools/node_modules/.bin/supabase",
+      "test",
+      "db",
+      "/workspace/.mentor-foundation/supabase/tests/database",
+      "--workdir",
+      "/workspace/.mentor-foundation"
+    ],
+    "started": "2026-10-21T09:58:39.562Z",
+    "finished": "2026-10-21T09:58:52.519Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-pgtap-extension",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:52.520Z",
+    "finished": "2026-10-21T09:58:53.734Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-001_schema.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:53.739Z",
+    "finished": "2026-10-21T09:58:54.627Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-002_constraints.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:54.630Z",
+    "finished": "2026-10-21T09:58:55.108Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-003_rls_security.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:55.109Z",
+    "finished": "2026-10-21T09:58:55.377Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-004_trigger_behavior.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:55.378Z",
+    "finished": "2026-10-21T09:58:58.130Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-005_ai_usage.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:58.131Z",
+    "finished": "2026-10-21T09:58:58.635Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-006_roadmap_integrity.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:58.636Z",
+    "finished": "2026-10-21T09:58:59.080Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-007_retention.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:58:59.080Z",
+    "finished": "2026-10-21T09:59:00.831Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "post-reapply-tests-008_gaps.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:59:00.832Z",
+    "finished": "2026-10-21T09:59:01.650Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "boundary-009_boundaries.test.sql",
+    "command": [
+      "docker",
+      "exec",
+      "-i",
+      "supabase_db_ai-career-mentor-foundation",
+      "psql",
+      "-XAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres"
+    ],
+    "started": "2026-10-21T09:59:01.654Z",
+    "finished": "2026-10-21T09:59:02.130Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "concurrency",
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "scripts/foundation/concurrency.mjs"
+    ],
+    "started": "2026-10-21T09:59:02.137Z",
+    "finished": "2026-10-21T09:59:02.878Z",
+    "exit_code": 0
+  },
+  {
+    "stage": "baseline-after",
+    "command": [
+      "python3",
+      "scripts/foundation/verify-baseline.py"
+    ],
+    "started": "2026-10-21T09:59:02.881Z",
+    "finished": "2026-10-21T09:59:02.987Z",
+    "exit_code": 0
+  }
+]

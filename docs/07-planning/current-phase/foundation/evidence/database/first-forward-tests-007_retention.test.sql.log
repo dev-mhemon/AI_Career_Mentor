@@ -1,0 +1,28 @@
+BEGIN
+1..9
+CREATE FUNCTION
+
+INSERT 0 2
+INSERT 0 2
+INSERT 0 1
+INSERT 0 2
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ok 1 - private.cleanup_expired_ai_context() executes without error
+ok 2 - private.cleanup_expired_retention() executes without error
+ok 3 - Expired AI context record is successfully purged
+ok 4 - Expired mentor message covered by summary is successfully purged
+ok 5 - Expired unsummarized message is purged independently of summaries
+ok 6 - Completed AI request older than 30 days is purged (PRD §52)
+ok 7 - Recent AI request within 30-day window is preserved
+ok 8 - Expired raw free response answer text is NULLed
+ok 9 - raw_text_purged_at timestamp is stamped upon answer purge
+ROLLBACK

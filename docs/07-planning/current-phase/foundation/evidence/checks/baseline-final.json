@@ -1,0 +1,9 @@
+{
+  "command": [
+    "python3",
+    "scripts/foundation/verify-baseline.py"
+  ],
+  "started": "2026-10-21T10:02:31.983Z",
+  "finished": "2026-10-21T10:02:32.080Z",
+  "exit_code": 0
+}

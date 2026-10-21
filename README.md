@@ -1,71 +1,28 @@
-# AI Career Intelligence Mentor - MVP
+# AI Career Mentor
 
-## Project Overview
-The AI Career Intelligence Mentor is an AI-powered platform designed to provide personalized career guidance, skills gap analysis, and tailored learning paths. This repository contains the Phase 0 foundational setup for the Minimum Viable Product (MVP).
+Bangla-first technology-career mentoring application. Current implementation is the Phase 1 Supabase foundation; the complete MVP is specified, not delivered. Start with [governance](docs/00-governance/START-HERE.md), [source register](docs/00-governance/source-of-truth.md) and [current audit](docs/07-planning/phase-1-audit.md).
 
-## Architecture Reference
-- **Frontend**: Next.js 14, TypeScript, Tailwind CSS
-- **Backend**: NestJS, TypeScript
-- **Database**: PostgreSQL
-- **Environment**: Docker (Database)
-- **CI/CD**: GitHub Actions
+Node >=24, npm >=10, Python3, Docker Engine and Supabase CLI **2.121.0** are required. Keep the two npm lockfiles. Supabase supplies Auth and the primary PostgreSQL database; ORM schema sync/startup migrations remain disabled. Historical TypeORM migrations and standalone PostgreSQL Compose are retired; no legacy data transfer is needed (D001).
 
-See `docs/architecture` and the foundational design documents (`PRD`, `SAD`, `UI/UX`, `Development Plan`) for more details.
-
-## Setup Instructions
-
-### Prerequisites
-- Node.js (v24 or higher)
-- npm (v10 or higher)
-- Docker Desktop
-- Git
-
-### 1. Environment Configuration
-Copy the placeholder environment file to set up your local variables:
 ```bash
-cp .env.example .env
-```
-*(Update `.env` with actual secrets as needed; never commit `.env` to source control)*
-
-### 2. Database Setup
-Start the local PostgreSQL development environment via Docker:
-```bash
-docker-compose up -d
+bash scripts/foundation/install.sh
+python3 scripts/alignment/verify.py
+node scripts/foundation/local.mjs start
+npm --prefix backend run build
+node scripts/foundation/local.mjs backend
+# Another terminal, same checkout:
+node scripts/foundation/local.mjs frontend-build
+node scripts/foundation/local.mjs frontend
 ```
 
-### 3. Frontend Setup
-Navigate to the frontend directory and install dependencies:
+Ports: Supabase API 56321, PostgreSQL 56322, backend 3200, frontend 3201. Configuration is generated under ignored/private `.local/foundation/`; app templates list required names without secret values. See the [runbook](docs/09-operations/runbook.md) for prerequisites, validation, restart and troubleshooting. Do not copy another task's private configuration or assume old services still run.
+
 ```bash
-cd frontend
-npm install
+bash scripts/foundation/check-apps.sh
+python3 scripts/foundation/verify-baseline.py
+# Fresh lifecycle validation is destructive only to the identified disposable project:
+node scripts/foundation/database-check.mjs --disposable
+node scripts/foundation/local.mjs stop
 ```
 
-### 4. Backend Setup
-Navigate to the backend directory and install dependencies:
-```bash
-cd backend
-npm install
-```
-
-## Development Commands
-
-### Frontend
-- Start development server: `npm run dev`
-- Build for production: `npm run build`
-- Start production server: `npm run start`
-- Run linter: `npm run lint`
-
-### Backend
-- Start development server: `npm run start:dev`
-- Build for production: `npm run build`
-- Start production server: `npm run start:prod`
-- Run linter: `npm run lint`
-- Run tests: `npm run test`
-
-## Git Workflow
-- **`main`**: Production-ready code.
-- **`develop`**: Integration branch for new features.
-- **Feature Branches**: Branch off `develop` (e.g., `feature/user-auth`) and submit PRs to `develop`.
-
-## AI Agents
-Please refer to `AGENTS.md` for strict development rules and constraints when contributing to this repository using AI assistants.
+Shared agent rules: [AGENTS.md](AGENTS.md). Alignment branches target `phase1-restart`; reviewed promotion to `main` is separate. No automatic CD, production deployment or owner acceptance is implied. Exact delivered checks/blockers appear in the current-phase alignment handoff. R32 remains in progress/partially executed; R33 is optional/deferred.

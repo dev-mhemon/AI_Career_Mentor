@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-21T12:26:28.983815+00:00",
+  "source_branch": "phase1-restart",
+  "source_commit": "37a785c84be7f5ba8a4d0b528a810623765140cc",
+  "working_branch": "feature/phase1-foundation",
+  "implementation_committed": true,
+  "reviewed_baseline_modified": false,
+  "owner_approval": false,
+  "production_ready": false,
+  "accepted": false,
+  "original_review": {
+    "path": "planning/reviewed-baseline/review/reviewed-status.json",
+    "sha256": "82af75d4efbf5f9b74af581adb13e69acbaa5ed80fc253e971c87cb7c29e28cf",
+    "issue_records_preserved": 42
+  },
+  "R32": {
+    "original_record": {
+      "id": "R32",
+      "title": "Runtime ও CI acceptance evidence",
+      "documents": [
+        "C07",
+        "C02",
+        "C04",
+        "C05",
+        "C06",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "blocked_environment",
+      "review_status": "Partially executed; remains open",
+      "evidence_scope_bn": "Local DB runs পাস; CI/new DB boundary/application/provider/operational gates বাকি।",
+      "fully_accepted": false
+    },
+    "status": "in_progress",
+    "runtime_status": "partially_executed",
+    "fully_accepted": false,
+    "sub_gates": {
+      "baseline_hashes": "executed_pass:179",
+      "fresh_forward": "executed_pass:21",
+      "first_forward_tests": "executed_pass:8_files_185_assertions",
+      "rollback": "executed_pass:21",
+      "reapply": "executed_pass:21",
+      "post_reapply_tests": "executed_pass:8_files_185_assertions",
+      "additional_boundaries": "executed_pass:27_assertions",
+      "report_threshold_concurrency": "executed_pass:two_independent_connections_READ_COMMITTED_threshold_2_lock_before_insert_duplicate_rollback",
+      "minimal_auth_account_access": "implemented_and_executed_in_foundation_scope",
+      "profile_alias_goal_level": "implemented_and_executed_in_foundation_scope",
+      "toolchain_and_local_http": "executed_pass",
+      "remote_github_actions": "pending_API_Forbidden",
+      "full_auth_providers_and_account_deletion_workflow": "pending_implementation_and_external_validation",
+      "generation_worker_scheduler_and_full_application": "pending_implementation",
+      "broader_security_deletion_fault_matrix": "pending",
+      "performance_and_PITR_restore": "pending",
+      "owner_release_signoff": "pending"
+    }
+  },
+  "R33": {
+    "original_record": {
+      "id": "R33",
+      "title": "ঐচ্ছিক PRD editorial provenance",
+      "documents": [
+        "C01",
+        "C02"
+      ],
+      "source_state_status": "pending",
+      "review_status": "Optional/deferred",
+      "evidence_scope_bn": "C01 edit হয়নি; pending state-কে mandatory blocker হিসেবে ধরতে হবে না।",
+      "fully_accepted": false
+    },
+    "status": "pending",
+    "disposition": "optional_deferred",
+    "fully_accepted": false
+  },
+  "foundation_results": {
+    "backend_unit": 25,
+    "backend_existing_e2e": 1,
+    "real_backend_auth_http_scenario_groups": 20,
+    "frontend_unit": 32,
+    "database_original_assertions_each_stage": 185,
+    "database_extra_boundary_assertions": 27,
+    "checks": {
+      "frontend-build": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/frontend-build.json"
+      },
+      "frontend-unit": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/frontend-unit.json"
+      },
+      "backend-http": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/backend-http.json"
+      },
+      "baseline-final": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/baseline-final.json"
+      },
+      "backend-build": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/backend-build.json"
+      },
+      "backend-unit": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/backend-unit.json"
+      },
+      "legacy-runner-blocked": {
+        "exit_code": 1,
+        "evidence": "evidence/checks/legacy-runner-blocked.json",
+        "expected_nonzero": true
+      },
+      "backend-e2e": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/backend-e2e.json"
+      },
+      "frontend-http": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/frontend-http.json"
+      },
+      "clean-final-backend-build": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/clean-final-backend-build.json"
+      },
+      "backend-lint": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/backend-lint.json"
+      },
+      "workflow-validation": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/workflow-validation.json"
+      },
+      "frontend-lint": {
+        "exit_code": 0,
+        "evidence": "evidence/checks/frontend-lint.json"
+      }
+    }
+  },
+  "resolved_integration_failures": [
+    {
+      "failure": "Local valid-token bootstrap returned 401",
+      "cause": "Stale ignored .env SUPABASE_JWKS_URL selected the earlier onboarding project",
+      "resolution": "Saved runtime configuration explicitly overrides matching JWKS URL",
+      "final_status": "executed_pass"
+    },
+    {
+      "failure": "New boundary fixture SQL failed before assertions",
+      "cause": "Fixture used a job status outside the reviewed enum; test plan had an off-by-one count",
+      "resolution": "Used authoritative preparing enum and added child rollback preservation assertion, final 27 assertions",
+      "evidence": "evidence/initial-boundary-fixture-failure.log",
+      "baseline_modified": false
+    },
+    {
+      "failure": "Valid 1.5 learning hours returned 422",
+      "cause": "Integer-oriented divisible-by validator unsuitable for 0.5 divisor",
+      "resolution": "Exact integer(value*2) constraint with real HTTP boundary checks",
+      "final_status": "executed_pass"
+    }
+  ],
+  "evidence_levels": {
+    "SPECIFIED": "Nine reviewed documents; not all catalog routes implemented",
+    "STATICALLY_CHECKED": "Manifest hashes; actionlint; lint/type/build validation",
+    "IMPLEMENTED": "Supabase integration and minimal Auth/account/access/profile/alias/goal confirmation slice",
+    "EXECUTED": "Local lifecycle, TAP, concurrency, unit, E2E and HTTP evidence only",
+    "ACCEPTED": false
+  },
+  "remote_ci": {
+    "command": "gh api repos/dev-mhemon/AI_Career_Mentor/actions/permissions --jq '.enabled'",
+    "result": "Forbidden",
+    "run_url": null,
+    "artifact_url": null
+  },
+  "limitations": [
+    "Historical pre-commit worktree evidence is separate from final committed delivery and any GitHub run.",
+    "Guard feature branches are tested, but future generation endpoints need transaction-time integration.",
+    "Real social/email/phone provider success, Redis lockout/rate limits and full deletion/worker/scheduler UI/workflows are not delivered.",
+    "No production performance, PITR/restore, owner sign-off or release acceptance."
+  ],
+  "running_services": {
+    "supabase": "ready",
+    "backend": "http://127.0.0.1:3200/health HTTP 200",
+    "frontend": "http://127.0.0.1:3201/login HTTP 200",
+    "evidence": "evidence/running-services.json"
+  },
+  "commit_identity": "Resolve repository HEAD after finalization; exact SHA and remote outcomes recorded in exportable artifacts/delivery/finalization.json",
+  "final_review": "FINAL_REVIEW_BN.md",
+  "evidence_provenance_note": "Existing committed=false local snapshots are historical execution records, not the final delivery state or remote CI evidence."
+}

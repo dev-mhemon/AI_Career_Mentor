@@ -1,0 +1,677 @@
+{
+  "schema_version": 1,
+  "kind": "review_assessment_not_live_state_update",
+  "reviewed_at": "2026-10-20T15:01:29.786Z",
+  "source_catalog_lock": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78",
+  "source_sha256": {
+    "C01": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+    "C02": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+    "C03": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+    "C04": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+    "C05": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+    "C06": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+    "C07": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+    "C08": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+    "C09": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7"
+  },
+  "documentation": "expected_patches_and_finite_static_checks_verified",
+  "owner_approval": false,
+  "local_db": {
+    "outcome": "pass",
+    "evidence": "evidence/owner-db-run/result.json",
+    "scope": "21 fresh forwards, 8 suites/185 assertions, 21 down, 21 reapply",
+    "reviewer_executed_database": false
+  },
+  "supabase_cli": {
+    "outcome": "owner_console_pass",
+    "files": 8,
+    "assertions": 185,
+    "evidence_provenance": "user_pasted_console_in_chat_2026-10-20",
+    "raw_log_in_upload": false,
+    "cli_source_hashes_or_history_in_upload": false
+  },
+  "R32": {
+    "status_recommendation": "in_progress",
+    "runtime_status": "partially_executed",
+    "remaining_gates": [
+      "CI on exact repository commit",
+      "new DB boundaries and concurrency",
+      "API/worker/scheduler",
+      "UI",
+      "provider/privacy",
+      "performance/purge timing",
+      "PITR/restore"
+    ]
+  },
+  "R33": {
+    "status_recommendation": "pending",
+    "disposition": "optional_deferred",
+    "required_development_blocker": false
+  },
+  "issues": [
+    {
+      "id": "V00",
+      "title": "নয়টি source file-এর পরিচয় ও hashes",
+      "documents": [
+        "C07",
+        "C01",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C06",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "closed",
+      "review_status": "Hash identity verified",
+      "evidence_scope_bn": "C01 baseline-এর সঙ্গে byte-identical; বাকি আটটি corrected release-এর সঙ্গে exact match।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R01",
+      "title": "Fresh Supabase restart strategy",
+      "documents": [
+        "C02",
+        "C04",
+        "C06",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Strategy + local DB verified",
+      "evidence_scope_bn": "Fresh install/rollback-reapply পাস; পুরোনো DB transfer N/A। Repository/CI adoption বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R02",
+      "title": "আটটি AI-generation FK index",
+      "documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Local DB gate verified",
+      "evidence_scope_bn": "019 ও schema suite-এর FK coverage/count gate পাস; performance benchmark নয়।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R03",
+      "title": "AIResponseContract TypeScript syntax",
+      "documents": [
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Static syntax verified",
+      "evidence_scope_bn": "C08-এর TypeScript blocks parse; application compiler/typecheck বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R04",
+      "title": "১১টি অসম্পূর্ণ rollback body",
+      "documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Rollback/reapply verified",
+      "evidence_scope_bn": "২১টি reverse event ও ২১টি reapply event পাস; প্রথম forward logs আলাদা রাখা হয়নি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R05",
+      "title": "Account deletion-এর atomic completion",
+      "documents": [
+        "C06",
+        "C05",
+        "C02",
+        "C03",
+        "C04",
+        "C07",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Successful cascade path verified",
+      "evidence_scope_bn": "008 suite-এ Auth user deletion-এর পরে completed tombstone থাকে; failure injection/retry বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R06",
+      "title": "DeletionReceipt; 401-কে completion না ধরা",
+      "documents": [
+        "C02",
+        "C05",
+        "C09",
+        "C03",
+        "C06",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Receipt scope, expiry, polling ও 401 boundary API integration-এ পরীক্ষা করতে হবে।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R07",
+      "title": "Level confirmation-এর আগে progress deferred রাখা",
+      "documents": [
+        "C05",
+        "C02",
+        "C03",
+        "C09",
+        "C06",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Alias storage suite পাস হলেও pre-confirmation progress deferral-এর service flow বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R08",
+      "title": "Summary ছাড়াও মেয়াদোত্তীর্ণ raw chat purge",
+      "documents": [
+        "C06",
+        "C03",
+        "C04",
+        "C05",
+        "C08",
+        "C02",
+        "C07",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Selected retention cases verified",
+      "evidence_scope_bn": "007-তে summarized ও unsummarized expired message purge পাস; boundary/read-cutoff/purge SLO বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R09",
+      "title": "AI request retention-এর creation clock",
+      "documents": [
+        "C06",
+        "C03",
+        "C05",
+        "C08",
+        "C02",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Selected retention cases verified",
+      "evidence_scope_bn": "007-তে old request purge/recent request preservation পাস; stale queued/unfinished boundary বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R10",
+      "title": "Active-account ও technology-access gates",
+      "documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C07",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Basic RLS cases verified",
+      "evidence_scope_bn": "003-তে cross-user isolation, write denial ও suspended admin case পাস; নতুন পূর্ণ gate matrix বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R11",
+      "title": "Human QA-তে অনুমোদিত data scope",
+      "documents": [
+        "C08",
+        "C02",
+        "C05",
+        "C07",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Production chat sampling নিষেধ ও অনুমোদিত QA scope আছে; provider/egress evidence বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R12",
+      "title": "Durable, private ও bounded AI input",
+      "documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "DDL + specification verified",
+      "evidence_scope_bn": "Column/constraints/grants install হয়েছে; payload size ও unauthorized read-এর dedicated boundary tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R13",
+      "title": "Queue claim, lease, fencing ও recovery",
+      "documents": [
+        "C08",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C06",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification + basic state tests",
+      "evidence_scope_bn": "005-এর state transitions পাস; দুই worker, lease expiry ও stale commit fencing পরীক্ষা হয়নি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R14",
+      "title": "Idempotency cache-loss policy",
+      "documents": [
+        "C02",
+        "C04",
+        "C05",
+        "C06",
+        "C07",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Redis loss/TTL/method-route-body collision-এর বাস্তব tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R15",
+      "title": "SSE wire/lifecycle contract",
+      "documents": [
+        "C02",
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "SSE framing-এর running endpoint, disconnect ও client lifecycle tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R16",
+      "title": "পাঁচটি screen-এর local state/actions",
+      "documents": [
+        "C09",
+        "C05"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Actual UI states, keyboard, reload ও retry tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R17",
+      "title": "202 response-এর পরে result ID পর্যন্ত অপেক্ষা",
+      "documents": [
+        "C09",
+        "C05",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Actual 202 job polling এবং successful result navigation tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R18",
+      "title": "Verify/resend-এর normalized identifier",
+      "documents": [
+        "C09",
+        "C05"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Actual verify/resend/reload flow বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R19",
+      "title": "DDD বনাম DMS physical authority",
+      "documents": [
+        "C03",
+        "C04"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Document alignment verified",
+      "evidence_scope_bn": "Physical SQL authority C06; DDD পূর্ণ schema copy নয়।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R20",
+      "title": "Function security classification",
+      "documents": [
+        "C03",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Inventory/security declarations verified",
+      "evidence_scope_bn": "২২ private function = ১০ DEFINER + ১২ INVOKER; পুরো privilege abuse matrix নয়।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R21",
+      "title": "Evidence অনুযায়ী validation claims",
+      "documents": [
+        "C04",
+        "C06",
+        "C07",
+        "C02",
+        "C03",
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Scoped claims verified",
+      "evidence_scope_bn": "Frozen docs static snapshot; নতুন DB evidence sidecar-এ যুক্ত করতে হবে।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R22",
+      "title": "Operational/performance scripts-এর executable source",
+      "documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Executable source present",
+      "evidence_scope_bn": "৩টি extra script extract হয়েছে; representative load/EXPLAIN/upgrade benchmark চালানো হয়নি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R23",
+      "title": "Version-aware PITR/restore checks",
+      "documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Restore specification verified",
+      "evidence_scope_bn": "Actual backup/restore/PITR drill ও measured RPO/RTO বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R24",
+      "title": "Meaningful activity-এর event rule",
+      "documents": [
+        "C05",
+        "C02",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Successful meaningful events ও excluded background activity-এর service tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R25",
+      "title": "Scheduler concurrency ও local-date contract",
+      "documents": [
+        "C02",
+        "C03",
+        "C05",
+        "C06",
+        "C07",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Concurrent/date-change/session-loss scheduler tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R26",
+      "title": "Runtime configuration bounds",
+      "documents": [
+        "C06",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "DDL + specification verified",
+      "evidence_scope_bn": "Bounds constraint install হয়েছে; invalid config ও exact-limit cases বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R27",
+      "title": "Report threshold-এর concurrency protocol",
+      "documents": [
+        "C06",
+        "C02",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Sequential threshold verified",
+      "evidence_scope_bn": "008-তে পঞ্চম independent report-এ hide পাস; concurrent sessions-এর lock protocol বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R28",
+      "title": "API catalog/HTTP route count",
+      "documents": [
+        "C04",
+        "C05",
+        "C08",
+        "C09",
+        "C02",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Static inventory verified",
+      "evidence_scope_bn": "৮২ catalog entry / ৮১ HTTP route; এতগুলো route implemented হয়েছে এমন দাবি নয়।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R29",
+      "title": "চারটি নির্দিষ্ট DTO contract",
+      "documents": [
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "DTO nullability/required fields-এর actual OpenAPI/client/compiler agreement বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R30",
+      "title": "UTC day grouping ও zero-filled series",
+      "documents": [
+        "C06",
+        "C05",
+        "C07",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Function installed; contract static",
+      "evidence_scope_bn": "by_day/UTC definition আছে; empty days, timezone ও range boundary output tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R31",
+      "title": "Auth/SMS counters ও TTL",
+      "documents": [
+        "C02",
+        "C04",
+        "C05",
+        "C07",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Auth counter expiry, SMS delivery metadata, resend/lockout tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R32",
+      "title": "Runtime ও CI acceptance evidence",
+      "documents": [
+        "C07",
+        "C02",
+        "C04",
+        "C05",
+        "C06",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "blocked_environment",
+      "review_status": "Partially executed; remains open",
+      "evidence_scope_bn": "Local DB runs পাস; CI/new DB boundary/application/provider/operational gates বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R33",
+      "title": "ঐচ্ছিক PRD editorial provenance",
+      "documents": [
+        "C01",
+        "C02"
+      ],
+      "source_state_status": "pending",
+      "review_status": "Optional/deferred",
+      "evidence_scope_bn": "C01 edit হয়নি; pending state-কে mandatory blocker হিসেবে ধরতে হবে না।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R34",
+      "title": "Rating ও report-এর পৃথক capabilities/targets",
+      "documents": [
+        "C09",
+        "C05"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Rating ও report props/capabilities পৃথক; actual target/context UI tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "R35",
+      "title": "User deletion-এর পরেও provider cleanup retry input",
+      "documents": [
+        "C06",
+        "C05",
+        "C02",
+        "C03",
+        "C07",
+        "C08",
+        "C09"
+      ],
+      "source_state_status": "patched",
+      "review_status": "DDL + specification verified",
+      "evidence_scope_bn": "Provider cleanup outbox/expiry constraints install হয়েছে; retained input, retry/deadline ও provider acknowledgement tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "N01",
+      "title": "Dashboard preview fetch/access mapping",
+      "documents": [
+        "C09",
+        "C05"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Specification verified",
+      "evidence_scope_bn": "Running dashboard preview fetch/feature-gate tests বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "N02",
+      "title": "Reply FK-তে ON DELETE SET NULL",
+      "documents": [
+        "C06",
+        "C03",
+        "C07",
+        "C08"
+      ],
+      "source_state_status": "patched",
+      "review_status": "FK definition installed",
+      "evidence_scope_bn": "ON DELETE SET NULL source/DDL আছে; expired parent + live child dedicated behavior test বাকি।",
+      "fully_accepted": false
+    },
+    {
+      "id": "E01",
+      "title": "Constraint অনুযায়ী FK-index exceptions",
+      "documents": [
+        "C06",
+        "C04",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Unchanged gate passed",
+      "evidence_scope_bn": "Final FK coverage gate পাস; পাঁচটি named exception অপরিবর্তিত।",
+      "fully_accepted": false
+    },
+    {
+      "id": "X01",
+      "title": "Uniqueness probe-এর উপযুক্ত fixture",
+      "documents": [
+        "C06"
+      ],
+      "source_state_status": null,
+      "review_status": "Fixture path verified",
+      "evidence_scope_bn": "006-এর uniqueness probe সঠিক fixture দিয়ে চলে; product behavior পরিবর্তন নয়।",
+      "fully_accepted": false
+    },
+    {
+      "id": "X02",
+      "title": "Quiz-attempt user FK-এর all-state index",
+      "documents": [
+        "C06",
+        "C04"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Local FK coverage verified",
+      "evidence_scope_bn": "Unfiltered (user_id,status) index আছে; 019 ও final FK query পাস।",
+      "fully_accepted": false
+    },
+    {
+      "id": "X03",
+      "title": "Account-deletion user FK-এর non-null index",
+      "documents": [
+        "C02",
+        "C03",
+        "C04",
+        "C06",
+        "C07"
+      ],
+      "source_state_status": "patched",
+      "review_status": "Local FK coverage verified",
+      "evidence_scope_bn": "Nullable user FK-তে IS NOT NULL index আছে; final 103-index/FK query পাস।",
+      "fully_accepted": false
+    }
+  ],
+  "limitations": [
+    "No database/server was executed in the reviewer environment; owner-supplied runtime artifacts were inspected.",
+    "The first and second forward runs share filenames; initial forward SQL/log artifacts were overwritten by reapply, although both 21-event sequences are recorded.",
+    "The runner executes pgTAP before rollback and does not re-run pgTAP on its reapplied state.",
+    "The separate Supabase CLI reset/test PASS with 185 assertions was supplied in chat; raw CLI logs, CLI migration-history export, actual CLI-directory hashes, and CI commit/run artifacts are not in this ZIP.",
+    "Original application journals/review receipts and source tools are not included in this review ZIP; they were not re-audited on the user PC.",
+    "No owner acceptance, application implementation, full SQL semantic correctness, performance, or release readiness is implied."
+  ],
+  "live_mutation_performed": false
+}

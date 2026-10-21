@@ -1,0 +1,3265 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-10-20T15:01:29.786Z",
+  "review_scope": "Uploaded artifact/source/log consistency and re-execution of the existing finite static verifier; no new database execution or full design audit",
+  "input_zip": "AI_Career_Mentor_Final_Review_20261020-205703.zip",
+  "input_zip_sha256": "a65b36a6072e1b6bc20f716f0cf5867ef7fbdf82180eb58d8a5e25363f7ff0b3",
+  "release_catalog_lock": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78",
+  "documents": [
+    {
+      "key": "C01",
+      "file": "docs/C01_PRD.md",
+      "bytes": 72643,
+      "sha256": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C02",
+      "file": "docs/C02_SAD.md",
+      "bytes": 43432,
+      "sha256": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C03",
+      "file": "docs/C03_DDD.md",
+      "bytes": 64012,
+      "sha256": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C04",
+      "file": "docs/C04_DIS.md",
+      "bytes": 66659,
+      "sha256": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C05",
+      "file": "docs/C05_API.md",
+      "bytes": 195279,
+      "sha256": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C06",
+      "file": "docs/C06_DMS.md",
+      "bytes": 227913,
+      "sha256": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C07",
+      "file": "docs/C07_Validation.md",
+      "bytes": 66814,
+      "sha256": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C08",
+      "file": "docs/C08_AI_System_Design.md",
+      "bytes": 145873,
+      "sha256": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    },
+    {
+      "key": "C09",
+      "file": "docs/C09_UI_UX.md",
+      "bytes": 97899,
+      "sha256": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7",
+      "release": true,
+      "static_report": true,
+      "extraction": true,
+      "runtime": true
+    }
+  ],
+  "checks": [
+    {
+      "id": "release-lock",
+      "outcome": "pass",
+      "detail": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78"
+    },
+    {
+      "id": "hash:C01",
+      "outcome": "pass",
+      "detail": {
+        "key": "C01",
+        "file": "docs/C01_PRD.md",
+        "bytes": 72643,
+        "sha256": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C02",
+      "outcome": "pass",
+      "detail": {
+        "key": "C02",
+        "file": "docs/C02_SAD.md",
+        "bytes": 43432,
+        "sha256": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C03",
+      "outcome": "pass",
+      "detail": {
+        "key": "C03",
+        "file": "docs/C03_DDD.md",
+        "bytes": 64012,
+        "sha256": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C04",
+      "outcome": "pass",
+      "detail": {
+        "key": "C04",
+        "file": "docs/C04_DIS.md",
+        "bytes": 66659,
+        "sha256": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C05",
+      "outcome": "pass",
+      "detail": {
+        "key": "C05",
+        "file": "docs/C05_API.md",
+        "bytes": 195279,
+        "sha256": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C06",
+      "outcome": "pass",
+      "detail": {
+        "key": "C06",
+        "file": "docs/C06_DMS.md",
+        "bytes": 227913,
+        "sha256": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C07",
+      "outcome": "pass",
+      "detail": {
+        "key": "C07",
+        "file": "docs/C07_Validation.md",
+        "bytes": 66814,
+        "sha256": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C08",
+      "outcome": "pass",
+      "detail": {
+        "key": "C08",
+        "file": "docs/C08_AI_System_Design.md",
+        "bytes": 145873,
+        "sha256": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "hash:C09",
+      "outcome": "pass",
+      "detail": {
+        "key": "C09",
+        "file": "docs/C09_UI_UX.md",
+        "bytes": 97899,
+        "sha256": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7",
+        "release": true,
+        "static_report": true,
+        "extraction": true,
+        "runtime": true
+      }
+    },
+    {
+      "id": "C01-frozen",
+      "outcome": "pass",
+      "detail": "Compared with locked original PRD baseline"
+    },
+    {
+      "id": "lock:static",
+      "outcome": "pass",
+      "detail": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78"
+    },
+    {
+      "id": "lock:manifest",
+      "outcome": "pass",
+      "detail": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78"
+    },
+    {
+      "id": "lock:runtime",
+      "outcome": "pass",
+      "detail": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78"
+    },
+    {
+      "id": "uploaded-static-report",
+      "outcome": "pass",
+      "detail": "B10 / 72 finite checks"
+    },
+    {
+      "id": "fresh-static-reexecution",
+      "outcome": "pass",
+      "detail": {
+        "checks": 72,
+        "failures": []
+      }
+    },
+    {
+      "id": "extraction-counts",
+      "outcome": "pass",
+      "detail": {
+        "forward": 21,
+        "down": 21,
+        "tests": 8,
+        "extra": 3
+      }
+    },
+    {
+      "id": "manifest-file-count",
+      "outcome": "pass",
+      "detail": "21 forward + 21 down + 8 pgTAP + 3 extras"
+    },
+    {
+      "id": "source:forward-000_extensions",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-001_enums",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-002_identity",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-003_profiles",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-004_career_intelligence",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-005_roadmap",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-006_learning",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-007_assessment",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-008_progress",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-009_ai_mentor",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-010_ai_operations",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-011_technology_intelligence",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-012_administration",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-013_constraints",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-014_indexes",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-015_functions",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-016_triggers",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-017_rls",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-018_seed",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-019_tests",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:forward-020_gaps_and_alignment",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and both execution-event hashes match C06 extraction"
+    },
+    {
+      "id": "source:reverse-020_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-019_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-018_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-017_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-016_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-015_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-014_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-013_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-012_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-011_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-010_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-009_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-008_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-007_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-006_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-005_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-004_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-003_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-002_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-001_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:reverse-000_down",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:001_schema.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:002_constraints.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:003_rls_security.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:004_trigger_behavior.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:005_ai_usage.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:006_roadmap_integrity.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:007_retention.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "source:008_gaps.test",
+      "outcome": "pass",
+      "detail": "Uploaded SQL bytes and execution-event hash match C06 extraction"
+    },
+    {
+      "id": "runtime-sequence",
+      "outcome": "pass",
+      "detail": {
+        "events": 74,
+        "expected": 74
+      }
+    },
+    {
+      "id": "runtime-process-results",
+      "outcome": "pass",
+      "detail": "74 reported successful psql events"
+    },
+    {
+      "id": "saved-event-logs",
+      "outcome": "pass",
+      "detail": {
+        "events": 74,
+        "distinct_logs": 53
+      }
+    },
+    {
+      "id": "TAP:001_schema.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 110,
+        "emitted": 110
+      }
+    },
+    {
+      "id": "TAP:002_constraints.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 12,
+        "emitted": 12
+      }
+    },
+    {
+      "id": "TAP:003_rls_security.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 16,
+        "emitted": 16
+      }
+    },
+    {
+      "id": "TAP:004_trigger_behavior.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 11,
+        "emitted": 11
+      }
+    },
+    {
+      "id": "TAP:005_ai_usage.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 10,
+        "emitted": 10
+      }
+    },
+    {
+      "id": "TAP:006_roadmap_integrity.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 6,
+        "emitted": 6
+      }
+    },
+    {
+      "id": "TAP:007_retention.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 9,
+        "emitted": 9
+      }
+    },
+    {
+      "id": "TAP:008_gaps.test",
+      "outcome": "pass",
+      "detail": {
+        "plan": 11,
+        "emitted": 11
+      }
+    },
+    {
+      "id": "TAP-total",
+      "outcome": "pass",
+      "detail": "185 emitted successful assertions; 0 SKIP/TODO"
+    },
+    {
+      "id": "physical-inventory",
+      "outcome": "pass",
+      "detail": {
+        "tables": 50,
+        "enums": 45,
+        "secondary_indexes": 103,
+        "private_functions": 22,
+        "definer": 10,
+        "invoker": 12,
+        "triggers": 68
+      }
+    }
+  ],
+  "check_summary": {
+    "total": 81,
+    "pass": 81,
+    "fail": 0
+  },
+  "static_reexecution": {
+    "checks": [
+      {
+        "check_id": "V00:C01-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C01-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C01-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C02-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C02-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C02-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C03-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C03-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C03-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C04-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C04-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C04-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C05-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C05-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C05-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C06-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C06-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C06-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C07-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C07-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C07-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C08-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C08-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C08-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:C09-utf8",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Fatal UTF-8 decoding completed"
+      },
+      {
+        "check_id": "V00:C09-CRLF",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "No line-ending normalization"
+      },
+      {
+        "check_id": "V00:C09-fences",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Balanced fenced blocks"
+      },
+      {
+        "check_id": "V00:frozen-PRD",
+        "issue_id": "V00",
+        "outcome": "pass",
+        "detail": "Frozen PRD byte-identical"
+      },
+      {
+        "check_id": "R01:fresh-strategy-mirrors",
+        "issue_id": "R01",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R02:eight-leading-indexes",
+        "issue_id": "R02",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R02:pre019-and-final-counts",
+        "issue_id": "R02",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R03:all-TS-blocks-parse",
+        "issue_id": "R03",
+        "outcome": "pass",
+        "detail": "Node TypeScript syntax stripping only; no application typecheck"
+      },
+      {
+        "check_id": "R04:21-real-rollback-bodies",
+        "issue_id": "R04",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R10:active-owner-shared-tech",
+        "issue_id": "R10",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R11:permitted-human-QA",
+        "issue_id": "R11",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "N02:reply-set-null",
+        "issue_id": "N02",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R26:config-guard-and-ceilings",
+        "issue_id": "R26",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R27:pre-insert-serialization",
+        "issue_id": "R27",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R12:private-bounded-input",
+        "issue_id": "R12",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R13:atomic-claim-fence-recovery",
+        "issue_id": "R13",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R08:summary-independent-physical-and-read-cutoff",
+        "issue_id": "R08",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R09:creation-clock-and-fixture",
+        "issue_id": "R09",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R05:atomic-trigger-and-reverse",
+        "issue_id": "R05",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R14:loss-barrier-and-key-collision",
+        "issue_id": "R14",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R06:receipt-and-no-false401",
+        "issue_id": "R06",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R35:bounded-service-only-outbox",
+        "issue_id": "R35",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R07:deferred-real-level-progress",
+        "issue_id": "R07",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R24:foreground-only-activity",
+        "issue_id": "R24",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R25:date-ownership-and-pending-DTO",
+        "issue_id": "R25",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R31:auth-TTL-and-metadata",
+        "issue_id": "R31",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R18:identifier-not-URL",
+        "issue_id": "R18",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R17:wait-result-ID",
+        "issue_id": "R17",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R15:SSE-wire-and-postcommit",
+        "issue_id": "R15",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R29:four-complete-DTOs",
+        "issue_id": "R29",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R30:UTC-zero-filled-series",
+        "issue_id": "R30",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R34:independent-capabilities-and-ID",
+        "issue_id": "R34",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "N01:gated-preview",
+        "issue_id": "N01",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R16:five-local-states",
+        "issue_id": "R16",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R23:version-aware-PITR",
+        "issue_id": "R23",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R22:operational-bodies-present",
+        "issue_id": "R22",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R19:physical-authority-and-nullability",
+        "issue_id": "R19",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R20:least-privilege-actual-count",
+        "issue_id": "R20",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R28:actual-API-inventory",
+        "issue_id": "R28",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "E01:constraint-specific-FK-exceptions",
+        "issue_id": "E01",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R21:truthful-evidence",
+        "issue_id": "R21",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "R21:no-obsolete-counters-or-certificates",
+        "issue_id": "R21",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "X02:all-state-user-FK-index",
+        "issue_id": "X02",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "X02:DIS-DMS-index-alignment",
+        "issue_id": "X02",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "X03:deletion-user-FK-index",
+        "issue_id": "X03",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "X03:inventory-and-count-alignment",
+        "issue_id": "X03",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "X03:original-FK-gates-retained",
+        "issue_id": "X03",
+        "outcome": "pass",
+        "detail": ""
+      },
+      {
+        "check_id": "X01:uniqueness-fixture-isolated",
+        "issue_id": "X01",
+        "outcome": "pass",
+        "detail": ""
+      }
+    ],
+    "inventory": {
+      "tables": [
+        "users",
+        "user_auth_providers",
+        "user_profiles",
+        "user_preferences",
+        "career_roles",
+        "skill_categories",
+        "skills",
+        "skill_aliases",
+        "skill_dependencies",
+        "career_goals",
+        "roadmaps",
+        "roadmap_versions",
+        "roadmap_items",
+        "roadmap_merges",
+        "roadmap_merge_items",
+        "topics",
+        "learning_resources",
+        "daily_plans",
+        "daily_plan_items",
+        "quizzes",
+        "quiz_questions",
+        "quiz_attempts",
+        "quiz_answers",
+        "practice_reviews",
+        "learning_evidence",
+        "skill_progress",
+        "achievement_history",
+        "conversations",
+        "messages",
+        "conversation_summaries",
+        "ai_context_records",
+        "ai_models",
+        "prompt_versions",
+        "ai_requests",
+        "ai_generations",
+        "technology_categories",
+        "technologies",
+        "technology_sources",
+        "technology_updates",
+        "user_update_relevance",
+        "update_delivery_history",
+        "admin_users",
+        "system_configurations",
+        "feature_controls",
+        "user_access_overrides",
+        "admin_audit_logs",
+        "user_ratings",
+        "content_reports",
+        "account_deletion_requests",
+        "user_skill_aliases"
+      ],
+      "enums": [
+        "user_status",
+        "auth_provider",
+        "experience_level",
+        "career_level",
+        "content_status",
+        "alias_status",
+        "goal_status",
+        "roadmap_status",
+        "roadmap_version_state",
+        "roadmap_version_origin",
+        "item_priority",
+        "skill_gap_type",
+        "merge_status",
+        "merge_origin",
+        "merge_op",
+        "resource_type",
+        "plan_status",
+        "plan_item_status",
+        "question_type",
+        "question_difficulty",
+        "attempt_status",
+        "performance_level",
+        "review_status",
+        "learning_state",
+        "evidence_source",
+        "progress_event_type",
+        "message_role",
+        "ui_language",
+        "conversation_context",
+        "ai_context_type",
+        "ai_task",
+        "job_status",
+        "job_kind",
+        "ai_validation_status",
+        "release_status",
+        "action_timing",
+        "relevance_level",
+        "technology_source_type",
+        "update_state",
+        "feature_key",
+        "admin_role",
+        "rating_target",
+        "report_target",
+        "report_reason",
+        "deletion_request_status"
+      ],
+      "indexes": [
+        {
+          "name": "idx_users_status_created",
+          "table": "users",
+          "columns": "status, created_at DESC"
+        },
+        {
+          "name": "idx_users_last_active",
+          "table": "users",
+          "columns": "last_active_at"
+        },
+        {
+          "name": "idx_career_roles_name_trgm",
+          "table": "career_roles",
+          "columns": "name extensions.gin_trgm_ops"
+        },
+        {
+          "name": "idx_skill_categories_parent",
+          "table": "skill_categories",
+          "columns": "parent_id"
+        },
+        {
+          "name": "idx_skills_category",
+          "table": "skills",
+          "columns": "category_id"
+        },
+        {
+          "name": "idx_skills_name_trgm",
+          "table": "skills",
+          "columns": "canonical_name extensions.gin_trgm_ops"
+        },
+        {
+          "name": "idx_skill_aliases_norm_trgm",
+          "table": "skill_aliases",
+          "columns": "alias_normalized extensions.gin_trgm_ops"
+        },
+        {
+          "name": "idx_skill_dependencies_dep",
+          "table": "skill_dependencies",
+          "columns": "depends_on_skill_id"
+        },
+        {
+          "name": "idx_career_goals_user_status",
+          "table": "career_goals",
+          "columns": "user_id, status, created_at DESC"
+        },
+        {
+          "name": "idx_career_goals_proposed_role",
+          "table": "career_goals",
+          "columns": "proposed_role_id"
+        },
+        {
+          "name": "idx_career_goals_confirmed_role",
+          "table": "career_goals",
+          "columns": "confirmed_role_id"
+        },
+        {
+          "name": "idx_roadmaps_user_status",
+          "table": "roadmaps",
+          "columns": "user_id, status"
+        },
+        {
+          "name": "idx_roadmaps_role",
+          "table": "roadmaps",
+          "columns": "canonical_role_id"
+        },
+        {
+          "name": "idx_roadmaps_current_version",
+          "table": "roadmaps",
+          "columns": "current_version_id"
+        },
+        {
+          "name": "idx_roadmap_versions_user",
+          "table": "roadmap_versions",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_roadmap_versions_merge",
+          "table": "roadmap_versions",
+          "columns": "merge_id"
+        },
+        {
+          "name": "idx_roadmap_versions_base",
+          "table": "roadmap_versions",
+          "columns": "base_version_id"
+        },
+        {
+          "name": "idx_roadmap_items_user",
+          "table": "roadmap_items",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_roadmap_items_skill",
+          "table": "roadmap_items",
+          "columns": "skill_id"
+        },
+        {
+          "name": "idx_roadmap_items_topic",
+          "table": "roadmap_items",
+          "columns": "topic_id"
+        },
+        {
+          "name": "idx_roadmap_items_lineage",
+          "table": "roadmap_items",
+          "columns": "lineage_id"
+        },
+        {
+          "name": "idx_roadmap_merges_roadmap_status",
+          "table": "roadmap_merges",
+          "columns": "roadmap_id, status, created_at DESC"
+        },
+        {
+          "name": "idx_roadmap_merges_user",
+          "table": "roadmap_merges",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_roadmap_merges_base_version",
+          "table": "roadmap_merges",
+          "columns": "base_version_id"
+        },
+        {
+          "name": "idx_roadmap_merges_result_version",
+          "table": "roadmap_merges",
+          "columns": "result_version_id"
+        },
+        {
+          "name": "idx_roadmap_merge_items_user",
+          "table": "roadmap_merge_items",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_roadmap_merge_items_topic",
+          "table": "roadmap_merge_items",
+          "columns": "topic_id"
+        },
+        {
+          "name": "idx_topics_skill_level_status",
+          "table": "topics",
+          "columns": "skill_id, career_level, status"
+        },
+        {
+          "name": "idx_learning_resources_topic",
+          "table": "learning_resources",
+          "columns": "topic_id"
+        },
+        {
+          "name": "idx_daily_plans_user",
+          "table": "daily_plans",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_daily_plans_version",
+          "table": "daily_plans",
+          "columns": "roadmap_version_id"
+        },
+        {
+          "name": "idx_daily_plan_items_open",
+          "table": "daily_plan_items",
+          "columns": "plan_id, day_no, sort_order"
+        },
+        {
+          "name": "idx_daily_plan_items_user",
+          "table": "daily_plan_items",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_daily_plan_items_topic",
+          "table": "daily_plan_items",
+          "columns": "topic_id"
+        },
+        {
+          "name": "idx_daily_plan_items_merge",
+          "table": "daily_plan_items",
+          "columns": "reconciled_by_merge_id"
+        },
+        {
+          "name": "idx_quizzes_topic_status",
+          "table": "quizzes",
+          "columns": "topic_id, status"
+        },
+        {
+          "name": "idx_quiz_attempts_user_status",
+          "table": "quiz_attempts",
+          "columns": "user_id, status"
+        },
+        {
+          "name": "idx_quiz_attempts_user_submitted",
+          "table": "quiz_attempts",
+          "columns": "user_id, submitted_at DESC"
+        },
+        {
+          "name": "idx_quiz_attempts_quiz",
+          "table": "quiz_attempts",
+          "columns": "quiz_id"
+        },
+        {
+          "name": "idx_quiz_attempts_retry_of",
+          "table": "quiz_attempts",
+          "columns": "retry_of_attempt_id"
+        },
+        {
+          "name": "idx_quiz_answers_user",
+          "table": "quiz_answers",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_quiz_answers_question",
+          "table": "quiz_answers",
+          "columns": "question_id"
+        },
+        {
+          "name": "idx_quiz_answers_raw_expiry",
+          "table": "quiz_answers",
+          "columns": "raw_text_expires_at"
+        },
+        {
+          "name": "idx_practice_reviews_attempt",
+          "table": "practice_reviews",
+          "columns": "attempt_id"
+        },
+        {
+          "name": "idx_practice_reviews_user",
+          "table": "practice_reviews",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_practice_reviews_question",
+          "table": "practice_reviews",
+          "columns": "question_id"
+        },
+        {
+          "name": "idx_practice_reviews_open",
+          "table": "practice_reviews",
+          "columns": "review_status, created_at"
+        },
+        {
+          "name": "idx_learning_evidence_user_skill_level",
+          "table": "learning_evidence",
+          "columns": "user_id, skill_id, career_level, occurred_at DESC"
+        },
+        {
+          "name": "idx_learning_evidence_skill",
+          "table": "learning_evidence",
+          "columns": "skill_id"
+        },
+        {
+          "name": "idx_learning_evidence_topic",
+          "table": "learning_evidence",
+          "columns": "topic_id"
+        },
+        {
+          "name": "idx_learning_evidence_roadmap",
+          "table": "learning_evidence",
+          "columns": "roadmap_id"
+        },
+        {
+          "name": "idx_skill_progress_user_state",
+          "table": "skill_progress",
+          "columns": "user_id, learning_state"
+        },
+        {
+          "name": "idx_skill_progress_skill",
+          "table": "skill_progress",
+          "columns": "skill_id"
+        },
+        {
+          "name": "idx_achievement_history_user_time",
+          "table": "achievement_history",
+          "columns": "user_id, occurred_at DESC"
+        },
+        {
+          "name": "idx_achievement_history_user_skill_time",
+          "table": "achievement_history",
+          "columns": "user_id, skill_id, occurred_at DESC"
+        },
+        {
+          "name": "idx_achievement_history_skill",
+          "table": "achievement_history",
+          "columns": "skill_id"
+        },
+        {
+          "name": "idx_conversations_user_last",
+          "table": "conversations",
+          "columns": "user_id, last_message_at DESC NULLS LAST"
+        },
+        {
+          "name": "idx_conversations_roadmap",
+          "table": "conversations",
+          "columns": "roadmap_id"
+        },
+        {
+          "name": "idx_conversations_topic",
+          "table": "conversations",
+          "columns": "topic_id"
+        },
+        {
+          "name": "idx_messages_conversation_created",
+          "table": "messages",
+          "columns": "conversation_id, created_at"
+        },
+        {
+          "name": "idx_messages_expires",
+          "table": "messages",
+          "columns": "expires_at"
+        },
+        {
+          "name": "idx_messages_user",
+          "table": "messages",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_messages_reply_to",
+          "table": "messages",
+          "columns": "reply_to_message_id"
+        },
+        {
+          "name": "idx_conversation_summaries_user",
+          "table": "conversation_summaries",
+          "columns": "user_id"
+        },
+        {
+          "name": "idx_ai_context_records_valid_until",
+          "table": "ai_context_records",
+          "columns": "valid_until"
+        },
+        {
+          "name": "idx_ai_models_routing",
+          "table": "ai_models",
+          "columns": "fallback_rank"
+        },
+        {
+          "name": "idx_ai_requests_user_status",
+          "table": "ai_requests",
+          "columns": "user_id, status"
+        },
+        {
+          "name": "idx_ai_requests_queue",
+          "table": "ai_requests",
+          "columns": "available_at"
+        },
+        {
+          "name": "idx_ai_requests_created",
+          "table": "ai_requests",
+          "columns": "created_at"
+        },
+        {
+          "name": "idx_ai_requests_feature_created",
+          "table": "ai_requests",
+          "columns": "feature_key, created_at"
+        },
+        {
+          "name": "idx_ai_requests_finished",
+          "table": "ai_requests",
+          "columns": "finished_at"
+        },
+        {
+          "name": "idx_ai_requests_model",
+          "table": "ai_requests",
+          "columns": "model_id"
+        },
+        {
+          "name": "idx_ai_requests_prompt",
+          "table": "ai_requests",
+          "columns": "prompt_version_id"
+        },
+        {
+          "name": "idx_ai_requests_subject",
+          "table": "ai_requests",
+          "columns": "subject_type, subject_id"
+        },
+        {
+          "name": "idx_ai_generations_task_created",
+          "table": "ai_generations",
+          "columns": "task, created_at"
+        },
+        {
+          "name": "idx_ai_generations_model",
+          "table": "ai_generations",
+          "columns": "model_id"
+        },
+        {
+          "name": "idx_ai_generations_prompt",
+          "table": "ai_generations",
+          "columns": "prompt_version_id"
+        },
+        {
+          "name": "idx_ai_generations_request",
+          "table": "ai_generations",
+          "columns": "request_id"
+        },
+        {
+          "name": "idx_technologies_category",
+          "table": "technologies",
+          "columns": "category_id"
+        },
+        {
+          "name": "idx_technologies_skill",
+          "table": "technologies",
+          "columns": "skill_id"
+        },
+        {
+          "name": "idx_technology_updates_fetched",
+          "table": "technology_updates",
+          "columns": "fetched_at DESC"
+        },
+        {
+          "name": "idx_technology_updates_technology",
+          "table": "technology_updates",
+          "columns": "technology_id"
+        },
+        {
+          "name": "idx_technology_updates_source",
+          "table": "technology_updates",
+          "columns": "source_id"
+        },
+        {
+          "name": "idx_user_update_relevance_user_computed",
+          "table": "user_update_relevance",
+          "columns": "user_id, computed_at DESC"
+        },
+        {
+          "name": "idx_user_update_relevance_update",
+          "table": "user_update_relevance",
+          "columns": "update_id"
+        },
+        {
+          "name": "idx_user_update_relevance_roadmap",
+          "table": "user_update_relevance",
+          "columns": "focus_roadmap_id"
+        },
+        {
+          "name": "idx_update_delivery_update",
+          "table": "update_delivery_history",
+          "columns": "update_id"
+        },
+        {
+          "name": "idx_user_access_overrides_feature",
+          "table": "user_access_overrides",
+          "columns": "feature_key, enabled"
+        },
+        {
+          "name": "idx_admin_audit_logs_actor_time",
+          "table": "admin_audit_logs",
+          "columns": "actor_id, created_at DESC"
+        },
+        {
+          "name": "idx_admin_audit_logs_target_time",
+          "table": "admin_audit_logs",
+          "columns": "target_user_id, created_at DESC"
+        },
+        {
+          "name": "idx_admin_audit_logs_action_time",
+          "table": "admin_audit_logs",
+          "columns": "action, created_at DESC"
+        },
+        {
+          "name": "idx_roadmap_versions_ai_generation",
+          "table": "roadmap_versions",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_roadmap_merges_ai_generation",
+          "table": "roadmap_merges",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_topics_ai_generation",
+          "table": "topics",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_quizzes_ai_generation",
+          "table": "quizzes",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_practice_reviews_ai_generation",
+          "table": "practice_reviews",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_messages_ai_generation",
+          "table": "messages",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_conversation_summaries_ai_generation",
+          "table": "conversation_summaries",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_technology_updates_ai_generation",
+          "table": "technology_updates",
+          "columns": "ai_generation_id"
+        },
+        {
+          "name": "idx_user_ratings_target",
+          "table": "user_ratings",
+          "columns": "target_type, target_id"
+        },
+        {
+          "name": "idx_content_reports_target",
+          "table": "content_reports",
+          "columns": "target_type, target_id"
+        },
+        {
+          "name": "idx_user_skill_aliases_skill",
+          "table": "user_skill_aliases",
+          "columns": "skill_id"
+        },
+        {
+          "name": "idx_account_deletion_requests_user",
+          "table": "account_deletion_requests",
+          "columns": "user_id"
+        }
+      ],
+      "functions": [
+        {
+          "name": "update_updated_at_column",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "validate_user_ownership",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "validate_roadmap_transition",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "enforce_active_roadmap_limit",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "guard_roadmap_version_immutability",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "validate_ai_request_status",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "calculate_total_tokens",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "calculate_ai_cost",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "cleanup_expired_ai_context",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "cleanup_expired_retention",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "prevent_row_modification",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "prevent_achievement_modification",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "prevent_audit_log_changes",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "validate_skill_progress_change",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "validate_profile_timezone",
+          "definer": false,
+          "empty_search_path": true
+        },
+        {
+          "name": "close_merge_undo_window",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "touch_conversation",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "is_admin",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "effective_feature_access",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "admin_usage_summary",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "complete_deletion_on_user_delete",
+          "definer": true,
+          "empty_search_path": true
+        },
+        {
+          "name": "evaluate_content_report_threshold",
+          "definer": true,
+          "empty_search_path": true
+        }
+      ],
+      "triggers": 68
+    },
+    "extracted": {
+      "forward": [
+        "000_extensions.sql",
+        "001_enums.sql",
+        "002_identity.sql",
+        "003_profiles.sql",
+        "004_career_intelligence.sql",
+        "005_roadmap.sql",
+        "006_learning.sql",
+        "007_assessment.sql",
+        "008_progress.sql",
+        "009_ai_mentor.sql",
+        "010_ai_operations.sql",
+        "011_technology_intelligence.sql",
+        "012_administration.sql",
+        "013_constraints.sql",
+        "014_indexes.sql",
+        "015_functions.sql",
+        "016_triggers.sql",
+        "017_rls.sql",
+        "018_seed.sql",
+        "019_tests.sql",
+        "020_gaps_and_alignment.sql"
+      ],
+      "tests": [
+        "001_schema.test.sql",
+        "002_constraints.test.sql",
+        "003_rls_security.test.sql",
+        "004_trigger_behavior.test.sql",
+        "005_ai_usage.test.sql",
+        "006_roadmap_integrity.test.sql",
+        "007_retention.test.sql",
+        "008_gaps.test.sql"
+      ],
+      "down": [
+        "020_down.sql",
+        "019_down.sql",
+        "018_down.sql",
+        "017_down.sql",
+        "016_down.sql",
+        "015_down.sql",
+        "014_down.sql",
+        "013_down.sql",
+        "012_down.sql",
+        "011_down.sql",
+        "010_down.sql",
+        "009_down.sql",
+        "008_down.sql",
+        "007_down.sql",
+        "006_down.sql",
+        "005_down.sql",
+        "004_down.sql",
+        "003_down.sql",
+        "002_down.sql",
+        "001_down.sql",
+        "000_down.sql"
+      ],
+      "extra": [
+        "scripts/db/test-upgrade.sh",
+        "scripts/db/perf/seed_volume.sql",
+        "scripts/db/perf/explain_checks.sql"
+      ]
+    },
+    "scope": "finite static contract checks and TypeScript syntax only; database/application runtime NOT EXECUTED"
+  },
+  "sql_matches": [
+    {
+      "kind": "forward",
+      "name": "000_extensions.sql",
+      "sha256": "2711bb4cad3aa58351fa2eaa114d5be4bf59738e29cf7e27d2ef153f86b89c43",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "001_enums.sql",
+      "sha256": "fd4d6c0392115993c576d5c875da25bcbd91e8d7fe270c7385d23ebe8a6ea50e",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "002_identity.sql",
+      "sha256": "e175ed77338fbf42acc6fdb029ef29523b38cdf809580cdd6a2d41e56301fd2d",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "003_profiles.sql",
+      "sha256": "9c0b4a0783dedb8e4ba14959ba612c9497729b701250cd42fec228a6184916ee",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "004_career_intelligence.sql",
+      "sha256": "b6db63788be97e9c6d04b1801255bbc1dbf9cd3ee72a8be352cc5b633d3e0ba2",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "005_roadmap.sql",
+      "sha256": "c9dda89548f3dc5bad92aa27a76e8fb9a2648ee08b1960ec4934714177059426",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "006_learning.sql",
+      "sha256": "82a0f8c528a093cd0b5a81fd33e5a16a9ef8900ba76f60307486f39353bf6c7b",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "007_assessment.sql",
+      "sha256": "24db2678ba5bbc4c9d3abe50a3a6e4b7a91b94569797181be87d0e6ac7595ac3",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "008_progress.sql",
+      "sha256": "54606b9735a5345370d37ebd48ee3fc6dc04c03594b42260818d05c7179085a3",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "009_ai_mentor.sql",
+      "sha256": "077785e145c490dd0a72aa1cd7aece83f5d3caaed2c2bbe89dbc0648eafbe944",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "010_ai_operations.sql",
+      "sha256": "174ff2cf8ee0e99fc982b9f97dadcb0efa2aa9d0fa3302918a2ac2a6f6a0d246",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "011_technology_intelligence.sql",
+      "sha256": "20e9eac0263b626d492b0f910b82d290af682c4b2996123891bab82ee5a666ce",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "012_administration.sql",
+      "sha256": "1440bb5f0fa384b66ecdabdb1739d14296128c8c41a94e4812158aa211bdf2cf",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "013_constraints.sql",
+      "sha256": "d3e92f76c98503c318ca486c09ac2cae4fa9a59475b5eacfb4d898e298c5c267",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "014_indexes.sql",
+      "sha256": "3698921089b2b5af4d7db76a3b4d40b426ecaec1f8a3f71ae27012ddc403738f",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "015_functions.sql",
+      "sha256": "8ab5e47e4a93689ac541acc82025c72d4d80e1dbf58536d7d1095a4eea285254",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "016_triggers.sql",
+      "sha256": "61d1448340224ef53faa6b302e25acacef8085ad687315a817e90b075a1a3eec",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "017_rls.sql",
+      "sha256": "ffa89961bdb3fff5c6e7f6ac27a44026525bc6394854e273ed0336ad2c7883ee",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "018_seed.sql",
+      "sha256": "f54984e9c639bf652acf6c49a67644177c687bf6c0a9fe292ae07ce6a1b9bbc6",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "019_tests.sql",
+      "sha256": "0cda8e517c5b8ee8a94e158f513c0ea608d2786b1a39d2784c49727d018f5b80",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "forward",
+      "name": "020_gaps_and_alignment.sql",
+      "sha256": "3ca2fc60fbbca8063d5871b9bdc1a8ad21a23a720d4ff74fea6ccaa921e87d39",
+      "event_occurrences": 2,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "020_down.sql",
+      "sha256": "b400333b4dcfcda79483e38eff6a3cad9df5a66a0aea7553274fdf6648f651e3",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "019_down.sql",
+      "sha256": "4e6b9172b913316593637349257c045185b2855aae45e04ec0c1e84585b95849",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "018_down.sql",
+      "sha256": "072b2cc3e3ae0ff64b1a51e76cdcb56f3ac7fe8df2206c6ea1cf336d4a090e35",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "017_down.sql",
+      "sha256": "9960d446b72e4e3aa3852956b0ee8ff33d12b5284386f55e62dc070b375a61f2",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "016_down.sql",
+      "sha256": "dc11d390967aaf7876c43f6dfdc9ca72fcfdc40c24059cf74594001b76793116",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "015_down.sql",
+      "sha256": "25da64b2883f0b949ca9beda40771d4c448cccc2a43dd513fea7834dc5cfdbf7",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "014_down.sql",
+      "sha256": "50b0ab5614069038136226fd37d5e2010cebf02c09e2c3d139d7b52d24f11b4f",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "013_down.sql",
+      "sha256": "87883d9ce71d95cc760e93c719026f9a9458e28aa728fde2e220a6de78a187ba",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "012_down.sql",
+      "sha256": "e6671729040dd0b6c7fca8ef8eb0a1d0b3aaf68fa00231244efd42cc971c3bcd",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "011_down.sql",
+      "sha256": "ebbdbc74410a4d6e1a932e5bc6d748625ba214eeaaea602769d438a8b8df043d",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "010_down.sql",
+      "sha256": "c7ddbac8603c1ebc0cb9cb9d14e663faf6c42f78660e7d4cf5017b3abb4391af",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "009_down.sql",
+      "sha256": "e1e3c47b28a84a1dc968760f5bf412f4a663dcea479f5747d41ec42de9873f0b",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "008_down.sql",
+      "sha256": "445176ce50e48317a701294ef2c48f8be060d1ad9f7d08030e5faa988ac47c2d",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "007_down.sql",
+      "sha256": "a92524b864ead579096efbd329793be78642d3f7530760e8126febe61563a1d6",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "006_down.sql",
+      "sha256": "e5fdcafb369fe67328ec59ff49c7866aec2b06cc8fb956b2f2a371d684ccd1e7",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "005_down.sql",
+      "sha256": "83bcc0f56bb88db2ef37ba7976f87f2bc54293da7d51dd62ebec825e835455a6",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "004_down.sql",
+      "sha256": "3770a51f2cc55f8bba201f79f55d1cb166ca38ce3a1d4a131a9719a2e8361307",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "003_down.sql",
+      "sha256": "343fe1f9620175d429a7dc60d2067d2622e654347797df226d6cb2bb383b3625",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "002_down.sql",
+      "sha256": "dbd76ce65fdb2b5357362122b106e663f2ffbb92feb629d2eac5a954065bd9a5",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "001_down.sql",
+      "sha256": "f90a538ccec0bcf9dffb46a969a88a8bf1e5970e4f41d729168bf58059821ab5",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "reverse",
+      "name": "000_down.sql",
+      "sha256": "9d94b4e2d98532afecd5a4949b59d0d96ee17aede4735dd9f007d8aa01e6c6cb",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "001_schema.test.sql",
+      "sha256": "cd5a42abd00ab275e119ff54da84ae8a6c31ede7fc0c875b305a822b8171608a",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "002_constraints.test.sql",
+      "sha256": "d1fef78e79b2e0d18b1bc12954822945df80593f1b6c68329904436a120d2525",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "003_rls_security.test.sql",
+      "sha256": "a212581198d0602e5cdfb0e56d0b9fb693b19368812f8c2f953bea7d81473c8e",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "004_trigger_behavior.test.sql",
+      "sha256": "bc3f50ec18a1fa37e6202c0d7fc4a37ea9abafd368aea7d9d9fe340741f9a00b",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "005_ai_usage.test.sql",
+      "sha256": "a3b8ae5607a7ea2773f2ff4864db03743740bc1cce135af4ea93b2b2fa14fde1",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "006_roadmap_integrity.test.sql",
+      "sha256": "d5ebb90d567b75396ca19ead53b7f187c3ecc23625c49ccf2fbf6075c1b86851",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "007_retention.test.sql",
+      "sha256": "bcc15552463becfdd1e733a49c7d3fe0b9b3224ebd425cb4c9e2340e181e7223",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    },
+    {
+      "kind": "test",
+      "name": "008_gaps.test.sql",
+      "sha256": "9a85d35d48e955d8a4f0076dc3d43ab29271042a1c6c3316d8ae4e1d8c927774",
+      "event_occurrences": 1,
+      "outcome": "pass"
+    }
+  ],
+  "runtime": {
+    "timestamp": "2026-10-20T14:45:32.355Z",
+    "events": 74,
+    "reported_pass": true,
+    "event_sequence_matched": true,
+    "distinct_saved_logs": 53,
+    "log_checks": [
+      {
+        "label": "preflight",
+        "outcome": "pass",
+        "log": "preflight.log",
+        "sha256": "2bc2f391d874278ca53f4a0649a52980ae9eca3d0cb8b7ebe74cc90ac4ea3076"
+      },
+      {
+        "label": "forward-000_extensions",
+        "outcome": "pass",
+        "log": "forward-000_extensions.log",
+        "sha256": "416492072aa347fca00c7178c5107736e6ec5ef513aa07f0673b73272b967699"
+      },
+      {
+        "label": "forward-001_enums",
+        "outcome": "pass",
+        "log": "forward-001_enums.log",
+        "sha256": "541df2c373d578e18b8dfa5c0cb21836f2b143d59d396b959f44f97cdc62874e"
+      },
+      {
+        "label": "forward-002_identity",
+        "outcome": "pass",
+        "log": "forward-002_identity.log",
+        "sha256": "7825638a46edcb883521f365c4458a5d4fc5a9eacbc9479bdc245804c4aa7588"
+      },
+      {
+        "label": "forward-003_profiles",
+        "outcome": "pass",
+        "log": "forward-003_profiles.log",
+        "sha256": "5c18142fe6a6ffa90bce13827603596bfc63b95e0e8eac3ecf276f85a0afb610"
+      },
+      {
+        "label": "forward-004_career_intelligence",
+        "outcome": "pass",
+        "log": "forward-004_career_intelligence.log",
+        "sha256": "6055ad739eceb9b1018328a34f677866a508cb3bd557d0ebfc3f3d593f34465f"
+      },
+      {
+        "label": "forward-005_roadmap",
+        "outcome": "pass",
+        "log": "forward-005_roadmap.log",
+        "sha256": "cd83a1f953658859a813585fa9c26cb659d47676907f4ac2a8655e0949ca38f4"
+      },
+      {
+        "label": "forward-006_learning",
+        "outcome": "pass",
+        "log": "forward-006_learning.log",
+        "sha256": "57303dfdd236470a86ec9d6dc77695f9ed66f163d38f495b93578241734ed13c"
+      },
+      {
+        "label": "forward-007_assessment",
+        "outcome": "pass",
+        "log": "forward-007_assessment.log",
+        "sha256": "e05ea0a14a2552727362ec240146f6c60204e41cbdfff46dc5b3f754e83674f4"
+      },
+      {
+        "label": "forward-008_progress",
+        "outcome": "pass",
+        "log": "forward-008_progress.log",
+        "sha256": "bd351cf9ce9136e33d658599339804f11b9514bce9090ab924b839ecf751caf3"
+      },
+      {
+        "label": "forward-009_ai_mentor",
+        "outcome": "pass",
+        "log": "forward-009_ai_mentor.log",
+        "sha256": "82efa062f85c86c9d8dd38c6290af9260a03b3758515a8e3294c066179e20743"
+      },
+      {
+        "label": "forward-010_ai_operations",
+        "outcome": "pass",
+        "log": "forward-010_ai_operations.log",
+        "sha256": "3198a5ebfefae95c4d0af42fc8a921cd261d9d527d4c7377c4ebbc3969a10c72"
+      },
+      {
+        "label": "forward-011_technology_intelligence",
+        "outcome": "pass",
+        "log": "forward-011_technology_intelligence.log",
+        "sha256": "334a92dfe79983460826f749e8b8c59dd92fbd51e074b4c21edac066d7a0abb9"
+      },
+      {
+        "label": "forward-012_administration",
+        "outcome": "pass",
+        "log": "forward-012_administration.log",
+        "sha256": "9ec6ade2ebb1c0458ecb4c62dd32297dbd14027022a7b5f5f72bd2addb70e163"
+      },
+      {
+        "label": "forward-013_constraints",
+        "outcome": "pass",
+        "log": "forward-013_constraints.log",
+        "sha256": "aabbd418ff7fcb6c60a4eb711e1da1026dcfa1ba90fceb8e1635013ffe137b63"
+      },
+      {
+        "label": "forward-014_indexes",
+        "outcome": "pass",
+        "log": "forward-014_indexes.log",
+        "sha256": "e55ed781cd6e5b5783023fa2a6384340f52205f8e1c43284435c9802c4442898"
+      },
+      {
+        "label": "forward-015_functions",
+        "outcome": "pass",
+        "log": "forward-015_functions.log",
+        "sha256": "c66a55eaa200bda9450ae27c72229c3ad666ee2b7bffbf68da2f97c0519b4683"
+      },
+      {
+        "label": "forward-016_triggers",
+        "outcome": "pass",
+        "log": "forward-016_triggers.log",
+        "sha256": "4150570f46cea83526f562a38d9a5ab7816c04e842148dfc05e87a4324b97053"
+      },
+      {
+        "label": "forward-017_rls",
+        "outcome": "pass",
+        "log": "forward-017_rls.log",
+        "sha256": "94e38dc3413efb568e374a0cb09bf29ed40dde958e35ad8a1cc8f2e6edd6be16"
+      },
+      {
+        "label": "forward-018_seed",
+        "outcome": "pass",
+        "log": "forward-018_seed.log",
+        "sha256": "90f7ed7572f569ff69d797beb456b3c2f1592e5406184e6937094d841d4f5900"
+      },
+      {
+        "label": "forward-019_tests",
+        "outcome": "pass",
+        "log": "forward-019_tests.log",
+        "sha256": "7fcbe437eed57be0b636df7254aff4a8e98cf8e02e5e57b53361f069d43bf5de"
+      },
+      {
+        "label": "forward-020_gaps_and_alignment",
+        "outcome": "pass",
+        "log": "forward-020_gaps_and_alignment.log",
+        "sha256": "004239dd85a80e498baaa5030ba4ced02bac6633b1a3fa664e5778afd1f9c550"
+      },
+      {
+        "label": "pgtap-extension",
+        "outcome": "pass",
+        "log": "pgtap-extension.log",
+        "sha256": "1cc3045909d779b16843898c3a4a0ce75883f1f846803d1fbc76bbc1689d9e14"
+      },
+      {
+        "label": "001_schema.test",
+        "outcome": "pass",
+        "log": "001_schema.test.log",
+        "sha256": "bd47197aeda2a02e4a74c34a0740ff7aa5a70f565f15825fcee82aa2fe46e5da"
+      },
+      {
+        "label": "002_constraints.test",
+        "outcome": "pass",
+        "log": "002_constraints.test.log",
+        "sha256": "013bc225309fc41142a02ea6537adadba85b8e1fb515de8f058d190c4caab3ba"
+      },
+      {
+        "label": "003_rls_security.test",
+        "outcome": "pass",
+        "log": "003_rls_security.test.log",
+        "sha256": "4da55ceed53ab514379a77e6ae7fcd6b385ae4c08bcb5f15404a2e65af530552"
+      },
+      {
+        "label": "004_trigger_behavior.test",
+        "outcome": "pass",
+        "log": "004_trigger_behavior.test.log",
+        "sha256": "0d77f724f8034e0f8ce5ab8f0b059eeb1ba9cdb7647fd0a1ceda448f041bf6a2"
+      },
+      {
+        "label": "005_ai_usage.test",
+        "outcome": "pass",
+        "log": "005_ai_usage.test.log",
+        "sha256": "24d26a5612818c1a59767a41e3cc99595784c14417a0b4a9be976d159efd7feb"
+      },
+      {
+        "label": "006_roadmap_integrity.test",
+        "outcome": "pass",
+        "log": "006_roadmap_integrity.test.log",
+        "sha256": "7e528c5e73dd6d82be5427cda42d2f96797730a4a6ae5c6f86dc60d503bd1a13"
+      },
+      {
+        "label": "007_retention.test",
+        "outcome": "pass",
+        "log": "007_retention.test.log",
+        "sha256": "b9c19a655b5cbcac12c029989ae8bc4248d8f6c6b962604d3609a0e4227394b1"
+      },
+      {
+        "label": "008_gaps.test",
+        "outcome": "pass",
+        "log": "008_gaps.test.log",
+        "sha256": "01329d6ebf2b09c94463d9f899f4532f0ac8f467362ea0f22fd918b5da72d062"
+      },
+      {
+        "label": "reverse-020_down",
+        "outcome": "pass",
+        "log": "reverse-020_down.log",
+        "sha256": "d2f48b9b8789d54938a0a1da0a3e9e4eea3382e7ac85a4d355db5047aa57c9c4"
+      },
+      {
+        "label": "reverse-019_down",
+        "outcome": "pass",
+        "log": "reverse-019_down.log",
+        "sha256": "16d9f9a42b9a6c227878af23c4aaf50c88df963c744e6d524ddb8f7e0b2639db"
+      },
+      {
+        "label": "reverse-018_down",
+        "outcome": "pass",
+        "log": "reverse-018_down.log",
+        "sha256": "691e6d00cfb995ded563ca222a0a09c89da17c87a72f341a0b6251e178024c46"
+      },
+      {
+        "label": "reverse-017_down",
+        "outcome": "pass",
+        "log": "reverse-017_down.log",
+        "sha256": "4addeac330c2a45524b0f9e2dbd628ad6e8dade32a062b26d849e6c58af519d4"
+      },
+      {
+        "label": "reverse-016_down",
+        "outcome": "pass",
+        "log": "reverse-016_down.log",
+        "sha256": "b80ae2a4bb5fa74cbd7601ce3818f9d46b5d22268fdbc8bf2be640be97f10f4b"
+      },
+      {
+        "label": "reverse-015_down",
+        "outcome": "pass",
+        "log": "reverse-015_down.log",
+        "sha256": "bbb3434f2040a292856aa3244dd522d9b8c4460de9eeb1808e4ee23113b542e3"
+      },
+      {
+        "label": "reverse-014_down",
+        "outcome": "pass",
+        "log": "reverse-014_down.log",
+        "sha256": "7fcbe437eed57be0b636df7254aff4a8e98cf8e02e5e57b53361f069d43bf5de"
+      },
+      {
+        "label": "reverse-013_down",
+        "outcome": "pass",
+        "log": "reverse-013_down.log",
+        "sha256": "a378065802f9ba88a9543fbb049eb9fdb7cf9acc6970996b999d3bc36b625eea"
+      },
+      {
+        "label": "reverse-012_down",
+        "outcome": "pass",
+        "log": "reverse-012_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-011_down",
+        "outcome": "pass",
+        "log": "reverse-011_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-010_down",
+        "outcome": "pass",
+        "log": "reverse-010_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-009_down",
+        "outcome": "pass",
+        "log": "reverse-009_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-008_down",
+        "outcome": "pass",
+        "log": "reverse-008_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-007_down",
+        "outcome": "pass",
+        "log": "reverse-007_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-006_down",
+        "outcome": "pass",
+        "log": "reverse-006_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-005_down",
+        "outcome": "pass",
+        "log": "reverse-005_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-004_down",
+        "outcome": "pass",
+        "log": "reverse-004_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-003_down",
+        "outcome": "pass",
+        "log": "reverse-003_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-002_down",
+        "outcome": "pass",
+        "log": "reverse-002_down.log",
+        "sha256": "6d41cb718a6d7f038d44878d2d38b034fc6757b6bc9e00f06098de12b9e97bb8"
+      },
+      {
+        "label": "reverse-001_down",
+        "outcome": "pass",
+        "log": "reverse-001_down.log",
+        "sha256": "c95acb286476759d8f2b0da5c7f6f0cd04f72e1749612698c992b9d6f8ea9d1c"
+      },
+      {
+        "label": "reverse-000_down",
+        "outcome": "pass",
+        "log": "reverse-000_down.log",
+        "sha256": "e5d92337e2bdf4dc6da5b3313e34fdf9d184fc0d092d982da78a3aeb216d1e4d"
+      },
+      {
+        "label": "reverse-postcondition",
+        "outcome": "pass",
+        "log": "reverse-postcondition.log",
+        "sha256": "c9f7e52bce630e4e248f1e211a7f770b1601565dedd4ab3e3e303997a643b1d0"
+      },
+      {
+        "label": "forward-000_extensions",
+        "outcome": "pass",
+        "log": "forward-000_extensions.log",
+        "sha256": "416492072aa347fca00c7178c5107736e6ec5ef513aa07f0673b73272b967699"
+      },
+      {
+        "label": "forward-001_enums",
+        "outcome": "pass",
+        "log": "forward-001_enums.log",
+        "sha256": "541df2c373d578e18b8dfa5c0cb21836f2b143d59d396b959f44f97cdc62874e"
+      },
+      {
+        "label": "forward-002_identity",
+        "outcome": "pass",
+        "log": "forward-002_identity.log",
+        "sha256": "7825638a46edcb883521f365c4458a5d4fc5a9eacbc9479bdc245804c4aa7588"
+      },
+      {
+        "label": "forward-003_profiles",
+        "outcome": "pass",
+        "log": "forward-003_profiles.log",
+        "sha256": "5c18142fe6a6ffa90bce13827603596bfc63b95e0e8eac3ecf276f85a0afb610"
+      },
+      {
+        "label": "forward-004_career_intelligence",
+        "outcome": "pass",
+        "log": "forward-004_career_intelligence.log",
+        "sha256": "6055ad739eceb9b1018328a34f677866a508cb3bd557d0ebfc3f3d593f34465f"
+      },
+      {
+        "label": "forward-005_roadmap",
+        "outcome": "pass",
+        "log": "forward-005_roadmap.log",
+        "sha256": "cd83a1f953658859a813585fa9c26cb659d47676907f4ac2a8655e0949ca38f4"
+      },
+      {
+        "label": "forward-006_learning",
+        "outcome": "pass",
+        "log": "forward-006_learning.log",
+        "sha256": "57303dfdd236470a86ec9d6dc77695f9ed66f163d38f495b93578241734ed13c"
+      },
+      {
+        "label": "forward-007_assessment",
+        "outcome": "pass",
+        "log": "forward-007_assessment.log",
+        "sha256": "e05ea0a14a2552727362ec240146f6c60204e41cbdfff46dc5b3f754e83674f4"
+      },
+      {
+        "label": "forward-008_progress",
+        "outcome": "pass",
+        "log": "forward-008_progress.log",
+        "sha256": "bd351cf9ce9136e33d658599339804f11b9514bce9090ab924b839ecf751caf3"
+      },
+      {
+        "label": "forward-009_ai_mentor",
+        "outcome": "pass",
+        "log": "forward-009_ai_mentor.log",
+        "sha256": "82efa062f85c86c9d8dd38c6290af9260a03b3758515a8e3294c066179e20743"
+      },
+      {
+        "label": "forward-010_ai_operations",
+        "outcome": "pass",
+        "log": "forward-010_ai_operations.log",
+        "sha256": "3198a5ebfefae95c4d0af42fc8a921cd261d9d527d4c7377c4ebbc3969a10c72"
+      },
+      {
+        "label": "forward-011_technology_intelligence",
+        "outcome": "pass",
+        "log": "forward-011_technology_intelligence.log",
+        "sha256": "334a92dfe79983460826f749e8b8c59dd92fbd51e074b4c21edac066d7a0abb9"
+      },
+      {
+        "label": "forward-012_administration",
+        "outcome": "pass",
+        "log": "forward-012_administration.log",
+        "sha256": "9ec6ade2ebb1c0458ecb4c62dd32297dbd14027022a7b5f5f72bd2addb70e163"
+      },
+      {
+        "label": "forward-013_constraints",
+        "outcome": "pass",
+        "log": "forward-013_constraints.log",
+        "sha256": "aabbd418ff7fcb6c60a4eb711e1da1026dcfa1ba90fceb8e1635013ffe137b63"
+      },
+      {
+        "label": "forward-014_indexes",
+        "outcome": "pass",
+        "log": "forward-014_indexes.log",
+        "sha256": "e55ed781cd6e5b5783023fa2a6384340f52205f8e1c43284435c9802c4442898"
+      },
+      {
+        "label": "forward-015_functions",
+        "outcome": "pass",
+        "log": "forward-015_functions.log",
+        "sha256": "c66a55eaa200bda9450ae27c72229c3ad666ee2b7bffbf68da2f97c0519b4683"
+      },
+      {
+        "label": "forward-016_triggers",
+        "outcome": "pass",
+        "log": "forward-016_triggers.log",
+        "sha256": "4150570f46cea83526f562a38d9a5ab7816c04e842148dfc05e87a4324b97053"
+      },
+      {
+        "label": "forward-017_rls",
+        "outcome": "pass",
+        "log": "forward-017_rls.log",
+        "sha256": "94e38dc3413efb568e374a0cb09bf29ed40dde958e35ad8a1cc8f2e6edd6be16"
+      },
+      {
+        "label": "forward-018_seed",
+        "outcome": "pass",
+        "log": "forward-018_seed.log",
+        "sha256": "90f7ed7572f569ff69d797beb456b3c2f1592e5406184e6937094d841d4f5900"
+      },
+      {
+        "label": "forward-019_tests",
+        "outcome": "pass",
+        "log": "forward-019_tests.log",
+        "sha256": "7fcbe437eed57be0b636df7254aff4a8e98cf8e02e5e57b53361f069d43bf5de"
+      },
+      {
+        "label": "forward-020_gaps_and_alignment",
+        "outcome": "pass",
+        "log": "forward-020_gaps_and_alignment.log",
+        "sha256": "004239dd85a80e498baaa5030ba4ced02bac6633b1a3fa664e5778afd1f9c550"
+      }
+    ],
+    "tap": [
+      {
+        "suite": "001_schema.test",
+        "plan": 110,
+        "emitted": 110,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "002_constraints.test",
+        "plan": 12,
+        "emitted": 12,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "003_rls_security.test",
+        "plan": 16,
+        "emitted": 16,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "004_trigger_behavior.test",
+        "plan": 11,
+        "emitted": 11,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "005_ai_usage.test",
+        "plan": 10,
+        "emitted": 10,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "006_roadmap_integrity.test",
+        "plan": 6,
+        "emitted": 6,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "007_retention.test",
+        "plan": 9,
+        "emitted": 9,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      },
+      {
+        "suite": "008_gaps.test",
+        "plan": 11,
+        "emitted": 11,
+        "outcome": "pass",
+        "skipped_or_todo": false
+      }
+    ],
+    "assertions": 185,
+    "forward_passes": 2,
+    "reverse_passes": 1
+  },
+  "inventory": {
+    "tables": 50,
+    "enums": 45,
+    "secondary_indexes": 103,
+    "private_functions": 22,
+    "security_definer": 10,
+    "security_invoker": 12,
+    "triggers": 68
+  },
+  "state_snapshot": {
+    "phase": "documentation_patched_static_checks_scoped_runtime_unexecuted",
+    "counts": {
+      "patched": 38,
+      "closed": 1,
+      "pending": 1,
+      "blocked_environment": 1
+    },
+    "issues": [
+      {
+        "id": "V00",
+        "status": "closed",
+        "runtime_status": "not_run",
+        "changed_documents": [],
+        "checkpoint": null
+      },
+      {
+        "id": "R01",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C04",
+          "C06",
+          "C07"
+        ],
+        "checkpoint": "c4ad20bf-e9a2-4910-91b4-65636dd71da7"
+      },
+      {
+        "id": "R02",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C02",
+          "C03",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "4727eb18-788c-45fc-8cac-197fb251ec64"
+      },
+      {
+        "id": "R03",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C08"
+        ],
+        "checkpoint": "4727eb18-788c-45fc-8cac-197fb251ec64"
+      },
+      {
+        "id": "R04",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "4727eb18-788c-45fc-8cac-197fb251ec64"
+      },
+      {
+        "id": "R10",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C02",
+          "C03",
+          "C04",
+          "C05",
+          "C07",
+          "C09"
+        ],
+        "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c"
+      },
+      {
+        "id": "R11",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C08",
+          "C02",
+          "C05",
+          "C07",
+          "C09"
+        ],
+        "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c"
+      },
+      {
+        "id": "N02",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C03",
+          "C07",
+          "C08"
+        ],
+        "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c"
+      },
+      {
+        "id": "R26",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C02",
+          "C03",
+          "C04",
+          "C05",
+          "C07",
+          "C08"
+        ],
+        "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c"
+      },
+      {
+        "id": "R27",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C02",
+          "C04",
+          "C05",
+          "C07",
+          "C08"
+        ],
+        "checkpoint": "692fd8b4-0af2-43f9-a586-963b2562718c"
+      },
+      {
+        "id": "R12",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C02",
+          "C03",
+          "C04",
+          "C05",
+          "C07",
+          "C08"
+        ],
+        "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e"
+      },
+      {
+        "id": "R13",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C08",
+          "C02",
+          "C03",
+          "C04",
+          "C05",
+          "C06",
+          "C07"
+        ],
+        "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e"
+      },
+      {
+        "id": "R08",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C03",
+          "C04",
+          "C05",
+          "C08",
+          "C02",
+          "C07",
+          "C09"
+        ],
+        "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e"
+      },
+      {
+        "id": "R09",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C03",
+          "C05",
+          "C08",
+          "C02",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "060ef617-1c92-426e-9326-5b63dbcc940e"
+      },
+      {
+        "id": "R05",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C05",
+          "C02",
+          "C03",
+          "C04",
+          "C07",
+          "C09"
+        ],
+        "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0"
+      },
+      {
+        "id": "R14",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C04",
+          "C05",
+          "C06",
+          "C07",
+          "C08"
+        ],
+        "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0"
+      },
+      {
+        "id": "R06",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C05",
+          "C09",
+          "C03",
+          "C06",
+          "C07"
+        ],
+        "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0"
+      },
+      {
+        "id": "R35",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C05",
+          "C02",
+          "C03",
+          "C07",
+          "C08",
+          "C09"
+        ],
+        "checkpoint": "424421da-8501-45f5-83a9-5609322f6cb0"
+      },
+      {
+        "id": "R07",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C05",
+          "C02",
+          "C03",
+          "C09",
+          "C06",
+          "C07"
+        ],
+        "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727"
+      },
+      {
+        "id": "R24",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C05",
+          "C02",
+          "C08",
+          "C09"
+        ],
+        "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727"
+      },
+      {
+        "id": "R25",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C03",
+          "C05",
+          "C06",
+          "C07",
+          "C08",
+          "C09"
+        ],
+        "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727"
+      },
+      {
+        "id": "R31",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C04",
+          "C05",
+          "C07",
+          "C08"
+        ],
+        "checkpoint": "748123c8-fe09-4943-91cb-57cd3cff3727"
+      },
+      {
+        "id": "R18",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C09",
+          "C05"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R17",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C09",
+          "C05",
+          "C08"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R15",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C05",
+          "C08",
+          "C09"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R29",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C05",
+          "C08",
+          "C09"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R30",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C05",
+          "C07",
+          "C09"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R34",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C09",
+          "C05"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "N01",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C09",
+          "C05"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R16",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C09",
+          "C05"
+        ],
+        "checkpoint": "94af8e90-9d41-4702-9243-d95107ab29d6"
+      },
+      {
+        "id": "R23",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "R22",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "R19",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C03",
+          "C04"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "R20",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C03",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "R28",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C04",
+          "C05",
+          "C08",
+          "C09",
+          "C02",
+          "C07"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "E01",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C04",
+          "C07"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "R21",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C04",
+          "C06",
+          "C07",
+          "C02",
+          "C03",
+          "C05",
+          "C08",
+          "C09"
+        ],
+        "checkpoint": "bb8c853a-0116-4d59-a4af-0d512be4e581"
+      },
+      {
+        "id": "R32",
+        "status": "blocked_environment",
+        "runtime_status": "not_run",
+        "changed_documents": [],
+        "checkpoint": null
+      },
+      {
+        "id": "R33",
+        "status": "pending",
+        "runtime_status": "not_run",
+        "changed_documents": [],
+        "checkpoint": null
+      },
+      {
+        "id": "X02",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C06",
+          "C04"
+        ],
+        "checkpoint": "2786b3d6-373b-4304-8ad7-5d1b9d8f702a"
+      },
+      {
+        "id": "X03",
+        "status": "patched",
+        "runtime_status": "not_run",
+        "changed_documents": [
+          "C02",
+          "C03",
+          "C04",
+          "C06",
+          "C07"
+        ],
+        "checkpoint": "2786b3d6-373b-4304-8ad7-5d1b9d8f702a"
+      }
+    ]
+  },
+  "limitations": [
+    "No database/server was executed in the reviewer environment; owner-supplied runtime artifacts were inspected.",
+    "The first and second forward runs share filenames; initial forward SQL/log artifacts were overwritten by reapply, although both 21-event sequences are recorded.",
+    "The runner executes pgTAP before rollback and does not re-run pgTAP on its reapplied state.",
+    "The separate Supabase CLI reset/test PASS with 185 assertions was supplied in chat; raw CLI logs, CLI migration-history export, actual CLI-directory hashes, and CI commit/run artifacts are not in this ZIP.",
+    "Original application journals/review receipts and source tools are not included in this review ZIP; they were not re-audited on the user PC.",
+    "No owner acceptance, application implementation, full SQL semantic correctness, performance, or release readiness is implied."
+  ]
+}

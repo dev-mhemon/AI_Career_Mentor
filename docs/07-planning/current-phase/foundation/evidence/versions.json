@@ -1,0 +1,15 @@
+{
+  "node": "v24.19.0",
+  "npm": "11.9.0",
+  "docker_server": "28.4.0",
+  "postgres": "17.11",
+  "supabase_cli": "2.121.0",
+  "backend_engines": {
+    "node": ">=24.0.0"
+  },
+  "backend_lockfile_version": 3,
+  "frontend_engines": {
+    "node": ">=24.0.0"
+  },
+  "frontend_lockfile_version": 3
+}

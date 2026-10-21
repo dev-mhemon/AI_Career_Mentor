@@ -1,0 +1,22 @@
+
+> backend@0.0.1 test
+> vitest run
+
+
+ RUN  v5.0.3 /workspace/AI_Career_Mentor/backend
+
+
+ Test Files  9 passed (9)
+      Tests  44 passed (44)
+   Start at  17:41:43
+   Duration  2.45s (import 72%, transform 19%, tests 6%, worker 2%)
+
+    Isolate  9 workers spawned · ~236ms startup each (spawn + environment, per file)
+             at least ~471ms faster with isolate: false — reuses workers across files instead of one per file
+
+The plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option. You can remove the plugin and set resolve.tsconfigPaths: true in your Vite config instead.
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

@@ -1,0 +1,9 @@
+{
+  "command": [
+    "node",
+    "scripts/foundation/frontend-check.mjs"
+  ],
+  "started": "2026-10-21T10:02:18.251Z",
+  "finished": "2026-10-21T10:02:20.873Z",
+  "exit_code": 0
+}

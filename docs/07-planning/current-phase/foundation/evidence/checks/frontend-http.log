@@ -1,0 +1,1 @@
+PASS: Next production startup; login/register/verify HTTP 200; dashboard redirects unauthenticated to login

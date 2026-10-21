@@ -1,0 +1,10 @@
+{
+  "executed_at": "2026-10-21T10:03:59.018592+00:00",
+  "snapshot": "/tmp/mentor-foundation-clean",
+  "credential_files_copied": false,
+  "dependencies_copied": false,
+  "installation": "passed: npm ci for backend/frontend using unchanged lockfiles",
+  "backend_build": "passed after refreshing current source",
+  "frontend_build": "passed using environment-owned public runtime configuration",
+  "scope": "Fresh materialized worktree snapshot; implementation is not committed/pushed. This is not a remote GitHub checkout/CI run."
+}

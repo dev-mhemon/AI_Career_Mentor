@@ -1,0 +1,11 @@
+{
+  "command": [
+    "npm",
+    "--prefix",
+    "backend",
+    "test"
+  ],
+  "started": "2026-10-21T12:25:21.410Z",
+  "finished": "2026-10-21T12:25:30.055Z",
+  "exit_code": 0
+}

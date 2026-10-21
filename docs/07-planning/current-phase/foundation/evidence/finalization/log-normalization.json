@@ -1,0 +1,7 @@
+{
+  "path": "evidence/checks/frontend-build.log",
+  "raw_local_artifact": "artifacts/checks/frontend-build.log",
+  "raw_sha256": "f5eb970374de723a141d1662742e4c51827929d168a2a570198a955fe929edea",
+  "committed_copy_sha256": "9f73550ec20e3c1fde94c1f29849662f00c52fd4f7ea6741f22376e1b26ea758",
+  "transformation": "Remove carriage-return progress updates and trailing whitespace only; test output/results unchanged; original local artifact retained"
+}

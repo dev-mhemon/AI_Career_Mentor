@@ -1,0 +1,12 @@
+{
+  "command": [
+    "npm",
+    "--prefix",
+    "frontend",
+    "run",
+    "build"
+  ],
+  "started": "2026-10-21T17:48:04.259Z",
+  "finished": "2026-10-21T17:48:12.865Z",
+  "exit_code": 0
+}

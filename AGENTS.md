@@ -1,139 +1,15 @@
-# AGENTS.md — AI Career Intelligence Mentor MVP
+# Shared project guidance — Codex and Antigravity
 
-This file is the always-on rulebook for every AI agent working in this repository.
-Read it fully at the start of every session. If anything here conflicts with a
-chat instruction, stop and ask before proceeding.
+Start at [START-HERE](docs/00-governance/START-HERE.md), then read the source register and task context. Explicit owner instructions define the authorized task; record conflicts with older guidance. Current scope: Phase 1 restart foundation and repository alignment; broader MVP implementation remains planned.
 
-## 1. Project
+- Use existing isolated checkouts. Do not create a worktree unless requested or needed to preserve unrelated work. Concurrent agents use separate branches/worktrees and provide the handoff below.
+- Read relevant adopted sections before changes. C01 owns product scope, C02 architecture, C03 domain meaning, C05 HTTP/DTOs, C06 exact SQL, C04 procedures, C08 AI, C09 UX. See the register for conflicts and history.
+- Preserve every byte in `planning/reviewed-baseline/`, adopted `supabase/migrations/`, `supabase/rollbacks/` and original eight `supabase/tests/database/` suites. Never weaken their verifier. Applied SQL changes require a separately reviewed forward migration.
+- Supabase supplies Auth AND primary PostgreSQL storage (D001). No legacy TypeORM migration replay. Retain the transactional TypeORM connection manager; `synchronize=false`, `migrationsRun=false`.
+- Node >=24, npm locked installs, existing Vitest. Run `bash scripts/foundation/install.sh`; use [runbook](docs/09-operations/runbook.md) for services/E2E. Run both app lint/tests/builds, baseline and alignment verifiers, affected HTTP/regressions and workflow checks. Report failures/skips/unrun checks separately.
+- Preserve OAuth `next_step`, RoleOptionDTO nullable rationale, beginner None, stronger evidence, tenant isolation, suspension exceptions and existing-data reads under generation-off.
+- Never log/commit credentials, private signing keys, JWTs, raw private practice/chat content or process environments. Only configured approved providers may receive real user data. `.gitignore`/permissions protect local configuration; an AI ignore file is not a security boundary.
+- Use `chore/repository-alignment` → PR into `phase1-restart`; eventual reviewed `phase1-restart` → `main`. Focused Conventional Commits. No force push, merge, deployment, shared DB reset or volume deletion. Use destructive harness only with positively identified disposable project safeguards.
+- Keep strict TypeScript, meaningful tests and clear names. Avoid speculative modules, future routes or placeholders. Preserve framework-specific scoped frontend instructions. Codex skills/settings are not automatically available in Antigravity.
 
-**AI Career Intelligence Mentor MVP** — a web application built as a monorepo:
-
-| Area       | Path         | Stack                                  |
-| ---------- | ------------ | -------------------------------------- |
-| Frontend   | `frontend/`  | Next.js, TypeScript, ESLint, Prettier  |
-| Backend    | `backend/`   | NestJS, TypeScript, ESLint, Prettier   |
-| Database   | `database/`  | PostgreSQL (Docker for development)    |
-| Docs       | `docs/`      | Markdown, source of truth for the build |
-
-## 2. Source of truth and priority
-
-The specification documents live in `docs/`. When they disagree, the higher item wins.
-
-1. **PRD v1.1** — `docs/product/PRD-v1.1.md` (what to build and why)
-2. **SAD v1.1** — `docs/architecture/SAD-v1.1.md` (how it is structured)
-3. **UI/UX Specification v1.1** — `docs/product/UIUX-Specification-v1.1.md` (how it looks and behaves)
-4. **Development Implementation Plan v1.1** — `docs/planning/Development-Implementation-Plan-v1.1.md` (phase order and tasks)
-
-Rules for using them:
-
-- Read the relevant document(s) before starting any task. Do not work from memory or assumption.
-- If two documents conflict, follow the higher-priority one and **report the conflict** in your summary. Never resolve it silently.
-- If a document is silent or ambiguous on something you need, **ask**. Do not invent requirements.
-- Cite the document and section you relied on when you make a non-obvious decision.
-
-## 3. Current phase
-
-**Active phase: Phase 0 — Project Foundation** *(update this line at the start of each phase)*
-
-- Work only on tasks belonging to the active phase in the Implementation Plan.
-- Do not begin, stub, or "prepare" work for later phases.
-- A phase is complete only when its exit criteria in the Implementation Plan are met and verified (see section 7).
-
-## 4. Scope discipline (no scope expansion)
-
-- Implement exactly what the current task asks. Nothing more.
-- Do not add features, screens, endpoints, libraries, or abstractions that were not requested.
-- Do not refactor unrelated code while doing a task.
-- If you notice something worth improving, note it in your summary under "Suggestions" instead of doing it.
-- Placeholders are allowed only where the task explicitly asks for them, and must be clearly marked `TODO(phase-N)`.
-
-## 5. Architectural changes require approval
-
-**Ask before** any of the following, and wait for an explicit yes:
-
-- Adding, removing, or replacing a framework, major dependency, or database
-- Changing folder structure, module boundaries, or API style
-- Changing data models or infrastructure in a way the SAD does not describe
-- Changing the Git workflow or CI tooling
-
-When asking, state: what you propose, why, the alternatives, and which document it deviates from.
-Once approved, record it as `docs/decisions/NNNN-short-title.md` (a short ADR).
-
-## 6. Working method
-
-1. **Plan first.** For any task larger than a trivial edit, produce an implementation plan
-   (task list + files to be touched + verification steps) and **stop for approval** before changing files.
-2. **Small, verifiable steps.** Prefer many small commits over one large one.
-3. **Verify before claiming done.** Run the checks in section 7 and report real output, not assumptions.
-4. **Report clearly.** End every task with: what changed, what was verified, what was *not* done,
-   any document conflicts, and any suggestions.
-
-## 7. Testing and validation
-
-Every change must include or preserve validation. Before saying a task is done, run and pass:
-
-- `lint` — no errors
-- `test` — all tests pass (add tests for any new logic, even in early phases)
-- `build` — both `frontend` and `backend` build successfully
-- Clean-clone check: setup instructions in `README.md` work from a fresh checkout
-
-If a check cannot be run, say so explicitly and explain why. Never mark it as passed.
-
-Testing notes and strategy live in `docs/testing/`.
-
-## 8. Security and secrets
-
-- **Never commit secrets**: no API keys, passwords, tokens, or real connection strings.
-- All configuration goes through environment variables. Keep `.env.example` current with
-  every variable the app reads, using placeholder values only.
-- `.env` and `.env.*` (except `.env.example`) must stay in `.gitignore`.
-- Do not paste secrets into logs, docs, tests, or commit messages.
-
-## 9. Git workflow
-
-- Branches: `main` (stable) ← `develop` (integration) ← `feature/<short-description>`.
-- Never commit directly to `main` or `develop`. Work on a feature branch and open a PR into `develop`.
-- Commit messages use Conventional Commits, e.g. `chore: scaffold backend with NestJS`,
-  `ci: add lint, test, build workflow`, `docs: add ADR for package manager`.
-- Keep PRs focused on one concern. Do not push or merge unless asked.
-- Do not gitignore the `.agents/` folder.
-
-## 10. Code standards
-
-- TypeScript strict mode in both `frontend/` and `backend/`.
-- ESLint and Prettier configs must pass with zero errors; do not disable rules to silence them
-  without asking.
-- Prefer clear names and small modules over cleverness.
-- Comment the "why", not the "what".
-- Keep environment access in a single config layer per app; do not read `process.env` throughout the code.
-
-## 11. Repository layout
-
-```
-frontend/            Next.js app
-backend/             NestJS app
-database/            Postgres Docker config, init/migration placeholders
-docs/
-  product/           PRD, UI/UX specification
-  architecture/      SAD, diagrams
-  planning/          Development Implementation Plan
-  api/               API documentation
-  prompts/           Prompt files for AI agents
-  decisions/         Architecture decision records (ADRs)
-  testing/           Test strategy and notes
-.github/workflows/   CI pipeline
-AGENTS.md            This file
-README.md            Setup and development guide
-.env.example         Environment variable template
-```
-
-## 12. Phase 0 boundaries
-
-Phase 0 delivers the **foundation only**.
-
-**In scope:** repo structure, frontend and backend scaffolds with lint/format/env config,
-PostgreSQL via Docker with a connection placeholder, `.env.example`, Git workflow documentation,
-CI pipeline (install, lint, test, build), `AGENTS.md`, `README.md`.
-
-**Out of scope (do not build):** authentication, AI features, UI screens beyond the default scaffold,
-business logic, real database schemas or migrations, third-party API integrations.
+Handoff: task, branch/base/head SHA; source sections; changed files; decisions; commands/exit codes/tested SHA/artifacts; blockers; next action. Use the current-phase report, not a historical running-service snapshot. Distinguish Specified, Implemented, Executed, Accepted; owner sign-off is separate.

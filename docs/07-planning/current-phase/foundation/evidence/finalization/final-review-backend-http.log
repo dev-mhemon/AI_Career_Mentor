@@ -1,0 +1,21 @@
+PASS: missing and malformed bearer rejected
+PASS: missing application mapping fails closed before bootstrap
+PASS: live Auth bootstrap maps exact UUID and ignores metadata role
+PASS: bootstrap is idempotent and creates one profile/provider
+PASS: contact collisions fail closed with 409 and preserve both UUID mappings
+PASS: auth/me reads without foreground activity writes
+PASS: provider mismatch rejected using live identities
+PASS: profile validation rejects unknowns, blanks, overlong names and None plus skills
+PASS: profile aliases defer progress until confirmed level; uncertain alias has no artificial skill
+PASS: None is valid, clears self-reported skills, and profile completion is deterministic
+PASS: user alias is atomic, deduplicated, private and never promoted globally
+PASS: canonical, validated global and user aliases resolve without cross-user leakage
+PASS: foreign goal path returns 404, even for platform admin
+PASS: role mismatch and invalid level cannot confirm
+PASS: goal confirmation initializes chosen level only and preserves stronger evidence
+PASS: repeat confirmation is invalid; fourth active goal blocked
+PASS: suspension is immediate, bootstrap preserves it, auth/me exposes all access false
+PASS: signed tokens reject expired/issuer/audience/subject tampering
+PASS: unverified contact metadata cannot assert verification
+PASS: deleted Auth identity cannot be re-provisioned with an old token
+PASS: 20 real HTTP/Auth/database foundation checks

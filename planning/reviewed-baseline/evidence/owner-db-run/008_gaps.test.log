@@ -1,0 +1,28 @@
+BEGIN
+1..11
+CREATE FUNCTION
+
+
+
+
+
+INSERT 0 1
+INSERT 0 1
+ok 1 - Rating score > 5 is rejected
+ok 2 - Valid 1-5 rating is stored
+INSERT 0 4
+ok 3 - Duplicate report from the same user on the same target is rejected
+ok 4 - Topic remains approved below 5 independent user reports
+INSERT 0 1
+ok 5 - 5th independent user report automatically hides shared topic
+ok 6 - User account deletion request is recorded in scheduled state
+ok 7 - Second active deletion request for the same user is rejected
+DELETE 1
+ok 8 - Completed deletion tombstone survives auth.users cascade deletion (ADR-020)
+ok 9 - User-specific skill alias interpretation is stored
+ok 10 - User-specific alias interpretation never auto-promotes to global skill_aliases
+SET
+{"sub" : "88888888-0000-0000-0000-000000000002", "role" : "authenticated"}
+ok 11 - User 2 cannot see User 1 skill alias interpretations via RLS
+RESET
+ROLLBACK

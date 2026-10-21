@@ -1,0 +1,24 @@
+BEGIN
+1..12
+CREATE FUNCTION
+
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ok 1 - Invalid phone format without +880 is rejected
+ok 2 - Suspension status without suspended_at timestamp is rejected
+ok 3 - Non-0.5 step preferred_daily_hours is rejected
+ok 4 - existing_skills_none cannot coexist with non-empty skills list
+ok 5 - Clarification round > 2 is rejected
+ok 6 - MCQ correct_option_id must exist in options array
+ok 7 - Non-standard quiz counts rejected when is_reduced = false
+ok 8 - Update state available requires non-null update_id
+INSERT 0 1
+ok 9 - Duplicate delivery record for same user on same local_date is rejected
+ok 10 - Focus roadmap cannot be in draft status
+INSERT 0 1
+ok 11 - At most one open draft per roadmap is permitted
+ok 12 - Valid +880 Bangladesh phone number passes validation
+ROLLBACK

@@ -1,0 +1,14 @@
+{
+  "implementation_head_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+  "checked_out_tested_sha": "d2c63c15b2b187e50acff3952924ddcd5263f7b6",
+  "base_sha": null,
+  "worktree_status": "",
+  "command": [
+    "node",
+    "scripts/foundation/local.mjs",
+    "frontend-build"
+  ],
+  "started": "2026-10-21T17:57:30.220Z",
+  "finished": "2026-10-21T17:57:40.380Z",
+  "exit_code": 0
+}

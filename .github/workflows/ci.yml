@@ -2,11 +2,19 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, phase1-restart, "chore/repository-alignment*" ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, phase1-restart ]
 
+permissions:
+  contents: read
 jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/alignment/verify.py
+      - run: python3 scripts/foundation/verify-baseline.py
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -17,7 +25,7 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: './frontend/package-lock.json'
       - run: npm ci
@@ -35,7 +43,7 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: './backend/package-lock.json'
       - run: npm ci

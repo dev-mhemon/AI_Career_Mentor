@@ -1,0 +1,7 @@
+BEGIN;
+DELETE FROM public.technology_categories WHERE slug IN ('languages-runtimes','frameworks-libraries','databases-storage','cloud-platforms','devops-tooling','security-tooling','ai-ml-platforms');
+DELETE FROM public.skill_categories WHERE slug IN ('software-engineering-fundamentals','programming-languages','web-development','databases','cloud-infrastructure','devops-tooling','testing-quality','security','mobile-development','data-engineering','ai-machine-learning');
+DELETE FROM public.career_roles WHERE slug IN ('frontend-development','backend-development','full-stack-development','qa-software-testing','qa-automation-sdet','devops','site-reliability-engineering','cloud-engineering','cybersecurity','mobile-development','data-engineering','ai-ml-engineering','ai-application-llm-engineering');
+DELETE FROM public.system_configurations WHERE config_key IN ('roadmap.max_active','career_goal.max_clarification_rounds','quiz.retry_limit','quiz.standard_mcq_count','quiz.standard_free_response_min','quiz.standard_free_response_max','retention.raw_response_days','retention.mentor_message_days','retention.ai_operational_log_days','career_knowledge.review_days','technology_update.active_window_days');
+DELETE FROM public.feature_controls WHERE feature_key IN ('roadmap_generator','daily_plan','quiz_practice','ai_practice_review','progress_tracking','ai_mentor','technology_update');
+COMMIT;

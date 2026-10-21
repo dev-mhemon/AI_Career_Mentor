@@ -1,0 +1,21 @@
+
+> backend@0.0.1 migration:show
+> typeorm-ts-node-esm migration:show -d src/data-source.ts
+
+Error during migration show:
+Error: Unable to open file: "/workspace/AI_Career_Mentor/backend/src/data-source.ts". Legacy TypeORM migration runner disabled: use the reviewed Supabase chain
+    at CommandUtils.loadDataSource (/workspace/AI_Career_Mentor/backend/node_modules/typeorm/commands/CommandUtils.js:22:19)
+    at async Object.handler (/workspace/AI_Career_Mentor/backend/node_modules/typeorm/commands/MigrationShowCommand.js:27:26) {
+  [cause]: Error: Legacy TypeORM migration runner disabled: use the reviewed Supabase chain
+      at file:///workspace/AI_Career_Mentor/backend/src/data-source.ts:1:7
+      at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+      at async node:internal/modules/esm/loader:643:26
+      at async tryToImport (/workspace/AI_Career_Mentor/backend/node_modules/typeorm/util/ImportUtils.js:18:13)
+      at async CommandUtils.loadDataSource (/workspace/AI_Career_Mentor/backend/node_modules/typeorm/commands/CommandUtils.js:19:17)
+      at async Object.handler (/workspace/AI_Career_Mentor/backend/node_modules/typeorm/commands/MigrationShowCommand.js:27:26)
+}
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

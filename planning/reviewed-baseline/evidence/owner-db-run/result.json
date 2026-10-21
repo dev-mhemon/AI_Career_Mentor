@@ -1,0 +1,686 @@
+{
+  "timestamp": "2026-10-20T14:45:32.355Z",
+  "catalog_lock": "d58d790e02ce3ab178141e9dea4bd760f3cad4c56ce6df8b2360f6fd8e898c78",
+  "source_sha256": {
+    "C01": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+    "C02": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+    "C03": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+    "C04": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+    "C05": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+    "C06": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+    "C07": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+    "C08": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+    "C09": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7"
+  },
+  "outcome": "pass",
+  "scope": "fresh SQL/pgTAP plus rollback-reapply only when selected",
+  "events": [
+    {
+      "label": "preflight",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "b53d6c129081a7d685e42b213cd6ee3a9d3e3d5a5c1f35fb7e79b7c96e65f49d",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/preflight.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-000_extensions",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "2711bb4cad3aa58351fa2eaa114d5be4bf59738e29cf7e27d2ef153f86b89c43",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-000_extensions.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-001_enums",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "fd4d6c0392115993c576d5c875da25bcbd91e8d7fe270c7385d23ebe8a6ea50e",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-001_enums.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-002_identity",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "e175ed77338fbf42acc6fdb029ef29523b38cdf809580cdd6a2d41e56301fd2d",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-002_identity.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-003_profiles",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "9c0b4a0783dedb8e4ba14959ba612c9497729b701250cd42fec228a6184916ee",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-003_profiles.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-004_career_intelligence",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "b6db63788be97e9c6d04b1801255bbc1dbf9cd3ee72a8be352cc5b633d3e0ba2",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-004_career_intelligence.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-005_roadmap",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "c9dda89548f3dc5bad92aa27a76e8fb9a2648ee08b1960ec4934714177059426",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-005_roadmap.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-006_learning",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "82a0f8c528a093cd0b5a81fd33e5a16a9ef8900ba76f60307486f39353bf6c7b",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-006_learning.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-007_assessment",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "24db2678ba5bbc4c9d3abe50a3a6e4b7a91b94569797181be87d0e6ac7595ac3",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-007_assessment.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-008_progress",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "54606b9735a5345370d37ebd48ee3fc6dc04c03594b42260818d05c7179085a3",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-008_progress.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-009_ai_mentor",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "077785e145c490dd0a72aa1cd7aece83f5d3caaed2c2bbe89dbc0648eafbe944",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-009_ai_mentor.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-010_ai_operations",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "174ff2cf8ee0e99fc982b9f97dadcb0efa2aa9d0fa3302918a2ac2a6f6a0d246",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-010_ai_operations.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-011_technology_intelligence",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "20e9eac0263b626d492b0f910b82d290af682c4b2996123891bab82ee5a666ce",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-011_technology_intelligence.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-012_administration",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "1440bb5f0fa384b66ecdabdb1739d14296128c8c41a94e4812158aa211bdf2cf",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-012_administration.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-013_constraints",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "d3e92f76c98503c318ca486c09ac2cae4fa9a59475b5eacfb4d898e298c5c267",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-013_constraints.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-014_indexes",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "3698921089b2b5af4d7db76a3b4d40b426ecaec1f8a3f71ae27012ddc403738f",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-014_indexes.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-015_functions",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "8ab5e47e4a93689ac541acc82025c72d4d80e1dbf58536d7d1095a4eea285254",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-015_functions.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-016_triggers",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "61d1448340224ef53faa6b302e25acacef8085ad687315a817e90b075a1a3eec",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-016_triggers.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-017_rls",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "ffa89961bdb3fff5c6e7f6ac27a44026525bc6394854e273ed0336ad2c7883ee",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-017_rls.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-018_seed",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "f54984e9c639bf652acf6c49a67644177c687bf6c0a9fe292ae07ce6a1b9bbc6",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-018_seed.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-019_tests",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "0cda8e517c5b8ee8a94e158f513c0ea608d2786b1a39d2784c49727d018f5b80",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-019_tests.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-020_gaps_and_alignment",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "3ca2fc60fbbca8063d5871b9bdc1a8ad21a23a720d4ff74fea6ccaa921e87d39",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-020_gaps_and_alignment.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "pgtap-extension",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "fa8cbcf8fd40b8348887b7c1bd708a52e9767480a5707cc9163645e6b6bdf9a9",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/pgtap-extension.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "001_schema.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "cd5a42abd00ab275e119ff54da84ae8a6c31ede7fc0c875b305a822b8171608a",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/001_schema.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "002_constraints.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "d1fef78e79b2e0d18b1bc12954822945df80593f1b6c68329904436a120d2525",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/002_constraints.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "003_rls_security.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "a212581198d0602e5cdfb0e56d0b9fb693b19368812f8c2f953bea7d81473c8e",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/003_rls_security.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "004_trigger_behavior.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "bc3f50ec18a1fa37e6202c0d7fc4a37ea9abafd368aea7d9d9fe340741f9a00b",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/004_trigger_behavior.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "005_ai_usage.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "a3b8ae5607a7ea2773f2ff4864db03743740bc1cce135af4ea93b2b2fa14fde1",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/005_ai_usage.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "006_roadmap_integrity.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "d5ebb90d567b75396ca19ead53b7f187c3ecc23625c49ccf2fbf6075c1b86851",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/006_roadmap_integrity.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "007_retention.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "bcc15552463becfdd1e733a49c7d3fe0b9b3224ebd425cb4c9e2340e181e7223",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/007_retention.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "008_gaps.test",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "9a85d35d48e955d8a4f0076dc3d43ab29271042a1c6c3316d8ae4e1d8c927774",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/008_gaps.test.log",
+      "scope": "pgTAP emitted assertions"
+    },
+    {
+      "label": "reverse-020_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "b400333b4dcfcda79483e38eff6a3cad9df5a66a0aea7553274fdf6648f651e3",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-020_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-019_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "4e6b9172b913316593637349257c045185b2855aae45e04ec0c1e84585b95849",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-019_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-018_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "072b2cc3e3ae0ff64b1a51e76cdcb56f3ac7fe8df2206c6ea1cf336d4a090e35",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-018_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-017_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "9960d446b72e4e3aa3852956b0ee8ff33d12b5284386f55e62dc070b375a61f2",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-017_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-016_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "dc11d390967aaf7876c43f6dfdc9ca72fcfdc40c24059cf74594001b76793116",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-016_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-015_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "25da64b2883f0b949ca9beda40771d4c448cccc2a43dd513fea7834dc5cfdbf7",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-015_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-014_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "50b0ab5614069038136226fd37d5e2010cebf02c09e2c3d139d7b52d24f11b4f",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-014_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-013_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "87883d9ce71d95cc760e93c719026f9a9458e28aa728fde2e220a6de78a187ba",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-013_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-012_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "e6671729040dd0b6c7fca8ef8eb0a1d0b3aaf68fa00231244efd42cc971c3bcd",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-012_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-011_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "ebbdbc74410a4d6e1a932e5bc6d748625ba214eeaaea602769d438a8b8df043d",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-011_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-010_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "c7ddbac8603c1ebc0cb9cb9d14e663faf6c42f78660e7d4cf5017b3abb4391af",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-010_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-009_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "e1e3c47b28a84a1dc968760f5bf412f4a663dcea479f5747d41ec42de9873f0b",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-009_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-008_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "445176ce50e48317a701294ef2c48f8be060d1ad9f7d08030e5faa988ac47c2d",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-008_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-007_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "a92524b864ead579096efbd329793be78642d3f7530760e8126febe61563a1d6",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-007_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-006_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "e5fdcafb369fe67328ec59ff49c7866aec2b06cc8fb956b2f2a371d684ccd1e7",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-006_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-005_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "83bcc0f56bb88db2ef37ba7976f87f2bc54293da7d51dd62ebec825e835455a6",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-005_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-004_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "3770a51f2cc55f8bba201f79f55d1cb166ca38ce3a1d4a131a9719a2e8361307",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-004_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-003_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "343fe1f9620175d429a7dc60d2067d2622e654347797df226d6cb2bb383b3625",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-003_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-002_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "dbd76ce65fdb2b5357362122b106e663f2ffbb92feb629d2eac5a954065bd9a5",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-002_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-001_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "f90a538ccec0bcf9dffb46a969a88a8bf1e5970e4f41d729168bf58059821ab5",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-001_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-000_down",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "9d94b4e2d98532afecd5a4949b59d0d96ee17aede4735dd9f007d8aa01e6c6cb",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-000_down.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "reverse-postcondition",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "8cd037b00ac5992d2d6d48dfad3ca31e1e5aab0d1e7fa31f8b75e93d2e0d94d9",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/reverse-postcondition.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-000_extensions",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "2711bb4cad3aa58351fa2eaa114d5be4bf59738e29cf7e27d2ef153f86b89c43",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-000_extensions.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-001_enums",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "fd4d6c0392115993c576d5c875da25bcbd91e8d7fe270c7385d23ebe8a6ea50e",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-001_enums.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-002_identity",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "e175ed77338fbf42acc6fdb029ef29523b38cdf809580cdd6a2d41e56301fd2d",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-002_identity.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-003_profiles",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "9c0b4a0783dedb8e4ba14959ba612c9497729b701250cd42fec228a6184916ee",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-003_profiles.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-004_career_intelligence",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "b6db63788be97e9c6d04b1801255bbc1dbf9cd3ee72a8be352cc5b633d3e0ba2",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-004_career_intelligence.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-005_roadmap",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "c9dda89548f3dc5bad92aa27a76e8fb9a2648ee08b1960ec4934714177059426",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-005_roadmap.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-006_learning",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "82a0f8c528a093cd0b5a81fd33e5a16a9ef8900ba76f60307486f39353bf6c7b",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-006_learning.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-007_assessment",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "24db2678ba5bbc4c9d3abe50a3a6e4b7a91b94569797181be87d0e6ac7595ac3",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-007_assessment.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-008_progress",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "54606b9735a5345370d37ebd48ee3fc6dc04c03594b42260818d05c7179085a3",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-008_progress.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-009_ai_mentor",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "077785e145c490dd0a72aa1cd7aece83f5d3caaed2c2bbe89dbc0648eafbe944",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-009_ai_mentor.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-010_ai_operations",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "174ff2cf8ee0e99fc982b9f97dadcb0efa2aa9d0fa3302918a2ac2a6f6a0d246",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-010_ai_operations.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-011_technology_intelligence",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "20e9eac0263b626d492b0f910b82d290af682c4b2996123891bab82ee5a666ce",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-011_technology_intelligence.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-012_administration",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "1440bb5f0fa384b66ecdabdb1739d14296128c8c41a94e4812158aa211bdf2cf",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-012_administration.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-013_constraints",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "d3e92f76c98503c318ca486c09ac2cae4fa9a59475b5eacfb4d898e298c5c267",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-013_constraints.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-014_indexes",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "3698921089b2b5af4d7db76a3b4d40b426ecaec1f8a3f71ae27012ddc403738f",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-014_indexes.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-015_functions",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "8ab5e47e4a93689ac541acc82025c72d4d80e1dbf58536d7d1095a4eea285254",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-015_functions.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-016_triggers",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "61d1448340224ef53faa6b302e25acacef8085ad687315a817e90b075a1a3eec",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-016_triggers.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-017_rls",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "ffa89961bdb3fff5c6e7f6ac27a44026525bc6394854e273ed0336ad2c7883ee",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-017_rls.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-018_seed",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "f54984e9c639bf652acf6c49a67644177c687bf6c0a9fe292ae07ce6a1b9bbc6",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-018_seed.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-019_tests",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "0cda8e517c5b8ee8a94e158f513c0ea608d2786b1a39d2784c49727d018f5b80",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-019_tests.log",
+      "scope": "SQL execution"
+    },
+    {
+      "label": "forward-020_gaps_and_alignment",
+      "exit_code": 0,
+      "error": null,
+      "outcome": "pass",
+      "sql_sha256": "3ca2fc60fbbca8063d5871b9bdc1a8ad21a23a720d4ff74fea6ccaa921e87d39",
+      "log": "validation/db-2026-10-20T14-45-22.768Z/forward-020_gaps_and_alignment.log",
+      "scope": "SQL execution"
+    }
+  ],
+  "remaining_R32": "API/UI/new concurrency/retention/provider/performance/PITR gates remain separate; do not close R32"
+}

@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "adoption_authority": "Owner Repository Alignment task, 2026-10-21",
+  "documents": [
+    {
+      "id": "C01",
+      "version": "1.4.1",
+      "uploaded_filename": "C01_PRD.md",
+      "bytes": 72643,
+      "sha256": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+      "destination": "docs/01-product/PRD.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C01_PRD.md",
+      "baseline_sha256": "f440954c9a11e3df5b5b46fe97484ba2a247e4fca34a357fae441146d5fa12dc",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C02",
+      "version": "1.1.1",
+      "uploaded_filename": "C02_SAD.md",
+      "bytes": 43432,
+      "sha256": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+      "destination": "docs/02-architecture/SAD.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C02_SAD.md",
+      "baseline_sha256": "3ec734f5870fda2b8ab68f751759041c2580a4a117ef9f96d582509e16c842a4",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C03",
+      "version": "1.2.2",
+      "uploaded_filename": "C03_DDD.md",
+      "bytes": 64012,
+      "sha256": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+      "destination": "docs/03-domain/DDD.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C03_DDD.md",
+      "baseline_sha256": "8126ff486c9089ece6bc4fa31c2563a7580d105b194faa921752618263960a27",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C04",
+      "version": "1.1.1",
+      "uploaded_filename": "C04_DIS.md",
+      "bytes": 66659,
+      "sha256": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+      "destination": "docs/04-database/DIS.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C04_DIS.md",
+      "baseline_sha256": "0063c43318aa3fd390bd6f7b0f154fe0a998b79e6fd3f71942516db7f8fa3e5f",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C05",
+      "version": "1.5.1",
+      "uploaded_filename": "C05_API.md",
+      "bytes": 195279,
+      "sha256": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+      "destination": "docs/05-api/API-Specification.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C05_API.md",
+      "baseline_sha256": "0c5482798362b578c1312e3fc99f6bd9c9af261566e740c86048c036f7adbe25",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C06",
+      "version": "1.2.2",
+      "uploaded_filename": "C06_DMS.md",
+      "bytes": 227913,
+      "sha256": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+      "destination": "docs/04-database/DMS.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C06_DMS.md",
+      "baseline_sha256": "68829ec73f0bd85e3b2bd3fbba8086885e5322284ebbe9ee6d5442f460da28bb",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C07",
+      "version": "1.1",
+      "uploaded_filename": "C07_Validation.md",
+      "bytes": 66814,
+      "sha256": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+      "destination": "docs/04-database/validation-report.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C07_Validation.md",
+      "baseline_sha256": "fc46774c64b954ab5a33d8542372e45e81488b62a19e62659526126b3628662f",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C08",
+      "version": "1.1.1",
+      "uploaded_filename": "C08_AI_System_Design.md",
+      "bytes": 145873,
+      "sha256": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+      "destination": "docs/02-architecture/AI-System-Design.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C08_AI_System_Design.md",
+      "baseline_sha256": "218235a2bf62adb2e84b18069af4884e4191ba43b1074f2010383d0732d2ac12",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    },
+    {
+      "id": "C09",
+      "version": "2.0.2",
+      "uploaded_filename": "C09_UI_UX.md",
+      "bytes": 97899,
+      "sha256": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7",
+      "destination": "docs/01-product/UIUX-Specification.md",
+      "historical_baseline": "planning/reviewed-baseline/docs/C09_UI_UX.md",
+      "baseline_sha256": "a5dc92c2db4b6899e764c8b5a7de6757a6855593df31200e398a386b1c2752c7",
+      "baseline_equal": true,
+      "effect": "No source-version or SQL change; activate existing reviewed specification"
+    }
+  ]
+}
