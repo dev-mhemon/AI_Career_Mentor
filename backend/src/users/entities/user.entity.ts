@@ -4,12 +4,10 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  OneToMany,
   Index,
 } from 'typeorm';
 import { UserRole } from '../../common/enums/user-role.enum.js';
 import { UserStatus } from '../../common/enums/user-status.enum.js';
-import type { InvitationCode } from '../../invitation-codes/entities/invitation-code.entity.js';
 
 /**
  * User entity — stores identity, authentication reference, role, and status.
@@ -56,7 +54,7 @@ export class User {
   @Column({
     type: 'enum',
     enum: UserStatus,
-    default: UserStatus.PENDING_INVITE,
+    default: UserStatus.ACTIVE,
   })
   status: UserStatus;
 
@@ -65,11 +63,4 @@ export class User {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updated_at: Date;
-
-  /**
-   * Invitation codes created by this user (relevant for ADMIN users).
-   * Lazy-loaded to avoid unnecessary joins on basic user queries.
-   */
-  @OneToMany('InvitationCode', 'creator')
-  created_invitation_codes: InvitationCode[];
 }

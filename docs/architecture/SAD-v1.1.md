@@ -309,30 +309,31 @@ MVP methods:
 -   Google login
 -   Facebook login
 
-Phone verification:
+Verification:
 
-Primary: - WhatsApp OTP
+-   Email/password registration uses an email verification code (OTP).
+-   Phone/password registration uses WhatsApp OTP as the primary channel.
+-   A low-cost SMS OTP provider is the fallback for phone verification.
+-   Google/Facebook authentication is handled through Supabase OAuth.
 
-Fallback: - Low-cost SMS OTP provider
+Account access flow:
 
-Invitation flow:
+Email registration → Email verification code → Account activation
 
-Register ↓ Login ↓ Invitation code verification ↓ Account activation
+Phone registration → WhatsApp OTP → Account activation
 
-Invitation code stores:
+Google/Facebook → OAuth authentication → Account activation
 
--   Code
--   Creator
--   Usage limit
--   Expiration
--   Status
+NestJS remains responsible for application-level authorization and access
+control after successful Supabase authentication.
+
+Invitation codes are not part of the MVP architecture.
 
 Roles:
 
 User: - Uses career features
 
-Admin: - Manages users - Manages invitation codes - Controls feature
-toggles
+Admin: - Manages users - Controls feature toggles
 
 ------------------------------------------------------------------------
 
@@ -419,9 +420,10 @@ Monitoring:
 
 -   Project setup
 -   Database
--   Authentication
--   Invitation system
--   Roles
+-   Authentication and verification
+-   Email verification code
+-   Phone verification (WhatsApp OTP with SMS fallback)
+-   Roles and access control
 
 ## Phase 2: Core Features
 

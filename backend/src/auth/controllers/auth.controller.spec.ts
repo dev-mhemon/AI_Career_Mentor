@@ -15,10 +15,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     email: 'test@example.com',
     phone: null,
     role: UserRole.USER,
-    status: UserStatus.PENDING_INVITE,
+    status: UserStatus.ACTIVE,
     created_at: new Date('2025-01-01'),
     updated_at: new Date('2025-01-01'),
-    created_invitation_codes: [],
     ...overrides,
   } as User;
 }
@@ -37,7 +36,6 @@ describe('AuthController', () => {
   const mockAuthService = {
     syncUser: vi.fn(),
     findBySupabaseUid: vi.fn(),
-    verifyInvitation: vi.fn(),
   };
 
   beforeEach(async () => {
@@ -91,20 +89,6 @@ describe('AuthController', () => {
       await expect(controller.me(makeIdentity())).rejects.toThrow(
         NotFoundException,
       );
-    });
-  });
-
-  describe('POST /auth/invitation/verify', () => {
-    it('should return activated UserResponseDto', async () => {
-      const activatedUser = makeUser({ status: UserStatus.ACTIVE });
-      mockAuthService.verifyInvitation.mockResolvedValue(activatedUser);
-
-      const result = await controller.verifyInvitation(makeIdentity(), {
-        code: 'VALID-CODE',
-      });
-
-      expect(result.status).toBe(UserStatus.ACTIVE);
-      expect(result).not.toHaveProperty('supabase_uid');
     });
   });
 });

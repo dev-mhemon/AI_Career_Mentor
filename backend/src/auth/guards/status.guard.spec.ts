@@ -29,16 +29,6 @@ describe('StatusGuard', () => {
     expect(guard.canActivate(ctx)).toBe(true);
   });
 
-  it('should reject PENDING_INVITE users by default', () => {
-    vi.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
-    const ctx = createMockContext({
-      status: UserStatus.PENDING_INVITE,
-      role: 'USER',
-    });
-
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-  });
-
   it('should reject SUSPENDED users', () => {
     vi.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
     const ctx = createMockContext({
@@ -49,10 +39,10 @@ describe('StatusGuard', () => {
     expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
   });
 
-  it('should allow PENDING_INVITE users when @SkipStatusCheck is set', () => {
+  it('should allow users when @SkipStatusCheck is set', () => {
     vi.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true);
     const ctx = createMockContext({
-      status: UserStatus.PENDING_INVITE,
+      status: UserStatus.SUSPENDED,
       role: 'USER',
     });
 

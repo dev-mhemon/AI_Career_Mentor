@@ -3,12 +3,9 @@ import { AuthService } from './auth.service.js';
 import type { JwtIdentity } from './auth.service.js';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { User } from '../../users/entities/user.entity.js';
-import { InvitationCode } from '../../invitation-codes/entities/invitation-code.entity.js';
 import { UserRole } from '../../common/enums/user-role.enum.js';
 import { UserStatus } from '../../common/enums/user-status.enum.js';
-import { InvitationCodeStatus } from '../../common/enums/invitation-code-status.enum.js';
 import { DataSource } from 'typeorm';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -28,29 +25,11 @@ function makeUser(overrides: Partial<User> = {}): User {
     email: 'test@example.com',
     phone: null,
     role: UserRole.USER,
-    status: UserStatus.PENDING_INVITE,
+    status: UserStatus.ACTIVE,
     created_at: new Date(),
     updated_at: new Date(),
-    created_invitation_codes: [],
     ...overrides,
   } as User;
-}
-
-function makeInvitationCode(
-  overrides: Partial<InvitationCode> = {},
-): InvitationCode {
-  return {
-    id: 'invite-uuid-1',
-    code: 'VALID-CODE',
-    creator: null,
-    creator_id: null,
-    usage_limit: 10,
-    used_count: 0,
-    expiration_date: null,
-    status: InvitationCodeStatus.ACTIVE,
-    created_at: new Date(),
-    ...overrides,
-  } as InvitationCode;
 }
 
 // ─── Tests ──────────────────────────────────────────────────
@@ -65,22 +44,8 @@ describe('AuthService', () => {
     save: vi.fn(),
   };
 
-  const mockInvitationCodeRepo = {
-    findOne: vi.fn(),
-  };
-
-  // Transaction manager used inside verifyInvitation
-  const mockTransactionManager = {
-    findOne: vi.fn(),
-    save: vi.fn(),
-    createQueryBuilder: vi.fn(),
-  };
-
   const mockDataSource = {
-    transaction: vi.fn(
-      (cb: (manager: typeof mockTransactionManager) => Promise<any>) =>
-        cb(mockTransactionManager),
-    ),
+    transaction: vi.fn(),
   };
 
   beforeEach(async () => {
@@ -90,10 +55,6 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
-        {
-          provide: getRepositoryToken(InvitationCode),
-          useValue: mockInvitationCodeRepo,
-        },
         { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
@@ -122,9 +83,27 @@ describe('AuthService', () => {
         email: identity.email,
         phone: identity.phone,
         role: UserRole.USER,
-        status: UserStatus.PENDING_INVITE,
+        status: UserStatus.ACTIVE,
       });
       expect(result).toEqual(createdUser);
+    });
+
+    it('should normalize empty string email and phone to null', async () => {
+      const identity = makeIdentity({ email: '   ', phone: '' });
+      const createdUser = makeUser();
+
+      mockUserRepo.findOne.mockResolvedValue(null);
+      mockUserRepo.create.mockReturnValue(createdUser);
+      mockUserRepo.save.mockResolvedValue(createdUser);
+
+      await service.syncUser(identity);
+
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: null,
+          phone: null,
+        }),
+      );
     });
 
     it('should return existing user without saving when nothing changed', async () => {
@@ -212,145 +191,6 @@ describe('AuthService', () => {
       const result = await service.findBySupabaseUid('non-existent');
 
       expect(result).toBeNull();
-    });
-  });
-
-  // ── verifyInvitation ─────────────────────────────────────
-
-  describe('verifyInvitation', () => {
-    const mockQueryBuilder = {
-      setLock: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      getOne: vi.fn(),
-    };
-
-    beforeEach(() => {
-      mockTransactionManager.createQueryBuilder.mockReturnValue(
-        mockQueryBuilder,
-      );
-    });
-
-    it('should activate user with a valid invitation code', async () => {
-      const user = makeUser();
-      const code = makeInvitationCode();
-      const activatedUser = makeUser({ status: UserStatus.ACTIVE });
-
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(code);
-      mockTransactionManager.save
-        .mockResolvedValueOnce(code) // save code
-        .mockResolvedValueOnce(activatedUser); // save user
-
-      const result = await service.verifyInvitation('supa-uid-1', 'VALID-CODE');
-
-      expect(result.status).toBe(UserStatus.ACTIVE);
-    });
-
-    it('should increment used_count on the invitation code', async () => {
-      const user = makeUser();
-      const code = makeInvitationCode({ used_count: 3, usage_limit: 10 });
-
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(code);
-      mockTransactionManager.save.mockImplementation(
-        (_entity: any, data: any) => Promise.resolve(data),
-      );
-
-      await service.verifyInvitation('supa-uid-1', 'VALID-CODE');
-
-      // The code's used_count should have been incremented.
-      expect(code.used_count).toBe(4);
-    });
-
-    it('should throw NotFoundException when user does not exist', async () => {
-      mockTransactionManager.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.verifyInvitation('unknown-uid', 'VALID-CODE'),
-      ).rejects.toThrow(NotFoundException);
-    });
-
-    it('should throw BadRequestException when user is already ACTIVE', async () => {
-      const user = makeUser({ status: UserStatus.ACTIVE });
-      mockTransactionManager.findOne.mockResolvedValue(user);
-
-      await expect(
-        service.verifyInvitation('supa-uid-1', 'VALID-CODE'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should throw BadRequestException for non-existent code', async () => {
-      const user = makeUser();
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(null);
-
-      await expect(
-        service.verifyInvitation('supa-uid-1', 'BAD-CODE'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should throw BadRequestException for expired code', async () => {
-      const user = makeUser();
-      const code = makeInvitationCode({
-        expiration_date: new Date('2020-01-01'),
-      });
-
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(code);
-      mockTransactionManager.save.mockResolvedValue(code);
-
-      await expect(
-        service.verifyInvitation('supa-uid-1', 'VALID-CODE'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should throw BadRequestException for exhausted code', async () => {
-      const user = makeUser();
-      const code = makeInvitationCode({
-        used_count: 10,
-        usage_limit: 10,
-      });
-
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(code);
-      mockTransactionManager.save.mockResolvedValue(code);
-
-      await expect(
-        service.verifyInvitation('supa-uid-1', 'VALID-CODE'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should throw BadRequestException for revoked code', async () => {
-      const user = makeUser();
-      const code = makeInvitationCode({
-        status: InvitationCodeStatus.REVOKED,
-      });
-
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(code);
-
-      await expect(
-        service.verifyInvitation('supa-uid-1', 'VALID-CODE'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should mark code EXHAUSTED when used_count reaches usage_limit', async () => {
-      const user = makeUser();
-      const code = makeInvitationCode({
-        used_count: 9,
-        usage_limit: 10,
-      });
-
-      mockTransactionManager.findOne.mockResolvedValue(user);
-      mockQueryBuilder.getOne.mockResolvedValue(code);
-      mockTransactionManager.save.mockImplementation(
-        (_entity: any, data: any) => Promise.resolve(data),
-      );
-
-      await service.verifyInvitation('supa-uid-1', 'VALID-CODE');
-
-      expect(code.used_count).toBe(10);
-      expect(code.status).toBe(InvitationCodeStatus.EXHAUSTED);
     });
   });
 });

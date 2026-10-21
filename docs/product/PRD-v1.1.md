@@ -350,6 +350,9 @@ Admin responsibilities:
 -   Access control
 -   Feature toggle management
 
+Access is controlled through authentication and admin-managed user access.
+The MVP does not use invitation codes.
+
 Admin will NOT:
 
 -   Create courses
@@ -378,29 +381,64 @@ Users can register using:
 -   Google login
 -   Facebook login
 
-## Invite Code Access
+## Verification
 
-Because this is a private platform:
+### Email Registration
 
-Flow:
+-   Email/password registration requires email verification.
+-   The user receives a verification code by email.
+-   The user submits the code in the application.
+-   Successful verification establishes the authenticated account session.
+
+### Phone Registration
+
+-   Phone/password registration requires OTP verification.
+-   WhatsApp OTP is the primary verification channel.
+-   A low-cost SMS OTP provider is the fallback when configured.
+-   Successful OTP verification establishes the authenticated account session.
+
+### Google/Facebook Authentication
+
+-   Authentication is completed through the selected OAuth provider.
+-   Successful provider authentication establishes the authenticated account session.
+
+## Account Access Flow
+
+Email:
 
 Registration
-
 ↓
-
-Login
-
+Email verification code
 ↓
-
-Enter invitation code
-
+Code verified
 ↓
-
 Account activated
-
 ↓
-
 Access granted
+
+Phone:
+
+Registration
+↓
+WhatsApp OTP
+↓
+OTP verified
+↓
+Account activated
+↓
+Access granted
+
+Google/Facebook:
+
+OAuth authentication
+↓
+Authentication successful
+↓
+Account activated
+↓
+Access granted
+
+**Invitation codes are not part of the MVP authentication or access-control flow.**
 
 ------------------------------------------------------------------------
 
@@ -587,7 +625,6 @@ Mitigation:
 -   Progress Tracking
 -   AI Career Mentor Chat
 -   Authentication
--   Invite code access
 -   Admin user management
 -   Feature toggles
 
@@ -624,10 +661,9 @@ The PRD defines:
 Implementation-level decisions only:
 
 1.  Final AI evaluation scoring approach
-2.  Invitation code management rules
-3.  Data retention policy
-4.  Initial roadmap structure for four career paths
-5.  Final UI/UX flows
+2.  Data retention policy
+3.  Initial roadmap structure for four career paths
+4.  Final UI/UX flows
 
 ------------------------------------------------------------------------
 

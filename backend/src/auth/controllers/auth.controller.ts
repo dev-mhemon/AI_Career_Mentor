@@ -1,5 +1,4 @@
 import {
-  Body,
   Controller,
   Get,
   HttpCode,
@@ -8,7 +7,6 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { SupabaseAuthGuard } from '../guards/supabase-auth.guard.js';
 import { StatusGuard } from '../guards/status.guard.js';
 import { RolesGuard } from '../guards/roles.guard.js';
@@ -16,21 +14,19 @@ import { CurrentUser } from '../decorators/current-user.decorator.js';
 import { SkipStatusCheck } from '../decorators/skip-status-check.decorator.js';
 import { AuthService } from '../services/auth.service.js';
 import type { JwtIdentity } from '../services/auth.service.js';
-import { VerifyInvitationDto } from '../dtos/verify-invitation.dto.js';
 import { UserResponseDto } from '../dtos/user-response.dto.js';
 
 /**
- * Authentication & invitation endpoints.
+ * Authentication endpoints.
  *
- * Plan v1.2 §4 defines three routes:
+ * Plan v1.3 defines two routes:
  *  - POST /api/auth/sync
  *  - GET  /api/auth/me
- *  - POST /api/auth/invitation/verify
  *
- * All three require a valid Supabase JWT (SupabaseAuthGuard).
+ * Both require a valid Supabase JWT (SupabaseAuthGuard).
  * StatusGuard and RolesGuard run after auth for standard routes;
- * the three auth routes use @SkipStatusCheck() so PENDING_INVITE
- * users can still call them.
+ * the auth routes use @SkipStatusCheck() so newly authenticated
+ * users can still call them before having a full active profile.
  */
 @Controller('auth')
 @UseGuards(SupabaseAuthGuard, StatusGuard, RolesGuard)
@@ -58,8 +54,6 @@ export class AuthController {
    * GET /api/auth/me
    *
    * Returns the current application-level user.
-   * Allowed for PENDING_INVITE users so the frontend can
-   * check status before prompting for an invite code.
    */
   @Get('me')
   @SkipStatusCheck()
@@ -72,27 +66,6 @@ export class AuthController {
         'User not found. Please call /api/auth/sync first.',
       );
     }
-    return UserResponseDto.fromEntity(user);
-  }
-
-  /**
-   * POST /api/auth/invitation/verify
-   *
-   * Verifies an invitation code and activates the user account.
-   * Rate-limited per Plan v1.2 §5.
-   */
-  @Post('invitation/verify')
-  @HttpCode(HttpStatus.OK)
-  @SkipStatusCheck()
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  async verifyInvitation(
-    @CurrentUser() identity: JwtIdentity,
-    @Body() dto: VerifyInvitationDto,
-  ): Promise<UserResponseDto> {
-    const user = await this.authService.verifyInvitation(
-      identity.supabase_uid,
-      dto.code,
-    );
     return UserResponseDto.fromEntity(user);
   }
 }

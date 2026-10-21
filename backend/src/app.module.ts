@@ -6,7 +6,6 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { User } from './users/entities/user.entity.js';
-import { InvitationCode } from './invitation-codes/entities/invitation-code.entity.js';
 
 @Module({
   imports: [
@@ -23,7 +22,7 @@ import { InvitationCode } from './invitation-codes/entities/invitation-code.enti
         username: configService.get<string>('DB_USER', 'postgres'),
         password: configService.get<string>('DB_PASSWORD', 'postgres'),
         database: configService.get<string>('DB_NAME', 'ai_career_mentor'),
-        entities: [User, InvitationCode],
+        entities: [User],
         synchronize: false,
       }),
       inject: [ConfigService],

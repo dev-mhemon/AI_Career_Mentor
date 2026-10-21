@@ -44,18 +44,13 @@ Phase 0: Foundation
 
 Phase 1: Authentication and Access Control
 
-- \- Registration
-
-- \- Login
-
-- \- Social authentication
-
-- \- Phone authentication
-
-- \- Invitation verification
-
-- \- Roles
-
+- Registration
+- Email verification code / OTP
+- Login and logout
+- Social authentication
+- Phone authentication (WhatsApp OTP with SMS fallback; provider dependency applies)
+- Roles
+- Authentication-based access control
 
 Phase 2: User Profile and Onboarding
 
@@ -116,7 +111,6 @@ Phase 6: Admin Features
 
 \- User management
 
-\- Invitation management
 
 \- Feature toggles
 
@@ -408,6 +402,8 @@ Deployment:
 - \- Follow PRD -> SAD -> UI/UX priority.
 
 - \- Do not add features, screens, or workflows.
+
+- Invitation codes are removed from the MVP and must not be implemented.
 
 - \- Prefer simple maintainable solutions.
 

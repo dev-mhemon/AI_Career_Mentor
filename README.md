@@ -4,7 +4,7 @@
 The AI Career Intelligence Mentor is an AI-powered platform designed to provide personalized career guidance, skills gap analysis, and tailored learning paths. This repository contains the Phase 0 foundational setup for the Minimum Viable Product (MVP).
 
 ## Architecture Reference
-- **Frontend**: Next.js 14, TypeScript, Tailwind CSS
+- **Frontend**: Next.js 16, TypeScript, Tailwind CSS
 - **Backend**: NestJS, TypeScript
 - **Database**: PostgreSQL
 - **Environment**: Docker (Database)
@@ -49,10 +49,17 @@ cd backend
 npm install
 ```
 
+### 5. Supabase Configuration
+For Phase 1 Authentication to function locally, you must configure the following in the Supabase Dashboard:
+1. **Email Template**: Ensure your Supabase project's "Confirm signup" Email Template uses the `{{ .Token }}` variable to support the OTP-based Email verification flow. Do NOT use `{{ .ConfirmationURL }}` as the primary flow.
+2. **Custom SMTP**: Required for reliable project email authentication delivery and to avoid Supabase's strict default rate limits (which will cause 429 errors).
+3. **Site URL and Redirects**: Ensure the Supabase Dashboard Site URL points to the frontend (`http://localhost:3001`). The backend runs on `http://localhost:3000`.
+4. **Phone Auth**: Configure Twilio / Twilio Verify in the Supabase Dashboard to enable the Phone/WhatsApp authentication flows.
+
 ## Development Commands
 
-### Frontend
-- Start development server: `npm run dev`
+### Frontend (Runs on http://localhost:3001)
+- Start development server: `npm run dev` (configured to use port 3001)
 - Build for production: `npm run build`
 - Start production server: `npm run start`
 - Run linter: `npm run lint`

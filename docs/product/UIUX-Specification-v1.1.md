@@ -8,8 +8,7 @@ Product: AI Career Intelligence Mentor\
 Type: Personal AI-powered career guidance PWA\
 Scope: Frozen MVP
 
-This version applies UX review improvements without changing product
-scope.
+This version applies UX review improvements and aligns the authentication UX with the approved MVP decision to remove invitation codes.
 
 ------------------------------------------------------------------------
 
@@ -56,7 +55,7 @@ maintenance
 
 ## New User
 
-Landing → Registration/Login → Invitation Code Verification → Profile
+Landing → Registration/Login → Email/Phone Verification → Profile
 Setup → AI Analysis → Dashboard
 
 ## Onboarding
@@ -96,7 +95,7 @@ Profile is accessed through avatar/menu.
 
 ## Admin Navigation
 
-Admin: - Dashboard - Users - Invitations - Feature Toggles
+Admin: - Dashboard - Users - Feature Toggles
 
 ------------------------------------------------------------------------
 
@@ -116,8 +115,17 @@ Components: - Introduction - Benefits - Register/Login
 Components: - Email/password - Phone/password - Google login - Facebook
 login
 
-States: Loading: Authentication progress. Error: Invalid credentials or
-verification failure.
+States: Loading: Authentication progress. Error: Invalid credentials or verification failure.
+
+### Verification Screen
+A unified screen for entering verification codes (OTP) sent to Email or Phone (WhatsApp). Email registration uses an email verification code; phone registration uses WhatsApp OTP as the primary channel with SMS fallback when configured. OAuth users complete verification through the selected provider.
+Components:
+- Dynamic instruction text ("Enter the code sent to your email" vs "WhatsApp")
+- Verification code input field
+- Verify button
+- Resend code button (with 60-second cooldown timer)
+
+States: Initial (awaiting input), Verifying (loading), Error (invalid/expired code, rate limit), Success.
 
 ## Onboarding
 
@@ -236,6 +244,14 @@ AI message: - message - reasoning - suggested actions
 ------------------------------------------------------------------------
 
 # UI/UX Decision Summary
+
+## Authentication Scope Clarification
+
+- Email/password users verify their account with an email verification code.
+- Phone/password users verify their account with WhatsApp OTP as the primary channel and SMS as the configured fallback.
+- Google/Facebook users complete authentication through the selected OAuth provider.
+- **Invitation codes are removed from the MVP and must not appear in user journeys, screens, navigation, or admin workflows.**
+
 
 ## Major Improvements Applied
 

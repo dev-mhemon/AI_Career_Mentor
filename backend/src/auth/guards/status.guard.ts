@@ -15,8 +15,7 @@ import type { User } from '../../users/entities/user.entity.js';
  *
  * By default every authenticated route requires UserStatus.ACTIVE.
  * Routes decorated with @SkipStatusCheck() bypass this guard,
- * allowing PENDING_INVITE users to access /sync, /me, and
- * /invitation/verify (Plan v1.2 §5).
+ * allowing newly authenticated users to access /sync and /me.
  */
 @Injectable()
 export class StatusGuard implements CanActivate {
@@ -36,12 +35,12 @@ export class StatusGuard implements CanActivate {
     const user = request.user as User | undefined;
 
     if (!user || !('status' in user)) {
-      throw new ForbiddenException('User record not found');
+      throw new ForbiddenException('User record not found in request context.');
     }
 
     if (user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException(
-        'Account is not active. Please verify an invitation code.',
+        'Account is not active or has been suspended.',
       );
     }
 

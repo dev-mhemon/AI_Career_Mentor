@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { User } from './users/entities/user.entity.js';
-import { InvitationCode } from './invitation-codes/entities/invitation-code.entity.js';
 
 /**
  * Standalone DataSource for TypeORM CLI operations (migrations).
@@ -20,7 +19,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER ?? 'postgres',
   password: process.env.DB_PASSWORD ?? 'postgres',
   database: process.env.DB_NAME ?? 'ai_career_mentor',
-  entities: [User, InvitationCode],
+  entities: [User],
   migrations: ['src/migrations/*.ts'],
   synchronize: false,
   logging: true,
