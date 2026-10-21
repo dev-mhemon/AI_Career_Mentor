@@ -203,7 +203,14 @@ export class ProfileService {
       proposed_role: g.proposed_role_id
         ? { canonical_role_id: g.proposed_role_id, name: g.role_name }
         : null,
-      alternative_roles: alternatives,
+      alternative_roles: alternatives.map(
+        (role: { canonical_role_id: string; name: string }) => ({
+          canonical_role_id: role.canonical_role_id,
+          name: role.name,
+          // The role catalog has no authoritative goal-specific rationale.
+          rationale: null,
+        }),
+      ),
       suggested_level: g.suggested_level,
       target_level: g.target_level,
       roadmap_id: g.roadmap_id,

@@ -26,9 +26,9 @@ export class AuthController {
       profile_complete: me.profile_complete,
       verified_contact_required: !me.user.verified_contact,
       next_step: !me.user.verified_contact
-        ? 'verify_contact'
+        ? 'add_verified_contact'
         : me.profile_complete
-          ? 'dashboard'
+          ? 'app_home'
           : 'profile_setup',
     };
   }
