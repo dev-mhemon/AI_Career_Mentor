@@ -86,7 +86,7 @@ export class AuthService {
           await db.query(
             `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,now(),now())
         ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact,
-        last_login_at=now(),last_active_at=CASE WHEN users.last_active_at IS NULL OR users.last_active_at < now()-interval '5 minutes' THEN now() ELSE users.last_active_at END`,
+        last_login_at=now(),last_active_at=CASE WHEN users.last_active_at IS NULL OR users.last_active_at <= clock_timestamp()-interval '5 minutes' THEN GREATEST(users.last_active_at,clock_timestamp()) ELSE users.last_active_at END`,
             [user.id, email, phone, !!(email || phone)],
           );
           for (const i of identities) {
