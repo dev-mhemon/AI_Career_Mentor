@@ -9,3 +9,7 @@ docs/04-database/DMS.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
 docs/04-database/validation-report.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
 docs/02-architecture/AI-System-Design.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
 docs/01-product/UIUX-Specification.md -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+supabase/migrations/** -text
+supabase/rollbacks/** -text
+supabase/tests/database/** -text
+backend/**/*.ts text eol=lf
