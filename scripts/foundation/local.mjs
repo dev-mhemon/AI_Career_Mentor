@@ -1,5 +1,5 @@
 /** Dedicated disposable local stack. Never prints status credentials. */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "./process.mjs";
 import {
   mkdirSync,
   readFileSync,

@@ -1,5 +1,5 @@
 /** Destructive lifecycle checks are restricted to this dedicated disposable project. */
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawnSync, execFileSync } from "./process.mjs";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";

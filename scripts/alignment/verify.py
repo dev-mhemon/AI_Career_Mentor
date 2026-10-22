@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[2]
-manifest = json.loads((ROOT / 'docs/00-governance/source-manifest.json').read_text())
+manifest = json.loads((ROOT / 'docs/00-governance/source-manifest.json').read_text(encoding='utf-8'))
 assert {entry['id'] for entry in manifest['documents']} == {f'C0{i}' for i in range(1, 10)}
 for entry in manifest['documents']:
     active = ROOT / entry['destination']
@@ -20,14 +21,14 @@ for entry in manifest['documents']:
     indexed = subprocess.run(['git', 'show', ':' + entry['destination']], cwd=ROOT, capture_output=True)
     if indexed.returncode == 0:
         assert indexed.stdout == data, 'Git index bytes differ: ' + entry['id']
-subprocess.run(['python3', str(ROOT / 'scripts/foundation/verify-baseline.py')], check=True, cwd=ROOT)
+subprocess.run([sys.executable, str(ROOT / 'scripts/foundation/verify-baseline.py')], check=True, cwd=ROOT)
 maintained = [ROOT/'README.md', ROOT/'AGENTS.md', ROOT/'backend/README.md', ROOT/'frontend/README.md']
 for folder in ['00-governance', '06-decisions', '07-planning', '09-operations']:
-    maintained += [p for p in (ROOT/'docs'/folder).rglob('*.md') if '/current-phase/foundation/' not in str(p)]
+    maintained += [p for p in (ROOT/'docs'/folder).rglob('*.md') if '/current-phase/foundation/' not in p.as_posix()]
 failures = []
 for doc in maintained:
     # Only actual Markdown links, not path-looking code or external live links.
-    text = re.sub(r'```.*?```', '', doc.read_text(), flags=re.S)
+    text = re.sub(r'```.*?```', '', doc.read_text(encoding='utf-8'), flags=re.S)
     for target in re.findall(r'\]\(([^\s)]+)(?:\s+"[^"]*")?\)', text):
         target = unquote(target.strip('<>').split('#')[0])
         if not target or re.match(r'^[A-Za-z][A-Za-z0-9+.-]*:', target):

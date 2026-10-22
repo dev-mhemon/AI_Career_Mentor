@@ -1,5 +1,5 @@
 import { redact } from "./redact.mjs";
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawnSync, execFileSync } from "./process.mjs";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 const git = (...args) => {
   try {
