@@ -25,4 +25,4 @@ node scripts/foundation/database-check.mjs --disposable
 node scripts/foundation/local.mjs stop
 ```
 
-Shared agent rules: [AGENTS.md](AGENTS.md). Alignment branches target `phase1-restart`; reviewed promotion to `main` is separate. No automatic CD, production deployment or owner acceptance is implied. Exact delivered checks/blockers appear in the current-phase alignment handoff. R32 remains in progress/partially executed; R33 is optional/deferred.
+Shared agent rules: [AGENTS.md](AGENTS.md) and the [single execution/handoff workflow](docs/00-governance/agent-workflow.md). Foundation/alignment and Windows tooling changes are merged in the locally observed main history; use a dedicated branch for each authorized writing task instead of reusing the old alignment branch instructions. [DOC-01](docs/07-planning/current-phase/documentation-alignment/DOC-01.md) records the current documentation delivery and bounded next task. Historical alignment checks identify their own tested SHAs, not current service health or current-HEAD PASS. No automatic CD, deployment or owner acceptance is implied. R32 remains in progress/partially executed; R33 is optional/deferred.

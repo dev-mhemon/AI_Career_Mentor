@@ -1,5 +1,7 @@
 # Development runbook
 
+For agent task intake and evidence use the [shared workflow](../00-governance/agent-workflow.md) and [current DOC-01 record](../07-planning/current-phase/documentation-alignment/DOC-01.md). Prefer explicit Git Bash for Windows agent terminal commands after confirming the actual runner; the native Windows PowerShell service instructions below remain supported. Documentation-only work runs read-only verifiers/link/diff checks, not the installation/service/database lifecycle commands on this page.
+
 This is a local foundation runbook, not a production deployment guide. Start at the repository root. Required: Node >=24 (tested 24.19.0), npm (11.9.0), Python3, Docker daemon, Supabase CLI **2.121.0**. Official CLI installation: install the exact supabase npm dev tool in a separate tools directory or use the official release binary; put it on PATH or set SUPABASE_BIN to its executable. Use a writable npm cache. Do not replace application lockfiles.
 
 ```bash
@@ -114,7 +116,10 @@ Git attributes preserve reviewed SQL bytes and enforce LF for backend
 TypeScript. A hash mismatch must be investigated; do not update manifests
 or weaken verification to accommodate checkout conversion.
 
-Local database lifecycle and application checks passed on the Windows
-working tree during this setup. These results do not establish remote CI
-success for a later commit or production readiness. Broader R32 gates remain
-open. Keep private runtime configuration and logs out of Git.
+Historical setup claim: local database lifecycle and application checks were
+reported passing on the Windows working tree during that setup. This paragraph
+has no exact tested SHA/artifact identity; it is not fresh evidence at the current
+HEAD. See the [audit's evidence boundaries](../07-planning/phase-1-audit.md).
+These results do not establish remote CI success for a later commit or production
+readiness. Broader R32 gates remain open. Keep private runtime configuration and
+logs out of Git.
