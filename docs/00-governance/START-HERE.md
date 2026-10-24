@@ -2,7 +2,9 @@
 
 এই repository-তে Phase 1 Supabase foundation এবং Windows tooling changes merge হয়েছে; পূর্ণ MVP এখনও তৈরি হয়নি। DOC-01 inspection শুরু হয়েছে clean main, HEAD 74e2f2c8975751d9c1545917ed7fa81be50d4400 থেকে। এটি recorded checkpoint, স্থায়ীভাবে checkout করার নির্দেশ নয়। প্রত্যেক নতুন task-এ actual Git state যাচাই করুন।
 
-Current documentation delivery: [DOC-02 record](../07-planning/current-phase/documentation-alignment/DOC-02.md). The [master execution plan](../07-planning/master-execution-plan.md) is the active development plan, **Draft / proposed for review**: full MVP milestones/dependencies and a detailed proposed first email/session milestone. Implementation priority/authorization and owner acceptance remain pending. [DOC-01](../07-planning/current-phase/documentation-alignment/DOC-01.md) is preserved as historical guidance/evidence; its checks and fingerprint are unchanged.
+Current documentation delivery: [M01-01 email/session contract record](../07-planning/current-phase/M01-01.md), **Draft / review pending**. The five scoped deliverables are [backend architecture](../02-architecture/backend-architecture.md), [rule index](../03-domain/business-rules.md), [OpenAPI](../05-api/openapi.yaml), [DTO/DB mapping](../05-api/DTO-DB-mapping.md) and [QA plan](../08-testing/QA-plan.md). Only this documentation increment is authorized; no M01 implementation is complete or newly authorized. M01-02 inputs are prepared for review, with the readiness conditions and provider/session findings in the record.
+
+The [master execution plan](../07-planning/master-execution-plan.md) remains **Draft / proposed for review** for remaining development. Actual clean main was fetched and already current at `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`; DOC-01/DOC-02 merge and two successful CI run statuses were checked. Their [DOC-01](../07-planning/current-phase/documentation-alignment/DOC-01.md) / [DOC-02](../07-planning/current-phase/documentation-alignment/DOC-02.md) records and fingerprints remain historical and unchanged; merge CI is not evidence for this new uncommitted worktree or full Auth acceptance.
 
 নতুন agent-এর পড়ার পথ:
 

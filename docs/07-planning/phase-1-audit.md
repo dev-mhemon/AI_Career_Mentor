@@ -1,5 +1,7 @@
 # Phase 1 implementation and evidence audit
 
+Current documentation delta (M01-01, 2026-10-24): [record](current-phase/M01-01.md) re-inspects Auth/Profile/common/frontend/public configuration at fetched main `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`. Five email/session documents are now Draft/review pending; four of the former nine missing standalone documents remain Planned (23/27 now present at this local delivery). No application behavior changes. DOC-01/DOC-02 records/fingerprints remain unchanged. See [current findings](../00-governance/open-issues.md#m01-01-contract-findings); the observations/evidence below retain their historical scope.
+
 ## Observation scope
 
 DOC-01 inspected clean main at 74e2f2c8975751d9c1545917ed7fa81be50d4400, then created docs/doc-01-agent-workflow from that source. See the [current DOC-01 record](current-phase/documentation-alignment/DOC-01.md) for the final uncommitted documentation worktree and actual checks. This is a recorded observation, not a standing instruction to reset/switch to that commit.
@@ -36,7 +38,7 @@ The historical [82-entry catalog coverage](current-phase/alignment/endpoint-cove
 
 Remaining implementation includes full canonical Auth/local SMS/social/linking/contact/recovery; shared Redis limits/lockout/idempotency and refresh integration; deletion receipt/outbox/worker/failure handling; broader career, roadmap, daily-plan, quiz/practice/progress/mentor/technology/feedback/jobs/admin workflows; AI gateway/prompts/providers/privacy/evaluation, leases/fencing/scheduler; full Bangla UI/accessibility/PWA and R17/R18 flows. SMS naming consistency does not certify a configured Bangladesh provider.
 
-The original 27-document inventory is still 18 present / nine absent standalone files; embedded equivalents and priorities are in DOC-01. Config/audit are refreshed here; the master checklist receives a historical disposition only. Full development planning is DOC-02, not completed by this audit.
+At DOC-01 the original 27-document inventory was 18 present / nine absent standalone files; embedded equivalents and priorities remain in DOC-01. M01-01's current delta is above; historical inventory evidence is not rewritten.
 
 ## Historical executed evidence, not current-HEAD PASS
 
@@ -59,4 +61,4 @@ DOC-01 freshly executes only documentation/protected-source checks, recorded in 
 
 R32 remains **in_progress / partially_executed**; R33 **optional/deferred**. Full Auth/provider approval, deletion/RLS fault matrices, purge timing/recovery, performance/connection budget, PITR/restore, production destination/secrets/security and owner release acceptance remain open. No local PASS count or source adoption closes them.
 
-Follow [source authority](../00-governance/source-of-truth.md), [open issues](../00-governance/open-issues.md), the [shared workflow](../00-governance/agent-workflow.md) and [runbook](../09-operations/runbook.md). The [master plan](master-execution-plan.md) currently preserves a historical alignment checklist with a DOC-02 pointer; it is not a full active MVP plan.
+Follow [source authority](../00-governance/source-of-truth.md), [open issues](../00-governance/open-issues.md), the [shared workflow](../00-governance/agent-workflow.md) and [runbook](../09-operations/runbook.md). The [master plan](master-execution-plan.md) is the active proposed MVP plan with M01-01 documentation progress; implementation and acceptance require their own authorized gates.

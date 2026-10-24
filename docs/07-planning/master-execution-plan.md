@@ -4,6 +4,8 @@ DOC-02 v0.1 - 2026-10-24 (Asia/Dhaka) - **Draft / proposed for review**.
 
 This is the active development planning document. It proposes work; it does not approve implementation, installation, provider use, commits, pushes, PRs, database operations or deployment. The [DOC-02 record](current-phase/documentation-alignment/DOC-02.md) identifies this local documentation delivery and checks. Use the [shared workflow](../00-governance/agent-workflow.md) for each separately authorized task.
 
+M01-01 progress, 2026-10-24: owner authorized **documentation only**; [current record](current-phase/M01-01.md) delivers five scoped Draft/review-pending documents from fetched main `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`. M01-02 inputs are prepared, pending design review and separate implementation authorization. No M01 code/task M01-02–10 or milestone completion is claimed. DOC-02's branch/SHA/worktree below are its preserved preparation checkpoint, not today's checkout instructions.
+
 ## 1. Identity, authority and agreed scope
 
 Repository: dev-mhemon/AI_Career_Mentor; root D:/AI Career Mentor; branch docs/doc-01-agent-workflow; base and full HEAD 74e2f2c8975751d9c1545917ed7fa81be50d4400. Entry: no staged changes, 11 modified tracked documents and two untracked Markdown documents inherited from DOC-01. Continue on that branch to preserve the sequential handoff; no reset, switch, stash, stage or commit. HEAD alone does not identify the edited worktree; see DOC-02 for inherited paths and fingerprints.
@@ -244,6 +246,8 @@ Existing backend E2E covers health; foundation HTTP/form helpers alone cannot pr
 
 ### M01-01 - Resolve email/session contract increment
 
+Progress: documentation deliverables authored and checked in the [M01-01 record](current-phase/M01-01.md), **Draft / review pending**. [Architecture](../02-architecture/backend-architecture.md), [rules](../03-domain/business-rules.md), [OpenAPI](../05-api/openapi.yaml), [mapping](../05-api/DTO-DB-mapping.md), [QA](../08-testing/QA-plan.md) distinguish implementation/proposal/evidence. Provider/pending-row/session findings ES-01–06 remain in [open issues](../00-governance/open-issues.md#m01-01-contract-findings). Owner acceptance and review of M01-02 inputs remain open; the task's bounded documentation delivery does not complete M01.
+
 - Goal/dependencies: first task after owner priority/authorization; M00 and current docs. Resolve adapter/session handoff before dependent coding.
 - Sources/invariants: C01 §7–9; C05 §13/14.1/15.2/16/17.1/R18/R24/R31; C06 §6.1–2; C09 Screens02–04/07/13/22/§6. Incomplete profile never blocks dashboard; OAuth's third next_step remains in shared types.
 - Targets/exclusions: maintained architecture/domain/API/testing docs/current record; read source/public templates. No app/provider/schema edits.
@@ -334,7 +338,7 @@ Existing backend E2E covers health; foundation HTTP/form helpers alone cannot pr
 
 ## 6. Nine standalone documentation dependencies
 
-All nine exact paths below were rechecked absent. No complete standalone equivalent was found in the repository inventory; embedded equivalents exist. These are planned incremental derived documents, not files created by DOC-02 or independent policy authorities. The implementing slice author maintains affected content; a separate reviewer checks it, and the owner resolves product/provider/production policy.
+At DOC-02 preparation, all nine exact paths below were rechecked absent; embedded equivalents existed. M01-01 now authors five scoped Draft increments; four remain Planned. These are incremental derived documents, not independent policy authorities. The implementing slice author maintains affected content; a separate reviewer checks it, and the owner resolves product/provider/production policy.
 
 | Planned path | Existing embedded authority | First need / smallest useful content | Acceptance / maintenance |
 |---|---|---|---|
@@ -348,7 +352,7 @@ All nine exact paths below were rechecked absent. No complete standalone equival
 | docs/08-testing/AI-evaluation.md | C01 §25/47/56, C08 §13/16–17/R11, C05 tasks | M04 before AI acceptance: synthetic 8-role x 3-language coverage, task rubric/failure criteria/prompt/model/provider provenance; extend M05–M12 | Actual grounding/correctness/relevance/language/consistency/adversarial results and methods; no private production samples; AI author/reviewer plus owner data/provider approval |
 | docs/09-operations/deployment.md | C02 §9/11–12, C06 §17–20/R23, C08 §18–19, runbook/config | M03/M04 recovery notes can live initially in task/runbook; standalone M13 before live-pilot planning, complete M14 | Actual destination/access/admin/secrets/backup/monitor/on-call owners, rollout/rollback, Redis-loss/worker/scheduler/purge recovery and measured PITR/security; operations author/reviewer plus owner release approval |
 
-M01-01 needs useful contract/rule/QA/backend increments, not all nine files. UI map accompanies UI; schema map accompanies schema-dependent work; AI evaluation precedes AI acceptance; production documentation precedes live operations. OpenAPI specified scope must never imply implemented routes. Reuse endpoint/screen inventories instead of duplicate trackers. Config names follow real public consumers, never private runtime inspection. No placeholders are created.
+M01-01 has authored the five useful email/session contract/rule/QA/backend increments above as Draft/review pending; §6 describes their future extension responsibilities. The other four standalone documents remain Planned. UI map accompanies UI; schema map accompanies schema-dependent work; AI evaluation precedes AI acceptance; production documentation precedes live operations. OpenAPI specified scope never implies implemented routes. Reuse endpoint/screen inventories instead of duplicate trackers. Config names follow real public consumers, never private runtime inspection. No placeholders are created.
 
 ## 7. Traceability and acceptance
 

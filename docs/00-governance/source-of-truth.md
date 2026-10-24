@@ -43,20 +43,21 @@ For a conflict: identify both source sections and actual source/evidence identit
 | `supabase/migrations`, `supabase/rollbacks`, `supabase/tests/database` | Adopted executable history; same historical SQL hashes |
 | `docs/07-planning/current-phase/alignment/` | Historical alignment delivery and execution records; their Draft/acceptance statements belong to that delivery |
 | `docs/99-archive/` | Historical only; no active authority |
-| [DOC-01 record](../07-planning/current-phase/documentation-alignment/DOC-01.md) | Current documentation delivery, observed source identity, inventory and verification; owner acceptance separate |
+| [DOC-01 record](../07-planning/current-phase/documentation-alignment/DOC-01.md) / [DOC-02 record](../07-planning/current-phase/documentation-alignment/DOC-02.md) | Historical documentation deliveries, source identities, inventories and checks; preserved unchanged |
+| [M01-01 record](../07-planning/current-phase/M01-01.md) | Current bounded email/session documentation delivery; derived Drafts, not adopted contract changes or implementation acceptance |
 | [Shared agent workflow](agent-workflow.md) | One task execution/handoff procedure for both agents |
 
-Future deliverables below were rechecked as absent standalone files during DOC-01. Embedded equivalents and timing are recorded in DOC-01; absence does not mean all underlying information is missing. Do not create duplicate authorities or empty placeholders.
+The nine standalone paths below were absent at DOC-01. M01-01 authors five useful email/session Draft increments; the other four remain Planned. Full-project expansion follows the master plan, not this task. These derived documents do not supersede adopted sections or create duplicate policy authorities.
 
-| Planned path | Status | Intended scope / prerequisites / milestone |
+| Deliverable path | Status | Intended scope / prerequisites / milestone |
 |---|---|---|
 | `docs/02-architecture/frontend-architecture.md` | Planned | Actual component/cache/PWA architecture; implemented screens and ADR review; frontend milestone |
-| `docs/02-architecture/backend-architecture.md` | Planned | Actual module/worker boundaries; service implementation/review; backend milestone |
-| `docs/03-domain/business-rules.md` | Planned | Indexed links to C01/C03 rules, no duplicates; domain implementation traceability milestone |
+| [backend-architecture.md](../02-architecture/backend-architecture.md) | Draft / review pending | M01-01 actual Auth/access/transaction and proposed session/provider boundary; wider modules deferred |
+| [business-rules.md](../03-domain/business-rules.md) | Draft / review pending | M01-01 email/session rule → authority → implementation/test links; wider domain index deferred |
 | `docs/04-database/DB-schema-map.md` | Planned | Installed-catalog mapping; reviewed forward versions; next schema milestone |
-| `docs/05-api/openapi.yaml` | Planned | Exact implemented DTO/operations, no invented routes; HTTP contract milestone |
-| `docs/05-api/DTO-DB-mapping.md` | Planned | Links to C05/C06 plus executable mappings; broader API milestone |
-| `docs/08-testing/QA-plan.md` | Planned | Full MVP acceptance matrix; named implementations/owner gates; QA milestone |
+| [openapi.yaml](../05-api/openapi.yaml) | Draft / review pending | M01-01 C05 scoped canonical contracts labeled Planned; existing A10/A13 and transitional sync labeled separately; not runtime completion |
+| [DTO-DB-mapping.md](../05-api/DTO-DB-mapping.md) | Draft / review pending | M01-01 identity/profile mapping, pending-row lifecycle and provider/application recovery proposal |
+| [QA-plan.md](../08-testing/QA-plan.md) | Draft / review pending | M01-01 minimal email/session matrix; existing/planned/synthetic/live evidence distinct; full MVP matrix deferred |
 | `docs/08-testing/AI-evaluation.md` | Planned | Synthetic 8-role/3-language benchmark and approved models; AI milestone |
 | `docs/09-operations/deployment.md` | Planned | Destination, credentials, backup/security/rollback approval; release milestone |
 | `supabase/seed/` | Planned only if needed | Separate future fixture purpose/execution review; adopted 018/020 seeds stay in place |
