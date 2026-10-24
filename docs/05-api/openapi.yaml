@@ -1,0 +1,1604 @@
+openapi: 3.0.3
+info:
+  title: AI Career Mentor - M01-01 email/session contract increment
+  version: 0.1.0
+  description: >-
+    Draft / review pending, 2026-10-24. Derived from adopted C05 v1.5.1. SPECIFIED is not IMPLEMENTED or
+    ACCEPTED. Source inspection: 5a71a5b8196a619ae0960b212fe71e74d79e0fb6. Six planned canonical operations
+    plus existing A10/A13 and observed sync; no phone verification/recovery/link/deletion or internal HTTP
+    routes invented. See M01-01 task record, backend architecture, DTO-DB-mapping and QA-plan. OpenAPI
+    describes wire contracts; semantic rules and provider capability gaps remain linked review obligations.
+servers:
+  - url: /api/v1
+tags:
+  - name: Email and session
+    description: C05 14.1 subset; shared DTOs preserve later phone/OAuth requirements.
+x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1 and accepted R18/R24/R31
+x-contract-notes:
+  - >-
+    H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT. Content-Type application/json for bodies;
+    optional X-Request-Id UUID. Every response has X-Request-Id; every 429 includes Retry-After.
+  - >-
+    R31: auth:v1 HMAC contact/IP components; six digits/600s provider challenge, five failures/one consume;
+    resend60s,3/contact/15min,10/IP/15min; login5/identifier+IP/15min with15min lockout. Redis send/verify
+    outage => retryable SERVICE_UNAVAILABLE503. Limits are operating defaults, not new product requirements.
+  - >-
+    C05 common errors apply in addition to endpoint-specific codes. PLATFORM/provider/DB failures retain
+    section16 meanings; no raw provider diagnostics. Error code/status lists follow scoped endpoint plus
+    common policy.
+  - >-
+    No request Idempotency-Key, challenge_id, identifier URL parameter, new status or email-only next_step
+    variant is introduced.
+  - x-* annotations are documentation metadata, not wire fields or implementation enums.
+  - >-
+    Registration exactly-one/non-null choice uses overlapping oneOf branches so both actual strings fail. RFC
+    email, BD normalization, matching password and channel/contact validation require semantic validation
+    beyond OpenAPI.
+  - >-
+    Transitional sync uses observed nullable retry metadata. Canonical A10/A13 source has the same formatter
+    discrepancy, explicitly recorded in x-observed-gaps.
+paths:
+  /auth/register:
+    post:
+      operationId: EP-A01
+      tags:
+        - Email and session
+      summary: Register by email or Bangladesh phone
+      description: >-
+        SPECIFIED, backend absent. M01 delivers only email behavior in later tasks; shared phone contract
+        remains required for M02. No session until required verification. Create users/provider rows
+        unverified; trusted pre-session mapping is unresolved (DTO-DB-mapping.md). R31 counters precede
+        provider sends.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: planned
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequestDTO'
+      responses:
+        '201':
+          description: C05 EP-A01 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationPendingDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '409':
+          description: CONTACT_ALREADY_REGISTERED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - CONTACT_ALREADY_REGISTERED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE, INVALID_PHONE_NUMBER, PASSWORD_POLICY_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+            - INVALID_PHONE_NUMBER
+            - PASSWORD_POLICY_FAILED
+        '429':
+          description: RATE_LIMITED, OTP_LIMIT_EXCEEDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+            - OTP_LIMIT_EXCEEDED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: SMS_PROVIDER_ERROR, EMAIL_PROVIDER_ERROR, PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SMS_PROVIDER_ERROR
+            - EMAIL_PROVIDER_ERROR
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/verify-email:
+    post:
+      operationId: EP-A02
+      tags:
+        - Email and session
+      summary: Verify email code and establish session
+      description: >-
+        SPECIFIED, backend absent. Public signup mode; optional JWT for email added via A12 (M02, not
+        completed here). Six-digit code, one-time consume; empty profile/preferences mapped atomically.
+        Profile completeness does not gate general access.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: planned
+      x-authorization-profile: AZ-PUB
+      security:
+        - {}
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+      responses:
+        '200':
+          description: C05 EP-A02 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '409':
+          description: ALREADY_VERIFIED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ALREADY_VERIFIED
+        '410':
+          description: VERIFICATION_CODE_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFICATION_CODE_EXPIRED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE, VERIFICATION_CODE_INVALID
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+            - VERIFICATION_CODE_INVALID
+        '429':
+          description: RATE_LIMITED, VERIFICATION_ATTEMPTS_EXCEEDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+            - VERIFICATION_ATTEMPTS_EXCEEDED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/resend-verification:
+    post:
+      operationId: EP-A04
+      tags:
+        - Email and session
+      summary: Resend email or phone verification
+      description: >-
+        SPECIFIED, backend absent. Same response for known/unknown contact; masked display, expiry and resend
+        metadata. Full channel enum preserved; email-only work is partial operation delivery. R31 Redis outage
+        fails send closed with retryable 503.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: planned
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationDTO'
+      responses:
+        '200':
+          description: C05 EP-A04 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationPendingDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+        '429':
+          description: RATE_LIMITED, RESEND_COOLDOWN_ACTIVE, OTP_LIMIT_EXCEEDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+            - RESEND_COOLDOWN_ACTIVE
+            - OTP_LIMIT_EXCEEDED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: SMS_PROVIDER_ERROR, EMAIL_PROVIDER_ERROR, PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SMS_PROVIDER_ERROR
+            - EMAIL_PROVIDER_ERROR
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/login:
+    post:
+      operationId: EP-A05
+      tags:
+        - Email and session
+      summary: Password login by email or Bangladesh phone
+      description: >-
+        SPECIFIED, backend absent. Unknown user and wrong password share INVALID_CREDENTIALS. Suspended users
+        may authenticate into account settings; profile completion does not gate basic access. ACCOUNT_LOCKED
+        carries error.retryAfterSeconds. Email implementation alone does not complete shared phone login.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: planned
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-A05 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: INVALID_CREDENTIALS
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_CREDENTIALS
+        '403':
+          description: UNVERIFIED_ACCOUNT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - UNVERIFIED_ACCOUNT
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+        '423':
+          description: ACCOUNT_LOCKED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_LOCKED
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/logout:
+    post:
+      operationId: EP-A06
+      tags:
+        - Email and session
+      summary: Revoke current session
+      description: >-
+        SPECIFIED, backend absent. No request body. Current-session revocation, idempotent with valid JWT;
+        missing/invalid/expired token remains 401. No application table writes. Provider refresh revocation
+        does not immediately invalidate access JWT cryptographically.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: planned
+      x-authorization-profile: AZ-SUSP
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      responses:
+        '200':
+          description: C05 EP-A06 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+        '502':
+          description: PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/refresh:
+    post:
+      operationId: EP-A07
+      tags:
+        - Email and session
+      summary: Rotate refresh token
+      description: >-
+        SPECIFIED, backend absent. Rotated provider token pair, no silent meaningful-activity update; do not
+        bootstrap/recreate account. Configured provider reuse grace must be respected; not every immediate
+        token replay is invalid.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: planned
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenDTO'
+      responses:
+        '200':
+          description: C05 EP-A07 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: REFRESH_TOKEN_INVALID, SESSION_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - REFRESH_TOKEN_INVALID
+            - SESSION_EXPIRED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/oauth/session:
+    post:
+      operationId: EP-A10
+      tags:
+        - Email and session
+      summary: Bootstrap Google or Facebook application state
+      description: >-
+        Provider sign-in completed externally; supply Supabase access JWT. Provider must match JWT and live
+        linked identity. Backend retains all three next_step values; frontend callback is transitional
+        sync/me-to-dashboard. No session tokens returned by this operation.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented-backend
+      x-authorization-profile: AZ-SUSP
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthSessionRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-A10 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthSessionResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '409':
+          description: IDENTITY_LINK_CONFLICT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - IDENTITY_LINK_CONFLICT
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE, PROVIDER_MISMATCH
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+            - PROVIDER_MISMATCH
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+      x-observed-gaps:
+        - >-
+          Shared HTTP formatter emits null retryAfterSeconds; normative ErrorDTO allows optional nonnegative
+          integer.
+        - Frontend does not consume canonical OAuth next_step end to end.
+  /auth/me:
+    get:
+      operationId: EP-A13
+      tags:
+        - Email and session
+      summary: Current user and effective access
+      description: >-
+        Valid JWT including suspended users. Full identity/access/completeness/focus state. Suspended flags
+        all false and can_delete_account true; frontend getMe currently returns only user, losing metadata. No
+        activity update.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented-backend
+      x-authorization-profile: AZ-SUSP
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      responses:
+        '200':
+          description: C05 EP-A13 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+      x-observed-gaps:
+        - >-
+          Shared HTTP formatter emits null retryAfterSeconds; normative ErrorDTO allows optional nonnegative
+          integer.
+  /auth/sync:
+    post:
+      operationId: transitionalSync
+      tags:
+        - Email and session
+      summary: Observed compatibility bootstrap
+      description: >-
+        Outside C05 catalog, retained only to explain current email/phone/OAuth frontend handoff. No body is
+        consumed. JWT bootstrap skips app guard; live Auth lookup and UUID comparison precede mapping. Creates
+        profile/preferences and stamps login/activity, so unsuitable for silent refresh.
+        x-authorization-profile is descriptive of observed suspended bootstrap access, not a newly adopted
+        operation.
+      x-source: ../../backend/src/auth/controllers/auth.controller.ts; ../02-architecture/backend-architecture.md
+      x-implementation-status: transitional-implemented
+      x-authorization-profile: AZ-SUSP
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      responses:
+        '200':
+          description: Observed transitional success envelope; outside C05 catalog.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '409':
+          description: IDENTITY_LINK_CONFLICT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - IDENTITY_LINK_CONFLICT
+        '422':
+          description: VALIDATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+      x-observed-gaps:
+        - >-
+          No canonical email policy/Redis control supplied by sync; do not promote it to register/login/verify
+          contract.
+components:
+  securitySchemes:
+    SupabaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase-issued JWT; ES256/issuer/audience/expiry/UUID validation in current backend.
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+    Language:
+      name: Accept-Language
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - bn
+          - en
+  headers:
+    RequestId:
+      description: Included on every response. Matches error.requestId when an error is present.
+      schema:
+        type: string
+        format: uuid
+    RetryAfter:
+      description: Required on rate-limited 429 responses (C05 13.1); server retryAfterSeconds is authoritative.
+      schema:
+        type: integer
+        minimum: 0
+  schemas:
+    RegisterRequestDTO:
+      type: object
+      required:
+        - password
+        - confirm_password
+        - privacy_consent
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: RFC email; lower-case normalization (C05 A01 / 15.2).
+          nullable: true
+        phone:
+          type: string
+          description: >-
+            Bangladesh mobile input; normalized to +8801[3-9][0-9]{8}. Local 017... input is allowed by C05
+            15.2; validation/normalization is semantic.
+          nullable: true
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: >-
+            C05 example/default minimum 8 is configurable; no all-numeric password. Server configured policy
+            remains authoritative.
+        confirm_password:
+          type: string
+          description: >-
+            Must equal password. Mismatch: VALIDATION_FAILED with details field confirm_password / code
+            PASSWORD_MISMATCH; nothing created.
+        privacy_consent:
+          type: boolean
+          enum:
+            - true
+      description: >-
+        Shared email/phone contract, not an email-only replacement. Exactly one non-null contact. Null unused
+        contact follows C05 A01 example. Both omitted/null or two strings are invalid.
+      oneOf:
+        - required:
+            - email
+          properties:
+            email:
+              type: string
+              format: email
+              maxLength: 254
+              description: RFC email; lower-case normalization (C05 A01 / 15.2).
+        - required:
+            - phone
+          properties:
+            phone:
+              type: string
+              description: >-
+                Bangladesh mobile input; normalized to +8801[3-9][0-9]{8}. Local 017... input is allowed by
+                C05 15.2; validation/normalization is semantic.
+    RegistrationPendingDTO:
+      type: object
+      required:
+        - verification_channel
+        - contact_masked
+        - expires_in_seconds
+        - resend_available_at
+      properties:
+        verification_channel:
+          type: string
+          enum:
+            - email
+            - phone
+        contact_masked:
+          type: string
+        expires_in_seconds:
+          type: integer
+          description: >-
+            Provider challenge validity remaining; R31 proposed operating policy is 600 seconds, not a
+            hard-coded example response.
+        resend_available_at:
+          type: string
+          format: date-time
+    VerifyCodeRequestDTO:
+      type: object
+      required:
+        - code
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: RFC email; lower-case normalization (C05 A01 / 15.2).
+        phone:
+          type: string
+          description: >-
+            Bangladesh mobile input; normalized to +8801[3-9][0-9]{8}. Local 017... input is allowed by C05
+            15.2; validation/normalization is semantic.
+        code:
+          type: string
+          pattern: ^\d{6}$
+      description: >-
+        Shared DTO: email required on verify-email; phone required on verify-phone. Only verify-email
+        operation is included in this increment.
+      oneOf:
+        - required:
+            - email
+        - required:
+            - phone
+    EmailVerificationRequest:
+      allOf:
+        - $ref: '#/components/schemas/VerifyCodeRequestDTO'
+        - type: object
+          required:
+            - email
+      description: >-
+        C05 A02 email form of shared VerifyCodeRequestDTO. Added-contact mode supplies JWT; signup mode is
+        public.
+    ResendVerificationDTO:
+      type: object
+      required:
+        - channel
+        - contact
+      properties:
+        channel:
+          type: string
+          enum:
+            - email
+            - phone
+        contact:
+          type: string
+          description: 'Must match channel: RFC email or Bangladesh phone, normalized as C05 A01.'
+    LoginRequestDTO:
+      type: object
+      required:
+        - identifier
+        - password
+      properties:
+        identifier:
+          type: string
+          description: Email or Bangladesh phone; normalize using C05 A01 rules.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    RefreshTokenDTO:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+    OAuthSessionRequestDTO:
+      type: object
+      required:
+        - provider
+      properties:
+        provider:
+          type: string
+          enum:
+            - google
+            - facebook
+    AuthUserDTO:
+      type: object
+      required:
+        - id
+        - email
+        - phone
+        - status
+        - role
+        - linked_providers
+        - verified_contact
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+            - active
+            - suspended
+        role:
+          type: string
+          enum:
+            - USER
+            - ADMIN
+        linked_providers:
+          type: array
+          items:
+            type: string
+        verified_contact:
+          type: boolean
+    AuthSessionDTO:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - expires_in
+        - token_type
+        - user
+        - profile_complete
+        - next_step
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+        token_type:
+          type: string
+          enum:
+            - Bearer
+        user:
+          $ref: '#/components/schemas/AuthUserDTO'
+        profile_complete:
+          type: boolean
+        next_step:
+          type: string
+          enum:
+            - profile_setup
+            - app_home
+    OAuthSessionResponseDTO:
+      type: object
+      required:
+        - user
+        - profile_complete
+        - verified_contact_required
+        - next_step
+      properties:
+        user:
+          $ref: '#/components/schemas/AuthUserDTO'
+        profile_complete:
+          type: boolean
+        verified_contact_required:
+          type: boolean
+        next_step:
+          type: string
+          enum:
+            - profile_setup
+            - app_home
+            - add_verified_contact
+    MeResponseDTO:
+      type: object
+      required:
+        - user
+        - profile_complete
+        - focus_roadmap_id
+        - effective_access
+        - can_delete_account
+      properties:
+        user:
+          $ref: '#/components/schemas/AuthUserDTO'
+        profile_complete:
+          type: boolean
+        focus_roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+        effective_access:
+          type: object
+          required:
+            - roadmap_generator
+            - daily_plan
+            - quiz_practice
+            - ai_practice_review
+            - progress_tracking
+            - ai_mentor
+            - technology_update
+          properties:
+            roadmap_generator:
+              type: boolean
+            daily_plan:
+              type: boolean
+            quiz_practice:
+              type: boolean
+            ai_practice_review:
+              type: boolean
+            progress_tracking:
+              type: boolean
+            ai_mentor:
+              type: boolean
+            technology_update:
+              type: boolean
+          additionalProperties: false
+        can_delete_account:
+          type: boolean
+    LogoutDTO:
+      type: object
+      required:
+        - logged_out
+      properties:
+        logged_out:
+          type: boolean
+          enum:
+            - true
+    FieldErrorDTO:
+      type: object
+      required:
+        - field
+        - code
+        - message
+      properties:
+        field:
+          type: string
+          description: Dot path.
+        code:
+          type: string
+        message:
+          type: string
+    ErrorDTO:
+      type: object
+      required:
+        - code
+        - message
+        - requestId
+      properties:
+        code:
+          type: string
+          description: C05 section 16 error code; operation response lists applicable codes.
+        message:
+          type: string
+          description: Safe English message.
+        requestId:
+          type: string
+          format: uuid
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldErrorDTO'
+        retryable:
+          type: boolean
+          default: false
+        retryAfterSeconds:
+          type: integer
+          minimum: 0
+      description: >-
+        C05 15.1 normative contract. Optional retryAfterSeconds is omitted when absent, not null. Current
+        common/http.ts emits null: observed implementation discrepancy, not silently adopted here.
+    ObservedErrorDTO:
+      allOf:
+        - type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string
+              format: uuid
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/FieldErrorDTO'
+            retryable:
+              type: boolean
+            retryAfterSeconds:
+              type: integer
+              minimum: 0
+              nullable: true
+      description: >-
+        Observed common/http.ts only, used by transitional sync. Current canonical A10/A13 also share this
+        formatter; their x-observed-gaps records the discrepancy.
+    RegistrationPendingDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/RegistrationPendingDTO'
+    AuthSessionDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/AuthSessionDTO'
+    OAuthSessionResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/OAuthSessionResponseDTO'
+    MeResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/MeResponseDTO'
+    LogoutDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/LogoutDTO'
+    ErrorEnvelope:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          enum:
+            - false
+        error:
+          $ref: '#/components/schemas/ErrorDTO'
+    ObservedErrorEnvelope:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          enum:
+            - false
+        error:
+          $ref: '#/components/schemas/ObservedErrorDTO'
