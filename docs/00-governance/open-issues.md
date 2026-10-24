@@ -1,6 +1,6 @@
 # Open issues and decisions
 
-Current delivery is [M01-01](../07-planning/current-phase/M01-01.md): bounded email/session documentation, Draft/review pending. [DOC-02](../07-planning/current-phase/documentation-alignment/DOC-02.md) / [DOC-01](../07-planning/current-phase/documentation-alignment/DOC-01.md) retain historical inspection/checks. The [master plan](../07-planning/master-execution-plan.md) remains proposed for implementation; this task does not authorize code. Requirements come from the [source register](source-of-truth.md); current boundaries are in the [phase audit](../07-planning/phase-1-audit.md).
+Use [START-HERE](START-HERE.md) for the current maintenance task. Latest merged implementation is [M01-02](../07-planning/current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25): bounded shared Auth abuse-control helper/tests, merged through PR #7 with separate successful PR/main application and database CI. Scoped owner acceptance does not cover endpoint/provider/session integration, all derived Draft designs or production readiness. M01-01, DOC-01 and DOC-02 remain historical records. The [master plan](../07-planning/master-execution-plan.md) proposes remaining work; M01-03 is the next candidate and requires separate authorization. Requirements remain governed by the [source register](source-of-truth.md); the [phase audit](../07-planning/phase-1-audit.md) preserves its dated observation scope.
 
 ## M01-01 contract findings
 
@@ -15,7 +15,7 @@ Inspected source `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`; proposals are revie
 | ES-05 — C05 §15.1 optional retryAfterSeconds integer versus current common/http null when absent | Existing A10/A13 formatter differs from canonical ErrorDTO | Canonical OpenAPI follows C05; observed sync variant/gaps explicit. Future bounded formatter alignment or reviewed exception; no frozen-source change |
 | ES-06 — C05 A02 AZ-PUB with optional JWT versus C09 Screen04 secondary-contact AZ-USER | Added-contact status policy needs reconciliation in M02, outside signup implementation | Preserve C05 optional bearer in contract; apply adopted user/status constraints when secondary-contact mode is designed, record any required owner clarification. No email-only narrowing of shared DTO |
 
-M01-02 policy/error inputs are authored; separate review and implementation authorization remain. ES-01/02/04 block dependent provider/session acceptance, not independent documentation or Redis policy preparation.
+M01-02 policy/error inputs have been implemented and reviewed within the merged helper/test scope. ES-01/02/04 still block dependent provider/session acceptance; the shared helper does not resolve provider bypass, delivery configuration, pending-row recovery or session revocation. Historical M01-01 proposals above remain review inputs rather than accepted policy exceptions.
 
 ## Verified resolutions and historical claims
 
@@ -33,7 +33,8 @@ M01-02 policy/error inputs are authored; separate review and implementation auth
 |---|---|---|
 | Full Auth/account/local SMS/social/linking/recovery | Deferred implementation; frontend SDK/sync path is transitional | Provider selection/configuration, canonical contracts, privacy/rate-limit/integration evidence |
 | R18 contact identifier in verification query; OAuth callback goes directly to dashboard | Actual frontend gaps; backend next_step is not end-to-end routing evidence | Implement existing C05/C09 contracts in an authorized slice; no new policy invented |
-| Redis shared limits/idempotency; deletion receipt/outbox/worker; AI/worker/scheduler; broader UI/PWA | Specified, not delivered | Bounded implementation, fault/security tests and relevant dependencies |
+| Redis shared Auth abuse controls | Bounded M01-02 helper/tests merged; existing endpoints do not invoke it | M01-03+ endpoint/provider integration, trusted IP normalization, direct-provider bypass controls and external-effect/session recovery evidence |
+| Generic Redis idempotency/loss recovery; deletion receipt/outbox/worker; AI/worker/scheduler; broader UI/PWA | Specified, not delivered by M01-02 | Separately authorized implementation, fault/security tests and relevant dependencies; R14 is not implemented by R31 helper completion |
 | R32 | in_progress / partially_executed; owner/release acceptance pending | Remaining Auth/provider, deletion/RLS fault, purge/recovery, load/connection-budget, PITR/security/production and acceptance gates |
 | R33 | optional/deferred | Owner may revisit; not a DOC-01 blocker |
 | Numerical SLA/quality and schema-family/assertion prose | Targets or scoped historical claims | Named methods and version-bound measurements; C06 exact SQL/hash gates govern physical objects |
@@ -42,9 +43,9 @@ M01-02 policy/error inputs are authored; separate review and implementation auth
 
 ## Owner decisions that remain genuinely open
 
-1. Select/prioritize the next implementation slice and its observable acceptance boundary. DOC-02 proposes M01 canonical email/session tasks and alternatives; owner selection and separate implementation authorization remain pending.
+1. Authorize the next bounded implementation slice and its observable acceptance boundary. M01-01/M01-02 are merged; M01-03 is the next candidate. Their prior authorization does not authorize that next slice or complete the M01 milestone.
 2. Approve concrete SMS/AI providers/models and applicable real-user-data handling before dependent integrations; a provider being available is not approval.
 3. Decide production destination/access ownership and approve operational/security/backup/restore arrangements before release.
 4. Record explicit acceptance of applicable R32 gates and eventual release. Agent checks do not supply owner sign-off.
 
-These are dependencies for affected future work, not reasons to block independent DOC-01 guidance and verification. New conflicts must identify source sections, actual behavior, impact and the missing decision using the shared workflow.
+These are dependencies for affected future work, not blockers for the authorized documentation maintenance selected through START-HERE. New conflicts must identify source sections, actual behavior, impact and the missing decision using the shared workflow.

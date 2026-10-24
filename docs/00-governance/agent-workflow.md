@@ -91,6 +91,18 @@ Blockers / unresolved owner decisions:
 Next action: inputs | deliverables | dependencies | acceptance:
 ~~~
 
+### Documentation status lifecycle checklist
+
+Use START-HERE to navigate to the current maintenance/task record; the source register retains requirement authority. Update affected status assertions rather than every document after every merge. Preserve dated snapshots and earlier pending evidence, using current summaries or explicit superseding addenda.
+
+- The task author maintains affected current summaries during implementation and review handoff, distinguishing the current maintenance task, latest merged implementation and next separately authorized candidate.
+- The reviewer manually compares README, START-HERE and affected governance/planning/operations summaries with the latest task evidence and actual revision. Check SPECIFIED, IMPLEMENTED, EXECUTED and ACCEPTED separately, including open decisions, scoped acceptance and integration limitations. Link/hash checks alone do not establish semantic status consistency.
+- Before merge, the merge operator identifies an authorized post-merge documentation updater. This checklist does not authorize a merge or confer standing permission to edit, commit, push or change GitHub state.
+- Before dependent handoff, that updater verifies the actual merged head/merge SHA and separate PR-head/post-merge CI identities and results, then reconciles the existing record and affected current summaries. Record unavailable or pending evidence honestly; never predict post-merge success before merge or relabel local checks as hosted CI.
+- Every future task verifies actual revision, working-tree state and status before relying on maintained prose. Retain historical records, source authority and unresolved provider/release gates.
+
+Include this manual semantic-status review and its remaining gates in the existing handoff record. Documentation maintenance completion may be reported through normal delivery evidence; do not create recursive documentation-only follow-ups unless another factual correction is necessary.
+
 ## 8. Tool portability and privacy
 
 Inspect existing repository/global instruction entry points for conflicts without changing user-global configuration or reading credential/settings stores. A tool-specific bootstrap, if observed necessary, should only point to shared guidance. Do not maintain independent Codex/Gemini rule copies, claim a rule was loaded without observation, or equate PATH lookup failure with an absent installation.

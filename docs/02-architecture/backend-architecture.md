@@ -1,5 +1,7 @@
 # Backend architecture — email/session increment
 
+Maintenance pointer, 2026-10-25: use [START-HERE](../00-governance/START-HERE.md) for the current task and the [M01-02 post-merge addendum](../07-planning/current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25) for the latest merged shared helper. The dated M01-01/DOC-01 observations below are historical snapshots, including absent-Redis and then-current-delivery statements; they are not a current source inventory. Their content and evidence remain unchanged. Merge does not automatically adopt derived Draft designs.
+
 **Draft / review pending — M01-01, 2026-10-24 (Asia/Dhaka).** Derived map, not a replacement for C01–C09. Observation: `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`; [task/evidence](../07-planning/current-phase/M01-01.md). SPECIFIED means adopted contract; IMPLEMENTED means inspected source; proposals below are not runtime evidence or owner acceptance.
 
 Authority: [C01 §7–9](../01-product/PRD.md#7-user-access-control), [C05 §13–17 and R18/R24/R31](../05-api/API-Specification.md#13-global-contract-conventions), [C06 §6.1–2](../04-database/DMS.md#61-002_identitysql), C02 ADR-006/011/017/019 and D001 in the [source register](../00-governance/source-of-truth.md). Companion [rules](../03-domain/business-rules.md), [wire contract](../05-api/openapi.yaml), [mapping/recovery](../05-api/DTO-DB-mapping.md), [QA](../08-testing/QA-plan.md).
