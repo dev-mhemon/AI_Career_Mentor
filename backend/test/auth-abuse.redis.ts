@@ -26,6 +26,7 @@ const contact = (identifier = `${randomUUID()}@example.invalid`): Contact => ({
 });
 const ip = '192.0.2.1';
 
+/** Give each case isolated synthetic keys while two independent clients share its policy authority. */
 function fixture(overrides: Record<string, unknown> = {}) {
   const secret = randomUUID();
   const config = readAbuseConfiguration({
@@ -47,6 +48,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   return { a, b, config, key, loginKey };
 }
 
+/** Require a contract exception with the expected status/code instead of accepting any rejected promise. */
 async function rejected(
   promise: Promise<unknown>,
   status: number,
@@ -161,6 +163,40 @@ describe('R31 against real disposable Redis, independent application clients', (
     await expect(a.reserveSend(contact(), ip)).resolves.toEqual({
       retryAfterSeconds: 60,
     });
+  });
+
+  it('keeps mixed policies closed while old traffic continues and permits cutover after the quiet lifetime', async () => {
+    const { a, config, key } = fixture({
+      AUTH_OTP_TTL_SECONDS: 2,
+      AUTH_RESEND_COOLDOWN_SECONDS: 2,
+      AUTH_SEND_WINDOW_SECONDS: 2,
+      AUTH_LOGIN_WINDOW_SECONDS: 2,
+      AUTH_LOGIN_LOCKOUT_SECONDS: 2,
+    });
+    const b = new AuthAbuseControl({
+      ...config,
+      policy: { ...config.policy, AUTH_SEND_CONTACT_LIMIT: 4 },
+    });
+    services.push(b);
+    const original = contact();
+    await a.reserveSend(original, ip);
+    await pause(1200);
+    await a.reserveSend(contact(), ip);
+    await pause(1100);
+    // The original counter has expired, but more recent old-policy state is still protected.
+    expect(await admin.exists(key('send:contact', original))).toBe(0);
+    const error = await rejected(
+      b.reserveSend(contact(), ip),
+      503,
+      'SERVICE_UNAVAILABLE',
+    );
+    expect(error.getResponse()).toMatchObject({ retryAfterSeconds: 1 });
+    await pause(1100);
+    await expect(b.reserveSend(contact(), ip)).resolves.toEqual({
+      retryAfterSeconds: 2,
+    });
+    // A late instance with the old settings must not join the new policy's live state.
+    await rejected(a.reserveSend(contact(), ip), 503, 'SERVICE_UNAVAILABLE');
   });
 
   it('fails closed on fixture counter state whose required expiry was lost', async () => {
@@ -406,6 +442,49 @@ describe('R31 against real disposable Redis, independent application clients', (
     expect(provider).not.toHaveBeenCalled();
     await pause(1100);
     await expect(b.login(c, ip, provider)).resolves.toBe(true);
+  });
+
+  it('fences a late login completion after expiry without releasing a newer reservation', async () => {
+    const { a, b, loginKey } = fixture({ AUTH_LOGIN_WINDOW_SECONDS: 1 });
+    const c = contact();
+    let releaseOld!: () => void;
+    let oldStarted!: () => void;
+    const oldRunning = new Promise<void>((resolve) => {
+      oldStarted = resolve;
+    });
+    const old = a.login(c, ip, async () => {
+      oldStarted();
+      await new Promise<void>((resolve) => {
+        releaseOld = resolve;
+      });
+      return { success: true, value: 'synthetic-old-result' };
+    });
+    await oldRunning;
+    await pause(1100);
+    let releaseNew!: () => void;
+    let newStarted!: () => void;
+    const newRunning = new Promise<void>((resolve) => {
+      newStarted = resolve;
+    });
+    const current = b.login(c, ip, async () => {
+      newStarted();
+      await new Promise<void>((resolve) => {
+        releaseNew = resolve;
+      });
+      return { success: false };
+    });
+    await newRunning;
+    releaseOld();
+    await rejected(old, 503, 'SERVICE_UNAVAILABLE');
+    const provider = vi.fn(async () => ({ success: false as const }));
+    await rejected(a.login(c, ip, provider), 503, 'SERVICE_UNAVAILABLE');
+    expect(provider).not.toHaveBeenCalled();
+    releaseNew();
+    await rejected(current, 401, 'INVALID_CREDENTIALS');
+    expect(await admin.get(loginKey('failures', c))).toBe('1');
+    await expect(
+      a.login(c, ip, async () => ({ success: true, value: true })),
+    ).resolves.toBe(true);
   });
 
   it('honors login overrides, failure-window expiry, successful reset and lockout expiry', async () => {

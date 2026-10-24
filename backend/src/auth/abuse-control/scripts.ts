@@ -1,4 +1,5 @@
 /** All scripts target one standalone Redis authority; multi-key Redis Cluster is excluded. */
+/** Keep one policy active until all state created by its latest operation can expire. */
 export const policyGuard = `
 local policyKey = table.remove(KEYS)
 local fingerprint = table.remove(ARGV, 1)
