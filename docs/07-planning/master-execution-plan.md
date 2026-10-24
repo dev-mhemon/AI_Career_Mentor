@@ -257,6 +257,8 @@ Progress: documentation deliverables authored and checked in the [M01-01 record]
 
 ### M01-02 - Shared Auth abuse-control enabler
 
+Progress, 2026-10-24: owner separately authorized bounded implementation, dependency/service tests and local/CI Redis configuration after reporting M01-01 reviewed/merged. [M01-02 record](current-phase/M01-02.md) tracks the local helper delivery and fresh execution evidence. No canonical endpoint/provider integration or M01 acceptance is implied; historical M01-01 readiness statements above describe their original checkpoint. R32 remains open / partially executed.
+
 - Goal/dependencies: M01-01; common R31 email send/verify/login protection.
 - Sources/invariants: C02 ADR-017/R31; C05 §3/R31. auth:v1, HMAC contact/IP key parts, atomic count+first expiry and compare/consume across all instances.
 - Targets/exclusions: backend Auth/common/config/tests, public template/register with real consumers. Redis client dependency only if explicitly authorized; no durable Redis job queue, SQL or service action implied.

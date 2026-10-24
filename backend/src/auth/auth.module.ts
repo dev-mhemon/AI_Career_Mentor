@@ -9,8 +9,12 @@ import { AccessGuard } from './guards/access.guard.js';
 import { DatabaseService } from './services/database.service.js';
 import { ProfileController } from '../profile/profile.controller.js';
 import { ProfileService } from '../profile/profile.service.js';
+import { AuthAbuseControlModule } from './abuse-control/abuse-control.module.js';
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'supabase' })],
+  imports: [
+    PassportModule.register({ defaultStrategy: 'supabase' }),
+    AuthAbuseControlModule,
+  ],
   controllers: [AuthController, ProfileController],
   providers: [
     SupabaseStrategy,

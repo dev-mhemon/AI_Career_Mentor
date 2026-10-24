@@ -1,3 +1,5 @@
+import { readAbuseConfiguration } from './auth/abuse-control/config.js';
+
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
   const required = [
@@ -34,5 +36,6 @@ export function validateConfiguration(raw: Record<string, unknown>) {
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('Invalid DB_PORT');
   if (raw.SUPABASE_JWKS_URL) new URL(String(raw.SUPABASE_JWKS_URL));
+  readAbuseConfiguration(raw);
   return raw;
 }
