@@ -1,0 +1,13 @@
+services:
+  redis:
+    image: redis:7.4.9-alpine
+    labels:
+      ai-career-mentor.purpose: m01-02-disposable-auth-tests
+    ports:
+      - "127.0.0.1:56379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30

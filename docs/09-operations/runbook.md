@@ -41,6 +41,29 @@ CI pins CLI/Node, uses fresh checkout-owned disposable project and upstream regi
 
 Future H-IDEM service policy (C05 R14): acknowledged Redis key loss fails mutations closed until TTL-preserving recovery or24h loss boundary. Not yet implemented; no generic replay guarantee. Deployment destination, cloud secrets, purge scheduling/SLAs, provider privacy, PITR and owner release sign-off remain pending.
 
+## Disposable Auth Redis tests (M01-02)
+
+The shared enabler uses Redis 7+ as ephemeral storage only. Its independent test service is separate from Supabase and uses no persistent volume. From Git Bash at the repository root:
+
+```bash
+docker compose -p mentor-m01-02-auth-test -f backend/compose.auth-test.yml config --quiet
+docker compose -p mentor-m01-02-auth-test -f backend/compose.auth-test.yml up -d --wait
+AUTH_ABUSE_TEST_REDIS_URL=redis://127.0.0.1:56379 AUTH_ABUSE_TEST_DISPOSABLE=yes npm --prefix backend run test:redis
+docker compose -p mentor-m01-02-auth-test -f backend/compose.auth-test.yml down
+```
+
+Port 56379 is loopback-only; resolve a collision by selecting another dedicated disposable port in a local Compose override and matching the test URL. Do not reuse or flush a shared Redis instance. Tests use random synthetic contacts/HMAC secrets, real independent clients, short configured expiries and selected fixture-owned PEXPIRE operations; they never call FLUSHDB/FLUSHALL or touch Supabase. CI starts a fresh Redis service for the backend job and runs the same focused suite. Local workflow/schema checks do not establish a completed GitHub run.
+
+Configure the server-only variables in the [configuration register](../00-governance/config-register.md) consistently across all application instances. Use a single standalone Redis authority with `noeviction`, protected network access and credentials/TLS as appropriate to the deployment; Cluster multi-slot scripts are not supported. HMAC secret rotation changes the keyspace and resets effective limits, so it requires a coordinated operational decision. No production settings are changed by M01-02. R14 generic idempotency/loss-epoch recovery is outside this helper.
+
+An atomic policy fingerprint in each HMAC namespace rejects mismatched R31 settings with retryable 503. Its TTL intentionally refreshes to the longest configured state lifetime on accepted-policy operations; this is separate from fixed counter/challenge expiries. Coordinate a policy change after old-policy traffic stops and that marker/state expires, or separately review a migration. Connection timeout and outage retry settings do not change the R31 fingerprint. Configurable defaults remain operating choices, with safe rollout rather than mixed limits on active state.
+
+`AuthAbuseControlModule` exports the helper and is imported by `AuthModule`; existing endpoints do not call it. Configuration is validated at startup when supplied. If entirely absent, existing routes continue to boot and any helper operation fails closed with retryable SERVICE_UNAVAILABLE 503. The client connects lazily, uses bounded connection/command waits, suppresses sensitive driver error payloads, has no offline queue/automatic replay, and destroys its socket on module shutdown. Main enables shutdown hooks. Every caller must supply a trusted client IP (never an arbitrary forwarded header), a validated normalized contact, and the same R31 policy/secret. IPv6 zone identifiers are rejected with a value-free error before URL canonicalization.
+
+Future M01-03/04/05 callers must reserve send quota **before** provider delivery, including for unknown contacts. A provider delivery failure never refunds send quota. Create challenge metadata only for the corresponding provider challenge and cap validity by the provider-supported lifetime; six-digit validation stays in memory. Verification atomically reserves the current opaque generation before calling the provider, then compares ownership/generation and consumes once before returning success. No generation is added to the wire DTO. A replacement challenge invalidates older in-flight completion. The helper stores only opaque generations/operation owners, failure counts and consumed flags, with TTLs; OTPs and OTP digests remain outside Redis.
+
+Login provider calls are serialized per identifier+IP. Confirmed failed credentials increment a first-failure fixed window; the fifth default failure starts a separate 15-minute lock. Successful login clears that pair's failures. Other identifiers at that IP and the same identifier at other IPs remain independent. Parallel callers for an occupied pair/challenge receive retryable 503 with remaining reservation time. Unexpected provider exceptions leave the reservation quarantined until expiry: a possibly successful external operation must not be repeated automatically. Adapters must classify ordinary wrong-code/credential outcomes as false; later endpoints remain responsible for provider-specific error translation, session establishment, user state, anti-enumeration and partial-failure reconciliation. No provider/session atomicity is claimed.
+
 ## Windows PowerShell
 
 Tested locally with Node 24.19.0, npm 11.17.0, Python 3.14.7,
