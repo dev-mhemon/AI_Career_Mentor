@@ -2,9 +2,9 @@
 
 DOC-02 v0.1 - 2026-10-24 (Asia/Dhaka) - **Draft / proposed for review**.
 
-This is the active development planning document. It proposes work; it does not approve implementation, installation, provider use, commits, pushes, PRs, database operations or deployment. The [DOC-02 record](current-phase/documentation-alignment/DOC-02.md) identifies this local documentation delivery and checks. Use the [shared workflow](../00-governance/agent-workflow.md) for each separately authorized task.
+This active development plan proposes remaining work; it does not approve implementation, installation, provider use, commits, pushes, PRs, database operations or deployment. The [DOC-02 record](current-phase/documentation-alignment/DOC-02.md) preserves its preparation checkpoint and checks. Use [START-HERE](../00-governance/START-HERE.md) for the current maintenance task and the [shared workflow](../00-governance/agent-workflow.md) for each separately authorized task.
 
-M01-01 progress, 2026-10-24: owner authorized **documentation only**; [current record](current-phase/M01-01.md) delivers five scoped Draft/review-pending documents from fetched main `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`. M01-02 inputs are prepared, pending design review and separate implementation authorization. No M01 code/task M01-02–10 or milestone completion is claimed. DOC-02's branch/SHA/worktree below are its preserved preparation checkpoint, not today's checkout instructions.
+Current delivery status, verified 2026-10-25: [M01-02](current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25) is the latest merged implementation, PR #7 at `f45947e84f035500856c6a3bb9b27e46ae5bebb9`, from head `3294c60c65ed9beddd02121899bce40170e588de`. The bounded shared Redis helper/tests have scoped review/owner acceptance and separate successful PR/main CI evidence. Canonical Auth/provider/session integration is incomplete; M01-03 is the next candidate requiring separate authorization. Use [START-HERE](../00-governance/START-HERE.md) for the current maintenance task. Remaining plan/design proposals are not adopted by merge; R32 stays open/partially executed and R33 optional/deferred. DOC-02 branch/SHA/worktree details below are preserved preparation checkpoints, not checkout instructions.
 
 ## 1. Identity, authority and agreed scope
 
@@ -41,14 +41,15 @@ SPECIFIED = named contract; IMPLEMENTED = observed source behavior; EXECUTED = c
 | Delivered foundation | JWT/live identity bootstrap/application mapping; transaction connection manager; status/admin/feature guards; profile/preferences/settings/aliases; goal read/confirmation; completeness and HTTP errors | backend/src/app.module.ts, auth, profile and common contain these; source presence is not full feature acceptance |
 | Preserved invariants | OAuth next_step, nullable RoleOptionDTO rationale, optional education/explicit None, deferred level initialization/stronger evidence, transactional goal feature recheck, successful foreground activity, tenant/admin ownership | Existing unit/HTTP regression scope; preserve during later work |
 | Partial | Frontend SDK Auth/sync/callback/dashboard, limited health | actions.ts uses six-character signup minimum, identifier in verify URL and sync/me-to-dashboard. C05 A01 requires configured policy (example minimum eight); C09 R18 forbids identifier URL. Client discards me metadata. Findings do not amend requirements |
-| Remaining | Canonical A01–A09/A11–A12, full phone/social/link/contact/recovery; Redis controls; deletion/retention worker; AI/jobs/scheduler; wider career/roadmap/learning/quiz/progress/mentor/technology/feedback/admin and UI | Backend has Auth/Profile controllers plus health; no AI SDK/Redis integration in inspected manifests. Future modules/tests below are planned, not scaffolding |
+| Delivered shared enabler (M01-02 update) | Redis R31 helper, atomic policy/counters/challenges/login ownership and real Redis regression tests | Not invoked by existing endpoints; generic R14 idempotency/loss recovery is excluded |
+| Remaining | Canonical Auth endpoints, full phone/social/link/contact/recovery; endpoint/provider integration of Redis controls; deletion/retention worker; AI/jobs/scheduler; wider career/roadmap/learning/quiz/progress/mentor/technology/feedback/admin and UI | Canonical Auth integration and future modules remain planned; shared helper presence does not complete them |
 | Unaccepted | Provider/Auth, deletion/RLS faults, purge/recovery, load/connection budget, PITR/security/production and owner release gates | R32 in_progress / partially_executed; R33 optional_deferred |
 
 Reuse historical [endpoint coverage](current-phase/alignment/endpoint-coverage.json) and [screen coverage](current-phase/alignment/screen-coverage.json): 82 catalog entries = 81 specified HTTP operations (including unversioned GET /health) + internal-only EP-G04. Nine foundation entries, one partial health, 71 Planned HTTP entries and one Planned internal entry. Transitional POST /auth/sync is outside that catalog; no POST /progress/evidence exists. Five of 25 screens are partial and 20 Planned. Component, screen and operation counts are different.
 
 Historical [validation](current-phase/alignment/validation.json), 2026-10-21, has base 4dffb54835f62f806accbb883a2cf6557c30bcdf and delivery checkpoint 1fdc6c98c87fe959ba976e767199892999dd598f. Individual tested identities: DB lifecycle 3857af82390fb3eb953929fda67cf6e54009e9d4; later backend HTTP/workflow d2c63c15b2b187e50acff3952924ddcd5263f7b6; frontend lint/unit/build fac739aef5c52a64c7c35d945250ae5c19b083b5; frontend HTTP 1fdc6c98c87fe959ba976e767199892999dd598f. Lifecycle reports 185 original pgTAP assertions per run, separate 27 boundaries/concurrency and 19 additional in-migration assertions, not 204 pgTAP tests. Failed upstream pull/local image adaptation remain limitations. No old result becomes today's runtime PASS.
 
-DOC-02 executes read-only baseline/alignment/link/diff/content checks only, recorded separately. Protected package: 179 entries, 21 forward/21 rollback/eight original suites; frozen C01–C09/manifests remain unchanged. CI config uses npm/Vitest lint/test/build and disposable DB/HTTP checks, Node 24.19.0 / CLI 2.121.0. YAML is not execution; documentation-branch push filters omit this branch. No current application/DB/remote/provider PASS is asserted.
+DOC-02 executes read-only baseline/alignment/link/diff/content checks only, recorded separately. Protected package: 179 entries, 21 forward/21 rollback/eight original suites; frozen C01–C09/manifests remain unchanged. CI config uses npm/Vitest lint/test/build and disposable DB/HTTP checks, Node 24.19.0 / CLI 2.121.0. YAML is not execution; documentation-branch push filters omit this branch. At DOC-02 preparation no current application/DB/remote/provider PASS was asserted. The later M01-02 post-merge addendum above separately identifies verified PR/main hosted execution; no provider or production acceptance is inferred.
 
 ## 3. Development method
 
@@ -77,7 +78,7 @@ All new milestones are Proposed. M00 is an observed checkpoint to consume, not r
 - Entry/dependencies/areas: M00 plus task authorization; backend Auth/common/config, frontend Auth/client/session/forms/routes, Redis enabler. Live email needs approved configuration; mocks/synthetic development can start independently.
 - Documents: M01-01 thin Auth contracts/rules/QA/backend map; frontend map with UI work. Detailed tasks in §5.
 - Exit/gates: M01-01–10 reviewed and executed for claimed scope; shared limits, no unverified session/contact URL, basic access without complete profile, real destinations. Provider delivery evidence is separate; not a public MVP/deletion acceptance.
-- Decisions: owner priority pending; session persistence/adapter boundaries are constrained engineering choices resolved in M01-01.
+- Decisions: M01-01/M01-02 were separately authorized and merged; subsequent slices need separate authorization. Session persistence/adapter proposals and provider decisions retain their explicit review/acceptance gates.
 
 ### M02 - Complete required Auth and identity lifecycle
 
@@ -222,7 +223,7 @@ No cycle: all integration predecessors have lower IDs. M04's real-user gate depe
 
 ## 5. Detailed first milestone: M01 (conditionally proposed)
 
-Owner selection/implementation authorization remains pending. M01 has direct C01 §7–9/53 and C05 §14.1 dependencies, removes email SDK/sync bypass of canonical limit/error contracts, and supports deterministic synthetic checks without choosing an SMS/AI provider. Alternatives: prioritize M03 privacy before live pilot, M13 access controls, or M04 synthetic AI/jobs for a demo. None removes full Auth/privacy/release requirements. Planning proceeds without requiring a priority answer.
+M01-01 and the bounded M01-02 helper are merged. M01-03 is the next candidate; its implementation requires separate authorization. The remaining M01 slice must remove email SDK/sync bypass of canonical limit/error contracts under the adopted C01/C05 requirements. Synthetic development does not select an SMS/AI provider or remove full Auth/privacy/release requirements. Alternative future priorities remain an owner decision.
 
 Already delivered: JWT/live mapping, A10/A13, P01–05, C03/C05, guards/errors/transactions. New M01: email portions of A01/A02/A04/A05, A06/A07, canonical frontend integration, R18 verification transport and real landing destinations. Phone, email/phone recovery, full OAuth/contact/linking remain M02; deletion M03. Preserve existing phone/social behavior without calling it accepted.
 
@@ -240,13 +241,14 @@ The following commands exist; they are future task checks, NOT executed by DOC-0
 | V-B | npm.cmd --prefix backend run lint; npm.cmd --prefix backend test; npm.cmd --prefix backend run build |
 | V-F | npm.cmd --prefix frontend run lint; npm.cmd --prefix frontend test; node scripts/foundation/local.mjs frontend-build (prepared authorized config required). Direct npm.cmd --prefix frontend run build also exists |
 | V-HTTP | node scripts/foundation/local.mjs backend-e2e; node scripts/foundation/application-check.mjs; node scripts/foundation/frontend-check.mjs. Only after separately authorized positive disposable-project identification/setup; helpers start apps and application checks create synthetic DB data |
-| V-NEW | Planned, NOT yet implemented: canonical Auth HTTP cases, multi-instance Redis races/outage, browser draft/session routing. Add narrowly to existing tests/helpers or reviewed harness, then execute. No dedicated current command claimed |
+| V-REDIS | M01-02 adds npm --prefix backend run test:redis; dedicated disposable Redis setup/identity prerequisites are in the runbook. Real multi-instance/expiry/outage regressions have executed for the helper; no endpoint/provider evidence is implied |
+| V-NEW | Still planned: canonical Auth HTTP cases and browser draft/session routing. Add narrowly to existing tests/helpers or reviewed harness, then execute. Existing helper Redis evidence does not substitute for these integration cases |
 
 Existing backend E2E covers health; foundation HTTP/form helpers alone cannot prove new Auth. Service/reset commands are not documentation checks. No new browser tooling is installed here; a future need requires justified authorized scope. V-HTTP never targets shared/hosted DBs.
 
 ### M01-01 - Resolve email/session contract increment
 
-Progress: documentation deliverables authored and checked in the [M01-01 record](current-phase/M01-01.md), **Draft / review pending**. [Architecture](../02-architecture/backend-architecture.md), [rules](../03-domain/business-rules.md), [OpenAPI](../05-api/openapi.yaml), [mapping](../05-api/DTO-DB-mapping.md), [QA](../08-testing/QA-plan.md) distinguish implementation/proposal/evidence. Provider/pending-row/session findings ES-01–06 remain in [open issues](../00-governance/open-issues.md#m01-01-contract-findings). Owner acceptance and review of M01-02 inputs remain open; the task's bounded documentation delivery does not complete M01.
+Progress: [M01-01](current-phase/M01-01.md) documentation delivery is merged; the owner reported independent review and passing PR checks, and its commit ancestry was verified during M01-02 intake. [Architecture](../02-architecture/backend-architecture.md), [rules](../03-domain/business-rules.md), [OpenAPI](../05-api/openapi.yaml), [mapping](../05-api/DTO-DB-mapping.md) and [QA](../08-testing/QA-plan.md) retain their derived Draft/proposal boundaries. Delivery review is not blanket design adoption. Provider/pending-row/session findings ES-01 to ES-06 remain in [open issues](../00-governance/open-issues.md#m01-01-contract-findings); this documentation delivery does not complete M01.
 
 - Goal/dependencies: first task after owner priority/authorization; M00 and current docs. Resolve adapter/session handoff before dependent coding.
 - Sources/invariants: C01 §7–9; C05 §13/14.1/15.2/16/17.1/R18/R24/R31; C06 §6.1–2; C09 Screens02–04/07/13/22/§6. Incomplete profile never blocks dashboard; OAuth's third next_step remains in shared types.
@@ -257,14 +259,14 @@ Progress: documentation deliverables authored and checked in the [M01-01 record]
 
 ### M01-02 - Shared Auth abuse-control enabler
 
-Progress, 2026-10-24: owner separately authorized bounded implementation, dependency/service tests and local/CI Redis configuration after reporting M01-01 reviewed/merged. [M01-02 record](current-phase/M01-02.md) tracks the local helper delivery and fresh execution evidence. No canonical endpoint/provider integration or M01 acceptance is implied; historical M01-01 readiness statements above describe their original checkpoint. R32 remains open / partially executed.
+Progress, verified 2026-10-25: [M01-02 record](current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25) establishes the merged bounded helper/test delivery, scoped owner acceptance, reviewed corrections and separate successful PR-head/post-merge application and database CI. It includes the authorized Redis dependency, service/CI configuration and 22 real Redis regressions. No canonical endpoint/provider integration, full M01 acceptance or production readiness is implied. Earlier pending statements remain historical; R32 stays open / partially executed.
 
 - Goal/dependencies: M01-01; common R31 email send/verify/login protection.
 - Sources/invariants: C02 ADR-017/R31; C05 §3/R31. auth:v1, HMAC contact/IP key parts, atomic count+first expiry and compare/consume across all instances.
 - Targets/exclusions: backend Auth/common/config/tests, public template/register with real consumers. Redis client dependency only if explicitly authorized; no durable Redis job queue, SQL or service action implied.
 - Deliverables: reusable TTL/policy/error boundary, deterministic clock/failure fixtures and later integration setup requirements.
 - Acceptance/failure/security: 6-digit/provider-supported 10min challenge, 5 failures, one-time consume; resend 60s, 3/contact/15min, 10/IP/15min; login 5/identifier+IP/15min, 15min lockout; no blanket shared-IP user lock. Redis outage fails send/verification attempts closed with retryable 503. No raw contacts/secrets in keys/logs; authoritative retryAfterSeconds/Retry-After.
-- Verification/handoff: V-B/V-DOC; planned V-NEW Redis race/expiry/outage on authorized prepared service. M01-03/04/05 ready after policy review/unit evidence; execute actual multi-instance cases before M01-10 acceptance.
+- Verification/handoff: V-B/V-DOC and actual V-REDIS multi-instance/race/expiry/outage evidence are recorded for the helper. M01-03 is the next separately authorized candidate; M01-04/05 retain their endpoint dependencies. Provider/IP/recovery decisions and canonical HTTP evidence remain gates before M01-10 acceptance.
 
 ### M01-03 - Email registration and resend
 
