@@ -46,7 +46,7 @@ For a conflict: identify both source sections and actual source/evidence identit
 | [DOC-01 record](../07-planning/current-phase/documentation-alignment/DOC-01.md) / [DOC-02 record](../07-planning/current-phase/documentation-alignment/DOC-02.md) | Historical documentation deliveries, source identities, inventories and checks; preserved unchanged |
 | [M01-01 record](../07-planning/current-phase/M01-01.md) | Historical merged email/session documentation delivery; derived Draft status does not change without explicit adoption |
 | [M01-02 record](../07-planning/current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25) | Latest merged implementation: bounded Redis Auth abuse-control helper/tests; scoped review/owner acceptance and separate PR/main CI evidence; no endpoint/provider/session or release acceptance |
-| [Shared agent workflow](agent-workflow.md) | One task execution/handoff procedure for both agents; current maintenance task is selected through [START-HERE](START-HERE.md) |
+| [Shared agent workflow](agent-workflow.md) | One task execution/handoff procedure for both agents; current authorized M01-03 task is selected through [START-HERE](START-HERE.md) |
 
 The nine standalone paths below were absent at DOC-01. Merged M01-01 authored five useful email/session Draft increments; the other four remain Planned. The owner reported M01-01 reviewed and merged, and M01-02 subsequently delivered the bounded shared helper. Review/merge of those deliveries does not adopt every provider/session proposal below or resolve their open decisions. Full-project expansion follows the master plan and separate task authorization. These derived documents do not supersede adopted sections or create duplicate policy authorities.
 

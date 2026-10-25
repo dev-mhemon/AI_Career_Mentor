@@ -2,9 +2,24 @@ import { Body, Controller, Get, HttpCode, Post, Req } from '@nestjs/common';
 import { AuthService } from '../services/auth.service.js';
 import { Policy } from '../policy.js';
 import { OAuthSession } from '../../profile/profile.dto.js';
+import { EmailRegistrationService } from '../services/email-registration.service.js';
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly registration: EmailRegistrationService,
+  ) {}
+  @Post('register')
+  @Policy({ public: true })
+  register(@Req() req: any, @Body() body: unknown) {
+    return this.registration.register(body, req);
+  }
+  @Post('resend-verification')
+  @HttpCode(200)
+  @Policy({ public: true })
+  resendVerification(@Req() req: any, @Body() body: unknown) {
+    return this.registration.resend(body, req);
+  }
   /** Transitional adapter used by the existing email/phone UI; not an additional C05 catalog claim. */
   @Post('sync')
   @HttpCode(200)

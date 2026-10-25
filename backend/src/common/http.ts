@@ -123,7 +123,11 @@ export class EnvelopeInterceptor implements NestInterceptor {
       );
   }
 }
-export function configureHttp(app: INestApplication) {
+export function configureHttp(
+  app: INestApplication,
+  trustedProxies: string[] = [],
+) {
+  app.getHttpAdapter().getInstance().set('trust proxy', trustedProxies);
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
   app.enableCors({
     origin: true,

@@ -1,4 +1,5 @@
 import { readAbuseConfiguration } from './auth/abuse-control/config.js';
+import { trustedProxyCidrs } from './auth/client-ip.js';
 
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
@@ -36,6 +37,16 @@ export function validateConfiguration(raw: Record<string, unknown>) {
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('Invalid DB_PORT');
   if (raw.SUPABASE_JWKS_URL) new URL(String(raw.SUPABASE_JWKS_URL));
+  if (raw.AUTH_PASSWORD_MIN_LENGTH !== undefined) {
+    const minimum = String(raw.AUTH_PASSWORD_MIN_LENGTH);
+    if (
+      !/^[1-9][0-9]*$/.test(minimum) ||
+      Number(minimum) < 8 ||
+      Number(minimum) > 128
+    )
+      throw new Error('Invalid AUTH_PASSWORD_MIN_LENGTH');
+  }
   readAbuseConfiguration(raw);
+  trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;
 }
