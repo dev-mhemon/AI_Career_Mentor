@@ -54,7 +54,12 @@ function harness() {
     return [];
   });
   const database = {
-    transaction: vi.fn(async (_id, operation) => operation({ query: queries })),
+    transaction: vi.fn(
+      async (
+        _id: string | null,
+        operation: (db: { query: typeof queries }) => Promise<unknown>,
+      ) => operation({ query: queries }),
+    ),
   };
   const service = new EmailRegistrationService(
     provider as unknown as EmailRegistrationProvider,
@@ -541,7 +546,7 @@ describe('A01/A04 email service with synthetic provider', () => {
         .catch((error: unknown) => error);
       await vi.advanceTimersByTimeAsync(1);
       await vi.advanceTimersByTimeAsync(10000);
-      const firstError = await first;
+      const firstError = (await first) as HttpException;
       expect(firstError).toBeInstanceOf(HttpException);
       expect(firstError.getStatus()).toBe(504);
       expect(firstError.getResponse()).toMatchObject({
