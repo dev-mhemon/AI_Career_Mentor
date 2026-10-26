@@ -22,6 +22,8 @@ export interface RegistrationPendingDTO {
   resend_available_at: string;
 }
 
+class EmailProviderDeadlineError extends Error {}
+
 function mask(email: string): string {
   const at = email.lastIndexOf('@');
   return `${email[0]}****${email.slice(at)}`;
@@ -45,7 +47,14 @@ export class EmailRegistrationService {
     };
   }
 
-  private providerError(): never {
+  private providerError(error?: unknown): never {
+    if (
+      error instanceof EmailProviderDeadlineError ||
+      (error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message)))
+    )
+      fail(504, 'PROVIDER_TIMEOUT', 'Email provider timed out', [], true);
     fail(
       502,
       'EMAIL_PROVIDER_ERROR',
@@ -78,7 +87,11 @@ export class EmailRegistrationService {
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
             controller.abort();
-            reject(new Error('Email provider deadline exceeded'));
+            reject(
+              new EmailProviderDeadlineError(
+                'Email provider deadline exceeded',
+              ),
+            );
           }, 10000);
         }),
       ]);
@@ -121,7 +134,7 @@ export class EmailRegistrationService {
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === 409)
         throw error;
-      return this.providerError();
+      return this.providerError(error);
     }
     if (
       identity.email !== email ||
@@ -136,8 +149,8 @@ export class EmailRegistrationService {
         this.provider.sendChallenge(identity, signal),
       );
       if (delivery.expiresInSeconds !== 600) return this.providerError();
-    } catch {
-      return this.providerError();
+    } catch (error) {
+      return this.providerError(error);
     }
     return metadata;
   }
@@ -159,8 +172,8 @@ export class EmailRegistrationService {
       identity = await this.providerCall((signal) =>
         this.provider.findByEmail(email, signal),
       );
-    } catch {
-      return this.providerError();
+    } catch (error) {
+      return this.providerError(error);
     }
     if (
       !identity ||
@@ -182,8 +195,8 @@ export class EmailRegistrationService {
         this.provider.sendChallenge(identity, signal),
       );
       if (delivery.expiresInSeconds !== 600) return this.providerError();
-    } catch {
-      return this.providerError();
+    } catch (error) {
+      return this.providerError(error);
     }
     return metadata;
   }

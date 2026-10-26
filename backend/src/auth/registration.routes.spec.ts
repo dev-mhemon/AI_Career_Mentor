@@ -144,9 +144,9 @@ describe('canonical A01/A04 HTTP boundary', () => {
     const outage = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .send(body);
-    expect(outage.status).toBe(502);
+    expect(outage.status).toBe(504);
     expect(outage.body.error).toMatchObject({
-      code: 'EMAIL_PROVIDER_ERROR',
+      code: 'PROVIDER_TIMEOUT',
       retryable: true,
       requestId: expect.any(String),
     });

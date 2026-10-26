@@ -525,7 +525,7 @@ describe('A01/A04 email service with synthetic provider', () => {
     expect(provider.sendChallenge).toHaveBeenCalledTimes(1);
   });
 
-  it('a late provider completion cannot change the 502 or the newer reservation result', async () => {
+  it('a late provider completion cannot change the 504 or the newer reservation result', async () => {
     vi.useFakeTimers();
     try {
       const { service, provider, abuse } = harness();
@@ -543,9 +543,9 @@ describe('A01/A04 email service with synthetic provider', () => {
       await vi.advanceTimersByTimeAsync(10000);
       const firstError = await first;
       expect(firstError).toBeInstanceOf(HttpException);
-      expect(firstError.getStatus()).toBe(502);
+      expect(firstError.getStatus()).toBe(504);
       expect(firstError.getResponse()).toMatchObject({
-        code: 'EMAIL_PROVIDER_ERROR',
+        code: 'PROVIDER_TIMEOUT',
       });
       provider.findByEmail.mockResolvedValue(identity);
       const second = await service.resend(
