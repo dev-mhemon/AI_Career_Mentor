@@ -1,6 +1,6 @@
 # Backend architecture — email/session increment
 
-Maintenance pointer, 2026-10-25: use [START-HERE](../00-governance/START-HERE.md) for the current task and the [M01-02 post-merge addendum](../07-planning/current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25) for the latest merged shared helper. The dated M01-01/DOC-01 observations below are historical snapshots, including absent-Redis and then-current-delivery statements; they are not a current source inventory. Their content and evidence remain unchanged. Merge does not automatically adopt derived Draft designs.
+Maintenance pointer, 2026-10-26: use [START-HERE](../00-governance/START-HERE.md) for the current task and the [M01-03 post-merge addendum](../07-planning/current-phase/M01-03.md#post-merge-status-and-evidence-2026-10-26) for the latest merged A01/A04 slice. The dated M01-01/DOC-01 observations below are historical snapshots, including absent-Redis and then-current-delivery statements; they are not a current source inventory. Their content and evidence remain unchanged. The production provider remains 503-gated, and merge does not automatically adopt derived Draft designs.
 
 **Draft / review pending — M01-01, 2026-10-24 (Asia/Dhaka).** Derived map, not a replacement for C01–C09. Observation: `5a71a5b8196a619ae0960b212fe71e74d79e0fb6`; [task/evidence](../07-planning/current-phase/M01-01.md). SPECIFIED means adopted contract; IMPLEMENTED means inspected source; proposals below are not runtime evidence or owner acceptance.
 
