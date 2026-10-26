@@ -1,6 +1,6 @@
 # Open issues and decisions
 
-Use [START-HERE](START-HERE.md) for the current authorized [M01-03 handoff](../07-planning/current-phase/M01-03.md). `origin/main` at `bbca74ff45cb0a21631edb416fd4b19859fe64d0` includes documentation PR #8 and the earlier bounded M01-02 helper PR #7. M01-03's local A01/A04 boundaries are callable but fail closed in production; synthetic provider tests are not live-delivery acceptance. M01-01, M01-02, DOC-01 and DOC-02 remain historical records; the [master plan](../07-planning/master-execution-plan.md) remains a proposed plan. Requirements remain governed by the [source register](source-of-truth.md); the [phase audit](../07-planning/phase-1-audit.md) preserves its dated observation scope.
+Use [START-HERE](START-HERE.md) for the current task and [M01-03 post-merge handoff](../07-planning/current-phase/M01-03.md#post-merge-status-and-evidence-2026-10-26). PR #9 merged at `862d6e00b1f6fb849e25e17d62f198afceaa51b0` after PR #8 and the bounded M01-02 helper PR #7. M01-03's A01/A04 boundaries are merged but fail closed with the production provider's 503 response; synthetic provider tests are not live-delivery acceptance. M01-01, M01-02, DOC-01 and DOC-02 remain historical records; the [master plan](../07-planning/master-execution-plan.md) remains proposed. Requirements remain governed by the [source register](source-of-truth.md); the [phase audit](../07-planning/phase-1-audit.md) preserves its dated observation scope.
 
 ## M01-01 contract findings
 
@@ -43,9 +43,9 @@ M01-02 policy/error inputs have been implemented and reviewed within the merged 
 
 ## Owner decisions that remain genuinely open
 
-1. M01-03 is authorized for local implementation and review. The owner approved server-only privileged reconciliation and limited local Gmail use, while the provider-dependent A01/A04 success path still needs a proven trusted lookup/create/send sequence, direct Auth bypass control, safe unknown-contact failure response and deployment ingress evidence in the [current handoff](../07-planning/current-phase/M01-03.md). Earlier M01-01/M01-02 authorization does not complete the M01 milestone.
+1. M01-03 is merged; the earlier approval for server-only privileged reconciliation and limited local Gmail use did not configure or activate a provider. The A01/A04 success path still needs a proven trusted lookup/create/send sequence, direct Auth bypass control, safe unknown-contact timing and failure parity, older OTP ownership, cooperative-writer uniqueness limits and deployment ingress evidence in the [post-merge handoff](../07-planning/current-phase/M01-03.md#post-merge-status-and-evidence-2026-10-26). M01-04/A02 remains proposed and requires separate authorization.
 2. Approve concrete SMS/AI providers/models and applicable real-user-data handling before dependent integrations; a provider being available is not approval.
 3. Decide production destination/access ownership and approve operational/security/backup/restore arrangements before release.
 4. Record explicit acceptance of applicable R32 gates and eventual release. Agent checks do not supply owner sign-off.
 
-These decisions block only their dependent implementation or acceptance, not independent M01-03 validation and client-IP work. New conflicts must identify source sections, actual behavior, impact and the missing decision using the shared workflow.
+These decisions block only their dependent implementation or acceptance; the merged M01-03 validation and client-IP work is not live provider acceptance. New conflicts must identify source sections, actual behavior, impact and the missing decision using the shared workflow.
