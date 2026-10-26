@@ -2,9 +2,9 @@
 
 DOC-02 v0.1 - 2026-10-24 (Asia/Dhaka) - **Draft / proposed for review**.
 
-This active development plan proposes remaining work; it does not approve implementation, installation, provider use, commits, pushes, PRs, database operations or deployment. The [DOC-02 record](current-phase/documentation-alignment/DOC-02.md) preserves its preparation checkpoint and checks. Use [START-HERE](../00-governance/START-HERE.md) for the current maintenance task and the [shared workflow](../00-governance/agent-workflow.md) for each separately authorized task.
+This active development plan proposes remaining work; it does not itself approve implementation, installation, provider use, commits, pushes, PRs, database operations or deployment. The [DOC-02 record](current-phase/documentation-alignment/DOC-02.md) preserves its preparation checkpoint and checks. Use [START-HERE](../00-governance/START-HERE.md) for the current authorized task and the [shared workflow](../00-governance/agent-workflow.md) for each separately authorized task.
 
-Current delivery status, verified 2026-10-25: [M01-02](current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25) is the latest merged implementation, PR #7 at `f45947e84f035500856c6a3bb9b27e46ae5bebb9`, from head `3294c60c65ed9beddd02121899bce40170e588de`. The bounded shared Redis helper/tests have scoped review/owner acceptance and separate successful PR/main CI evidence. Canonical Auth/provider/session integration is incomplete; M01-03 is the next candidate requiring separate authorization. Use [START-HERE](../00-governance/START-HERE.md) for the current maintenance task. Remaining plan/design proposals are not adopted by merge; R32 stays open/partially executed and R33 optional/deferred. DOC-02 branch/SHA/worktree details below are preserved preparation checkpoints, not checkout instructions.
+Current delivery status, verified 2026-10-25: `origin/main` at `bbca74ff45cb0a21631edb416fd4b19859fe64d0` includes documentation PR #8 after bounded M01-02 implementation PR #7. M01-02's scoped review/owner acceptance and separate historical CI evidence do not cover endpoints or provider integration. [M01-03](current-phase/M01-03.md) is separately authorized and has a local A01/A04 controller/service/adapter-boundary diff with synthetic tests; its production routes fail closed pending the recorded identity, delivery and direct-bypass evidence. Use [START-HERE](../00-governance/START-HERE.md) for the current handoff. Remaining plan/design proposals are not adopted by merge; R32 stays open/partially executed and R33 optional/deferred. DOC-02 branch/SHA/worktree details below are preserved preparation checkpoints, not checkout instructions.
 
 ## 1. Identity, authority and agreed scope
 
@@ -41,7 +41,7 @@ SPECIFIED = named contract; IMPLEMENTED = observed source behavior; EXECUTED = c
 | Delivered foundation | JWT/live identity bootstrap/application mapping; transaction connection manager; status/admin/feature guards; profile/preferences/settings/aliases; goal read/confirmation; completeness and HTTP errors | backend/src/app.module.ts, auth, profile and common contain these; source presence is not full feature acceptance |
 | Preserved invariants | OAuth next_step, nullable RoleOptionDTO rationale, optional education/explicit None, deferred level initialization/stronger evidence, transactional goal feature recheck, successful foreground activity, tenant/admin ownership | Existing unit/HTTP regression scope; preserve during later work |
 | Partial | Frontend SDK Auth/sync/callback/dashboard, limited health | actions.ts uses six-character signup minimum, identifier in verify URL and sync/me-to-dashboard. C05 A01 requires configured policy (example minimum eight); C09 R18 forbids identifier URL. Client discards me metadata. Findings do not amend requirements |
-| Delivered shared enabler (M01-02 update) | Redis R31 helper, atomic policy/counters/challenges/login ownership and real Redis regression tests | Not invoked by existing endpoints; generic R14 idempotency/loss recovery is excluded |
+| Delivered shared enabler (M01-02 update) | Redis R31 helper, atomic policy/counters/challenges/login ownership and real Redis regression tests | M01-03's provider-gated A01/A04 service now calls `reserveSend`; no live provider activation or new Redis integration evidence; generic R14 idempotency/loss recovery is excluded |
 | Remaining | Canonical Auth endpoints, full phone/social/link/contact/recovery; endpoint/provider integration of Redis controls; deletion/retention worker; AI/jobs/scheduler; wider career/roadmap/learning/quiz/progress/mentor/technology/feedback/admin and UI | Canonical Auth integration and future modules remain planned; shared helper presence does not complete them |
 | Unaccepted | Provider/Auth, deletion/RLS faults, purge/recovery, load/connection budget, PITR/security/production and owner release gates | R32 in_progress / partially_executed; R33 optional_deferred |
 
@@ -223,7 +223,7 @@ No cycle: all integration predecessors have lower IDs. M04's real-user gate depe
 
 ## 5. Detailed first milestone: M01 (conditionally proposed)
 
-M01-01 and the bounded M01-02 helper are merged. M01-03 is the next candidate; its implementation requires separate authorization. The remaining M01 slice must remove email SDK/sync bypass of canonical limit/error contracts under the adopted C01/C05 requirements. Synthetic development does not select an SMS/AI provider or remove full Auth/privacy/release requirements. Alternative future priorities remain an owner decision.
+M01-01 and the bounded M01-02 helper are merged. M01-03 has separate local implementation authorization; its A01/A04 boundaries are callable but remain production fail-closed pending the provider evidence in its task record. The remaining M01 slice must remove email SDK/sync bypass of canonical limit/error contracts under the adopted C01/C05 requirements. Synthetic development does not select an SMS/AI provider or remove full Auth/privacy/release requirements. Alternative future priorities remain an owner decision.
 
 Already delivered: JWT/live mapping, A10/A13, P01–05, C03/C05, guards/errors/transactions. New M01: email portions of A01/A02/A04/A05, A06/A07, canonical frontend integration, R18 verification transport and real landing destinations. Phone, email/phone recovery, full OAuth/contact/linking remain M02; deletion M03. Preserve existing phone/social behavior without calling it accepted.
 
@@ -266,7 +266,7 @@ Progress, verified 2026-10-25: [M01-02 record](current-phase/M01-02.md#post-merg
 - Targets/exclusions: backend Auth/common/config/tests, public template/register with real consumers. Redis client dependency only if explicitly authorized; no durable Redis job queue, SQL or service action implied.
 - Deliverables: reusable TTL/policy/error boundary, deterministic clock/failure fixtures and later integration setup requirements.
 - Acceptance/failure/security: 6-digit/provider-supported 10min challenge, 5 failures, one-time consume; resend 60s, 3/contact/15min, 10/IP/15min; login 5/identifier+IP/15min, 15min lockout; no blanket shared-IP user lock. Redis outage fails send/verification attempts closed with retryable 503. No raw contacts/secrets in keys/logs; authoritative retryAfterSeconds/Retry-After.
-- Verification/handoff: V-B/V-DOC and actual V-REDIS multi-instance/race/expiry/outage evidence are recorded for the helper. M01-03 is the next separately authorized candidate; M01-04/05 retain their endpoint dependencies. Provider/IP/recovery decisions and canonical HTTP evidence remain gates before M01-10 acceptance.
+- Verification/handoff: V-B/V-DOC and actual V-REDIS multi-instance/race/expiry/outage evidence are recorded for the helper. M01-03 is separately authorized and in local review preparation; M01-04/05 retain their endpoint dependencies. Provider/IP/recovery evidence and live canonical HTTP delivery remain gates before M01-10 acceptance.
 
 ### M01-03 - Email registration and resend
 
@@ -275,7 +275,7 @@ Progress, verified 2026-10-25: [M01-02 record](current-phase/M01-02.md#post-merg
 - Targets/exclusions: backend Auth controller/service/DTO/planned adapter/tests; contract maps. Phone/OAuth/frontend/SQL excluded.
 - Deliverables: 201 RegistrationPendingDTO/masked expiry/resend metadata, provider-error mapping and recoverable unverified-row handling.
 - Acceptance/failure/security: exactly-one-contact full DTO validation retained; normalized email, consent, configured password/confirmation policy; mismatch creates nothing. Duplicate contracts, anti-enumerating resend, cooldown/limits/provider failures never verify account or leak provider details.
-- Verification/handoff: V-B/V-DOC; planned canonical registration/resend HTTP under V-NEW/V-HTTP after authorized setup. Mock and actual permitted synthetic delivery evidence distinguished. M01-04 consumes this challenge flow.
+- Verification/handoff: V-B/V-DOC and synthetic canonical registration/resend HTTP now execute in M01-03; disposable provider/Redis integration and live delivery remain gated. Mock and actual permitted synthetic delivery evidence are distinguished. M01-04 consumes this challenge flow only after its separate scope and provider evidence.
 
 ### M01-04 - Email verification establishes mapped session
 

@@ -19,9 +19,12 @@ describe('C05 OAuth session response', () => {
         user,
         profile_complete: profileComplete,
       });
-      const controller = new AuthController({
-        bootstrap,
-      } as unknown as AuthService);
+      const controller = new AuthController(
+        {
+          bootstrap,
+        } as unknown as AuthService,
+        {} as never,
+      );
       const request = {
         user: { sub: 'verified-subject' },
         headers: { authorization: 'Bearer synthetic-test-session' },

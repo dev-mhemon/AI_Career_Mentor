@@ -1,6 +1,6 @@
 # Open issues and decisions
 
-Use [START-HERE](START-HERE.md) for the current maintenance task. Latest merged implementation is [M01-02](../07-planning/current-phase/M01-02.md#post-merge-status-and-evidence-2026-10-25): bounded shared Auth abuse-control helper/tests, merged through PR #7 with separate successful PR/main application and database CI. Scoped owner acceptance does not cover endpoint/provider/session integration, all derived Draft designs or production readiness. M01-01, DOC-01 and DOC-02 remain historical records. The [master plan](../07-planning/master-execution-plan.md) proposes remaining work; M01-03 is the next candidate and requires separate authorization. Requirements remain governed by the [source register](source-of-truth.md); the [phase audit](../07-planning/phase-1-audit.md) preserves its dated observation scope.
+Use [START-HERE](START-HERE.md) for the current authorized [M01-03 handoff](../07-planning/current-phase/M01-03.md). `origin/main` at `bbca74ff45cb0a21631edb416fd4b19859fe64d0` includes documentation PR #8 and the earlier bounded M01-02 helper PR #7. M01-03's local A01/A04 boundaries are callable but fail closed in production; synthetic provider tests are not live-delivery acceptance. M01-01, M01-02, DOC-01 and DOC-02 remain historical records; the [master plan](../07-planning/master-execution-plan.md) remains a proposed plan. Requirements remain governed by the [source register](source-of-truth.md); the [phase audit](../07-planning/phase-1-audit.md) preserves its dated observation scope.
 
 ## M01-01 contract findings
 
@@ -33,7 +33,7 @@ M01-02 policy/error inputs have been implemented and reviewed within the merged 
 |---|---|---|
 | Full Auth/account/local SMS/social/linking/recovery | Deferred implementation; frontend SDK/sync path is transitional | Provider selection/configuration, canonical contracts, privacy/rate-limit/integration evidence |
 | R18 contact identifier in verification query; OAuth callback goes directly to dashboard | Actual frontend gaps; backend next_step is not end-to-end routing evidence | Implement existing C05/C09 contracts in an authorized slice; no new policy invented |
-| Redis shared Auth abuse controls | Bounded M01-02 helper/tests merged; existing endpoints do not invoke it | M01-03+ endpoint/provider integration, trusted IP normalization, direct-provider bypass controls and external-effect/session recovery evidence |
+| Redis shared Auth abuse controls | Bounded M01-02 helper/tests merged; M01-03's gated A01/A04 service invokes `reserveSend` with trusted client IP when a provider is ready | Disposable integration plus direct-provider bypass controls and external-effect/session recovery evidence before activation |
 | Generic Redis idempotency/loss recovery; deletion receipt/outbox/worker; AI/worker/scheduler; broader UI/PWA | Specified, not delivered by M01-02 | Separately authorized implementation, fault/security tests and relevant dependencies; R14 is not implemented by R31 helper completion |
 | R32 | in_progress / partially_executed; owner/release acceptance pending | Remaining Auth/provider, deletion/RLS fault, purge/recovery, load/connection-budget, PITR/security/production and acceptance gates |
 | R33 | optional/deferred | Owner may revisit; not a DOC-01 blocker |
@@ -43,9 +43,9 @@ M01-02 policy/error inputs have been implemented and reviewed within the merged 
 
 ## Owner decisions that remain genuinely open
 
-1. Authorize the next bounded implementation slice and its observable acceptance boundary. M01-01/M01-02 are merged; M01-03 is the next candidate. Their prior authorization does not authorize that next slice or complete the M01 milestone.
+1. M01-03 is authorized for local implementation and review. The owner approved server-only privileged reconciliation and limited local Gmail use, while the provider-dependent A01/A04 success path still needs a proven trusted lookup/create/send sequence, direct Auth bypass control, safe unknown-contact failure response and deployment ingress evidence in the [current handoff](../07-planning/current-phase/M01-03.md). Earlier M01-01/M01-02 authorization does not complete the M01 milestone.
 2. Approve concrete SMS/AI providers/models and applicable real-user-data handling before dependent integrations; a provider being available is not approval.
 3. Decide production destination/access ownership and approve operational/security/backup/restore arrangements before release.
 4. Record explicit acceptance of applicable R32 gates and eventual release. Agent checks do not supply owner sign-off.
 
-These are dependencies for affected future work, not blockers for the authorized documentation maintenance selected through START-HERE. New conflicts must identify source sections, actual behavior, impact and the missing decision using the shared workflow.
+These decisions block only their dependent implementation or acceptance, not independent M01-03 validation and client-IP work. New conflicts must identify source sections, actual behavior, impact and the missing decision using the shared workflow.

@@ -39,4 +39,33 @@ describe('Public runtime key boundary', () => {
       validateConfiguration({ ...base, DB_PASSWORD: undefined }),
     ).toThrow('DB_PASSWORD');
   });
+  it('fails startup for an invalid trusted-proxy range', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AUTH_TRUSTED_PROXY_CIDRS: '0.0.0.0/33',
+      }),
+    ).toThrow('AUTH_TRUSTED_PROXY_CIDRS');
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AUTH_TRUSTED_PROXY_CIDRS: '0.0.0.0/1,128.0.0.0/1',
+      }),
+    ).toThrow('AUTH_TRUSTED_PROXY_CIDRS');
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AUTH_TRUSTED_PROXY_CIDRS: 'fe80::1%eth0',
+      }),
+    ).toThrow('AUTH_TRUSTED_PROXY_CIDRS');
+  });
+  it('accepts only an explicit backend registration minimum of 8 through 128', () => {
+    for (const value of ['7', '129', '8.5', '08', 'not-a-number'])
+      expect(() =>
+        validateConfiguration({ ...base, AUTH_PASSWORD_MIN_LENGTH: value }),
+      ).toThrow('AUTH_PASSWORD_MIN_LENGTH');
+    expect(() =>
+      validateConfiguration({ ...base, AUTH_PASSWORD_MIN_LENGTH: '12' }),
+    ).not.toThrow();
+  });
 });
