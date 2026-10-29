@@ -225,6 +225,25 @@ try {
       422,
     );
   });
+  await check(
+    "unapproved session cannot access protected endpoints",
+    async () => {
+      assert.equal(
+        (await api("/profile", tokens[0], "PATCH", { current_role: "Student" }))
+          .status,
+        403,
+      );
+    },
+  );
+  for (const token of tokens) {
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url"),
+    );
+    await db.query(
+      "SELECT private.approve_auth_session($1::uuid, $2::uuid, 'password_login')",
+      [payload.sub, payload.session_id],
+    );
+  }
   await db.query(
     "INSERT INTO public.skills(id,slug,canonical_name) VALUES($1,$2,'Foundation Skill')",
     [skill, "foundation-" + skill],

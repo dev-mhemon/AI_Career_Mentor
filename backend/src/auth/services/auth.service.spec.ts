@@ -337,6 +337,11 @@ describe('AuthService session approval boundary', () => {
     expect(
       query.mock.calls.some(([sql]) => /UPDATE public\.users/.test(sql)),
     ).toBe(false);
+    const userUpsert = query.mock.calls.find(([sql]) =>
+      sql.includes('INSERT INTO public.users'),
+    )?.[0];
+    expect(userUpsert).toBeDefined();
+    expect(userUpsert).not.toMatch(/DO UPDATE SET[\s\S]*last_login_at/);
     expect(database.transaction).toHaveBeenCalledWith(
       userId,
       expect.any(Function),

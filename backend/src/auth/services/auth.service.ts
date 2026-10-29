@@ -281,8 +281,7 @@ export class AuthService {
             );
           await db.query(
             `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,clock_timestamp(),clock_timestamp())
-        ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact,
-        last_login_at=clock_timestamp()`,
+        ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact`,
             [user.id, email, phone, !!(email || phone)],
           );
           for (const i of identities) {
@@ -310,22 +309,13 @@ export class AuthService {
             [user.id],
           );
           const result = await this.meInTransaction(db, user.id);
-          if (result.user.verified_contact && identity.sessionId) {
-            if (provider) {
-              await this.approvals.approve(
-                db,
-                user.id,
-                identity.sessionId,
-                'oauth',
-              );
-            } else if (amr?.some((e) => e.method === 'password')) {
-              await this.approvals.approve(
-                db,
-                user.id,
-                identity.sessionId,
-                'password_login',
-              );
-            }
+          if (result.user.verified_contact && identity.sessionId && provider) {
+            await this.approvals.approve(
+              db,
+              user.id,
+              identity.sessionId,
+              'oauth',
+            );
           }
           return result;
         },
