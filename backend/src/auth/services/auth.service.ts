@@ -207,6 +207,27 @@ export class AuthService {
     const identities = (user.identities || []).filter((i) =>
       ['email', 'phone', 'google', 'facebook'].includes(i.provider),
     );
+    let amr = identity.amr;
+    if (!amr && authorization?.startsWith('Bearer ')) {
+      try {
+        const parts = authorization.slice(7).split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(
+            Buffer.from(parts[1], 'base64url').toString('utf8'),
+          ) as { amr?: unknown };
+          if (Array.isArray(payload.amr)) {
+            amr = payload.amr as Array<{
+              method: string;
+              timestamp?: number;
+              provider?: string;
+            }>;
+          }
+        }
+      } catch {
+        // Ignore token parsing failure; amr remains undefined
+      }
+    }
+
     if (provider) {
       if (!['google', 'facebook'].includes(provider))
         fail(422, 'PROVIDER_MISMATCH', 'Unsupported OAuth provider');
@@ -216,27 +237,6 @@ export class AuthService {
           'PROVIDER_MISMATCH',
           'Provider is not linked to this Auth identity',
         );
-
-      let amr = identity.amr;
-      if (!amr && authorization?.startsWith('Bearer ')) {
-        try {
-          const parts = authorization.slice(7).split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(
-              Buffer.from(parts[1], 'base64url').toString('utf8'),
-            ) as { amr?: unknown };
-            if (Array.isArray(payload.amr)) {
-              amr = payload.amr as Array<{
-                method: string;
-                timestamp?: number;
-                provider?: string;
-              }>;
-            }
-          }
-        } catch {
-          // Ignore token parsing failure; amr remains undefined
-        }
-      }
 
       const isOAuthSession = amr?.some(
         (entry) =>
@@ -256,24 +256,11 @@ export class AuthService {
       .transaction(
         identity.sub,
         async (db) => {
-          const [existing] = await db.query(
-            'SELECT verified_contact FROM public.users WHERE id=$1',
-            [user.id],
-          );
           const [pendingEmail] = await db.query(
             `SELECT 1 FROM public.user_auth_providers
               WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
             [user.id],
           );
-          if (!provider) {
-            if (!existing?.verified_contact || pendingEmail)
-              fail(
-                403,
-                'UNVERIFIED_ACCOUNT',
-                'Application registration is incomplete',
-              );
-            return this.meInTransaction(db, user.id);
-          }
           if (pendingEmail)
             fail(
               403,
@@ -323,13 +310,23 @@ export class AuthService {
             [user.id],
           );
           const result = await this.meInTransaction(db, user.id);
-          if (result.user.verified_contact)
-            await this.approvals.approve(
-              db,
-              user.id,
-              identity.sessionId,
-              'oauth',
-            );
+          if (result.user.verified_contact && identity.sessionId) {
+            if (provider) {
+              await this.approvals.approve(
+                db,
+                user.id,
+                identity.sessionId,
+                'oauth',
+              );
+            } else if (amr?.some((e) => e.method === 'password')) {
+              await this.approvals.approve(
+                db,
+                user.id,
+                identity.sessionId,
+                'password_login',
+              );
+            }
+          }
           return result;
         },
         false,

@@ -33,20 +33,24 @@ function configuration(): ConfigService {
 describe('AuthService session approval boundary', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('refuses sync for a confirmed GoTrue identity with no application account', async () => {
+  it('refuses sync when an A01 email registration is pending verification', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
           id: userId,
-          email: 'confirmed@example.invalid',
+          email: 'pending@example.invalid',
           email_confirmed_at: '2026-01-01T00:00:00Z',
           identities: [{ provider: 'email', id: userId }],
         }),
       }),
     );
-    const query = vi.fn().mockResolvedValue([]);
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("provider='email' AND verified_at IS NULL"))
+        return [{ id: '1' }];
+      return [];
+    });
     const database = {
       transaction: vi.fn((_id, operation) =>
         operation({ query } as unknown as EntityManager),
