@@ -1,30 +1,43 @@
 "use client";
 
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useState } from "react";
+import { signInWithOAuth } from "@/lib/auth/actions";
 
 /**
  * OAuth buttons for Google and Facebook login.
  *
- * Uses the browser Supabase client to initiate the OAuth redirect
- * flow. The browser must navigate to the external provider, so this
- * cannot be a Server Action.
- *
- * After authentication, the provider redirects to /auth/callback
- * where the code is exchanged for a session.
+ * Uses the signInWithOAuth server action to initiate the OAuth redirect flow.
+ * After authentication, the provider redirects to /auth/callback?provider=<provider>
+ * where the code is exchanged and approved.
  */
 export function OAuthButtons() {
+  const [error, setError] = useState<string | null>(null);
+
   const handleOAuth = async (provider: "google" | "facebook") => {
-    const supabase = createSupabaseBrowserClient();
-    await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+    setError(null);
+    try {
+      const res = await signInWithOAuth(provider);
+      if (res?.error) {
+        setError(res.error);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === "NEXT_REDIRECT") {
+        return;
+      }
+      setError("Failed to initiate OAuth login. Please try again.");
+    }
   };
 
   return (
     <div className="flex flex-col gap-3">
+      {error && (
+        <div
+          className="rounded-lg bg-destructive/15 p-3 text-sm text-destructive"
+          role="alert"
+        >
+          {error}
+        </div>
+      )}
       <button
         type="button"
         onClick={() => handleOAuth("google")}

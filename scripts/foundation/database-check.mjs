@@ -159,9 +159,10 @@ try {
     "first-forward-history",
     "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version;",
   );
-  const expected = Array.from({ length: 21 }, (_, i) =>
-    String(i).padStart(3, "0"),
-  );
+  const expected = readdirSync(path.join(root, "supabase/migrations"))
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => f.split("_")[0]);
   if (JSON.stringify(history.trim().split("\n")) !== JSON.stringify(expected))
     throw Error("Unexpected migration history");
   function testStage(stage) {
@@ -256,7 +257,7 @@ try {
   run("concurrency", process.execPath, ["scripts/foundation/concurrency.mjs"]);
   run("baseline-after", "python3", ["scripts/foundation/verify-baseline.py"]);
   console.log(
-    "PASS: 21 first forwards; 185 TAP; 21 downs; 21 reapply; 185 post-reapply TAP; boundaries + concurrency. Evidence: " +
+    `PASS: ${expected.length} first forwards; 185 TAP; ${expected.length} downs; ${expected.length} reapply; 185 post-reapply TAP; boundaries + concurrency. Evidence: ` +
       dir,
   );
 } catch (error) {

@@ -1,3 +1,9 @@
+export interface AmrEntry {
+  method: string;
+  timestamp?: number;
+  provider?: string;
+}
+
 /**
  * Supabase JWT payload shape.
  * Only the fields we actually consume are declared.
@@ -18,4 +24,10 @@ export interface SupabaseJwtPayload {
 
   /** Standard JWT issued-at (epoch seconds). */
   iat: number;
+
+  /** Supabase Auth session UUID. Signature validation precedes its use. */
+  session_id: string;
+
+  /** Authentication method references for the session. */
+  amr?: AmrEntry[];
 }

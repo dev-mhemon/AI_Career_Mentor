@@ -1,8 +1,9 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { syncUser, getMe, NetworkError, ApiError } from '@/lib/api/client';
+import { loginUser, syncUser, getMe, NetworkError, ApiError } from '@/lib/api/client';
 
 /**
  * Server Actions for authentication flows.
@@ -18,6 +19,55 @@ export interface AuthActionResult {
   error?: string;
 }
 
+const VERIFICATION_CONTEXT_COOKIE = 'mentor_verification_context';
+
+interface VerificationContext {
+  type: 'email' | 'phone';
+  identifier: string;
+}
+
+async function setVerificationContext(context: VerificationContext) {
+  const store = await cookies();
+  store.set(
+    VERIFICATION_CONTEXT_COOKIE,
+    Buffer.from(JSON.stringify(context)).toString('base64url'),
+    {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/verify',
+      maxAge: 600,
+    },
+  );
+}
+
+async function getVerificationContext(
+  type: 'email' | 'phone',
+): Promise<VerificationContext | null> {
+  const encoded = (await cookies()).get(VERIFICATION_CONTEXT_COOKIE)?.value;
+  if (!encoded) return null;
+  try {
+    const value = JSON.parse(
+      Buffer.from(encoded, 'base64url').toString('utf8'),
+    ) as Partial<VerificationContext>;
+    return value.type === type && typeof value.identifier === 'string'
+      ? { type, identifier: value.identifier }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function clearVerificationContext() {
+  (await cookies()).set(VERIFICATION_CONTEXT_COOKIE, '', {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/verify',
+    maxAge: 0,
+  });
+}
+
 export async function loginAction(
   _prevState: AuthActionResult,
   formData: FormData,
@@ -29,33 +79,21 @@ export async function loginAction(
     return { error: 'Email and password are required.' };
   }
 
-  const supabase = await createSupabaseServerClient();
-
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
-
-  if (signInError) {
-    return { error: signInError.message };
-  }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) {
-    return { error: 'Failed to establish session.' };
-  }
-
+  let destination = '/dashboard';
   try {
-    const redirectTo = await syncAndRedirect(session.access_token);
-    redirect(redirectTo);
+    const session = await loginUser(email, password);
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.auth.setSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    });
+    if (error) return { error: 'Failed to establish session.' };
+    if (
+      session.user.status !== 'suspended' &&
+      session.next_step === 'profile_setup'
+    )
+      destination = '/dashboard?next_step=profile_setup';
   } catch (err) {
-    if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
-      throw err;
-    }
-    await supabase.auth.signOut();
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
@@ -64,6 +102,7 @@ export async function loginAction(
     }
     return { error: 'An unexpected error occurred during login.' };
   }
+  redirect(destination);
 }
 
 export async function registerAction(
@@ -96,7 +135,7 @@ export async function registerAction(
       email: identifier,
       password,
       options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback`,
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback?flow=email`,
       },
     });
     signUpError = error;
@@ -126,8 +165,8 @@ export async function registerAction(
 
   if (!session) {
     // Session is null because confirmation is required.
-    const encodedIdentifier = encodeURIComponent(identifier);
-    redirect(`/verify?type=${type}&identifier=${encodedIdentifier}`);
+    await setVerificationContext({ type, identifier });
+    redirect(`/verify?type=${type}`);
   }
 
   try {
@@ -137,7 +176,7 @@ export async function registerAction(
     if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
       throw err;
     }
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
@@ -153,12 +192,14 @@ export async function verifyOtpAction(
   formData: FormData,
 ): Promise<AuthActionResult> {
   const type = formData.get('type') as 'email' | 'phone';
-  const identifier = formData.get('identifier') as string;
   const token = formData.get('token') as string;
 
-  if (!type || !identifier || !token) {
+  if (!type || !token) {
     return { error: 'Invalid verification request.' };
   }
+  const context = await getVerificationContext(type);
+  if (!context) return { error: 'Invalid verification request.' };
+  const identifier = context.identifier;
 
   const supabase = await createSupabaseServerClient();
   let verifyError;
@@ -198,12 +239,13 @@ export async function verifyOtpAction(
 
   try {
     const redirectTo = await syncAndRedirect(session.access_token);
+    await clearVerificationContext();
     redirect(redirectTo);
   } catch (err) {
     if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
       throw err;
     }
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
@@ -216,8 +258,10 @@ export async function verifyOtpAction(
 
 export async function resendOtpAction(
   type: 'email' | 'phone',
-  identifier: string,
 ): Promise<{ error?: string; success?: boolean }> {
+  const context = await getVerificationContext(type);
+  if (!context) return { error: 'Invalid verification request.' };
+  const identifier = context.identifier;
   const supabase = await createSupabaseServerClient();
 
   let resendError;
@@ -227,7 +271,7 @@ export async function resendOtpAction(
       type: 'signup',
       email: identifier,
       options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback`,
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback?flow=email`,
       },
     });
     resendError = error;
@@ -248,7 +292,43 @@ export async function resendOtpAction(
     return { error: resendError.message };
   }
 
+  await setVerificationContext(context);
   return { success: true };
+}
+
+export async function signInWithOAuth(
+  provider: 'google' | 'facebook',
+): Promise<{ error?: string }> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${siteUrl}/auth/callback?provider=${provider}`,
+      },
+    });
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    if (data?.url) {
+      redirect(data.url);
+    }
+
+    return { error: 'Failed to initiate OAuth login. Missing redirect URL.' };
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
+      throw err;
+    }
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : 'An unexpected error occurred during OAuth login.',
+    };
+  }
 }
 
 export async function logoutAction(): Promise<void> {

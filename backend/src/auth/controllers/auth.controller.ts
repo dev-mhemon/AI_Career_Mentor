@@ -20,6 +20,12 @@ export class AuthController {
   resendVerification(@Req() req: any, @Body() body: unknown) {
     return this.registration.resend(body, req);
   }
+  @Post('login')
+  @HttpCode(200)
+  @Policy({ public: true })
+  login(@Req() req: any, @Body() body: unknown) {
+    return this.auth.login(body, req);
+  }
   /** Transitional adapter used by the existing email/phone UI; not an additional C05 catalog claim. */
   @Post('sync')
   @HttpCode(200)
@@ -48,7 +54,7 @@ export class AuthController {
     };
   }
   @Get('me')
-  @Policy({ allowSuspended: true })
+  @Policy({ allowSuspended: true, accountInspection: true })
   me(@Req() req: any) {
     return this.auth.me(req.user.sub);
   }

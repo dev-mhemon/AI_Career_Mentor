@@ -5,9 +5,16 @@ import { DatabaseService } from './database.service.js';
 import { fail } from '../../common/http.js';
 import { profileComplete } from '../../common/profile-completeness.js';
 import { features } from '../policy.js';
+import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
+import { trustedClientIp } from '../client-ip.js';
+import { normalizeLoginRequest } from '../registration.dto.js';
+import type { Request } from 'express';
+import { SessionApprovalService } from './session-approval.service.js';
 export interface JwtIdentity {
   sub: string;
+  sessionId: string;
   authProvider?: string;
+  amr?: Array<{ method: string; timestamp?: number; provider?: string }>;
 }
 export interface AuthIdentity {
   provider: string;
@@ -22,18 +29,23 @@ interface AuthUser {
   phone_confirmed_at?: string;
   identities?: AuthIdentity[];
 }
+interface ProviderSession {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+}
+type ProviderLoginResult = ProviderSession | { unverified: true };
 @Injectable()
 export class AuthService {
   constructor(
     private readonly database: DatabaseService,
     private readonly config: ConfigService,
+    private readonly abuse: AuthAbuseControl,
+    private readonly approvals: SessionApprovalService,
   ) {}
-  async bootstrap(
-    identity: JwtIdentity,
-    authorization: string,
-    provider?: string,
-  ) {
-    // A live Auth lookup is required before provisioning. Never trust user metadata or JWT contacts.
+
+  private async authUser(authorization: string): Promise<AuthUser> {
     const response = await fetch(
       `${this.config.getOrThrow<string>('SUPABASE_URL').replace(/\/$/, '')}/auth/v1/user`,
       {
@@ -51,26 +63,210 @@ export class AuthService {
         fail(401, 'INVALID_TOKEN', 'Auth session is unavailable');
       fail(503, 'SERVICE_UNAVAILABLE', 'Auth service is unavailable');
     }
-    const user = (await response.json()) as AuthUser;
+    return (await response.json()) as AuthUser;
+  }
+
+  private sessionIdentity(accessToken: string): JwtIdentity {
+    try {
+      const parts = accessToken.split('.');
+      if (parts.length !== 3) throw new Error('Invalid JWT');
+      const payload = JSON.parse(
+        Buffer.from(parts[1], 'base64url').toString('utf8'),
+      ) as { sub?: unknown; session_id?: unknown; exp?: unknown };
+      if (
+        typeof payload.sub !== 'string' ||
+        typeof payload.session_id !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          payload.session_id,
+        ) ||
+        typeof payload.exp !== 'number' ||
+        payload.exp <= Date.now() / 1000
+      )
+        throw new Error('Invalid JWT claims');
+      return { sub: payload.sub, sessionId: payload.session_id };
+    } catch {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Auth service returned an invalid session',
+      );
+    }
+  }
+
+  async login(body: unknown, request: Request) {
+    const input = normalizeLoginRequest(body);
+    const providerResult = await this.abuse.login<ProviderLoginResult>(
+      { channel: input.channel, identifier: input.identifier },
+      trustedClientIp(request),
+      async () => {
+        const response = await fetch(
+          `${this.config.getOrThrow<string>('SUPABASE_URL').replace(/\/$/, '')}/auth/v1/token?grant_type=password`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: this.config.getOrThrow<string>('SUPABASE_ANON_KEY'),
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              [input.channel]: input.identifier,
+              password: input.password,
+            }),
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        if (response.status === 400 || response.status === 401) {
+          const error = (await response.json().catch(() => null)) as {
+            code?: unknown;
+            error_code?: unknown;
+          } | null;
+          if (
+            ['email_not_confirmed', 'phone_not_confirmed'].includes(
+              String(error?.code),
+            ) ||
+            ['email_not_confirmed', 'phone_not_confirmed'].includes(
+              String(error?.error_code),
+            )
+          )
+            return {
+              success: true as const,
+              value: { unverified: true as const },
+            };
+          return { success: false as const };
+        }
+        if (!response.ok) throw new Error('Auth provider unavailable');
+        return {
+          success: true as const,
+          value: (await response.json()) as ProviderSession,
+        };
+      },
+    );
+    if ('unverified' in providerResult)
+      fail(403, 'UNVERIFIED_ACCOUNT', 'Verify the account before login');
+    const providerSession = providerResult;
+    const identity = this.sessionIdentity(providerSession.access_token);
+    const user = await this.authUser(`Bearer ${providerSession.access_token}`);
+    if (user.id !== identity.sub)
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Auth service returned an invalid session',
+      );
+    const result = await this.database.transaction(
+      identity.sub,
+      async (db) => {
+        const [account] = await db.query(
+          `SELECT u.verified_contact,p.verified_at,p.contact_value
+             FROM public.users u
+             LEFT JOIN public.user_auth_providers p
+               ON p.user_id=u.id AND p.provider=$2::public.auth_provider
+            WHERE u.id=$1`,
+          [identity.sub, input.channel],
+        );
+        if (
+          !account?.verified_contact ||
+          !account.verified_at ||
+          account.contact_value !== input.identifier
+        )
+          fail(403, 'UNVERIFIED_ACCOUNT', 'Verify the account before login');
+        await this.approvals.approve(
+          db,
+          identity.sub,
+          identity.sessionId,
+          'password_login',
+        );
+        await db.query(
+          'UPDATE public.users SET last_login_at=now() WHERE id=$1',
+          [identity.sub],
+        );
+        return this.meInTransaction(db, identity.sub);
+      },
+      false,
+      true,
+    );
+    return {
+      access_token: providerSession.access_token,
+      refresh_token: providerSession.refresh_token,
+      expires_in: providerSession.expires_in,
+      token_type: 'Bearer' as const,
+      user: result.user,
+      profile_complete: result.profile_complete,
+      next_step: result.profile_complete
+        ? ('app_home' as const)
+        : ('profile_setup' as const),
+    };
+  }
+  async bootstrap(
+    identity: JwtIdentity,
+    authorization: string,
+    provider?: string,
+  ) {
+    // A live Auth lookup is required before provisioning. Never trust user metadata or JWT contacts.
+    const user = await this.authUser(authorization);
     if (user.id !== identity.sub)
       fail(401, 'INVALID_TOKEN', 'Identity mismatch');
     const identities = (user.identities || []).filter((i) =>
       ['email', 'phone', 'google', 'facebook'].includes(i.provider),
     );
-    if (
-      provider &&
-      (identity.authProvider !== provider ||
-        !identities.some((i) => i.provider === provider))
-    )
-      fail(
-        422,
-        'PROVIDER_MISMATCH',
-        'Provider is not linked to this Auth identity',
+    let amr = identity.amr;
+    if (!amr && authorization?.startsWith('Bearer ')) {
+      try {
+        const parts = authorization.slice(7).split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(
+            Buffer.from(parts[1], 'base64url').toString('utf8'),
+          ) as { amr?: unknown };
+          if (Array.isArray(payload.amr)) {
+            amr = payload.amr as Array<{
+              method: string;
+              timestamp?: number;
+              provider?: string;
+            }>;
+          }
+        }
+      } catch {
+        // Ignore token parsing failure; amr remains undefined
+      }
+    }
+
+    if (provider) {
+      if (!['google', 'facebook'].includes(provider))
+        fail(422, 'PROVIDER_MISMATCH', 'Unsupported OAuth provider');
+      if (!identities.some((i) => i.provider === provider))
+        fail(
+          422,
+          'PROVIDER_MISMATCH',
+          'Provider is not linked to this Auth identity',
+        );
+
+      const isOAuthSession = amr?.some(
+        (entry) =>
+          entry.method === 'oauth' &&
+          typeof entry.provider === 'string' &&
+          entry.provider.toLowerCase() === provider.toLowerCase(),
       );
+      if (!isOAuthSession) {
+        fail(
+          403,
+          'PROVIDER_MISMATCH',
+          'Session was not authenticated via the requested OAuth provider',
+        );
+      }
+    }
     return this.database
       .transaction(
         identity.sub,
         async (db) => {
+          const [pendingEmail] = await db.query(
+            `SELECT 1 FROM public.user_auth_providers
+              WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
+            [user.id],
+          );
+          if (pendingEmail)
+            fail(
+              403,
+              'UNVERIFIED_ACCOUNT',
+              'Pending email registration must complete through verification',
+            );
           const email = user.email_confirmed_at ? user.email || null : null;
           const phone = user.phone_confirmed_at
             ? user.phone?.startsWith('+')
@@ -84,9 +280,8 @@ export class AuthService {
               'Only Bangladesh mobile contacts are supported',
             );
           await db.query(
-            `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,now(),now())
-        ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact,
-        last_login_at=now(),last_active_at=CASE WHEN users.last_active_at IS NULL OR users.last_active_at <= clock_timestamp()-interval '5 minutes' THEN GREATEST(users.last_active_at,clock_timestamp()) ELSE users.last_active_at END`,
+            `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,clock_timestamp(),clock_timestamp())
+        ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact`,
             [user.id, email, phone, !!(email || phone)],
           );
           for (const i of identities) {
@@ -113,9 +308,23 @@ export class AuthService {
             'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING',
             [user.id],
           );
-          return this.meInTransaction(db, user.id);
+          const result = await this.meInTransaction(db, user.id);
+          if (result.user.verified_contact && identity.sessionId && provider) {
+            await this.approvals.approve(
+              db,
+              user.id,
+              identity.sessionId,
+              'oauth',
+            );
+            await db.query(
+              'UPDATE public.users SET last_login_at=clock_timestamp() WHERE id=$1',
+              [user.id],
+            );
+          }
+          return result;
         },
         false,
+        !!provider,
       )
       .catch((error: unknown) => {
         if (

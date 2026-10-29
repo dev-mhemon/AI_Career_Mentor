@@ -11,6 +11,7 @@ export interface AccessPolicy {
   public?: boolean;
   bootstrap?: boolean;
   allowSuspended?: boolean;
+  accountInspection?: boolean;
   admin?: boolean;
   feature?: Feature;
   existingRead?: boolean;

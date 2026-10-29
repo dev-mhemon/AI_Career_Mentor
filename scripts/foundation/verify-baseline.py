@@ -10,12 +10,24 @@ def check(path,entry):
   raise SystemExit('Hash mismatch: '+str(path.relative_to(root)))
 for f in manifest['files']: check(b/f['path'],f)
 counts={}
-for f in json.loads((b/'review/sql-export-manifest.json').read_text())['files']:
+reviewed_sql=json.loads((b/'review/sql-export-manifest.json').read_text())['files']
+for f in reviewed_sql:
  if f['kind'] in ('forward','down','tests'):
   check(root/f['path'],f);counts[f['kind']]=counts.get(f['kind'],0)+1
-assert len(manifest['files'])==179 and counts=={'forward':21,'down':21,'tests':8},counts
+if len(manifest['files'])!=179 or counts!={'forward':21,'down':21,'tests':8}:
+ raise SystemExit('Count mismatch: '+str(counts))
 print('PASS: 179 reviewed entries; integrated SQL 21 forward / 21 rollback / 8 test files, byte-identical')
 
-assert len(list((root/"supabase/migrations").glob("*.sql"))) == 21
-assert len(list((root/"supabase/rollbacks").glob("*.sql"))) == 21
-assert len(list((root/"supabase/tests/database").glob("*.sql"))) == 8
+extensions=[
+ {'kind':'forward','path':'supabase/migrations/022_session_approval_gate.sql','bytes':7753,'sha256':'f631ed91c11aecf0ab6a1f8e6dbfc85f0a13c0521e200bb7d361dd8d3d5d5088'},
+ {'kind':'down','path':'supabase/rollbacks/022_session_approval_gate_down.sql','bytes':4412,'sha256':'94f1b652e26c2eeb7e49d7e83d2e933aac44da8194230f147433a1e69d14d481'},
+]
+for f in extensions: check(root/f['path'],f)
+def paths(folder):
+ return {str(p.relative_to(root)).replace('\\','/') for p in (root/folder).glob('*.sql')}
+for kind,folder in [('forward','supabase/migrations'),('down','supabase/rollbacks'),('tests','supabase/tests/database')]:
+ expected={f['path'] for f in reviewed_sql if f['kind']==kind}|{f['path'] for f in extensions if f['kind']==kind}
+ actual=paths(folder)
+ if actual!=expected:
+  raise SystemExit(f'SQL directory inventory mismatch for {kind}: unexpected={sorted(actual-expected)}, missing={sorted(expected-actual)}')
+print('PASS: scoped SQL extension 022 forward / rollback registered; no unregistered SQL inventory')

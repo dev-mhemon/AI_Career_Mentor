@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { syncUser, getMe, ApiError, UnauthorizedError, NetworkError } from '@/lib/api/client';
+import {
+  loginUser,
+  approveOAuthSession,
+  syncUser,
+  getMe,
+  ApiError,
+  UnauthorizedError,
+  NetworkError,
+} from '@/lib/api/client';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -25,6 +33,53 @@ beforeEach(() => {
 });
 
 describe('API Client', () => {
+  it('calls backend EP-A05 without an Authorization header', async () => {
+    const session = {
+      access_token: 'approved-access',
+      refresh_token: 'approved-refresh',
+      expires_in: 3600,
+      token_type: 'Bearer' as const,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: session }),
+    });
+
+    await expect(loginUser('test@example.com', 'password123')).resolves.toEqual(session);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/auth/login',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+  });
+
+  it('preserves the complete EP-A10 OAuth routing response', async () => {
+    const response = {
+      user: { ...MOCK_USER_RESPONSE, verified_contact: false, linked_providers: ['google'] },
+      profile_complete: false,
+      verified_contact_required: true,
+      next_step: 'add_verified_contact' as const,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: response }),
+    });
+
+    await expect(approveOAuthSession(MOCK_TOKEN, 'google')).resolves.toEqual(response);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/auth/oauth/session',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ provider: 'google' }),
+        headers: expect.objectContaining({ Authorization: `Bearer ${MOCK_TOKEN}` }),
+      }),
+    );
+  });
+
   describe('syncUser', () => {
     it('calls POST /auth/sync with Bearer token', async () => {
       mockFetch.mockResolvedValueOnce({
