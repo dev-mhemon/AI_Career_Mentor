@@ -115,4 +115,21 @@ describe('SupabaseStrategy', () => {
 
     expect(() => strategy.validate(payload)).toThrow();
   });
+
+  it('rejects a signed payload without a session id', () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
+        return undefined;
+      }),
+    } as unknown as ConfigService;
+    const strategy = new SupabaseStrategy(configService);
+    const payload = {
+      sub: '22222222-2222-4222-8222-222222222222',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+    } as SupabaseJwtPayload;
+
+    expect(() => strategy.validate(payload)).toThrow();
+  });
 });

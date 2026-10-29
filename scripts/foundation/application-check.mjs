@@ -822,6 +822,11 @@ try {
         },
       });
       users.push(u.id);
+      const sessionId = randomUUID();
+      await db.query(
+        "INSERT INTO auth.sessions(id, user_id, created_at, updated_at) VALUES($1, $2, now(), now())",
+        [sessionId, u.id],
+      );
       const key = JSON.parse(
         readFileSync(path.join(local, "supabase/signing_keys.json")),
       )[0];
@@ -831,6 +836,7 @@ try {
       const p = Buffer.from(
         JSON.stringify({
           sub: u.id,
+          session_id: sessionId,
           exp: Math.floor(Date.now() / 1000) + 60,
           iss: status.API_URL + "/auth/v1",
           aud: "authenticated",

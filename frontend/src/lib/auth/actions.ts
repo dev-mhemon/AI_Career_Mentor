@@ -292,6 +292,7 @@ export async function resendOtpAction(
     return { error: resendError.message };
   }
 
+  await setVerificationContext(context);
   return { success: true };
 }
 

@@ -183,6 +183,11 @@ describe('AuthService session approval boundary', () => {
       sessionId,
       'oauth',
     );
+    expect(
+      query.mock.calls.some(([sql]) =>
+        /UPDATE public\.users SET last_login_at=clock_timestamp\(\)/.test(sql),
+      ),
+    ).toBe(true);
   });
 
   it('rejects OAuth bootstrap with unsupported provider (e.g. github)', async () => {

@@ -316,6 +316,10 @@ export class AuthService {
               identity.sessionId,
               'oauth',
             );
+            await db.query(
+              'UPDATE public.users SET last_login_at=clock_timestamp() WHERE id=$1',
+              [user.id],
+            );
           }
           return result;
         },

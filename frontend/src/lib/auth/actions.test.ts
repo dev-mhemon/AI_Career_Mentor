@@ -232,6 +232,11 @@ describe("Auth Actions", () => {
           emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback?flow=email`,
         },
       });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        expect.any(String),
+        expect.objectContaining({ httpOnly: true, maxAge: 600, path: "/verify" }),
+      );
     });
 
     it("handles rate limit", async () => {
