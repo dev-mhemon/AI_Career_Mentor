@@ -77,9 +77,22 @@ SET search_path = ''
 AS $$
   SELECT COALESCE(
     p_user_id = (SELECT auth.uid())
-    AND private.has_approved_session(
-      p_user_id,
-      NULLIF((SELECT auth.jwt()->>'session_id'),'')::uuid),
+    AND (
+      CASE
+        WHEN NULLIF((SELECT auth.jwt()->>'session_id'), '') IS NULL THEN
+          EXISTS (
+            SELECT 1
+              FROM public.users u
+             WHERE u.id = p_user_id
+               AND u.status = 'active'
+          )
+        ELSE
+          private.has_approved_session(
+            p_user_id,
+            NULLIF((SELECT auth.jwt()->>'session_id'), '')::uuid
+          )
+      END
+    ),
     false
   );
 $$;

@@ -19,7 +19,7 @@ if len(manifest['files'])!=179 or counts!={'forward':21,'down':21,'tests':8}:
 print('PASS: 179 reviewed entries; integrated SQL 21 forward / 21 rollback / 8 test files, byte-identical')
 
 extensions=[
- {'kind':'forward','path':'supabase/migrations/022_session_approval_gate.sql','bytes':7443,'sha256':'f9952effc3a2c6318366bb94cee551535b39e5d83a4d305922f0ead3816a7326'},
+ {'kind':'forward','path':'supabase/migrations/022_session_approval_gate.sql','bytes':7753,'sha256':'f631ed91c11aecf0ab6a1f8e6dbfc85f0a13c0521e200bb7d361dd8d3d5d5088'},
  {'kind':'down','path':'supabase/rollbacks/022_session_approval_gate_down.sql','bytes':4412,'sha256':'94f1b652e26c2eeb7e49d7e83d2e933aac44da8194230f147433a1e69d14d481'},
 ]
 for f in extensions: check(root/f['path'],f)

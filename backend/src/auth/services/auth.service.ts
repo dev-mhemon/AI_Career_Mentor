@@ -241,7 +241,8 @@ export class AuthService {
       const isOAuthSession = amr?.some(
         (entry) =>
           entry.method === 'oauth' &&
-          (!entry.provider || entry.provider === provider),
+          typeof entry.provider === 'string' &&
+          entry.provider.toLowerCase() === provider.toLowerCase(),
       );
       if (!isOAuthSession) {
         fail(

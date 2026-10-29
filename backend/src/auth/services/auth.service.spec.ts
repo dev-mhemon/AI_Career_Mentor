@@ -257,6 +257,32 @@ describe('AuthService session approval boundary', () => {
       response: { code: 'PROVIDER_MISMATCH' },
     });
     expect(approvals.approve).not.toHaveBeenCalled();
+
+    const missingProviderToken = accessToken([{ method: 'oauth' }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${missingProviderToken}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'PROVIDER_MISMATCH' },
+    });
+
+    const mismatchedProviderToken = accessToken([
+      { method: 'oauth', provider: 'facebook' },
+    ]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${mismatchedProviderToken}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'PROVIDER_MISMATCH' },
+    });
   });
 
   it('lets a verified existing account sync without approving or recording activity', async () => {
