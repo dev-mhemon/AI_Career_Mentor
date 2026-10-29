@@ -76,11 +76,28 @@ export interface UserResponse {
   verified_contact: boolean;
 }
 
+export interface AuthSessionResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: 'Bearer';
+  user: UserResponse;
+  profile_complete: boolean;
+  next_step: 'profile_setup' | 'app_home';
+}
+
+export interface OAuthSessionResponse {
+  user: UserResponse;
+  profile_complete: boolean;
+  verified_contact_required: boolean;
+  next_step: 'profile_setup' | 'app_home' | 'add_verified_contact';
+}
+
 // ─── Core Fetch Wrapper ──────────────────────────────────────
 
 async function apiFetch<T>(
   path: string,
-  accessToken: string,
+  accessToken: string | null,
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${getApiBaseUrl()}${path}`;
@@ -92,7 +109,7 @@ async function apiFetch<T>(
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...options.headers,
       },
     });
@@ -165,6 +182,23 @@ export async function syncUser(accessToken: string): Promise<UserResponse> {
     method: 'POST',
   });
   return data.user;
+}
+
+export function loginUser(identifier: string, password: string): Promise<AuthSessionResponse> {
+  return apiFetch<AuthSessionResponse>('/auth/login', null, {
+    method: 'POST',
+    body: JSON.stringify({ identifier, password }),
+  });
+}
+
+export async function approveOAuthSession(
+  accessToken: string,
+  provider: 'google' | 'facebook',
+): Promise<OAuthSessionResponse> {
+  return apiFetch<OAuthSessionResponse>('/auth/oauth/session', accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ provider }),
+  });
 }
 
 /**

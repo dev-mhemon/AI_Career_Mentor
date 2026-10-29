@@ -26,7 +26,7 @@ describe('VerifyForm', () => {
 
   it('renders form fields correctly with email type', () => {
     vi.mocked(useSearchParams).mockReturnValue(
-      new URLSearchParams('?type=email&identifier=test@example.com'),
+      new URLSearchParams('?type=email'),
     );
     render(<VerifyForm />);
     expect(
@@ -37,7 +37,7 @@ describe('VerifyForm', () => {
 
   it('calls resendOtpAction on resend click and shows rate limit error', async () => {
     vi.mocked(useSearchParams).mockReturnValue(
-      new URLSearchParams('?type=email&identifier=test@example.com'),
+      new URLSearchParams('?type=email'),
     );
     vi.mocked(resendOtpAction).mockResolvedValueOnce({
       error: 'Email delivery is temporarily rate-limited. Please try again later.',
@@ -49,14 +49,14 @@ describe('VerifyForm', () => {
     fireEvent.click(resendButton);
 
     await waitFor(() => {
-      expect(resendOtpAction).toHaveBeenCalledWith('email', 'test@example.com');
+      expect(resendOtpAction).toHaveBeenCalledWith('email');
       expect(screen.getByText(/email delivery is temporarily rate-limited/i)).toBeInTheDocument();
     });
   });
 
   it('shows success message and starts cooldown on successful resend', async () => {
     vi.mocked(useSearchParams).mockReturnValue(
-      new URLSearchParams('?type=email&identifier=test@example.com'),
+      new URLSearchParams('?type=email'),
     );
     vi.mocked(resendOtpAction).mockResolvedValueOnce({ success: true });
 
@@ -73,7 +73,7 @@ describe('VerifyForm', () => {
   });
   it('uses SMS as the only phone verification channel', () => {
     vi.mocked(useSearchParams).mockReturnValue(
-      new URLSearchParams('?type=phone&identifier=%2B8801712345678'),
+      new URLSearchParams('?type=phone'),
     );
     render(<VerifyForm />);
     expect(screen.getByLabelText(/sent to your phone via SMS/i)).toBeInTheDocument();

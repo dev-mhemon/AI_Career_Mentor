@@ -18,4 +18,7 @@ export interface SupabaseJwtPayload {
 
   /** Standard JWT issued-at (epoch seconds). */
   iat: number;
+
+  /** Supabase Auth session UUID. Signature validation precedes its use. */
+  session_id: string;
 }

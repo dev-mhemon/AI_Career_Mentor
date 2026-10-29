@@ -79,15 +79,16 @@ export class SupabaseStrategy extends PassportStrategy(Strategy, 'supabase') {
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         payload.sub,
       ) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        payload.session_id,
+      ) ||
       !Number.isFinite(payload.exp) ||
       payload.exp <= Date.now() / 1000
     )
       throw new UnauthorizedException();
     return {
       sub: payload.sub,
-      ...(payload.app_metadata?.provider
-        ? { authProvider: payload.app_metadata.provider }
-        : {}),
+      sessionId: payload.session_id,
     };
   }
 }

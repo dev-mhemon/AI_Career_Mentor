@@ -18,7 +18,11 @@ function fixture(policy: AccessPolicy, answers: any[]) {
     getClass: () => class {},
     switchToHttp: () => ({
       getRequest: () => ({
-        user: { sub: '11111111-1111-4111-8111-111111111111', role: 'ADMIN' },
+        user: {
+          sub: '11111111-1111-4111-8111-111111111111',
+          sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          role: 'ADMIN',
+        },
       }),
     }),
   } as unknown as ExecutionContext;
@@ -41,18 +45,50 @@ describe('Reviewed AccessGuard policy order', () => {
     expect(f.query).toHaveBeenCalledTimes(1);
   });
   it('allows suspended auth/me exception', async () => {
-    const f = fixture({ allowSuspended: true }, [[{ status: 'suspended' }]]);
+    const f = fixture({ allowSuspended: true, accountInspection: true }, [
+      [{ status: 'suspended' }],
+    ]);
     expect(await f.guard.canActivate(f.context)).toBe(true);
   });
+  it('denies an active verified account when the current session is unapproved', async () => {
+    const f = fixture({}, [
+      [{ status: 'active', verified_contact: true, session_approved: false }],
+    ]);
+    await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
+      response: { code: 'UNVERIFIED_ACCOUNT' },
+    });
+  });
+  it('fails closed when the approval lookup is unavailable', async () => {
+    const reflector = new Reflector();
+    vi.spyOn(reflector, 'getAllAndOverride').mockReturnValue({});
+    const database = {
+      transaction: vi.fn().mockRejectedValue(new Error('database unavailable')),
+    } as unknown as DatabaseService;
+    const guard = new AccessGuard(reflector, database);
+    const context = fixture({}, []).context;
+
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      'database unavailable',
+    );
+  });
   it('does not trust ADMIN on the JWT request', async () => {
-    const f = fixture({ admin: true }, [[{ status: 'active' }], []]);
+    const f = fixture({ admin: true }, [
+      [
+        {
+          status: 'active',
+          verified_contact: true,
+          session_approved: true,
+        },
+      ],
+      [],
+    ]);
     await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
       response: { code: 'ADMIN_REQUIRED' },
     });
   });
   it('global off beats positive override', async () => {
     const f = fixture({ feature: 'ai_mentor' }, [
-      [{ status: 'active' }],
+      [{ status: 'active', verified_contact: true, session_approved: true }],
       [{ enabled: false, default_user_enabled: true, override: true }],
     ]);
     await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
@@ -61,7 +97,7 @@ describe('Reviewed AccessGuard policy order', () => {
   });
   it('negative override beats positive default', async () => {
     const f = fixture({ feature: 'ai_mentor' }, [
-      [{ status: 'active' }],
+      [{ status: 'active', verified_contact: true, session_approved: true }],
       [{ enabled: true, default_user_enabled: true, override: false }],
     ]);
     await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
@@ -70,21 +106,21 @@ describe('Reviewed AccessGuard policy order', () => {
   });
   it('positive override grants when default off', async () => {
     const f = fixture({ feature: 'ai_mentor' }, [
-      [{ status: 'active' }],
+      [{ status: 'active', verified_contact: true, session_approved: true }],
       [{ enabled: true, default_user_enabled: false, override: true }],
     ]);
     expect(await f.guard.canActivate(f.context)).toBe(true);
   });
   it('preserves existing reads under generation feature off', async () => {
     const f = fixture({ feature: 'roadmap_generator', existingRead: true }, [
-      [{ status: 'active' }],
+      [{ status: 'active', verified_contact: true, session_approved: true }],
     ]);
     expect(await f.guard.canActivate(f.context)).toBe(true);
     expect(f.query).toHaveBeenCalledTimes(1);
   });
   it('technology update reads still require effective feature', async () => {
     const f = fixture({ feature: 'technology_update', existingRead: true }, [
-      [{ status: 'active' }],
+      [{ status: 'active', verified_contact: true, session_approved: true }],
       [{ enabled: false }],
     ]);
     await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({

@@ -7,7 +7,6 @@ import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/a
 function VerifyFormContent() {
   const searchParams = useSearchParams();
   const typeParam = searchParams.get('type') as 'email' | 'phone' | null;
-  const identifierParam = searchParams.get('identifier');
 
   const [state, formAction, isPending] = useActionState<AuthActionResult, FormData>(
     verifyOtpAction,
@@ -27,13 +26,13 @@ function VerifyFormContent() {
   }, [cooldown]);
 
   const handleResend = async () => {
-    if (!typeParam || !identifierParam || cooldown > 0) return;
+    if (!typeParam || cooldown > 0) return;
 
     setIsResending(true);
     setResendError(null);
     setResendSuccess(null);
 
-    const result = await resendOtpAction(typeParam, identifierParam);
+    const result = await resendOtpAction(typeParam);
 
     if (result.error) {
       setResendError(result.error);
@@ -44,7 +43,7 @@ function VerifyFormContent() {
     setIsResending(false);
   };
 
-  if (!typeParam || !identifierParam) {
+  if (!typeParam || !['email', 'phone'].includes(typeParam)) {
     return (
       <div className="text-center text-sm text-red-600">
         Invalid verification link. Please go back and try again.
@@ -61,7 +60,6 @@ function VerifyFormContent() {
     <div className="flex flex-col gap-6">
       <form action={formAction} className="flex flex-col gap-4">
         <input type="hidden" name="type" value={typeParam} />
-        <input type="hidden" name="identifier" value={identifierParam} />
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="token" className="text-sm font-medium text-foreground">

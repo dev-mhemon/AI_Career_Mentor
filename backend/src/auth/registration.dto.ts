@@ -20,6 +20,10 @@ export interface NormalizedContact {
   identifier: string;
 }
 
+export interface LoginRequestDTO extends NormalizedContact {
+  password: string;
+}
+
 function invalid(
   field: string,
   message: string,
@@ -130,4 +134,20 @@ export function normalizeResendRequest(value: unknown): NormalizedContact {
   if (input.channel !== 'email' && input.channel !== 'phone')
     invalid('channel', 'Choose email or phone', 'INVALID_ENUM_VALUE');
   return normalizeContact(input.channel, input.contact);
+}
+
+export function normalizeLoginRequest(value: unknown): LoginRequestDTO {
+  const input = object(value);
+  keys(input, ['identifier', 'password']);
+  if (typeof input.identifier !== 'string')
+    invalid('identifier', 'Enter an email address or Bangladesh mobile number');
+  const channel = input.identifier.includes('@') ? 'email' : 'phone';
+  const contact = normalizeContact(channel, input.identifier, 'contact');
+  if (
+    typeof input.password !== 'string' ||
+    input.password.length < 1 ||
+    input.password.length > 128
+  )
+    invalid('password', 'Enter a password');
+  return { ...contact, password: input.password };
 }

@@ -12,6 +12,7 @@ import { ProfileService } from '../profile/profile.service.js';
 import { AuthAbuseControlModule } from './abuse-control/abuse-control.module.js';
 import { EmailRegistrationProvider } from './services/email-registration.provider.js';
 import { EmailRegistrationService } from './services/email-registration.service.js';
+import { SessionApprovalService } from './services/session-approval.service.js';
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'supabase' }),
@@ -23,6 +24,7 @@ import { EmailRegistrationService } from './services/email-registration.service.
     AuthService,
     EmailRegistrationProvider,
     EmailRegistrationService,
+    SessionApprovalService,
     DatabaseService,
     ProfileService,
     { provide: APP_GUARD, useClass: SupabaseAuthGuard },
