@@ -89,6 +89,7 @@ export class SupabaseStrategy extends PassportStrategy(Strategy, 'supabase') {
     return {
       sub: payload.sub,
       sessionId: payload.session_id,
+      ...(Array.isArray(payload.amr) ? { amr: payload.amr } : {}),
     };
   }
 }

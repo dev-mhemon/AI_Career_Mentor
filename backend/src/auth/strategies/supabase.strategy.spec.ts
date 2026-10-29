@@ -74,6 +74,30 @@ describe('SupabaseStrategy', () => {
     });
   });
 
+  it('extracts amr array when present', () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'SUPABASE_URL') return 'https://test.supabase.co';
+        return undefined;
+      }),
+    } as unknown as ConfigService;
+    const strategy = new SupabaseStrategy(configService);
+    const payload: SupabaseJwtPayload = {
+      sub: '22222222-2222-4222-8222-222222222222',
+      session_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      amr: [{ method: 'oauth', provider: 'google' }],
+    };
+
+    const result = strategy.validate(payload);
+    expect(result).toEqual({
+      sub: payload.sub,
+      sessionId: payload.session_id,
+      amr: [{ method: 'oauth', provider: 'google' }],
+    });
+  });
+
   it('rejects a signed payload without a valid session id', () => {
     const configService = {
       get: vi.fn((key: string) => {

@@ -9,13 +9,16 @@ import { AuthService } from './auth.service.js';
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-function accessToken(): string {
+function accessToken(
+  amr?: Array<{ method: string; provider?: string }>,
+): string {
   const encode = (value: object) =>
     Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'ES256', typ: 'JWT' })}.${encode({
     sub: userId,
     session_id: sessionId,
     exp: Math.floor(Date.now() / 1000) + 3600,
+    amr: amr ?? [{ method: 'oauth', provider: 'google' }],
   })}.synthetic-signature`;
 }
 
@@ -214,6 +217,46 @@ describe('AuthService session approval boundary', () => {
       status: 422,
       response: { code: 'PROVIDER_MISMATCH' },
     });
+  });
+
+  it('refuses OAuth bootstrap when session AMR is not OAuth for requested provider', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'email', id: userId },
+            { provider: 'google', id: 'google-sub-123' },
+          ],
+        }),
+      }),
+    );
+    const database = { transaction: vi.fn() } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const passwordToken = accessToken([{ method: 'password' }]);
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${passwordToken}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'PROVIDER_MISMATCH' },
+    });
+    expect(approvals.approve).not.toHaveBeenCalled();
   });
 
   it('lets a verified existing account sync without approving or recording activity', async () => {

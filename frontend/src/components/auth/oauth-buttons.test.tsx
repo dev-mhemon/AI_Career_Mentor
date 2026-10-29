@@ -92,13 +92,14 @@ describe("OAuthButtons", () => {
 
     render(<OAuthButtons />);
 
-    try {
-      fireEvent.click(
-        screen.getByRole("button", { name: /continue with google/i }),
-      );
-    } catch {
-      // Ignored
-    }
+    fireEvent.click(
+      screen.getByRole("button", { name: /continue with google/i }),
+    );
+
+    await waitFor(() => {
+      expect(signInWithOAuth).toHaveBeenCalledWith("google");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });

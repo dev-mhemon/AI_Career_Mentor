@@ -14,6 +14,7 @@ export interface JwtIdentity {
   sub: string;
   sessionId: string;
   authProvider?: string;
+  amr?: Array<{ method: string; timestamp?: number; provider?: string }>;
 }
 export interface AuthIdentity {
   provider: string;
@@ -215,6 +216,40 @@ export class AuthService {
           'PROVIDER_MISMATCH',
           'Provider is not linked to this Auth identity',
         );
+
+      let amr = identity.amr;
+      if (!amr && authorization?.startsWith('Bearer ')) {
+        try {
+          const parts = authorization.slice(7).split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(
+              Buffer.from(parts[1], 'base64url').toString('utf8'),
+            ) as { amr?: unknown };
+            if (Array.isArray(payload.amr)) {
+              amr = payload.amr as Array<{
+                method: string;
+                timestamp?: number;
+                provider?: string;
+              }>;
+            }
+          }
+        } catch {
+          // Ignore token parsing failure; amr remains undefined
+        }
+      }
+
+      const isOAuthSession = amr?.some(
+        (entry) =>
+          entry.method === 'oauth' &&
+          (!entry.provider || entry.provider === provider),
+      );
+      if (!isOAuthSession) {
+        fail(
+          403,
+          'PROVIDER_MISMATCH',
+          'Session was not authenticated via the requested OAuth provider',
+        );
+      }
     }
     return this.database
       .transaction(

@@ -62,6 +62,15 @@ SELECT pg_temp.assert_true((SELECT count(*) FROM public.career_goals) = 0,
 SELECT pg_temp.assert_42501(
   $$UPDATE public.user_profiles SET current_role_title='Denied write'$$,
   'ADR-019 denies profile writes from an unapproved pending session');
+SELECT pg_temp.assert_42501(
+  $$SELECT private.approve_auth_session('d0500000-0000-4000-8000-000000000101'::uuid, 'd0500000-0000-4000-8000-000000000201'::uuid, 'oauth')$$,
+  'authenticated role cannot call private.approve_auth_session');
+SELECT pg_temp.assert_42501(
+  $$SELECT private.has_approved_session('d0500000-0000-4000-8000-000000000101'::uuid, 'd0500000-0000-4000-8000-000000000201'::uuid)$$,
+  'authenticated role cannot call two-argument private.has_approved_session');
+SELECT pg_temp.assert_42501(
+  $$SELECT count(*) FROM private.approved_auth_sessions$$,
+  'authenticated role cannot read private.approved_auth_sessions directly');
 
 RESET ROLE;
 UPDATE public.users
