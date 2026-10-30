@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { HttpException, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager, QueryFailedError } from 'typeorm';
 import { DatabaseService } from './database.service.js';
@@ -546,52 +546,82 @@ export class AuthService {
       );
     }
 
-    await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
-      await this.confirmGoTrueUser(userId);
+    let committed = false;
+    try {
+      await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
+        await this.confirmGoTrueUser(userId);
 
-      await this.database.transaction(
-        userId,
-        async (db) => {
-          const usersRes = await db.query(
-            `UPDATE public.users
-                SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
-              WHERE id = $2 AND verified_contact = false`,
-            [email, userId],
-          );
-          const usersAffected =
-            Array.isArray(usersRes) && typeof usersRes[1] === 'number'
-              ? usersRes[1]
-              : (usersRes?.rowCount ?? 0);
+        await this.database.transaction(
+          userId,
+          async (db) => {
+            const usersRes = await db.query(
+              `UPDATE public.users
+                  SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                WHERE id = $2 AND verified_contact = false`,
+              [email, userId],
+            );
+            const usersAffected =
+              Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                ? usersRes[1]
+                : (usersRes?.rowCount ?? 0);
 
-          const providersRes = await db.query(
-            `UPDATE public.user_auth_providers
-                SET verified_at = now(), updated_at = now()
-              WHERE user_id = $1 AND provider = 'email' AND verified_at IS NULL`,
-            [userId],
-          );
-          const providersAffected =
-            Array.isArray(providersRes) && typeof providersRes[1] === 'number'
-              ? providersRes[1]
-              : (providersRes?.rowCount ?? 0);
+            const providersRes = await db.query(
+              `UPDATE public.user_auth_providers
+                  SET verified_at = now(), updated_at = now()
+                WHERE user_id = $1 AND provider = 'email' AND verified_at IS NULL`,
+              [userId],
+            );
+            const providersAffected =
+              Array.isArray(providersRes) && typeof providersRes[1] === 'number'
+                ? providersRes[1]
+                : (providersRes?.rowCount ?? 0);
 
-          if (usersAffected !== 1 || providersAffected !== 1) {
-            fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
-          }
+            if (usersAffected !== 1 || providersAffected !== 1) {
+              fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+            }
 
-          await db.query(
-            'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-            [userId],
-          );
-          await db.query(
-            'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-            [userId],
-          );
-        },
+            await db.query(
+              'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+              [userId],
+            );
+            await db.query(
+              'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+              [userId],
+            );
+          },
+          false,
+        );
+        committed = true;
+      });
+    } catch (error) {
+      if (!committed) {
+        throw error;
+      }
+    }
+
+    try {
+      return await this.mintAndApproveSession(userId, email);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        const resp = error.getResponse() as any;
+        const status = error.getStatus();
+        const code = resp?.code || 'SESSION_MINT_FAILED';
+        fail(
+          status,
+          code,
+          'Account is verified; sign in with your email and password to start your session',
+          resp?.details || [],
+          false,
+        );
+      }
+      fail(
+        502,
+        'EMAIL_PROVIDER_ERROR',
+        'Account is verified; sign in with your email and password to start your session',
+        [],
         false,
       );
-    });
-
-    return this.mintAndApproveSession(userId, email);
+    }
   }
 
   private async confirmGoTrueUser(userId: string): Promise<void> {

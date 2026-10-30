@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { HttpException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
@@ -516,6 +517,157 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
       ).rejects.toMatchObject({
         status: 502,
         response: { code: 'EMAIL_PROVIDER_ERROR' },
+      });
+    });
+  });
+
+  describe('Post-Commit vs Pre-Commit Boundaries & Step 4 Failures', () => {
+    it('suppresses post-commit Redis valid-step cleanup failure and still completes session minting', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      otpStore.verifyAndConsumeOtp = vi.fn(
+        async (
+          _userId: string,
+          _email: string,
+          _code: string,
+          onValid?: () => Promise<void>,
+        ) => {
+          await onValid?.();
+          // Simulate Redis failure during post-commit valid step / cleanup
+          throw new HttpException(
+            { code: 'SERVICE_UNAVAILABLE', retryable: true },
+            503,
+          );
+        },
+      );
+
+      const result = await service.verifyEmail({ email, code }, {} as Request);
+      expect(result.user.verified_contact).toBe(true);
+      expect(approvals.approve).toHaveBeenCalledWith(
+        expect.anything(),
+        userId,
+        sessionId,
+        'email_verification',
+      );
+    });
+
+    it('propagates pre-commit DB failure and does not reach mintAndApproveSession', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      database.transaction.mockRejectedValueOnce(
+        new Error('Database transaction lock acquisition failure'),
+      );
+
+      await expect(
+        service.verifyEmail({ email, code }, {} as Request),
+      ).rejects.toThrow();
+
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+
+    it('returns retryable: false directing user to login if generate_link times out at Step 4', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/auth/v1/admin/users/')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ id: userId, email }),
+            };
+          }
+          if (url.includes('/auth/v1/admin/generate_link')) {
+            const err = new Error('Operation timed out');
+            err.name = 'AbortError';
+            throw err;
+          }
+          return { ok: false, status: 404, json: async () => ({}) };
+        }),
+      );
+
+      await expect(
+        service.verifyEmail({ email, code }, {} as Request),
+      ).rejects.toMatchObject({
+        status: 504,
+        response: {
+          code: 'PROVIDER_TIMEOUT',
+          message: expect.stringMatching(
+            /sign in with your email and password/i,
+          ),
+          retryable: false,
+        },
+      });
+    });
+
+    it('returns retryable: false directing user to login if generate_link fails with 500 at Step 4', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/auth/v1/admin/users/')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ id: userId, email }),
+            };
+          }
+          if (url.includes('/auth/v1/admin/generate_link')) {
+            return {
+              ok: false,
+              status: 500,
+              json: async () => ({ msg: 'Internal provider error' }),
+            };
+          }
+          return { ok: false, status: 404, json: async () => ({}) };
+        }),
+      );
+
+      await expect(
+        service.verifyEmail({ email, code }, {} as Request),
+      ).rejects.toMatchObject({
+        status: 502,
+        response: {
+          code: 'EMAIL_PROVIDER_ERROR',
+          message: expect.stringMatching(
+            /sign in with your email and password/i,
+          ),
+          retryable: false,
+        },
       });
     });
   });
