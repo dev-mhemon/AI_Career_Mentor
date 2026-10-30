@@ -36,6 +36,13 @@ interface ProviderSession {
   token_type: string;
 }
 type ProviderLoginResult = ProviderSession | { unverified: true };
+/** Values accepted by the public.auth_provider enum (001_enums.sql). */
+const SUPPORTED_AUTH_PROVIDERS: readonly string[] = [
+  'email',
+  'phone',
+  'google',
+  'facebook',
+];
 @Injectable()
 export class AuthService {
   constructor(
@@ -208,14 +215,22 @@ export class AuthService {
       ['email', 'phone', 'google', 'facebook'].includes(i.provider),
     );
     let amr = identity.amr;
-    if (!amr && authorization?.startsWith('Bearer ')) {
+    let payload:
+      | {
+          amr?: unknown;
+          email?: string;
+          phone?: string;
+          app_metadata?: { provider?: string; providers?: string[] };
+        }
+      | undefined;
+    if (authorization?.startsWith('Bearer ')) {
       try {
         const parts = authorization.slice(7).split('.');
         if (parts.length === 3) {
-          const payload = JSON.parse(
+          payload = JSON.parse(
             Buffer.from(parts[1], 'base64url').toString('utf8'),
-          ) as { amr?: unknown };
-          if (Array.isArray(payload.amr)) {
+          );
+          if (!amr && Array.isArray(payload?.amr)) {
             amr = payload.amr as Array<{
               method: string;
               timestamp?: number;
@@ -227,6 +242,9 @@ export class AuthService {
         // Ignore token parsing failure; amr remains undefined
       }
     }
+
+    let activeProvider: string;
+    let activeContact: string | null = null;
 
     if (provider) {
       if (!['google', 'facebook'].includes(provider))
@@ -251,11 +269,92 @@ export class AuthService {
           'Session was not authenticated via the requested OAuth provider',
         );
       }
+      activeProvider = provider.toLowerCase();
+      activeContact = user.email || null;
+    } else {
+      const oauthEntry = amr?.find(
+        (entry) =>
+          entry.method === 'oauth' &&
+          typeof entry.provider === 'string' &&
+          ['google', 'facebook'].includes(entry.provider.toLowerCase()),
+      );
+      if (oauthEntry?.provider) {
+        activeProvider = oauthEntry.provider.toLowerCase();
+        activeContact = user.email || payload?.email || null;
+      } else if (amr?.some((entry) => entry.method === 'sms')) {
+        activeProvider = 'phone';
+        activeContact = user.phone || payload?.phone || null;
+      } else if (amr?.some((entry) => entry.method === 'password')) {
+        const phoneOnly = Boolean(user.phone && !user.email);
+        activeProvider = phoneOnly ? 'phone' : 'email';
+        activeContact = phoneOnly
+          ? user.phone || null
+          : user.email || payload?.email || null;
+      } else if (amr?.some((entry) => entry.method === 'otp')) {
+        if (user.phone || payload?.phone) {
+          activeProvider = 'phone';
+          activeContact = user.phone || payload?.phone || null;
+        } else {
+          activeProvider = 'email';
+          activeContact = user.email || payload?.email || null;
+        }
+      } else if (payload?.app_metadata?.provider) {
+        activeProvider = payload.app_metadata.provider.toLowerCase();
+        activeContact =
+          activeProvider === 'phone'
+            ? user.phone || payload?.phone || null
+            : user.email || payload?.email || null;
+      } else if (user.phone && !user.email) {
+        activeProvider = 'phone';
+        activeContact = user.phone;
+      } else {
+        activeProvider = 'email';
+        activeContact = user.email || payload?.email || null;
+      }
     }
     return this.database
       .transaction(
         identity.sub,
         async (db) => {
+          if (!provider) {
+            if (!SUPPORTED_AUTH_PROVIDERS.includes(activeProvider)) {
+              fail(
+                403,
+                'UNVERIFIED_ACCOUNT',
+                'Application account verification is incomplete',
+              );
+            }
+            const lookupContact =
+              activeProvider === 'phone' && activeContact
+                ? activeContact.startsWith('+')
+                  ? activeContact
+                  : `+${activeContact}`
+                : activeContact;
+            if (!lookupContact) {
+              fail(
+                403,
+                'UNVERIFIED_ACCOUNT',
+                'Application account verification is incomplete',
+              );
+            }
+            const [existing] = await db.query(
+              `SELECT u.verified_contact, p.verified_at
+                 FROM public.users u
+                 JOIN public.user_auth_providers p
+                   ON p.user_id = u.id AND p.provider = $2 AND p.verified_at IS NOT NULL
+                WHERE u.id = $1
+                  AND LOWER(p.contact_value) = LOWER($3)`,
+              [user.id, activeProvider, lookupContact],
+            );
+            if (!existing?.verified_contact || !existing?.verified_at) {
+              fail(
+                403,
+                'UNVERIFIED_ACCOUNT',
+                'Application account verification is incomplete',
+              );
+            }
+            return this.meInTransaction(db, user.id);
+          }
           const [pendingEmail] = await db.query(
             `SELECT 1 FROM public.user_auth_providers
               WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,

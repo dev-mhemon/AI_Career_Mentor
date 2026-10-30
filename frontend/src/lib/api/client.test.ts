@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   loginUser,
   approveOAuthSession,
+  registerUser,
+  resendVerification,
   syncUser,
   getMe,
   ApiError,
@@ -134,6 +136,74 @@ describe('API Client', () => {
       await expect(syncUser(MOCK_TOKEN)).rejects.toThrow(
         new ApiError(500, 'Service temporarily unavailable. Please try again.', 'INTERNAL_ERROR'),
       );
+    });
+  });
+
+  describe('registerUser', () => {
+    it('calls POST /auth/register with registration payload', async () => {
+      const responseData = {
+        verification_channel: 'email',
+        contact_masked: 't***@example.com',
+        expires_in_seconds: 600,
+        resend_available_at: '2026-01-01T00:00:00Z',
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: responseData }),
+      });
+
+      const result = await registerUser({
+        email: 'test@example.com',
+        password: 'password123',
+        confirm_password: 'password123',
+        privacy_consent: true,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/v1/auth/register',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            email: 'test@example.com',
+            password: 'password123',
+            confirm_password: 'password123',
+            privacy_consent: true,
+          }),
+        }),
+      );
+      expect(result).toEqual(responseData);
+    });
+  });
+
+  describe('resendVerification', () => {
+    it('calls POST /auth/resend-verification with contact payload', async () => {
+      const responseData = {
+        verification_channel: 'email',
+        contact_masked: 't***@example.com',
+        expires_in_seconds: 600,
+        resend_available_at: '2026-01-01T00:00:00Z',
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: responseData }),
+      });
+
+      const result = await resendVerification({
+        channel: 'email',
+        contact: 'test@example.com',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/v1/auth/resend-verification',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            channel: 'email',
+            contact: 'test@example.com',
+          }),
+        }),
+      );
+      expect(result).toEqual(responseData);
     });
   });
 

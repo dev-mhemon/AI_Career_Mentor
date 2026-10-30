@@ -93,6 +93,26 @@ export interface OAuthSessionResponse {
   next_step: 'profile_setup' | 'app_home' | 'add_verified_contact';
 }
 
+export interface RegistrationPendingResponse {
+  verification_channel: 'email' | 'phone';
+  contact_masked: string;
+  expires_in_seconds: number;
+  resend_available_at: string;
+}
+
+export interface RegisterUserBody {
+  email?: string | null;
+  phone?: string | null;
+  password: string;
+  confirm_password: string;
+  privacy_consent: true;
+}
+
+export interface ResendVerificationBody {
+  channel: 'email' | 'phone';
+  contact: string;
+}
+
 // ─── Core Fetch Wrapper ──────────────────────────────────────
 
 async function apiFetch<T>(
@@ -182,6 +202,20 @@ export async function syncUser(accessToken: string): Promise<UserResponse> {
     method: 'POST',
   });
   return data.user;
+}
+
+export function registerUser(body: RegisterUserBody): Promise<RegistrationPendingResponse> {
+  return apiFetch<RegistrationPendingResponse>('/auth/register', null, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function resendVerification(body: ResendVerificationBody): Promise<RegistrationPendingResponse> {
+  return apiFetch<RegistrationPendingResponse>('/auth/resend-verification', null, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 export function loginUser(identifier: string, password: string): Promise<AuthSessionResponse> {

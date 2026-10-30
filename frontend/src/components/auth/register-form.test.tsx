@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { RegisterForm } from "@/components/auth/register-form";
 
@@ -17,6 +17,14 @@ describe("RegisterForm", () => {
     expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/confirm password/i)).toBeInTheDocument();
+  });
+
+  it("renders privacy consent checkbox", () => {
+    render(<RegisterForm />);
+
+    expect(
+      screen.getByLabelText(/agree to the privacy policy/i),
+    ).toBeInTheDocument();
   });
 
   it("renders the create account button", () => {
@@ -47,7 +55,7 @@ describe("RegisterForm", () => {
     const passwordInput = screen.getByLabelText(/^password$/i);
     const confirmInput = screen.getByLabelText(/confirm password/i);
 
-    expect(passwordInput).toHaveAttribute("minLength", "6");
-    expect(confirmInput).toHaveAttribute("minLength", "6");
+    expect(passwordInput).toHaveAttribute("minLength", "8");
+    expect(confirmInput).toHaveAttribute("minLength", "8");
   });
 });

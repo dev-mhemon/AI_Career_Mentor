@@ -7,7 +7,7 @@ import {
   logoutAction,
   signInWithOAuth,
 } from "@/lib/auth/actions";
-import { loginUser, syncUser, getMe, approveOAuthSession } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, ApiError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -69,6 +69,8 @@ vi.mock("@/lib/api/client", () => {
     syncUser: vi.fn(),
     getMe: vi.fn(),
     approveOAuthSession: vi.fn(),
+    registerUser: vi.fn(),
+    resendVerification: vi.fn(),
     NetworkError: MockNetworkError,
     ApiError: MockApiError,
   };
@@ -118,12 +120,24 @@ describe("Auth Actions", () => {
   });
 
   describe("registerAction", () => {
+    it("returns error if privacy consent is missing", async () => {
+      const formData = new FormData();
+      formData.set("type", "email");
+      formData.set("identifier", "test@example.com");
+      formData.set("password", "password123");
+      formData.set("confirmPassword", "password123");
+
+      const result = await registerAction({}, formData);
+      expect(result).toEqual({ error: "Privacy consent is required." });
+    });
+
     it("returns error if passwords do not match", async () => {
       const formData = new FormData();
       formData.set("type", "email");
       formData.set("identifier", "test@example.com");
       formData.set("password", "password123");
       formData.set("confirmPassword", "password456");
+      formData.set("privacy_consent", "on");
 
       const result = await registerAction({}, formData);
       expect(result).toEqual({ error: "Passwords do not match." });
@@ -135,10 +149,11 @@ describe("Auth Actions", () => {
       formData.set("identifier", "test@example.com");
       formData.set("password", "pass");
       formData.set("confirmPassword", "pass");
+      formData.set("privacy_consent", "true");
 
       const result = await registerAction({}, formData);
       expect(result).toEqual({
-        error: "Password must be at least 6 characters.",
+        error: "Password must be at least 8 characters.",
       });
     });
 
@@ -148,10 +163,9 @@ describe("Auth Actions", () => {
       formData.set("identifier", "test@example.com");
       formData.set("password", "password123");
       formData.set("confirmPassword", "password123");
+      formData.set("privacy_consent", "on");
 
-      mockSignUp.mockResolvedValueOnce({
-        error: { status: 429, message: "Too many requests" },
-      });
+      vi.mocked(registerUser).mockRejectedValueOnce(new ApiError(429, "Too many requests"));
 
       const result = await registerAction({}, formData);
       expect(result).toEqual({
@@ -166,13 +180,25 @@ describe("Auth Actions", () => {
       formData.set("identifier", "test@example.com");
       formData.set("password", "password123");
       formData.set("confirmPassword", "password123");
-      mockSignUp.mockResolvedValueOnce({ error: null });
-      mockGetSession.mockResolvedValueOnce({ data: { session: null } });
+      formData.set("privacy_consent", "on");
+      vi.mocked(registerUser).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "t***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
       vi.mocked(redirect).mockImplementationOnce(() => {
         throw new Error("NEXT_REDIRECT");
       });
 
       await expect(registerAction({}, formData)).rejects.toThrow("NEXT_REDIRECT");
+      expect(registerUser).toHaveBeenCalledWith({
+        email: "test@example.com",
+        phone: null,
+        password: "password123",
+        confirm_password: "password123",
+        privacy_consent: true,
+      });
       expect(redirect).toHaveBeenCalledWith("/verify?type=email");
       expect(mockCookieStore.set).toHaveBeenCalledWith(
         "mentor_verification_context",
@@ -189,48 +215,34 @@ describe("Auth Actions", () => {
       expect(result).toEqual({ error: "Invalid verification request." });
     });
 
-    it("verifies email OTP", async () => {
+    it("fails closed until EP-A02 backend verification is implemented", async () => {
       const formData = new FormData();
       formData.set("type", "email");
       formData.set("token", "123456");
 
-      mockVerifyOtp.mockResolvedValueOnce({ error: null });
-      mockGetSession.mockResolvedValueOnce({
-        data: { session: { access_token: "token123" } },
+      const result = await verifyOtpAction({}, formData);
+      expect(result).toEqual({
+        error:
+          "Direct OTP verification is temporarily suspended until backend challenge verification (EP-A02) is enabled.",
       });
-      (getMe as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        status: "ACTIVE",
-      });
-
-      try {
-        await verifyOtpAction({}, formData);
-      } catch {
-        // next redirect throws
-      }
-
-      expect(mockVerifyOtp).toHaveBeenCalledWith({
-        email: "test@example.com",
-        token: "123456",
-        type: "email",
-      });
-      expect(syncUser).toHaveBeenCalledWith("token123");
-      expect(getMe).toHaveBeenCalledWith("token123");
-      expect(redirect).toHaveBeenCalledWith("/dashboard");
+      expect(mockVerifyOtp).not.toHaveBeenCalled();
     });
   });
 
   describe("resendOtpAction", () => {
-    it("resends email verification", async () => {
-      mockResend.mockResolvedValueOnce({ error: null });
+    it("resends email verification via backend EP-A04", async () => {
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "t***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
 
       const result = await resendOtpAction("email");
       expect(result).toEqual({ success: true });
-      expect(mockResend).toHaveBeenCalledWith({
-        type: "signup",
-        email: "test@example.com",
-        options: {
-          emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback?flow=email`,
-        },
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: "email",
+        contact: "test@example.com",
       });
       expect(mockCookieStore.set).toHaveBeenCalledWith(
         "mentor_verification_context",
@@ -240,9 +252,9 @@ describe("Auth Actions", () => {
     });
 
     it("handles rate limit", async () => {
-      mockResend.mockResolvedValueOnce({
-        error: { status: 429, message: "Rate limit" },
-      });
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(429, "Rate limit"),
+      );
 
       const result = await resendOtpAction("email");
       expect(result).toEqual({

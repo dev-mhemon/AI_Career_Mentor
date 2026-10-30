@@ -3,17 +3,12 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { loginUser, syncUser, getMe, NetworkError, ApiError } from '@/lib/api/client';
+import { loginUser, registerUser, resendVerification, NetworkError, ApiError } from '@/lib/api/client';
 
 /**
  * Server Actions for authentication flows.
  */
 
-async function syncAndRedirect(accessToken: string): Promise<string> {
-  await syncUser(accessToken);
-  await getMe(accessToken);
-  return '/dashboard';
-}
 
 export interface AuthActionResult {
   error?: string;
@@ -58,15 +53,6 @@ async function getVerificationContext(
   }
 }
 
-async function clearVerificationContext() {
-  (await cookies()).set(VERIFICATION_CONTEXT_COOKIE, '', {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/verify',
-    maxAge: 0,
-  });
-}
 
 export async function loginAction(
   _prevState: AuthActionResult,
@@ -113,78 +99,50 @@ export async function registerAction(
   const identifier = formData.get('identifier') as string;
   const password = formData.get('password') as string;
   const confirmPassword = formData.get('confirmPassword') as string;
+  const consentRaw = formData.get('privacy_consent');
+  const privacy_consent = consentRaw === 'true' || consentRaw === 'on';
 
   if (!type || !identifier || !password) {
     return { error: 'All fields are required.' };
+  }
+
+  if (!privacy_consent) {
+    return { error: 'Privacy consent is required.' };
   }
 
   if (password !== confirmPassword) {
     return { error: 'Passwords do not match.' };
   }
 
-  if (password.length < 6) {
-    return { error: 'Password must be at least 6 characters.' };
-  }
-
-  const supabase = await createSupabaseServerClient();
-
-  let signUpError;
-
-  if (type === 'email') {
-    const { error } = await supabase.auth.signUp({
-      email: identifier,
-      password,
-      options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback?flow=email`,
-      },
-    });
-    signUpError = error;
-  } else if (type === 'phone') {
-    const { error } = await supabase.auth.signUp({
-      phone: identifier,
-      password,
-      options: {
-        channel: 'sms',
-      },
-    });
-    signUpError = error;
-  }
-
-  if (signUpError) {
-    if (signUpError.status === 429) {
-      return {
-        error: 'Email delivery is temporarily rate-limited. Please try again later.',
-      };
-    }
-    return { error: signUpError.message };
-  }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) {
-    // Session is null because confirmation is required.
-    await setVerificationContext({ type, identifier });
-    redirect(`/verify?type=${type}`);
+  if (password.length < 8) {
+    return { error: 'Password must be at least 8 characters.' };
   }
 
   try {
-    const redirectTo = await syncAndRedirect(session.access_token);
-    redirect(redirectTo);
+    await registerUser({
+      email: type === 'email' ? identifier : null,
+      phone: type === 'phone' ? identifier : null,
+      password,
+      confirm_password: confirmPassword,
+      privacy_consent,
+    });
   } catch (err) {
-    if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
-      throw err;
-    }
-    await supabase.auth.signOut({ scope: 'local' });
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (err.statusCode === 429) {
+        return {
+          error: 'Email delivery is temporarily rate-limited. Please try again later.',
+        };
+      }
       return { error: err.message };
     }
     return { error: 'An unexpected error occurred during registration.' };
   }
+
+  await setVerificationContext({ type, identifier });
+  redirect(`/verify?type=${type}`);
 }
 
 export async function verifyOtpAction(
@@ -199,61 +157,11 @@ export async function verifyOtpAction(
   }
   const context = await getVerificationContext(type);
   if (!context) return { error: 'Invalid verification request.' };
-  const identifier = context.identifier;
 
-  const supabase = await createSupabaseServerClient();
-  let verifyError;
-
-  if (type === 'email') {
-    const { error } = await supabase.auth.verifyOtp({
-      email: identifier,
-      token,
-      type: 'email',
-    });
-    verifyError = error;
-  } else {
-    const { error } = await supabase.auth.verifyOtp({
-      phone: identifier,
-      token,
-      type: 'sms',
-    });
-    verifyError = error;
-  }
-
-  if (verifyError) {
-    if (verifyError.status === 429) {
-      return {
-        error: 'Too many verification attempts. Please wait a minute and try again.',
-      };
-    }
-    return { error: verifyError.message };
-  }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) {
-    return { error: 'Failed to establish session after verification.' };
-  }
-
-  try {
-    const redirectTo = await syncAndRedirect(session.access_token);
-    await clearVerificationContext();
-    redirect(redirectTo);
-  } catch (err) {
-    if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
-      throw err;
-    }
-    await supabase.auth.signOut({ scope: 'local' });
-    if (err instanceof NetworkError) {
-      return { error: 'Unable to reach the server. Please try again later.' };
-    }
-    if (err instanceof ApiError) {
-      return { error: err.message };
-    }
-    return { error: 'An unexpected error occurred during verification.' };
-  }
+  return {
+    error:
+      'Direct OTP verification is temporarily suspended until backend challenge verification (EP-A02) is enabled.',
+  };
 }
 
 export async function resendOtpAction(
@@ -262,38 +170,28 @@ export async function resendOtpAction(
   const context = await getVerificationContext(type);
   if (!context) return { error: 'Invalid verification request.' };
   const identifier = context.identifier;
-  const supabase = await createSupabaseServerClient();
 
-  let resendError;
-
-  if (type === 'email') {
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: identifier,
-      options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001'}/auth/callback?flow=email`,
-      },
+  try {
+    await resendVerification({
+      channel: type,
+      contact: identifier,
     });
-    resendError = error;
-  } else if (type === 'phone') {
-    const { error } = await supabase.auth.resend({
-      type: 'sms',
-      phone: identifier,
-    });
-    resendError = error;
-  }
-
-  if (resendError) {
-    if (resendError.status === 429) {
-      return {
-        error: 'Email delivery is temporarily rate-limited. Please try again later.',
-      };
+    await setVerificationContext(context);
+    return { success: true };
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      return { error: 'Unable to reach the server. Please try again later.' };
     }
-    return { error: resendError.message };
+    if (err instanceof ApiError) {
+      if (err.statusCode === 429) {
+        return {
+          error: 'Email delivery is temporarily rate-limited. Please try again later.',
+        };
+      }
+      return { error: err.message };
+    }
+    return { error: 'An unexpected error occurred while resending verification.' };
   }
-
-  await setVerificationContext(context);
-  return { success: true };
 }
 
 export async function signInWithOAuth(

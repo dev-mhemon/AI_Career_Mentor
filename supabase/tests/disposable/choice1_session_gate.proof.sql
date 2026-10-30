@@ -130,6 +130,31 @@ SELECT pg_temp.assert_true(
   private.has_approved_session('d0500000-0000-4000-8000-000000000101'),
   'a stolen copy of the exact approved bearer token is indistinguishable and succeeds');
 
+-- Normal authenticated JWT JSON missing session_id must fail closed in direct RLS probes
+SELECT set_config('request.jwt.claims', json_build_object(
+  'sub', 'd0500000-0000-4000-8000-000000000101',
+  'role', 'authenticated')::text, true);
+SELECT pg_temp.assert_true(
+  NOT private.has_approved_session('d0500000-0000-4000-8000-000000000101'),
+  'authenticated JWT JSON missing session_id returns false');
+SELECT pg_temp.assert_true((SELECT count(*) FROM public.career_goals) = 0,
+  'authenticated JWT JSON missing session_id is denied owner feature data');
+SELECT pg_temp.assert_true((SELECT count(*) FROM public.career_roles) = 0,
+  'authenticated JWT JSON missing session_id is denied shared reference data');
+
+-- Malformed session_id must fail closed without raising a cast exception
+SELECT set_config('request.jwt.claims', json_build_object(
+  'sub', 'd0500000-0000-4000-8000-000000000101',
+  'role', 'authenticated',
+  'session_id', 'not-a-uuid')::text, true);
+SELECT pg_temp.assert_true(
+  NOT private.has_approved_session('d0500000-0000-4000-8000-000000000101'),
+  'malformed session_id returns false');
+SELECT pg_temp.assert_true((SELECT count(*) FROM public.career_goals) = 0,
+  'malformed session_id is denied owner feature data');
+SELECT pg_temp.assert_true((SELECT count(*) FROM public.career_roles) = 0,
+  'malformed session_id is denied shared reference data');
+
 RESET ROLE;
 DELETE FROM auth.sessions WHERE id='d0500000-0000-4000-8000-000000000202';
 SET LOCAL ROLE authenticated;
