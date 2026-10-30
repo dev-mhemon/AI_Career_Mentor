@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { loginUser, registerUser, resendVerification, NetworkError, ApiError } from '@/lib/api/client';
+import { loginUser, registerUser, resendVerification, verifyEmail, NetworkError, ApiError } from '@/lib/api/client';
 
 /**
  * Server Actions for authentication flows.
@@ -34,6 +34,16 @@ async function setVerificationContext(context: VerificationContext) {
       maxAge: 600,
     },
   );
+}
+
+async function clearVerificationContext() {
+  const store = await cookies();
+  store.set(VERIFICATION_CONTEXT_COOKIE, '', {
+    path: '/verify',
+    maxAge: 0,
+    httpOnly: true,
+    sameSite: 'strict',
+  });
 }
 
 async function getVerificationContext(
@@ -158,10 +168,39 @@ export async function verifyOtpAction(
   const context = await getVerificationContext(type);
   if (!context) return { error: 'Invalid verification request.' };
 
-  return {
-    error:
-      'Direct OTP verification is temporarily suspended until backend challenge verification (EP-A02) is enabled.',
-  };
+  if (type !== 'email') {
+    return { error: 'Phone verification is temporarily unavailable.' };
+  }
+
+  let destination = '/dashboard';
+  try {
+    const session = await verifyEmail({
+      email: context.identifier,
+      code: token,
+    });
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.auth.setSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    });
+    if (error) return { error: 'Failed to establish session.' };
+    await clearVerificationContext();
+    destination =
+      session.next_step === 'profile_setup'
+        ? '/dashboard?next_step=profile_setup'
+        : session.next_step === 'add_verified_contact'
+          ? '/dashboard?next_step=add_verified_contact'
+          : '/dashboard';
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      return { error: 'Unable to reach the server. Please try again later.' };
+    }
+    if (err instanceof ApiError) {
+      return { error: err.message };
+    }
+    return { error: 'An unexpected error occurred during verification.' };
+  }
+  redirect(destination);
 }
 
 export async function resendOtpAction(

@@ -58,11 +58,15 @@ if redis.call('HGET', KEYS[1], 'busy') ~= ARGV[2] then return {6, ttl} end
 if ARGV[3] == 'valid' then
   redis.call('HSET', KEYS[1], 'consumed', 1)
   redis.call('HDEL', KEYS[1], 'busy')
+  if KEYS[2] then redis.call('DEL', KEYS[2]) end
   return {0, ttl}
 end
 redis.call('HDEL', KEYS[1], 'busy')
 local failures = redis.call('HINCRBY', KEYS[1], 'failures', 1)
-if failures >= tonumber(ARGV[4]) then return {5, ttl} end
+if failures >= tonumber(ARGV[4]) then
+  if KEYS[2] then redis.call('DEL', KEYS[2]) end
+  return {5, ttl}
+end
 return {7, 0}
 `;
 

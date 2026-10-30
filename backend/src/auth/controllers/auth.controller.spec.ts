@@ -43,4 +43,27 @@ describe('C05 OAuth session response', () => {
       );
     },
   );
+
+  it('delegates verifyEmail to authService.verifyEmail', async () => {
+    const mockSession = {
+      access_token: 'token',
+      refresh_token: 'refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      expires_at: 1234567890,
+      next_step: 'profile_setup',
+      user: { id: 'user-1', email: 'test@example.com', verified_contact: true },
+    };
+    const verifyEmail = vi.fn().mockResolvedValue(mockSession);
+    const controller = new AuthController(
+      { verifyEmail } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {} as any;
+    const body = { email: 'test@example.com', code: '123456' };
+
+    const result = await controller.verifyEmail(req, body);
+    expect(result).toEqual(mockSession);
+    expect(verifyEmail).toHaveBeenCalledWith(body, req);
+  });
 });

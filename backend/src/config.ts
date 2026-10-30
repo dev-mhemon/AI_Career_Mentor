@@ -46,6 +46,15 @@ export function validateConfiguration(raw: Record<string, unknown>) {
     )
       throw new Error('Invalid AUTH_PASSWORD_MIN_LENGTH');
   }
+  if (raw.AUTH_OTP_HMAC_SECRET !== undefined) {
+    if (
+      typeof raw.AUTH_OTP_HMAC_SECRET !== 'string' ||
+      !raw.AUTH_OTP_HMAC_SECRET.trim() ||
+      Buffer.byteLength(raw.AUTH_OTP_HMAC_SECRET) < 32 ||
+      raw.AUTH_OTP_HMAC_SECRET.startsWith('replace_')
+    )
+      throw new Error('AUTH_OTP_HMAC_SECRET requires at least 32 secret bytes');
+  }
   readAbuseConfiguration(raw);
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;

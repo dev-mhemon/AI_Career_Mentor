@@ -20,6 +20,12 @@ export class AuthController {
   resendVerification(@Req() req: any, @Body() body: unknown) {
     return this.registration.resend(body, req);
   }
+  @Post('verify-email')
+  @HttpCode(200)
+  @Policy({ public: true })
+  verifyEmail(@Req() req: any, @Body() body: unknown) {
+    return this.auth.verifyEmail(body, req);
+  }
   @Post('login')
   @HttpCode(200)
   @Policy({ public: true })

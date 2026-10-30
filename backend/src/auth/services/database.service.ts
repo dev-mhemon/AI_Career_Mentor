@@ -4,6 +4,9 @@ import { fail } from '../../common/http.js';
 @Injectable()
 export class DatabaseService {
   constructor(private readonly source: DataSource) {}
+  async query<T = any>(query: string, parameters?: unknown[]): Promise<T> {
+    return this.source.query(query, parameters);
+  }
   /** All application writes use a real transaction; the lock precedes data access. */
   async transaction<T>(
     userId: string | null,

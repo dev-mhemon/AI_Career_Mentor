@@ -83,7 +83,7 @@ export interface AuthSessionResponse {
   token_type: 'Bearer';
   user: UserResponse;
   profile_complete: boolean;
-  next_step: 'profile_setup' | 'app_home';
+  next_step: 'profile_setup' | 'app_home' | 'add_verified_contact';
 }
 
 export interface OAuthSessionResponse {
@@ -111,6 +111,11 @@ export interface RegisterUserBody {
 export interface ResendVerificationBody {
   channel: 'email' | 'phone';
   contact: string;
+}
+
+export interface VerifyEmailBody {
+  email: string;
+  code: string;
 }
 
 // ─── Core Fetch Wrapper ──────────────────────────────────────
@@ -213,6 +218,13 @@ export function registerUser(body: RegisterUserBody): Promise<RegistrationPendin
 
 export function resendVerification(body: ResendVerificationBody): Promise<RegistrationPendingResponse> {
   return apiFetch<RegistrationPendingResponse>('/auth/resend-verification', null, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function verifyEmail(body: VerifyEmailBody): Promise<AuthSessionResponse> {
+  return apiFetch<AuthSessionResponse>('/auth/verify-email', null, {
     method: 'POST',
     body: JSON.stringify(body),
   });
