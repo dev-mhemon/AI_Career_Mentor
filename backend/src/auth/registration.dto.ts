@@ -172,3 +172,21 @@ export function normalizeVerifyEmailRequest(
   }
   return { email: contact.identifier, code };
 }
+
+export interface RefreshTokenRequestDTO {
+  refresh_token: string;
+}
+
+export function normalizeRefreshTokenRequest(
+  value: unknown,
+): RefreshTokenRequestDTO {
+  const input = object(value);
+  keys(input, ['refresh_token']);
+  if (
+    typeof input.refresh_token !== 'string' ||
+    input.refresh_token.trim().length === 0
+  ) {
+    invalid('refresh_token', 'refresh_token is required');
+  }
+  return { refresh_token: input.refresh_token.trim() };
+}

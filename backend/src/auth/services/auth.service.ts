@@ -9,6 +9,7 @@ import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { trustedClientIp } from '../client-ip.js';
 import {
   normalizeLoginRequest,
+  normalizeRefreshTokenRequest,
   normalizeVerifyEmailRequest,
 } from '../registration.dto.js';
 import type { Request } from 'express';
@@ -789,6 +790,121 @@ export class AuthService {
       access_token: sessionData.access_token,
       refresh_token: sessionData.refresh_token,
       expires_in: sessionData.expires_in,
+      token_type: 'Bearer' as const,
+      user: result.user,
+      profile_complete: result.profile_complete,
+      next_step: result.profile_complete
+        ? ('app_home' as const)
+        : ('profile_setup' as const),
+    };
+  }
+
+  async logout(identity: JwtIdentity, authorization?: string) {
+    await this.approvals.revokeSession(identity.sub, identity.sessionId);
+    if (authorization) {
+      try {
+        const supabaseUrl = this.config
+          .getOrThrow<string>('SUPABASE_URL')
+          .replace(/\/$/, '');
+        const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
+        await fetch(`${supabaseUrl}/auth/v1/logout?scope=local`, {
+          method: 'POST',
+          headers: {
+            Authorization: authorization,
+            apikey: anonKey,
+          },
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => null);
+      } catch {
+        // Best-effort GoTrue session invalidation; do not fail logout if upstream token expired or network fails
+      }
+    }
+    return { logged_out: true as const };
+  }
+
+  async refresh(body: unknown) {
+    const input = normalizeRefreshTokenRequest(body);
+    const supabaseUrl = this.config
+      .getOrThrow<string>('SUPABASE_URL')
+      .replace(/\/$/, '');
+    const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `${supabaseUrl}/auth/v1/token?grant_type=refresh_token`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: anonKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ refresh_token: input.refresh_token }),
+          signal: AbortSignal.timeout(10000),
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message))
+      ) {
+        fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
+      }
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    if (
+      response.status === 400 ||
+      response.status === 401 ||
+      response.status === 422
+    ) {
+      fail(401, 'REFRESH_TOKEN_INVALID', 'Refresh token is invalid or expired');
+    }
+
+    if (!response.ok) {
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    const providerSession = (await response
+      .json()
+      .catch(() => null)) as ProviderSession | null;
+
+    if (!providerSession?.access_token || !providerSession?.refresh_token) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Auth service returned an invalid session',
+      );
+    }
+
+    const identity = this.sessionIdentity(providerSession.access_token);
+
+    const approved = await this.approvals.isSessionApproved(
+      identity.sub,
+      identity.sessionId,
+    );
+    if (!approved) {
+      fail(
+        401,
+        'REFRESH_TOKEN_INVALID',
+        'Session is not approved or has been revoked',
+      );
+    }
+
+    const result = await this.database.transaction(
+      identity.sub,
+      async (db) => {
+        return this.meInTransaction(db, identity.sub);
+      },
+      false,
+      true,
+    );
+
+    return {
+      access_token: providerSession.access_token,
+      refresh_token: providerSession.refresh_token,
+      expires_in: providerSession.expires_in,
       token_type: 'Bearer' as const,
       user: result.user,
       profile_complete: result.profile_complete,

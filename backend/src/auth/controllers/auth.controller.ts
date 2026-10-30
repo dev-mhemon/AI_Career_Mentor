@@ -32,6 +32,17 @@ export class AuthController {
   login(@Req() req: any, @Body() body: unknown) {
     return this.auth.login(body, req);
   }
+  @Post('refresh')
+  @HttpCode(200)
+  @Policy({ public: true })
+  refresh(@Body() body: unknown) {
+    return this.auth.refresh(body);
+  }
+  @Post('logout')
+  @HttpCode(200)
+  logout(@Req() req: any) {
+    return this.auth.logout(req.user, req.headers?.authorization);
+  }
   /** Transitional adapter used by the existing email/phone UI; not an additional C05 catalog claim. */
   @Post('sync')
   @HttpCode(200)

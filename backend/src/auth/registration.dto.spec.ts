@@ -1,5 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import {
+  normalizeRefreshTokenRequest,
   normalizeRegisterRequest,
   normalizeResendRequest,
 } from './registration.dto.js';
@@ -138,6 +139,46 @@ describe('C05 shared registration and resend input', () => {
     expect(resend.body).toMatchObject({
       code: 'INVALID_PHONE_NUMBER',
       details: [{ field: 'contact', code: 'INVALID_PHONE_NUMBER' }],
+    });
+  });
+
+  describe('normalizeRefreshTokenRequest', () => {
+    it('normalizes valid refresh_token', () => {
+      expect(
+        normalizeRefreshTokenRequest({
+          refresh_token: '  valid-refresh-token  ',
+        }),
+      ).toEqual({ refresh_token: 'valid-refresh-token' });
+    });
+
+    it('rejects empty or whitespace refresh_token', () => {
+      expect(
+        errorOf(() => normalizeRefreshTokenRequest({ refresh_token: '' }))
+          .status,
+      ).toBe(422);
+      expect(
+        errorOf(() => normalizeRefreshTokenRequest({ refresh_token: '   ' }))
+          .status,
+      ).toBe(422);
+    });
+
+    it('rejects missing refresh_token or non-string', () => {
+      expect(errorOf(() => normalizeRefreshTokenRequest({})).status).toBe(422);
+      expect(
+        errorOf(() => normalizeRefreshTokenRequest({ refresh_token: 123 }))
+          .status,
+      ).toBe(422);
+    });
+
+    it('rejects extra unknown fields', () => {
+      expect(
+        errorOf(() =>
+          normalizeRefreshTokenRequest({
+            refresh_token: 'valid',
+            unknown_prop: true,
+          }),
+        ).status,
+      ).toBe(422);
     });
   });
 });

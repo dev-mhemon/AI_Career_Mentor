@@ -971,4 +971,326 @@ describe('AuthService session approval boundary', () => {
       true,
     );
   });
+
+  describe('EP-A07 logout', () => {
+    const mockAbuse = {} as unknown as AuthAbuseControl;
+
+    it('revokes session in DB and invalidates GoTrue session locally', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => ({}) });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const approvals = {
+        revokeSession: vi.fn().mockResolvedValue(true),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        approvals,
+      );
+
+      const result = await service.logout(
+        { sub: userId, sessionId },
+        'Bearer test-token',
+      );
+
+      expect(result).toEqual({ logged_out: true });
+      expect(approvals.revokeSession).toHaveBeenCalledWith(userId, sessionId);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/logout?scope=local',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-token',
+          }),
+        }),
+      );
+    });
+
+    it('succeeds even if GoTrue session revocation throws or times out (best effort)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockRejectedValue(new Error('Network error')),
+      );
+
+      const approvals = {
+        revokeSession: vi.fn().mockResolvedValue(true),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        approvals,
+      );
+
+      const result = await service.logout(
+        { sub: userId, sessionId },
+        'Bearer test-token',
+      );
+
+      expect(result).toEqual({ logged_out: true });
+      expect(approvals.revokeSession).toHaveBeenCalledWith(userId, sessionId);
+    });
+  });
+
+  describe('EP-A06 refresh', () => {
+    const mockAbuse = {} as unknown as AuthAbuseControl;
+
+    it('rejects empty or missing refresh_token', async () => {
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+      );
+
+      await expect(service.refresh({})).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'VALIDATION_FAILED' },
+      });
+      await expect(
+        service.refresh({ refresh_token: '' }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'VALIDATION_FAILED' },
+      });
+    });
+
+    it('maps GoTrue timeout to 504 PROVIDER_TIMEOUT', async () => {
+      const timeoutError = new Error(
+        'The operation was aborted due to timeout',
+      );
+      timeoutError.name = 'AbortError';
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeoutError));
+
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+      );
+
+      await expect(
+        service.refresh({ refresh_token: 'some-token' }),
+      ).rejects.toMatchObject({
+        status: 504,
+        response: { code: 'PROVIDER_TIMEOUT' },
+      });
+    });
+
+    it('maps GoTrue 502/500 to 502 PROVIDER_ERROR', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+        }),
+      );
+
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+      );
+
+      await expect(
+        service.refresh({ refresh_token: 'some-token' }),
+      ).rejects.toMatchObject({
+        status: 502,
+        response: { code: 'PROVIDER_ERROR' },
+      });
+    });
+
+    it('maps GoTrue 400/401 to 401 REFRESH_TOKEN_INVALID', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          json: async () => ({ error: 'invalid_grant' }),
+        }),
+      );
+
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+      );
+
+      await expect(
+        service.refresh({ refresh_token: 'invalid-token' }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'REFRESH_TOKEN_INVALID' },
+      });
+    });
+
+    it('fails closed with 401 REFRESH_TOKEN_INVALID when session is unapproved or revoked, never calling approveSession', async () => {
+      const newJwt = accessToken();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: newJwt,
+            refresh_token: 'new-refresh-token',
+            expires_in: 3600,
+            token_type: 'bearer',
+          }),
+        }),
+      );
+
+      const approvals = {
+        isSessionApproved: vi.fn().mockResolvedValue(false),
+        approve: vi.fn(),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        approvals,
+      );
+
+      await expect(
+        service.refresh({ refresh_token: 'valid-token' }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'REFRESH_TOKEN_INVALID' },
+      });
+      expect(approvals.isSessionApproved).toHaveBeenCalledWith(
+        userId,
+        sessionId,
+      );
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+
+    it('succeeds for approved unrevoked session, updating activity and returning flat AuthSessionDTO', async () => {
+      const newJwt = accessToken();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: newJwt,
+            refresh_token: 'new-refresh-token',
+            expires_in: 3600,
+            token_type: 'bearer',
+          }),
+        }),
+      );
+
+      const query = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM public.users u WHERE u.id=$1'))
+          return [
+            {
+              id: userId,
+              email: 'active@example.com',
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['email'],
+            },
+          ];
+        if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+        if (sql.includes('effective_feature_access'))
+          return [{ enabled: true }];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const approvals = {
+        isSessionApproved: vi.fn().mockResolvedValue(true),
+        approve: vi.fn(),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mockAbuse,
+        approvals,
+      );
+
+      const result = await service.refresh({ refresh_token: 'valid-token' });
+
+      expect(result).toMatchObject({
+        access_token: newJwt,
+        refresh_token: 'new-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: { id: userId, status: 'active', verified_contact: true },
+        next_step: 'profile_setup',
+      });
+      expect(approvals.isSessionApproved).toHaveBeenCalledWith(
+        userId,
+        sessionId,
+      );
+      expect(approvals.approve).not.toHaveBeenCalled();
+      expect(database.transaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Function),
+        false,
+        true,
+      );
+    });
+
+    it('lifecycle sequence: EP-A07 logout revokes session, causing subsequent refresh to fail closed without auto-approval', async () => {
+      let sessionApproved = true;
+      const approvals = {
+        revokeSession: vi.fn(async () => {
+          sessionApproved = false;
+          return true;
+        }),
+        isSessionApproved: vi.fn(async () => sessionApproved),
+        approve: vi.fn(),
+      } as unknown as SessionApprovalService;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: accessToken(),
+            refresh_token: 'rot-refresh',
+            expires_in: 3600,
+            token_type: 'bearer',
+          }),
+        }),
+      );
+
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        approvals,
+      );
+
+      // Step 1: User logs out
+      await service.logout({ sub: userId, sessionId }, 'Bearer token');
+      expect(approvals.revokeSession).toHaveBeenCalledWith(userId, sessionId);
+      expect(sessionApproved).toBe(false);
+
+      // Step 2: Attempting to refresh the revoked session fails closed
+      await expect(
+        service.refresh({ refresh_token: 'rot-refresh' }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'REFRESH_TOKEN_INVALID' },
+      });
+      expect(approvals.isSessionApproved).toHaveBeenCalledWith(
+        userId,
+        sessionId,
+      );
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+  });
 });

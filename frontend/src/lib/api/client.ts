@@ -247,6 +247,25 @@ export async function approveOAuthSession(
   });
 }
 
+export interface LogoutResponse {
+  logged_out: true;
+}
+
+export function logoutUser(accessToken: string): Promise<LogoutResponse> {
+  return apiFetch<LogoutResponse>('/auth/logout', accessToken, {
+    method: 'POST',
+  });
+}
+
+export function refreshSession(
+  refreshToken: string,
+): Promise<AuthSessionResponse> {
+  return apiFetch<AuthSessionResponse>('/auth/refresh', null, {
+    method: 'POST',
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+}
+
 /**
  * GET /auth/me
  * Returns the current application-level user (role, status).

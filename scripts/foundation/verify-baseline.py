@@ -23,6 +23,8 @@ extensions=[
  {'kind':'down','path':'supabase/rollbacks/022_session_approval_gate_down.sql','bytes':4412,'sha256':'94f1b652e26c2eeb7e49d7e83d2e933aac44da8194230f147433a1e69d14d481'},
  {'kind':'forward','path':'supabase/migrations/023_session_gate_hardening.sql','bytes':2272,'sha256':'708970f2632b8aea00f4c75a0025f1239937f48a8efd0ac9f890b484cc8be21e'},
  {'kind':'down','path':'supabase/rollbacks/023_session_gate_hardening_down.sql','bytes':1607,'sha256':'3739f58b79bc2968fc1908b089736a9428048d13697e556e60f10fe551231fe3'},
+ {'kind':'forward','path':'supabase/migrations/024_session_revocation.sql','bytes':2412,'sha256':'a197b94df15cb7c54edd8d784abfc7bc38e17d5c63ebeea41e576e2daa21f102'},
+ {'kind':'down','path':'supabase/rollbacks/024_session_revocation_down.sql','bytes':2236,'sha256':'53c4fe34e272c123c5a0a4208983e3597825cc12f10c8e9c3743f9d885559624'},
 ]
 for f in extensions: check(root/f['path'],f)
 def paths(folder):
@@ -32,4 +34,4 @@ for kind,folder in [('forward','supabase/migrations'),('down','supabase/rollback
  actual=paths(folder)
  if actual!=expected:
   raise SystemExit(f'SQL directory inventory mismatch for {kind}: unexpected={sorted(actual-expected)}, missing={sorted(expected-actual)}')
-print('PASS: scoped SQL extensions 022 and 023 forward / rollback registered; no unregistered SQL inventory')
+print('PASS: scoped SQL extensions 022, 023 and 024 forward / rollback registered; no unregistered SQL inventory')
