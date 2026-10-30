@@ -21,6 +21,8 @@ print('PASS: 179 reviewed entries; integrated SQL 21 forward / 21 rollback / 8 t
 extensions=[
  {'kind':'forward','path':'supabase/migrations/022_session_approval_gate.sql','bytes':7753,'sha256':'f631ed91c11aecf0ab6a1f8e6dbfc85f0a13c0521e200bb7d361dd8d3d5d5088'},
  {'kind':'down','path':'supabase/rollbacks/022_session_approval_gate_down.sql','bytes':4412,'sha256':'94f1b652e26c2eeb7e49d7e83d2e933aac44da8194230f147433a1e69d14d481'},
+ {'kind':'forward','path':'supabase/migrations/023_session_gate_hardening.sql','bytes':2258,'sha256':'c96e3b00b5d76c41ed5edeec2b7ede7bf493bb8a2df33d756d130ac7dd879891'},
+ {'kind':'down','path':'supabase/rollbacks/023_session_gate_hardening_down.sql','bytes':1607,'sha256':'3739f58b79bc2968fc1908b089736a9428048d13697e556e60f10fe551231fe3'},
 ]
 for f in extensions: check(root/f['path'],f)
 def paths(folder):
@@ -30,4 +32,4 @@ for kind,folder in [('forward','supabase/migrations'),('down','supabase/rollback
  actual=paths(folder)
  if actual!=expected:
   raise SystemExit(f'SQL directory inventory mismatch for {kind}: unexpected={sorted(actual-expected)}, missing={sorted(expected-actual)}')
-print('PASS: scoped SQL extension 022 forward / rollback registered; no unregistered SQL inventory')
+print('PASS: scoped SQL extensions 022 and 023 forward / rollback registered; no unregistered SQL inventory')

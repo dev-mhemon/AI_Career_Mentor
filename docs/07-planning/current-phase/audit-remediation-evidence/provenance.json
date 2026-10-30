@@ -1,0 +1,12 @@
+{
+  "branch": "fix/m01-03-post-merge-audit",
+  "head": "38308577da4ea90b2cc770fba40bb60219efaaa3",
+  "merge_base": "b9394122d9c773073d773cfa00701226ca0611db",
+  "container": "supabase_db_ai-career-mentor-foundation",
+  "port": 56322,
+  "database": "postgres",
+  "user": "postgres",
+  "engine": "PostgreSQL 17.11 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit",
+  "node": "v24.19.0",
+  "generated_at": "2026-10-29T20:19:11.716Z"
+}

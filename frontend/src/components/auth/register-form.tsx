@@ -77,7 +77,7 @@ export function RegisterForm() {
             type="password"
             autoComplete="new-password"
             required
-            minLength={6}
+            minLength={8}
             disabled={isPending}
             className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
             placeholder="••••••••"
@@ -97,11 +97,28 @@ export function RegisterForm() {
             type="password"
             autoComplete="new-password"
             required
-            minLength={6}
+            minLength={8}
             disabled={isPending}
             className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
             placeholder="••••••••"
           />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            id="privacy_consent"
+            name="privacy_consent"
+            type="checkbox"
+            required
+            disabled={isPending}
+            className="h-4 w-4 rounded border-foreground/20 text-foreground focus:ring-foreground"
+          />
+          <label
+            htmlFor="privacy_consent"
+            className="text-sm text-foreground/80"
+          >
+            I agree to the privacy policy
+          </label>
         </div>
 
         {state.error && (

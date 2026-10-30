@@ -1,0 +1,63 @@
+BEGIN
+CREATE FUNCTION
+CREATE FUNCTION
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 3
+SET
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated", "session_id" : "d0500000-0000-4000-8000-000000000201"}
+ok - own application-account read remains available while incomplete
+ok - own provider-mapping read remains available while incomplete
+ok - R10 feature-controls read remains available while incomplete
+ok - shared reference data is denied to an unapproved pending session
+ok - profile read is denied to an unapproved pending session
+ok - owner feature data is denied to an unapproved pending session
+ok - ADR-019 denies profile writes from an unapproved pending session
+ok - authenticated role cannot call private.approve_auth_session
+ok - authenticated role cannot call two-argument private.has_approved_session
+ok - authenticated role cannot read private.approved_auth_sessions directly
+RESET
+UPDATE 1
+UPDATE 1
+SET
+ok - service role can approve the exact verified live provider session
+ok - exact-session approval retry remains one approval row
+ok - service role can enforce the exact live-session check used by Nest
+RESET
+SET
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated", "session_id" : "d0500000-0000-4000-8000-000000000201", "refreshed" : true}
+ok - completion and refresh do not approve the earlier pending session
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated", "session_id" : "d0500000-0000-4000-8000-000000000203"}
+ok - a public-verify session remains denied when no approval exists
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated", "session_id" : "d0500000-0000-4000-8000-000000000202"}
+ok - the exact approved session can read shared reference data
+ok - the exact approved session can read its profile
+ok - the exact approved session can read owner feature data
+ok - ADR-019 still denies direct profile writes from an approved session
+ok - a stolen copy of the exact approved bearer token is indistinguishable and succeeds
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated"}
+ok - authenticated JWT JSON missing session_id returns false
+ok - authenticated JWT JSON missing session_id is denied owner feature data
+ok - authenticated JWT JSON missing session_id is denied shared reference data
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated", "session_id" : "not-a-uuid"}
+ok - malformed session_id returns false
+ok - malformed session_id is denied owner feature data
+ok - malformed session_id is denied shared reference data
+RESET
+DELETE 1
+SET
+{"sub" : "d0500000-0000-4000-8000-000000000101", "role" : "authenticated", "session_id" : "d0500000-0000-4000-8000-000000000202"}
+ok - sign-out session deletion cascades approval and denies the stale JWT
+RESET
+ALTER TABLE
+SET
+DO
+RESET
+ALTER TABLE
+ok - isolated proof fixture exists only inside this transaction
+ROLLBACK
+NOTICE:  ok - approval-store lookup failure denies instead of returning protected rows

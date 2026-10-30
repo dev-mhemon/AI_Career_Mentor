@@ -40,7 +40,7 @@ function harness() {
   const abuse = {
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
   };
-  const queries = vi.fn(async (sql: string) => {
+  const queries = vi.fn(async (sql: string): Promise<any[]> => {
     if (sql.startsWith('SELECT verified_contact'))
       return [{ verified_contact: false, email: null, phone: null }];
     if (sql.startsWith('SELECT provider_subject'))
@@ -396,10 +396,14 @@ describe('A01/A04 email service with synthetic provider', () => {
   it('maps a concurrent database uniqueness violation to the A01 duplicate contract', async () => {
     const { service, provider, database } = harness();
     database.transaction.mockRejectedValueOnce(
-      new QueryFailedError('INSERT INTO public.user_auth_providers', [], {
-        code: '23505',
-        constraint: 'uq_user_auth_providers_subject',
-      }),
+      new QueryFailedError(
+        'INSERT INTO public.user_auth_providers',
+        [],
+        Object.assign(new Error('duplicate key'), {
+          code: '23505',
+          constraint: 'uq_user_auth_providers_subject',
+        }),
+      ),
     );
     await rejection(
       () => service.register(body, peer),

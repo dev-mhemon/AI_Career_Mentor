@@ -1,0 +1,10 @@
+{
+  "files": 8,
+  "assertions": 185,
+  "failures": 0,
+  "skips": 0,
+  "todos": 0,
+  "proof_file": "supabase/tests/disposable/choice1_session_gate.proof.sql",
+  "proof_passed": true,
+  "proof_assertions": 29
+}
