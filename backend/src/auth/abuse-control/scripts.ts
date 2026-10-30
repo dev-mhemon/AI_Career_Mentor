@@ -55,6 +55,10 @@ if ARGV[3] == 'begin' then
   return {0, ttl, generation}
 end
 if redis.call('HGET', KEYS[1], 'busy') ~= ARGV[2] then return {6, ttl} end
+if ARGV[3] == 'abort' then
+  redis.call('HDEL', KEYS[1], 'busy')
+  return {0, ttl}
+end
 if ARGV[3] == 'valid' then
   redis.call('HSET', KEYS[1], 'consumed', 1)
   redis.call('HDEL', KEYS[1], 'busy')

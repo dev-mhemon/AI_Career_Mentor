@@ -58,4 +58,37 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
     );
     service.onModuleDestroy();
   });
+
+  it('evaluates abort phase when verify callback throws, clearing busy reservation', async () => {
+    const service = new AuthAbuseControl(
+      readAbuseConfiguration({
+        AUTH_REDIS_URL: 'redis://127.0.0.1:1',
+        AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+      }),
+    );
+    const contact = {
+      channel: 'email' as const,
+      identifier: 'synthetic@example.invalid',
+    };
+    const evaluateSpy = vi
+      .spyOn(service as any, 'evaluate')
+      .mockResolvedValueOnce([0, 600000, 'test-generation'])
+      .mockResolvedValueOnce([0, 600000]);
+
+    const error = new HttpException({ code: 'OTP_EXPIRED' }, 410);
+    await expect(
+      service.verifyChallenge(contact, '123456', async () => {
+        throw error;
+      }),
+    ).rejects.toThrow(error);
+
+    expect(evaluateSpy).toHaveBeenCalledTimes(2);
+    expect(evaluateSpy.mock.calls[1][2]).toEqual([
+      'test-generation',
+      expect.any(String),
+      'abort',
+      5,
+    ]);
+    service.onModuleDestroy();
+  });
 });

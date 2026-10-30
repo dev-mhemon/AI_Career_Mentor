@@ -395,6 +395,12 @@ export class AuthAbuseControl implements OnModuleDestroy {
     try {
       valid = await verify(code);
     } catch (err) {
+      await this.evaluate(challengeScript, keys, [
+        generation,
+        attempt,
+        'abort',
+        max,
+      ]).catch(() => undefined);
       if (err instanceof HttpException) throw err;
       this.unavailable(Math.max(1, Math.ceil(begin[1] / 1000)));
     }
