@@ -43,7 +43,7 @@ DECLARE
   v_claims_text text;
   v_claims jsonb;
 BEGIN
-  IF p_user_id IS NULL OR p_user_id <> (SELECT auth.uid()) THEN
+  IF p_user_id IS NULL OR p_user_id IS DISTINCT FROM (SELECT auth.uid()) THEN
     RETURN false;
   END IF;
 

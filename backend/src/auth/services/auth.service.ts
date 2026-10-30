@@ -36,6 +36,13 @@ interface ProviderSession {
   token_type: string;
 }
 type ProviderLoginResult = ProviderSession | { unverified: true };
+/** Values accepted by the public.auth_provider enum (001_enums.sql). */
+const SUPPORTED_AUTH_PROVIDERS: readonly string[] = [
+  'email',
+  'phone',
+  'google',
+  'facebook',
+];
 @Injectable()
 export class AuthService {
   constructor(
@@ -278,8 +285,11 @@ export class AuthService {
         activeProvider = 'phone';
         activeContact = user.phone || payload?.phone || null;
       } else if (amr?.some((entry) => entry.method === 'password')) {
-        activeProvider = 'email';
-        activeContact = user.email || payload?.email || null;
+        const phoneOnly = Boolean(user.phone && !user.email);
+        activeProvider = phoneOnly ? 'phone' : 'email';
+        activeContact = phoneOnly
+          ? user.phone || null
+          : user.email || payload?.email || null;
       } else if (amr?.some((entry) => entry.method === 'otp')) {
         if (user.phone || payload?.phone) {
           activeProvider = 'phone';
@@ -307,20 +317,34 @@ export class AuthService {
         identity.sub,
         async (db) => {
           if (!provider) {
+            if (!SUPPORTED_AUTH_PROVIDERS.includes(activeProvider)) {
+              fail(
+                403,
+                'UNVERIFIED_ACCOUNT',
+                'Application account verification is incomplete',
+              );
+            }
             const lookupContact =
               activeProvider === 'phone' && activeContact
                 ? activeContact.startsWith('+')
                   ? activeContact
                   : `+${activeContact}`
                 : activeContact;
+            if (!lookupContact) {
+              fail(
+                403,
+                'UNVERIFIED_ACCOUNT',
+                'Application account verification is incomplete',
+              );
+            }
             const [existing] = await db.query(
               `SELECT u.verified_contact, p.verified_at
                  FROM public.users u
                  JOIN public.user_auth_providers p
                    ON p.user_id = u.id AND p.provider = $2 AND p.verified_at IS NOT NULL
                 WHERE u.id = $1
-                  AND ($3::text IS NULL OR LOWER(p.contact_value) = LOWER($3))`,
-              [user.id, activeProvider, lookupContact ?? null],
+                  AND LOWER(p.contact_value) = LOWER($3)`,
+              [user.id, activeProvider, lookupContact],
             );
             if (!existing?.verified_contact || !existing?.verified_at) {
               fail(

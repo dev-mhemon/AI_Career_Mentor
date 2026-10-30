@@ -32,6 +32,7 @@ app.stderr.on("data", (b) => {
 const results = [];
 let completed = false;
 const users = [];
+const emails = [];
 const skill = randomUUID(),
   role = randomUUID();
 let tokens = [];
@@ -97,6 +98,7 @@ try {
       user_metadata: { role: "ADMIN", verified_contact: true },
     });
     users.push(u.id);
+    emails.push(email);
     const session = await auth(
       "/token?grant_type=password",
       "POST",
@@ -109,10 +111,45 @@ try {
     "missing application mapping fails closed before bootstrap",
     async () => {
       assert.equal((await api("/profile", tokens[0])).status, 401);
+      const sync = await api("/auth/sync", tokens[0], "POST");
+      assert.equal(sync.status, 403);
+      assert.equal(sync.error.code, "UNVERIFIED_ACCOUNT");
+      assert.equal(
+        (
+          await db.query("SELECT count(*)::int AS n FROM public.users WHERE id=$1", [
+            users[0],
+          ])
+        ).rows[0].n,
+        0,
+      );
     },
   );
+  for (let i = 0; i < 2; i++) {
+    const confirmed = (
+      await db.query(
+        "SELECT email,email_confirmed_at FROM auth.users WHERE id=$1",
+        [users[i]],
+      )
+    ).rows[0];
+    assert.equal(confirmed.email, emails[i]);
+    assert(confirmed.email_confirmed_at);
+    await db.query(
+      "INSERT INTO public.users(id,email,verified_contact) VALUES($1,$2,true)",
+      [users[i], emails[i]],
+    );
+    await db.query(
+      "INSERT INTO public.user_auth_providers(user_id,provider,provider_subject,contact_value,verified_at,is_primary) VALUES($1,'email',$3,$2,$4,true)",
+      [users[i], emails[i], users[i], confirmed.email_confirmed_at],
+    );
+    await db.query("INSERT INTO public.user_profiles(user_id) VALUES($1)", [
+      users[i],
+    ]);
+    await db.query("INSERT INTO public.user_preferences(user_id) VALUES($1)", [
+      users[i],
+    ]);
+  }
   await check(
-    "live Auth bootstrap maps exact UUID and ignores metadata role",
+    "sync reads trusted verified mapping and ignores metadata role",
     async () => {
       for (let i = 0; i < 2; i++) {
         const r = await api("/auth/sync", tokens[i], "POST");
@@ -125,7 +162,7 @@ try {
     },
   );
   await check(
-    "bootstrap is idempotent and creates one profile/provider",
+    "sync is idempotent and preserves one provisioned profile/provider",
     async () => {
       await api("/auth/sync", tokens[0], "POST");
       assert.equal(
@@ -149,53 +186,39 @@ try {
     },
   );
   await check(
-    "contact collisions fail closed with 409 and preserve both UUID mappings",
+    "verified provider contact mismatch fails closed without promotion",
     async () => {
-      const contacts = (
-        await db.query(
-          "SELECT id,email FROM public.users WHERE id=ANY($1::uuid[])",
-          [users.slice(0, 2)],
-        )
-      ).rows;
-      const first = contacts.find((u) => u.id === users[0]),
-        second = contacts.find((u) => u.id === users[1]);
+      const mismatchedContact = `foundation-mismatch-${randomUUID()}@test.local`;
       try {
-        await db.query("UPDATE public.users SET email=NULL WHERE id=$1", [
-          users[1],
-        ]);
-        await db.query("UPDATE public.users SET email=$2 WHERE id=$1", [
-          users[0],
-          second.email,
-        ]);
+        await db.query(
+          "UPDATE public.user_auth_providers SET contact_value=$2 WHERE user_id=$1 AND provider='email'",
+          [users[1], mismatchedContact],
+        );
         const response = await api("/auth/sync", tokens[1], "POST");
-        assert.equal(response.status, 409);
-        assert.equal(response.error.code, "IDENTITY_LINK_CONFLICT");
+        assert.equal(response.status, 403);
+        assert.equal(response.error.code, "UNVERIFIED_ACCOUNT");
         assert.equal(
           (
             await db.query("SELECT email FROM public.users WHERE id=$1", [
               users[1],
             ])
           ).rows[0].email,
-          null,
+          emails[1],
         );
         assert.equal(
           (
             await db.query(
-              "SELECT count(*)::int AS n FROM public.users WHERE id=ANY($1::uuid[])",
-              [users.slice(0, 2)],
+              "SELECT contact_value FROM public.user_auth_providers WHERE user_id=$1 AND provider='email'",
+              [users[1]],
             )
-          ).rows[0].n,
-          2,
+          ).rows[0].contact_value,
+          mismatchedContact,
         );
       } finally {
-        await db.query("UPDATE public.users SET email=$2 WHERE id=$1", [
-          users[0],
-          first.email,
-        ]);
-        await db.query("UPDATE public.users SET email=$2 WHERE id=$1", [
-          users[1],
-          second.email,
-        ]);
+        await db.query(
+          "UPDATE public.user_auth_providers SET contact_value=$2 WHERE user_id=$1 AND provider='email'",
+          [users[1], emails[1]],
+        );
       }
     },
   );
@@ -282,7 +305,7 @@ try {
           { name: "unrecognizable skill xyz" },
         ],
       });
-      assert.equal(p.status, 200);
+      assert.equal(p.status, 200, JSON.stringify(p.error));
       assert.equal(p.data.current_role, "Student");
       assert.equal(
         p.data.progress_initialization,
@@ -848,10 +871,16 @@ try {
         dsaEncoding: "ieee-p1363",
       }).toString("base64url");
       const r = await api("/auth/sync", h + "." + p + "." + s, "POST");
-      assert.equal(r.status, 200);
-      assert.equal(r.data.user.verified_contact, false);
-      assert.equal(r.data.user.email, null);
-      assert.equal(r.data.user.role, "USER");
+      assert.equal(r.status, 403);
+      assert.equal(r.error.code, "UNVERIFIED_ACCOUNT");
+      assert.equal(
+        (
+          await db.query("SELECT count(*)::int AS n FROM public.users WHERE id=$1", [
+            u.id,
+          ])
+        ).rows[0].n,
+        0,
+      );
     },
   );
   await check(

@@ -19,7 +19,7 @@ const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 function accessToken(
   amr?: Array<{ method: string; provider?: string }>,
-  claims: { phone?: string } = {},
+  claims: { phone?: string; app_metadata?: { provider?: string } } = {},
 ): string {
   const encode = (value: object) =>
     Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -316,7 +316,7 @@ describe('AuthService session approval boundary', () => {
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ id: userId }),
+        json: async () => ({ id: userId, email: 'person@example.invalid' }),
       }),
     );
     const query = vi.fn(async (sql: string) => {
@@ -462,6 +462,115 @@ describe('AuthService session approval boundary', () => {
       expect(
         query.mock.calls.some(([sql]) => /^(INSERT|UPDATE) /i.test(sql)),
       ).toBe(false);
+    },
+  );
+
+  it('maps a phone-only password session to the verified phone provider row', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          phone: '8801700000000',
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        expect(params).toEqual([userId, 'phone', '+8801700000000']);
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.includes('SELECT u.id,u.email'))
+        return [
+          {
+            id: userId,
+            email: null,
+            phone: '+8801700000000',
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['phone'],
+          },
+        ];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${accessToken([{ method: 'password' }])}`,
+      ),
+    ).resolves.toMatchObject({ user: { id: userId, verified_contact: true } });
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(
+      query.mock.calls.some(([sql]) => /^(INSERT|UPDATE) /i.test(sql)),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      name: 'unsupported app_metadata provider',
+      authUser: { id: userId, email: 'person@example.invalid' },
+      claims: { app_metadata: { provider: 'github' } },
+    },
+    {
+      name: 'no resolvable active contact',
+      authUser: { id: userId },
+      claims: {},
+    },
+  ])(
+    'rejects provider-less sync with $name before the provider lookup',
+    async ({ authUser, claims }) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: async () => authUser }),
+      );
+      const query = vi.fn(async () => [
+        { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+      ]);
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+      const approvals = {
+        approve: vi.fn(),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        approvals,
+      );
+
+      await expect(
+        service.bootstrap(
+          { sub: userId, sessionId },
+          `Bearer ${accessToken([], claims)}`,
+        ),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'UNVERIFIED_ACCOUNT' },
+      });
+      expect(query).not.toHaveBeenCalled();
+      expect(approvals.approve).not.toHaveBeenCalled();
     },
   );
 

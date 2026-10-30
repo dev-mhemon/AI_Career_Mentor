@@ -1,6 +1,8 @@
 {
   "branch": "fix/m01-03-post-merge-audit",
-  "head": "38308577da4ea90b2cc770fba40bb60219efaaa3",
+  "head": "b054c3729156ae9f13b0bcb946ea98c3bf9e9fe4",
+  "worktree_status": " M docs/00-governance/START-HERE.md\n M docs/07-planning/current-phase/M01-03.md\n M docs/07-planning/current-phase/audit-remediation-evidence/commands.json\n M scripts/foundation/application-check.mjs\n M scripts/foundation/verify-baseline.py\n M supabase/migrations/023_session_gate_hardening.sql\n",
+  "migration_023_sha256": "708970f2632b8aea00f4c75a0025f1239937f48a8efd0ac9f890b484cc8be21e",
   "merge_base": "b9394122d9c773073d773cfa00701226ca0611db",
   "container": "supabase_db_ai-career-mentor-foundation",
   "port": 56322,
@@ -8,5 +10,5 @@
   "user": "postgres",
   "engine": "PostgreSQL 17.11 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit",
   "node": "v24.19.0",
-  "generated_at": "2026-10-29T20:19:11.716Z"
+  "generated_at": "2026-10-30T06:51:51.325Z"
 }
