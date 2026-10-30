@@ -47,6 +47,7 @@ local generation = redis.call('HGET', KEYS[1], 'generation')
 if ARGV[3] ~= 'begin' and generation ~= ARGV[1] then return {3, 0} end
 if redis.call('HGET', KEYS[1], 'consumed') == '1' then return {4, 0} end
 if tonumber(redis.call('HGET', KEYS[1], 'failures')) >= tonumber(ARGV[4]) then
+  if KEYS[2] then redis.call('DEL', KEYS[2]) end
   return {5, ttl}
 end
 if ARGV[3] == 'begin' then

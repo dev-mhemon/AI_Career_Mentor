@@ -129,6 +129,7 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
     it('succeeds and consumes OTP when code matches stored digest', async () => {
       const digest = store.computeDigest(userId, email, '123456');
       abuseControl.getOtpSecret.mockResolvedValue(digest);
+      const onValid = vi.fn().mockResolvedValue(undefined);
 
       abuseControl.verifyChallenge.mockImplementation(
         async (_contact, code, verifyFn, secretKey) => {
@@ -139,10 +140,54 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
       );
 
       await expect(
-        store.verifyAndConsumeOtp(userId, email, '123456'),
+        store.verifyAndConsumeOtp(userId, email, '123456', onValid),
       ).resolves.toBeUndefined();
 
-      expect(abuseControl.deleteOtpSecret).toHaveBeenCalledWith(userId);
+      expect(onValid).toHaveBeenCalledOnce();
+      expect(abuseControl.deleteOtpSecret).not.toHaveBeenCalled();
+    });
+
+    it('preserves the OTP when valid-code follow-up work fails', async () => {
+      const digest = store.computeDigest(userId, email, '123456');
+      abuseControl.getOtpSecret.mockResolvedValue(digest);
+      const providerError = new HttpException(
+        { code: 'EMAIL_PROVIDER_ERROR' },
+        502,
+      );
+      abuseControl.verifyChallenge.mockImplementation(
+        async (_contact, code, verifyFn) => {
+          await verifyFn(code);
+        },
+      );
+
+      await expect(
+        store.verifyAndConsumeOtp(userId, email, '123456', async () => {
+          throw providerError;
+        }),
+      ).rejects.toThrow(providerError);
+
+      expect(abuseControl.deleteOtpSecret).not.toHaveBeenCalled();
+    });
+
+    it('converts non-HttpException follow-up errors to 503 HttpException before verifyChallenge', async () => {
+      const digest = store.computeDigest(userId, email, '123456');
+      abuseControl.getOtpSecret.mockResolvedValue(digest);
+      abuseControl.verifyChallenge.mockImplementation(
+        async (_contact, code, verifyFn) => {
+          await verifyFn(code);
+        },
+      );
+
+      await expect(
+        store.verifyAndConsumeOtp(userId, email, '123456', async () => {
+          throw new Error('Database connection reset');
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: { code: 'SERVICE_UNAVAILABLE' },
+      });
+
+      expect(abuseControl.deleteOtpSecret).not.toHaveBeenCalled();
     });
 
     it('returns false in verifyFn when code does not match stored digest', async () => {
@@ -195,7 +240,7 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
       });
     });
 
-    it('throws 429 RATE_LIMITED and deletes secret when attempts exceeded', async () => {
+    it('throws 429 RATE_LIMITED without deleting a possibly newer secret', async () => {
       abuseControl.verifyChallenge.mockRejectedValue(
         new HttpException(
           { code: 'VERIFICATION_ATTEMPTS_EXCEEDED', retryAfterSeconds: 45 },
@@ -210,7 +255,7 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         response: { code: 'RATE_LIMITED' },
       });
 
-      expect(abuseControl.deleteOtpSecret).toHaveBeenCalledWith(userId);
+      expect(abuseControl.deleteOtpSecret).not.toHaveBeenCalled();
     });
 
     it('throws 409 ALREADY_VERIFIED when challenge is already consumed', async () => {

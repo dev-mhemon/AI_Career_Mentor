@@ -212,24 +212,29 @@ describe('R31 against real disposable Redis, independent application clients', (
   it('enforces five failures, unchanged challenge TTL, one-time consume and generation replacement', async () => {
     const { a, b, key } = fixture();
     const c = contact();
+    const secretKey = `auth:v1:otp:secret:${randomUUID()}`;
     const challenge = await a.issueChallenge(c);
+    await admin.set(secretKey, 'synthetic-digest', { EX: 600 });
     expect(challenge.expiresInSeconds).toBe(600);
     const first = await admin.pTTL(key('challenge', c));
     await pause(30);
     for (let i = 1; i <= 5; i++)
       await rejected(
-        b.verifyChallenge(c, '000000', async () => false),
+        b.verifyChallenge(c, '000000', async () => false, secretKey),
         i === 5 ? 429 : 422,
         i === 5
           ? 'VERIFICATION_ATTEMPTS_EXCEEDED'
           : 'VERIFICATION_CODE_INVALID',
       );
+    expect(await admin.exists(secretKey)).toBe(0);
+    await admin.set(secretKey, 'synthetic-digest', { EX: 600 });
     const provider = vi.fn(async () => true);
     await rejected(
-      a.verifyChallenge(c, '000000', provider),
+      a.verifyChallenge(c, '000000', provider, secretKey),
       429,
       'VERIFICATION_ATTEMPTS_EXCEEDED',
     );
+    expect(await admin.exists(secretKey)).toBe(0);
     expect(provider).not.toHaveBeenCalled();
     expect(await admin.pTTL(key('challenge', c))).toBeLessThan(first - 20);
     await b.issueChallenge(c);

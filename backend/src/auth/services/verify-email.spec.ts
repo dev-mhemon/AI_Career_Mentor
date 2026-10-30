@@ -113,7 +113,16 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
       generateOtp: vi.fn().mockReturnValue('123456'),
       computeDigest: vi.fn().mockReturnValue('mock-digest'),
       storeOtp: vi.fn().mockResolvedValue(undefined),
-      verifyAndConsumeOtp: vi.fn().mockResolvedValue(undefined),
+      verifyAndConsumeOtp: vi.fn(
+        async (
+          _userId: string,
+          _email: string,
+          _code: string,
+          onValid?: () => Promise<void>,
+        ) => {
+          await onValid?.();
+        },
+      ),
     };
 
     service = new AuthService(
@@ -185,6 +194,7 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         userId,
         email,
         code,
+        expect.any(Function),
       );
 
       // 2. GoTrue admin PUT called with email_confirm: true

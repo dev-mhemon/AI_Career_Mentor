@@ -66,6 +66,7 @@ export class OtpSecretStore {
     userId: string,
     email: string,
     code: string,
+    onValid?: () => Promise<void>,
   ): Promise<void> {
     if (!/^\d{6}$/.test(code)) {
       fail(422, 'INVALID_OTP', 'Verification code must contain six digits', [
@@ -96,10 +97,25 @@ export class OtpSecretStore {
           );
           const expectedBuf = Buffer.from(expectedHex, 'hex');
           const storedBuf = Buffer.from(storedHex, 'hex');
-          return (
+          const matches =
             expectedBuf.length === storedBuf.length &&
-            timingSafeEqual(expectedBuf, storedBuf)
-          );
+            timingSafeEqual(expectedBuf, storedBuf);
+          if (matches && onValid) {
+            try {
+              await onValid();
+            } catch (err) {
+              if (err instanceof HttpException) throw err;
+              fail(
+                503,
+                'SERVICE_UNAVAILABLE',
+                'Verification processing failed',
+                [],
+                true,
+                5,
+              );
+            }
+          }
+          return matches;
         },
         secretKey,
       );
@@ -123,7 +139,6 @@ export class OtpSecretStore {
           respCode === 'VERIFICATION_ATTEMPTS_EXCEEDED' ||
           respCode === 'RATE_LIMITED'
         ) {
-          await this.abuse.deleteOtpSecret(userId).catch(() => undefined);
           fail(
             429,
             'RATE_LIMITED',
@@ -143,7 +158,5 @@ export class OtpSecretStore {
       }
       throw error;
     }
-
-    await this.abuse.deleteOtpSecret(userId).catch(() => undefined);
   }
 }
