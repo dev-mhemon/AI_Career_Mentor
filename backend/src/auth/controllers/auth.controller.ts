@@ -38,6 +38,18 @@ export class AuthController {
   refresh(@Body() body: unknown) {
     return this.auth.refresh(body);
   }
+  @Post('forgot-password')
+  @HttpCode(202)
+  @Policy({ public: true })
+  forgotPassword(@Req() req: any, @Body() body: unknown) {
+    return this.auth.forgotPassword(body, req);
+  }
+  @Post('reset-password')
+  @HttpCode(200)
+  @Policy({ public: true })
+  resetPassword(@Req() req: any, @Body() body: unknown) {
+    return this.auth.resetPassword(body, req);
+  }
   @Post('logout')
   @HttpCode(200)
   @Policy({ allowSuspended: true })

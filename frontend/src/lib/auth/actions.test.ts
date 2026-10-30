@@ -6,8 +6,10 @@ import {
   resendOtpAction,
   logoutAction,
   signInWithOAuth,
+  forgotPasswordAction,
+  resetPasswordAction,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, logoutUser, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, logoutUser, forgotPassword, resetPassword, ApiError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -73,6 +75,8 @@ vi.mock("@/lib/api/client", () => {
     resendVerification: vi.fn(),
     verifyEmail: vi.fn(),
     logoutUser: vi.fn(),
+    forgotPassword: vi.fn(),
+    resetPassword: vi.fn(),
     NetworkError: MockNetworkError,
     ApiError: MockApiError,
   };
@@ -581,4 +585,76 @@ describe("Auth Actions", () => {
       expect(redirect).toHaveBeenCalledWith("/login");
     });
   });
+  describe("forgotPasswordAction", () => {
+    it("returns error when identifier is missing", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "");
+
+      const result = await forgotPasswordAction({}, formData);
+      expect(result).toEqual({ error: "Email or phone is required." });
+      expect(forgotPassword).not.toHaveBeenCalled();
+    });
+
+    it("calls forgotPassword, sets recovery context cookie, and redirects to /reset-password", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "user@example.com");
+      vi.mocked(forgotPassword).mockResolvedValueOnce({
+        message: "If the account exists, a code was sent.",
+      });
+
+      await forgotPasswordAction({}, formData);
+
+      expect(forgotPassword).toHaveBeenCalledWith("user@example.com");
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_recovery_context",
+        expect.any(String),
+        expect.objectContaining({ path: "/reset-password" })
+      );
+      expect(redirect).toHaveBeenCalledWith("/reset-password");
+    });
+  });
+
+  describe("resetPasswordAction", () => {
+    it("validates code and password mismatch", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "user@example.com");
+      formData.set("code", "123");
+      formData.set("new_password", "Passw0rd1!");
+      formData.set("confirm_new_password", "Passw0rd1!");
+
+      const badCode = await resetPasswordAction({}, formData);
+      expect(badCode.error).toContain("six-digit");
+
+      formData.set("code", "123456");
+      formData.set("confirm_new_password", "Mismatch!");
+      const mismatch = await resetPasswordAction({}, formData);
+      expect(mismatch.error).toContain("Passwords do not match");
+    });
+
+    it("calls resetPassword, clears recovery cookie, and redirects to /login?reset=success", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "user@example.com");
+      formData.set("code", "123456");
+      formData.set("new_password", "N3w!Passw0rd");
+      formData.set("confirm_new_password", "N3w!Passw0rd");
+
+      vi.mocked(resetPassword).mockResolvedValueOnce({ password_reset: true });
+
+      await resetPasswordAction({}, formData);
+
+      expect(resetPassword).toHaveBeenCalledWith(
+        "user@example.com",
+        "123456",
+        "N3w!Passw0rd",
+        "N3w!Passw0rd"
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_recovery_context",
+        "",
+        expect.objectContaining({ maxAge: 0 })
+      );
+      expect(redirect).toHaveBeenCalledWith("/login?reset=success");
+    });
+  });
+
 });

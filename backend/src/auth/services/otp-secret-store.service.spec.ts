@@ -271,4 +271,160 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
       });
     });
   });
+
+  describe('R31/S1 Domain Separation (verify_email vs reset_password)', () => {
+    it('produces distinct HMAC digests for verify_email vs reset_password', () => {
+      const emailVerifyDigest = store.computeDigest(
+        userId,
+        email,
+        '123456',
+        'verify_email',
+      );
+      const resetPasswordDigest = store.computeDigest(
+        userId,
+        email,
+        '123456',
+        'reset_password',
+      );
+      expect(emailVerifyDigest).not.toBe(resetPasswordDigest);
+    });
+
+    it('stores reset_password OTP with domain separation', async () => {
+      abuseControl.issueChallenge.mockResolvedValueOnce({
+        expiresInSeconds: 600,
+      });
+
+      await store.storeOtp(userId, email, '123456', 600, 'reset_password');
+
+      expect(abuseControl.issueChallenge).toHaveBeenCalledWith(
+        { channel: 'email', identifier: email },
+        600,
+        'reset_password',
+      );
+      expect(abuseControl.setOtpSecret).toHaveBeenCalledWith(
+        userId,
+        expect.any(String),
+        600,
+        'reset_password',
+      );
+    });
+
+    it('verifies reset_password challenge and returns C05 error codes', async () => {
+      abuseControl.verifyChallenge.mockImplementation(
+        async (_contact, _code, verifyFn, secretKey, purpose) => {
+          expect(secretKey).toBe(`auth:v1:otp:secret:reset_password:${userId}`);
+          expect(purpose).toBe('reset_password');
+          abuseControl.getOtpSecret.mockResolvedValueOnce(
+            store.computeDigest(userId, email, '123456', 'reset_password'),
+          );
+          const valid = await verifyFn('123456');
+          expect(valid).toBe(true);
+        },
+      );
+
+      const onValid = vi.fn().mockResolvedValue(undefined);
+      await store.verifyAndConsumeOtp(
+        userId,
+        email,
+        '123456',
+        onValid,
+        'reset_password',
+      );
+      expect(onValid).toHaveBeenCalledTimes(1);
+    });
+
+    it('maps C05 errors for reset_password (VERIFICATION_CODE_EXPIRED, VERIFICATION_CODE_INVALID, VERIFICATION_ATTEMPTS_EXCEEDED)', async () => {
+      abuseControl.verifyChallenge.mockRejectedValueOnce(
+        new HttpException({ code: 'VERIFICATION_CODE_EXPIRED' }, 410),
+      );
+      await expect(
+        store.verifyAndConsumeOtp(
+          userId,
+          email,
+          '123456',
+          undefined,
+          'reset_password',
+        ),
+      ).rejects.toMatchObject({
+        status: 410,
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
+      });
+
+      abuseControl.verifyChallenge.mockRejectedValueOnce(
+        new HttpException({ code: 'VERIFICATION_CODE_INVALID' }, 422),
+      );
+      await expect(
+        store.verifyAndConsumeOtp(
+          userId,
+          email,
+          '123456',
+          undefined,
+          'reset_password',
+        ),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'VERIFICATION_CODE_INVALID' },
+      });
+
+      abuseControl.verifyChallenge.mockRejectedValueOnce(
+        new HttpException(
+          { code: 'VERIFICATION_ATTEMPTS_EXCEEDED', retryAfterSeconds: 30 },
+          429,
+        ),
+      );
+      await expect(
+        store.verifyAndConsumeOtp(
+          userId,
+          email,
+          '123456',
+          undefined,
+          'reset_password',
+        ),
+      ).rejects.toMatchObject({
+        status: 429,
+        response: { code: 'VERIFICATION_ATTEMPTS_EXCEEDED' },
+      });
+
+      abuseControl.verifyChallenge.mockRejectedValueOnce(
+        new HttpException({ code: 'ALREADY_VERIFIED' }, 409),
+      );
+      await expect(
+        store.verifyAndConsumeOtp(
+          userId,
+          email,
+          '123456',
+          undefined,
+          'reset_password',
+        ),
+      ).rejects.toMatchObject({
+        status: 410,
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
+      });
+    });
+
+    it('rejects cross-domain OTP: signup digest fails timingSafeEqual against reset_password secret', async () => {
+      const signupDigest = store.computeDigest(
+        userId,
+        email,
+        '123456',
+        'verify_email',
+      );
+
+      abuseControl.verifyChallenge.mockImplementation(
+        async (_contact, _code, verifyFn) => {
+          abuseControl.getOtpSecret.mockResolvedValueOnce(signupDigest);
+          const valid = await verifyFn('123456');
+          expect(valid).toBe(false);
+        },
+      );
+
+      await store.verifyAndConsumeOtp(
+        userId,
+        email,
+        '123456',
+        undefined,
+        'reset_password',
+      );
+    });
+  });
 });

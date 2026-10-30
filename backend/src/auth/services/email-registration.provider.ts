@@ -163,6 +163,27 @@ export class EmailRegistrationProvider {
     return { expiresInSeconds };
   }
 
+  async sendPasswordResetChallenge(
+    email: string,
+    userId: string,
+    signal?: AbortSignal,
+  ): Promise<EmailDelivery> {
+    this.ready();
+    if (!this.otpStore || !this.transport) {
+      this.unavailable();
+    }
+    const otp = this.otpStore.generateOtp();
+    const { expiresInSeconds } = await this.otpStore.storeOtp(
+      userId,
+      email,
+      otp,
+      600,
+      'reset_password',
+    );
+    await this.transport(email, otp, signal);
+    return { expiresInSeconds };
+  }
+
   private unavailable(): never {
     return fail(
       503,

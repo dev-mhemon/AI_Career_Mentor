@@ -1,4 +1,4 @@
-import { HttpException, Injectable, Optional } from '@nestjs/common';
+import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager, QueryFailedError } from 'typeorm';
 import { DatabaseService } from './database.service.js';
@@ -8,13 +8,16 @@ import { features } from '../policy.js';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { trustedClientIp } from '../client-ip.js';
 import {
+  normalizeForgotPasswordRequest,
   normalizeLoginRequest,
   normalizeRefreshTokenRequest,
+  normalizeResetPasswordRequest,
   normalizeVerifyEmailRequest,
 } from '../registration.dto.js';
 import type { Request } from 'express';
 import { SessionApprovalService } from './session-approval.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
+import { EmailRegistrationProvider } from './email-registration.provider.js';
 export interface JwtIdentity {
   sub: string;
   sessionId: string;
@@ -50,12 +53,15 @@ const SUPPORTED_AUTH_PROVIDERS: readonly string[] = [
 ];
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly database: DatabaseService,
     private readonly config: ConfigService,
     private readonly abuse: AuthAbuseControl,
     private readonly approvals: SessionApprovalService,
     @Optional() private readonly otpStore?: OtpSecretStore,
+    @Optional() private readonly emailProvider?: EmailRegistrationProvider,
   ) {}
 
   private async authUser(authorization: string): Promise<AuthUser> {
@@ -912,5 +918,228 @@ export class AuthService {
         ? ('app_home' as const)
         : ('profile_setup' as const),
     };
+  }
+
+  async forgotPassword(body: unknown, request?: Request) {
+    const input = normalizeForgotPasswordRequest(body);
+    if (input.channel !== 'email') {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Phone password recovery is temporarily unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    if (!this.abuse.isReady() || !this.otpStore || !this.emailProvider) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Password recovery is temporarily unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    this.emailProvider.ready();
+
+    const ip = request ? trustedClientIp(request) : '127.0.0.1';
+    await this.abuse.reserveSend(input, ip);
+
+    const rows = await this.database.query(
+      `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject, p.verified_at
+         FROM public.users u
+         JOIN public.user_auth_providers p
+           ON p.user_id = u.id AND p.provider = 'email'
+        WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
+        LIMIT 1`,
+      [input.identifier],
+    );
+
+    const user = rows?.[0];
+    if (
+      user &&
+      user.status === 'active' &&
+      user.verified_contact === true &&
+      user.verified_at !== null
+    ) {
+      void this.emailProvider
+        .sendPasswordResetChallenge(input.identifier, user.id)
+        .catch((error: unknown) => {
+          this.logger.error(
+            `Failed to dispatch password reset challenge for user ${user.id}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+        });
+    }
+
+    return {
+      success: true,
+      data: {
+        message: 'If the account exists, a code was sent.',
+      },
+    };
+  }
+
+  async resetPassword(body: unknown, _request?: Request) {
+    void _request;
+    const configuredMinimum = Number(
+      this.config.get<number>('AUTH_PASSWORD_MIN_LENGTH') ?? 8,
+    );
+    const input = normalizeResetPasswordRequest(body, configuredMinimum);
+    if (input.channel !== 'email') {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Phone password recovery is temporarily unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    if (!this.otpStore) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'OTP secret store is unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    const rows = await this.database.query(
+      `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject
+         FROM public.users u
+         JOIN public.user_auth_providers p
+           ON p.user_id = u.id AND p.provider = 'email'
+        WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
+        LIMIT 1`,
+      [input.identifier],
+    );
+
+    const user = rows?.[0];
+    if (!user) {
+      fail(410, 'VERIFICATION_CODE_EXPIRED', 'Verification challenge expired');
+    }
+
+    const userId = user.id;
+
+    await this.otpStore.verifyAndConsumeOtp(
+      userId,
+      input.identifier,
+      input.code,
+      async () => {
+        let goTrueUpdated = false;
+        try {
+          await this.database.transaction(
+            userId,
+            async (db) => {
+              await this.approvals.revokeAllUserSessions(userId, db);
+              await this.updateGoTrueUserPassword(userId, input.new_password);
+              await this.revokeGoTrueUserSessions(userId);
+              goTrueUpdated = true;
+            },
+            true,
+          );
+        } catch (err) {
+          if (goTrueUpdated) {
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                await this.approvals.revokeAllUserSessions(userId);
+                break;
+              } catch {
+                // Best-effort fallback retry
+              }
+            }
+          }
+          throw err;
+        }
+      },
+      'reset_password',
+    );
+
+    return {
+      success: true,
+      data: {
+        password_reset: true,
+      },
+    };
+  }
+
+  private async updateGoTrueUserPassword(
+    userId: string,
+    newPassword: string,
+  ): Promise<void> {
+    const supabaseUrl = this.config
+      .getOrThrow<string>('SUPABASE_URL')
+      .replace(/\/$/, '');
+    const serviceRoleKey =
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
+      this.config.get<string>('SERVICE_ROLE_KEY');
+
+    let response: Response;
+    try {
+      response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          apikey: serviceRoleKey || '',
+          Authorization: `Bearer ${serviceRoleKey || ''}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password: newPassword }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message))
+      ) {
+        fail(
+          504,
+          'PROVIDER_TIMEOUT',
+          'Authentication provider timed out',
+          [],
+          true,
+        );
+      }
+      fail(502, 'PROVIDER_ERROR', 'Authentication provider error', [], true);
+    }
+
+    if (!response.ok) {
+      fail(
+        502,
+        'PROVIDER_ERROR',
+        `Authentication provider error: ${response.status}`,
+        [],
+        true,
+      );
+    }
+  }
+
+  private async revokeGoTrueUserSessions(userId: string): Promise<void> {
+    try {
+      const supabaseUrl = this.config
+        .getOrThrow<string>('SUPABASE_URL')
+        .replace(/\/$/, '');
+      const serviceRoleKey =
+        this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
+        this.config.get<string>('SERVICE_ROLE_KEY');
+      await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}/logout`, {
+        method: 'POST',
+        headers: {
+          apikey: serviceRoleKey || '',
+          Authorization: `Bearer ${serviceRoleKey || ''}`,
+        },
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => null);
+    } catch {
+      // Best-effort GoTrue session invalidation
+    }
   }
 }

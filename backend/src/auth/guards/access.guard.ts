@@ -17,6 +17,9 @@ export class AccessGuard implements CanActivate {
       ]) || {};
     if (p.public || p.bootstrap) return true;
     const req = context.switchToHttp().getRequest();
+    if (!req?.user?.sub || !req?.user?.sessionId) {
+      fail(401, 'AUTH_REQUIRED', 'Application account required');
+    }
     return this.database.transaction(
       req.user.sub,
       async (db) => {

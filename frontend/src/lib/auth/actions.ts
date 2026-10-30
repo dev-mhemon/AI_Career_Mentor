@@ -3,18 +3,29 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { loginUser, registerUser, resendVerification, verifyEmail, logoutUser, NetworkError, ApiError } from '@/lib/api/client';
+import {
+  loginUser,
+  registerUser,
+  resendVerification,
+  verifyEmail,
+  logoutUser,
+  forgotPassword,
+  resetPassword,
+  NetworkError,
+  ApiError,
+} from '@/lib/api/client';
 
 /**
  * Server Actions for authentication flows.
  */
 
-
 export interface AuthActionResult {
   error?: string;
+  success?: boolean;
 }
 
 const VERIFICATION_CONTEXT_COOKIE = 'mentor_verification_context';
+const RECOVERY_CONTEXT_COOKIE = 'mentor_recovery_context';
 
 interface VerificationContext {
   type: 'email' | 'phone';
@@ -62,7 +73,6 @@ async function getVerificationContext(
     return null;
   }
 }
-
 
 export async function loginAction(
   _prevState: AuthActionResult,
@@ -282,4 +292,97 @@ export async function logoutAction(): Promise<void> {
   }
   await supabase.auth.signOut();
   redirect('/login');
+}
+
+export async function forgotPasswordAction(
+  _prevState: AuthActionResult,
+  formData: FormData,
+): Promise<AuthActionResult> {
+  const identifier = formData.get('identifier') as string;
+  if (!identifier || !identifier.trim()) {
+    return { error: 'Email or phone is required.' };
+  }
+
+  try {
+    await forgotPassword(identifier.trim());
+    const store = await cookies();
+    store.set(
+      RECOVERY_CONTEXT_COOKIE,
+      Buffer.from(JSON.stringify({ identifier: identifier.trim() })).toString('base64url'),
+      {
+        httpOnly: true,
+        sameSite: 'strict',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/reset-password',
+        maxAge: 600,
+      },
+    );
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      return { error: 'Unable to reach the server. Please try again later.' };
+    }
+    if (err instanceof ApiError) {
+      return { error: err.message };
+    }
+    return { error: 'An unexpected error occurred while requesting password recovery.' };
+  }
+
+  redirect('/reset-password');
+}
+
+export async function resetPasswordAction(
+  _prevState: AuthActionResult,
+  formData: FormData,
+): Promise<AuthActionResult> {
+  let identifier = (formData.get('identifier') as string)?.trim();
+  if (!identifier) {
+    const encoded = (await cookies()).get(RECOVERY_CONTEXT_COOKIE)?.value;
+    if (encoded) {
+      try {
+        const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+        if (typeof parsed?.identifier === 'string') {
+          identifier = parsed.identifier;
+        }
+      } catch {
+        // Ignore cookie decode failure
+      }
+    }
+  }
+  const code = (formData.get('code') as string)?.trim();
+  const newPassword = formData.get('new_password') as string;
+  const confirmNewPassword = formData.get('confirm_new_password') as string;
+
+  if (!identifier) {
+    return { error: 'Identifier is required. Please restart password recovery.' };
+  }
+  if (!code || !/^\d{6}$/.test(code)) {
+    return { error: 'Enter a six-digit verification code.' };
+  }
+  if (!newPassword || newPassword.length < 8) {
+    return { error: 'Password must be at least 8 characters.' };
+  }
+  if (newPassword !== confirmNewPassword) {
+    return { error: 'Passwords do not match.' };
+  }
+
+  try {
+    await resetPassword(identifier, code, newPassword, confirmNewPassword);
+    const store = await cookies();
+    store.set(RECOVERY_CONTEXT_COOKIE, '', {
+      path: '/reset-password',
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: 'strict',
+    });
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      return { error: 'Unable to reach the server. Please try again later.' };
+    }
+    if (err instanceof ApiError) {
+      return { error: err.message };
+    }
+    return { error: 'An unexpected error occurred while resetting password.' };
+  }
+
+  redirect('/login?reset=success');
 }

@@ -5,7 +5,7 @@ import type { EntityManager } from 'typeorm';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { configureHttp } from '../../common/http.js';
+import { configureHttp, fail } from '../../common/http.js';
 import { AuthController } from '../controllers/auth.controller.js';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { DatabaseService } from './database.service.js';
@@ -13,6 +13,7 @@ import { SessionApprovalService } from './session-approval.service.js';
 import { AuthService } from './auth.service.js';
 import { EmailRegistrationProvider } from './email-registration.provider.js';
 import { EmailRegistrationService } from './email-registration.service.js';
+import { OtpSecretStore } from './otp-secret-store.service.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -32,14 +33,18 @@ function accessToken(
   })}.synthetic-signature`;
 }
 
-function configuration(): ConfigService {
+function configuration(overrides: Record<string, unknown> = {}): ConfigService {
   return {
-    get: vi.fn((name: string) =>
-      name === 'AUTH_PASSWORD_MIN_LENGTH' ? 8 : undefined,
-    ),
-    getOrThrow: vi.fn((name: string) =>
-      name === 'SUPABASE_URL' ? 'http://supabase.invalid' : 'public-anon-key',
-    ),
+    get: vi.fn((name: string) => {
+      if (name in overrides) return overrides[name];
+      return name === 'AUTH_PASSWORD_MIN_LENGTH' ? 8 : undefined;
+    }),
+    getOrThrow: vi.fn((name: string) => {
+      if (name in overrides) return overrides[name];
+      return name === 'SUPABASE_URL'
+        ? 'http://supabase.invalid'
+        : 'public-anon-key';
+    }),
   } as unknown as ConfigService;
 }
 
@@ -1291,6 +1296,562 @@ describe('AuthService session approval boundary', () => {
         sessionId,
       );
       expect(approvals.approve).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('EP-A08 Forgot Password', () => {
+    it('fails closed with 503 when abuse control, otpStore, or emailProvider is unconfigured', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(false),
+      } as unknown as AuthAbuseControl;
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        undefined,
+        undefined,
+      );
+
+      await expect(
+        service.forgotPassword({ identifier: 'user@example.com' }),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: { code: 'SERVICE_UNAVAILABLE' },
+      });
+    });
+
+    it('rejects phone identifier with 503', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(true),
+      } as unknown as AuthAbuseControl;
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+
+      await expect(
+        service.forgotPassword({ identifier: '+8801712345678' }),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: { code: 'SERVICE_UNAVAILABLE' },
+      });
+    });
+
+    it('forwards rate limiting / abuse errors from reserveSend', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockRejectedValue({
+          status: 429,
+          getResponse: () => ({ code: 'RESEND_COOLDOWN_ACTIVE' }),
+          getStatus: () => 429,
+        }),
+      } as unknown as AuthAbuseControl;
+      const mockEmailProvider = {
+        ready: vi.fn(),
+      } as unknown as EmailRegistrationProvider;
+      const mockOtpStore = {} as OtpSecretStore;
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        mockOtpStore,
+        mockEmailProvider,
+      );
+
+      await expect(
+        service.forgotPassword({ identifier: 'user@example.com' }, {
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' },
+        } as Request),
+      ).rejects.toMatchObject({
+        status: 429,
+      });
+    });
+
+    it('preserves anti-enumeration: returns 202 when user does not exist without sending challenge', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+      const mockEmailProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi.fn(),
+      } as unknown as EmailRegistrationProvider;
+      const mockOtpStore = {} as OtpSecretStore;
+      const database = {
+        query: vi.fn().mockResolvedValue([]),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        mockOtpStore,
+        mockEmailProvider,
+      );
+
+      const response = await service.forgotPassword(
+        { identifier: 'unknown@example.com' },
+        { ip: '127.0.0.1', socket: { remoteAddress: '127.0.0.1' } } as Request,
+      );
+
+      expect(response).toEqual({
+        success: true,
+        data: { message: 'If the account exists, a code was sent.' },
+      });
+      expect(
+        mockEmailProvider.sendPasswordResetChallenge,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('dispatches challenge and returns uniform 202 for active, verified email user', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+      const mockEmailProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi
+          .fn()
+          .mockResolvedValue({ expiresInSeconds: 600 }),
+      } as unknown as EmailRegistrationProvider;
+      const mockOtpStore = {} as OtpSecretStore;
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'active',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        mockOtpStore,
+        mockEmailProvider,
+      );
+
+      const response = await service.forgotPassword(
+        { identifier: 'user@example.com' },
+        { ip: '127.0.0.1', socket: { remoteAddress: '127.0.0.1' } } as Request,
+      );
+
+      expect(response).toEqual({
+        success: true,
+        data: { message: 'If the account exists, a code was sent.' },
+      });
+      expect(mockEmailProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
+        'user@example.com',
+        userId,
+      );
+    });
+
+    it('returns uniform 202 even when background challenge dispatch fails', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+      const mockEmailProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi
+          .fn()
+          .mockRejectedValue(new Error('SMTP down')),
+      } as unknown as EmailRegistrationProvider;
+      const mockOtpStore = {} as OtpSecretStore;
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'active',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        mockOtpStore,
+        mockEmailProvider,
+      );
+
+      const response = await service.forgotPassword(
+        { identifier: 'user@example.com' },
+        { ip: '127.0.0.1', socket: { remoteAddress: '127.0.0.1' } } as Request,
+      );
+
+      expect(response).toEqual({
+        success: true,
+        data: { message: 'If the account exists, a code was sent.' },
+      });
+      expect(mockEmailProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
+        'user@example.com',
+        userId,
+      );
+    });
+  });
+
+  describe('EP-A09 Reset Password', () => {
+    const resetBody = {
+      identifier: 'user@example.com',
+      code: '123456',
+      new_password: 'N3w!Passw0rd',
+      confirm_new_password: 'N3w!Passw0rd',
+    };
+
+    it('fails closed with 503 if otpStore is unconfigured', async () => {
+      const service = new AuthService(
+        {} as never,
+        configuration(),
+        {} as never,
+        {} as never,
+        undefined,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 503,
+        response: { code: 'SERVICE_UNAVAILABLE' },
+      });
+    });
+
+    it('returns 410 VERIFICATION_CODE_EXPIRED when user does not exist in DB', async () => {
+      const database = {
+        query: vi.fn().mockResolvedValue([]),
+      } as unknown as DatabaseService;
+      const mockOtpStore = {} as OtpSecretStore;
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        {} as never,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 410,
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
+      });
+    });
+
+    it('enforces configured AUTH_PASSWORD_MIN_LENGTH', async () => {
+      const customConfig = configuration({
+        AUTH_PASSWORD_MIN_LENGTH: 12,
+      });
+
+      const service = new AuthService(
+        { query: vi.fn() } as unknown as DatabaseService,
+        customConfig,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+
+      await expect(
+        service.resetPassword({
+          identifier: 'user@example.com',
+          code: '123456',
+          new_password: 'Passw0rd!10',
+          confirm_new_password: 'Passw0rd!10',
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'PASSWORD_POLICY_FAILED' },
+      });
+    });
+
+    it('does not leak 403 ACCOUNT_SUSPENDED when OTP is invalid for suspended user', async () => {
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'suspended',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      } as unknown as DatabaseService;
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn().mockRejectedValue({
+          status: 422,
+          getResponse: () => ({ code: 'VERIFICATION_CODE_INVALID' }),
+          getStatus: () => 422,
+        }),
+      } as unknown as OtpSecretStore;
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        {} as never,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 422,
+      });
+    });
+
+    it('throws 403 ACCOUNT_SUSPENDED within locked transaction on valid OTP if user is suspended', async () => {
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'suspended',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+        transaction: vi.fn().mockRejectedValue({
+          status: 403,
+          getResponse: () => ({ code: 'ACCOUNT_SUSPENDED' }),
+          getStatus: () => 403,
+        }),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_userId, _email, _code, onValid) => {
+          if (onValid) await onValid();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        {} as never,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(database.transaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Function),
+        true,
+      );
+    });
+
+    it('updates password in GoTrue, revokes ALL sessions, and returns 200 on valid code', async () => {
+      const mockDbRunner = { query: vi.fn() };
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'active',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+        transaction: vi.fn(async (targetUserId, operation, active) => {
+          expect(targetUserId).toBe(userId);
+          expect(active).toBe(true);
+          return operation(mockDbRunner as never);
+        }),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn(
+          async (_userId, _email, _code, onValid, purpose) => {
+            expect(purpose).toBe('reset_password');
+            if (onValid) await onValid();
+          },
+        ),
+      } as unknown as OtpSecretStore;
+
+      const mockApprovals = {
+        revokeAllUserSessions: vi.fn().mockResolvedValue(2),
+      } as unknown as SessionApprovalService;
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: userId }),
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        mockApprovals,
+        mockOtpStore,
+      );
+
+      const response = await service.resetPassword(resetBody);
+
+      expect(response).toEqual({
+        success: true,
+        data: { password_reset: true },
+      });
+
+      // Verify transaction called with user lock
+      expect(database.transaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Function),
+        true,
+      );
+
+      // Verify GoTrue Admin API called with new password
+      expect(fetchSpy).toHaveBeenCalledWith(
+        `http://supabase.invalid/auth/v1/admin/users/${userId}`,
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ password: 'N3w!Passw0rd' }),
+        }),
+      );
+
+      // Verify GoTrue Admin API called to revoke all GoTrue sessions
+      expect(fetchSpy).toHaveBeenCalledWith(
+        `http://supabase.invalid/auth/v1/admin/users/${userId}/logout`,
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+
+      // Verify ALL user sessions revoked with transactional query runner
+      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledWith(
+        userId,
+        mockDbRunner,
+      );
+    });
+
+    it('rolls back database transaction and fails if GoTrue update fails', async () => {
+      const mockDbRunner = { query: vi.fn() };
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'active',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+        transaction: vi.fn(async (_targetUserId, operation) => {
+          return operation(mockDbRunner as never);
+        }),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_userId, _email, _code, onValid) => {
+          if (onValid) await onValid();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const mockApprovals = {
+        revokeAllUserSessions: vi.fn().mockResolvedValue(2),
+      } as unknown as SessionApprovalService;
+
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ message: 'Internal server error' }),
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        mockApprovals,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 502,
+        response: { code: 'PROVIDER_ERROR' },
+      });
+    });
+
+    it('rejects cross-domain OTP: verification challenge failures are forwarded', async () => {
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'active',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn().mockRejectedValue({
+          status: 422,
+          getResponse: () => ({ code: 'VERIFICATION_CODE_INVALID' }),
+          getStatus: () => 422,
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        {} as never,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 422,
+      });
+    });
+
+    it('returns 410 VERIFICATION_CODE_EXPIRED when replaying an already-consumed reset code', async () => {
+      const database = {
+        query: vi.fn().mockResolvedValue([
+          {
+            id: userId,
+            email: 'user@example.com',
+            status: 'active',
+            verified_contact: true,
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn().mockImplementation(() => {
+          fail(
+            410,
+            'VERIFICATION_CODE_EXPIRED',
+            'Verification challenge expired',
+          );
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        {} as never,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 410,
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
+      });
     });
   });
 });
