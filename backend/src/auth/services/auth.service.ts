@@ -604,6 +604,10 @@ export class AuthService {
       if (!committed) {
         throw error;
       }
+      this.logger.error(
+        `OTP consumption failed after email verification commit for user ${userId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
 
     try {
@@ -1026,23 +1030,52 @@ export class AuthService {
 
     const userId = user.id;
 
-    await this.otpStore.verifyAndConsumeOtp(
-      userId,
-      input.identifier,
-      input.code,
-      async () => {
-        await this.database.transaction(
-          userId,
-          async (db) => {
-            await this.approvals.revokeAllUserSessions(userId, db);
-            await this.updateGoTrueUserPassword(userId, input.new_password);
-          },
-          true,
-        );
-        await this.revokeGoTrueUserSessions(userId);
-      },
-      'reset_password',
-    );
+    let committed = false;
+    try {
+      await this.otpStore.verifyAndConsumeOtp(
+        userId,
+        input.identifier,
+        input.code,
+        async () => {
+          let passwordUpdated = false;
+          try {
+            await this.database.transaction(
+              userId,
+              async (db) => {
+                await this.approvals.revokeAllUserSessions(userId, db);
+                await this.updateGoTrueUserPassword(userId, input.new_password);
+                passwordUpdated = true;
+              },
+              true,
+            );
+            committed = true;
+          } catch (error) {
+            if (passwordUpdated) {
+              for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                  await this.approvals.revokeAllUserSessions(userId);
+                  break;
+                } catch {
+                  // Best-effort compensating local session revocation
+                }
+              }
+            }
+            throw error;
+          }
+        },
+        'reset_password',
+      );
+    } catch (error) {
+      if (!committed) {
+        throw error;
+      }
+      this.logger.error(
+        `OTP consumption failed after password reset commit for user ${user.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+
+    await this.revokeGoTrueUserSessions(userId);
 
     return {
       password_reset: true as const,
@@ -1100,21 +1133,63 @@ export class AuthService {
     }
   }
 
+  private async withQueryTimeout<T>(
+    operation: () => Promise<T>,
+    timeoutMs: number,
+  ): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`Cleanup query timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   private async revokeGoTrueUserSessions(userId: string): Promise<void> {
+    const configuredTimeout = Number(this.config.get('GOTRUE_TIMEOUT_MS'));
+    const timeoutMs =
+      Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : 5000;
+    const safeTimeoutMs = Math.max(1, Math.trunc(timeoutMs));
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await this.database.query(
-          `UPDATE auth.refresh_tokens
-              SET revoked = true,
-                  updated_at = clock_timestamp()
-            WHERE user_id = $1::text
-              AND COALESCE(revoked, false) = false`,
-          [userId],
-        );
-        await this.database.query(
-          'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
-          [userId],
+        await this.withQueryTimeout(
+          () =>
+            this.database.transaction(
+              null,
+              async (qr) => {
+                await qr.query(
+                  `SET LOCAL statement_timeout = ${safeTimeoutMs}`,
+                );
+                await qr.query(
+                  `UPDATE auth.refresh_tokens
+                      SET revoked = true,
+                          updated_at = clock_timestamp()
+                    WHERE user_id = $1::text
+                      AND COALESCE(revoked, false) = false`,
+                  [userId],
+                );
+                await qr.query(
+                  'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
+                  [userId],
+                );
+              },
+              false,
+              false,
+              false,
+            ),
+          safeTimeoutMs,
         );
         return;
       } catch (error) {
@@ -1127,11 +1202,16 @@ export class AuthService {
       lastError instanceof Error ? lastError.stack : String(lastError),
     );
 
-    if (
-      lastError instanceof Error &&
-      (lastError.name === 'AbortError' ||
-        /timeout|timed out/i.test(lastError.message))
-    ) {
+    const isTimeoutError =
+      (typeof (lastError as { code?: unknown })?.code === 'string' &&
+        (lastError as { code: string }).code === '57014') ||
+      (lastError instanceof Error &&
+        (lastError.name === 'AbortError' ||
+          /statement timeout|query_canceled|timeout|timed out/i.test(
+            lastError.message,
+          )));
+
+    if (isTimeoutError) {
       fail(
         504,
         'PROVIDER_TIMEOUT',

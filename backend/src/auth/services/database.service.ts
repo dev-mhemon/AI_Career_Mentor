@@ -13,9 +13,12 @@ export class DatabaseService {
     operation: (db: EntityManager) => Promise<T>,
     active = true,
     foreground = false,
+    useServiceRole = true,
   ): Promise<T> {
     return this.source.transaction('READ COMMITTED', async (db) => {
-      await db.query('SET LOCAL ROLE service_role');
+      if (useServiceRole) {
+        await db.query('SET LOCAL ROLE service_role');
+      }
       if (userId) {
         await db.query(
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
