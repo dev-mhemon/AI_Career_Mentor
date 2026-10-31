@@ -1723,6 +1723,9 @@ describe('AuthService session approval boundary', () => {
         'SET LOCAL statement_timeout = 5000',
       );
       expect(mockDbRunner.query).toHaveBeenCalledWith(
+        'SET LOCAL lock_timeout = 5000',
+      );
+      expect(mockDbRunner.query).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE auth.refresh_tokens'),
         [userId],
       );
@@ -1793,21 +1796,29 @@ describe('AuthService session approval boundary', () => {
       expect(mockDbRunner.query).toHaveBeenCalledWith(
         'SET LOCAL statement_timeout = 5000',
       );
+      expect(mockDbRunner.query).toHaveBeenCalledWith(
+        'SET LOCAL lock_timeout = 5000',
+      );
     });
 
     it('fails with non-retryable 502 PROVIDER_ERROR if GoTrue session revocation fails after transaction commits and OTP is consumed', async () => {
+      let transactionCommitted = false;
+      let otpConsumed = false;
+      let orderingViolated = false;
       const mockDbRunner = {
         query: vi.fn(async (sql: string) => {
-          if (sql.startsWith('SET LOCAL statement_timeout')) {
+          if (
+            sql.startsWith('SET LOCAL statement_timeout') ||
+            sql.startsWith('SET LOCAL lock_timeout')
+          ) {
             return [];
           }
-          expect(transactionCommitted).toBe(true);
-          expect(otpConsumed).toBe(true);
+          if (!transactionCommitted || !otpConsumed) {
+            orderingViolated = true;
+          }
           throw new Error('DB session delete failed');
         }),
       };
-      let transactionCommitted = false;
-      let otpConsumed = false;
       const database = {
         query: vi.fn().mockResolvedValueOnce([
           {
@@ -1866,6 +1877,7 @@ describe('AuthService session approval boundary', () => {
         },
       });
 
+      expect(orderingViolated).toBe(false);
       expect(transactionCommitted).toBe(true);
       expect(otpConsumed).toBe(true);
       expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
@@ -1875,6 +1887,9 @@ describe('AuthService session approval boundary', () => {
       );
       expect(mockDbRunner.query).toHaveBeenCalledWith(
         'SET LOCAL statement_timeout = 5000',
+      );
+      expect(mockDbRunner.query).toHaveBeenCalledWith(
+        'SET LOCAL lock_timeout = 5000',
       );
     });
 
@@ -1948,21 +1963,36 @@ describe('AuthService session approval boundary', () => {
       );
     });
 
-    it('cancels blocked cleanup query via transaction-scoped SET LOCAL statement_timeout (57014) and fails with non-retryable 504 PROVIDER_TIMEOUT', async () => {
+    it('cancels blocked cleanup query via transaction-scoped SET LOCAL statement_timeout (57014), awaits rollback/release, and fails with non-retryable 504 PROVIDER_TIMEOUT', async () => {
       let transactionCommitted = false;
       let otpConsumed = false;
+      let orderingViolated = false;
+      let rollbackAwaitedCount = 0;
+      let releaseAwaitedCount = 0;
       const mockDbRunner = {
         query: vi.fn(async (sql: string) => {
-          if (sql.startsWith('SET LOCAL statement_timeout')) {
+          if (
+            sql.startsWith('SET LOCAL statement_timeout') ||
+            sql.startsWith('SET LOCAL lock_timeout')
+          ) {
             return [];
           }
-          expect(transactionCommitted).toBe(true);
-          expect(otpConsumed).toBe(true);
+          if (!transactionCommitted || !otpConsumed) {
+            orderingViolated = true;
+          }
           const pgTimeoutError = Object.assign(
             new Error('canceling statement due to statement timeout'),
             { code: '57014' },
           );
           throw pgTimeoutError;
+        }),
+        rollbackTransaction: vi.fn(async () => {
+          await Promise.resolve();
+          rollbackAwaitedCount++;
+        }),
+        release: vi.fn(async () => {
+          await Promise.resolve();
+          releaseAwaitedCount++;
         }),
       };
       const database = {
@@ -1976,11 +2006,18 @@ describe('AuthService session approval boundary', () => {
           },
         ]),
         transaction: vi.fn(async (targetUserId, operation) => {
-          const res = await operation(mockDbRunner as never);
-          if (targetUserId !== null) {
-            transactionCommitted = true;
+          try {
+            const res = await operation(mockDbRunner as never);
+            if (targetUserId !== null) {
+              transactionCommitted = true;
+            }
+            return res;
+          } catch (error) {
+            await mockDbRunner.rollbackTransaction();
+            throw error;
+          } finally {
+            await mockDbRunner.release();
           }
-          return res;
         }),
       } as unknown as DatabaseService;
 
@@ -2023,97 +2060,20 @@ describe('AuthService session approval boundary', () => {
         },
       });
 
+      expect(orderingViolated).toBe(false);
       expect(transactionCommitted).toBe(true);
       expect(otpConsumed).toBe(true);
+      expect(rollbackAwaitedCount).toBe(3);
+      expect(releaseAwaitedCount).toBe(4);
+      expect(mockDbRunner.rollbackTransaction).toHaveBeenCalledTimes(3);
+      expect(mockDbRunner.release).toHaveBeenCalledTimes(4);
       expect(mockDbRunner.query).toHaveBeenCalledWith(
         'SET LOCAL statement_timeout = 25',
       );
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
-    });
-
-    it('bounds hanging cleanup query in revokeGoTrueUserSessions with per-operation timeout and fails with non-retryable 504 PROVIDER_TIMEOUT', async () => {
-      let transactionCommitted = false;
-      let otpConsumed = false;
-      const mockDbRunner = {
-        query: vi.fn((sql: string) => {
-          if (sql.startsWith('SET LOCAL statement_timeout')) {
-            return Promise.resolve([]);
-          }
-          expect(transactionCommitted).toBe(true);
-          expect(otpConsumed).toBe(true);
-          return new Promise(() => {
-            // Hanging query that never settles
-          });
-        }),
-      };
-      const database = {
-        query: vi.fn().mockResolvedValueOnce([
-          {
-            id: userId,
-            email: 'user@example.com',
-            status: 'active',
-            verified_contact: true,
-            verified_at: '2026-01-01T00:00:00Z',
-          },
-        ]),
-        transaction: vi.fn(async (targetUserId, operation) => {
-          const res = await operation(mockDbRunner as never);
-          if (targetUserId !== null) {
-            transactionCommitted = true;
-          }
-          return res;
-        }),
-      } as unknown as DatabaseService;
-
-      const mockOtpStore = {
-        verifyAndConsumeOtp: vi.fn(async (_userId, _email, _code, onValid) => {
-          if (onValid) await onValid();
-          otpConsumed = true;
-        }),
-      } as unknown as OtpSecretStore;
-
-      const mockApprovals = {
-        revokeAllUserSessions: vi.fn().mockResolvedValue(1),
-      } as unknown as SessionApprovalService;
-
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: true,
-          status: 200,
-          json: async () => ({ id: userId }),
-        }),
-      );
-
-      const service = new AuthService(
-        database,
-        configuration({ GOTRUE_TIMEOUT_MS: 15 }),
-        {} as never,
-        mockApprovals,
-        mockOtpStore,
-      );
-
-      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
-        status: 504,
-        response: {
-          code: 'PROVIDER_TIMEOUT',
-          retryable: false,
-          message: expect.stringContaining(
-            'Password was updated and local sessions were revoked',
-          ),
-        },
-      });
-
-      expect(transactionCommitted).toBe(true);
-      expect(otpConsumed).toBe(true);
       expect(mockDbRunner.query).toHaveBeenCalledWith(
-        'SET LOCAL statement_timeout = 15',
+        'SET LOCAL lock_timeout = 25',
       );
       expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledWith(
-        userId,
-        mockDbRunner,
-      );
     });
 
     it('rolls back database transaction and fails if GoTrue update fails', async () => {

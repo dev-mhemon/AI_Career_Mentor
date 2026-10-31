@@ -15,7 +15,7 @@ export class DatabaseService {
     foreground = false,
     useServiceRole = true,
   ): Promise<T> {
-    return this.source.transaction('READ COMMITTED', async (db) => {
+    const runInTransaction = async (db: EntityManager): Promise<T> => {
       if (useServiceRole) {
         await db.query('SET LOCAL ROLE service_role');
       }
@@ -43,6 +43,28 @@ export class DatabaseService {
         );
       }
       return result;
-    });
+    };
+
+    if (typeof this.source.createQueryRunner === 'function') {
+      const qr = this.source.createQueryRunner();
+      let transactionStarted = false;
+      try {
+        await qr.connect();
+        await qr.startTransaction('READ COMMITTED');
+        transactionStarted = true;
+        const result = await runInTransaction(qr.manager);
+        await qr.commitTransaction();
+        return result;
+      } catch (error) {
+        if (transactionStarted) {
+          await qr.rollbackTransaction();
+        }
+        throw error;
+      } finally {
+        await qr.release();
+      }
+    }
+
+    return this.source.transaction('READ COMMITTED', runInTransaction);
   }
 }

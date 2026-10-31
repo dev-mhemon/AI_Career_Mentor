@@ -47,4 +47,34 @@ describe('C05 R24 foreground activity transaction', () => {
       query.mock.calls.some(([sql]) => sql.includes('UPDATE public.users')),
     ).toBe(false);
   });
+  it('releases query runner without calling rollbackTransaction if startTransaction rejects after connect', async () => {
+    let releaseAwaited = false;
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi
+        .fn()
+        .mockRejectedValue(new Error('BEGIN failed after connect')),
+      commitTransaction: vi.fn(),
+      rollbackTransaction: vi.fn(),
+      release: vi.fn(async () => {
+        await Promise.resolve();
+        releaseAwaited = true;
+      }),
+      manager: { query: vi.fn() },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => 'unreachable'),
+    ).rejects.toThrow('BEGIN failed after connect');
+
+    expect(qr.connect).toHaveBeenCalledTimes(1);
+    expect(qr.startTransaction).toHaveBeenCalledWith('READ COMMITTED');
+    expect(qr.rollbackTransaction).not.toHaveBeenCalled();
+    expect(qr.release).toHaveBeenCalledTimes(1);
+    expect(releaseAwaited).toBe(true);
+  });
 });

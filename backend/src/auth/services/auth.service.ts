@@ -1133,27 +1133,6 @@ export class AuthService {
     }
   }
 
-  private async withQueryTimeout<T>(
-    operation: () => Promise<T>,
-    timeoutMs: number,
-  ): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        operation(),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => {
-            reject(new Error(`Cleanup query timed out after ${timeoutMs}ms`));
-          }, timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-    }
-  }
-
   private async revokeGoTrueUserSessions(userId: string): Promise<void> {
     const configuredTimeout = Number(this.config.get('GOTRUE_TIMEOUT_MS'));
     const timeoutMs =
@@ -1164,32 +1143,27 @@ export class AuthService {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await this.withQueryTimeout(
-          () =>
-            this.database.transaction(
-              null,
-              async (qr) => {
-                await qr.query(
-                  `SET LOCAL statement_timeout = ${safeTimeoutMs}`,
-                );
-                await qr.query(
-                  `UPDATE auth.refresh_tokens
-                      SET revoked = true,
-                          updated_at = clock_timestamp()
-                    WHERE user_id = $1::text
-                      AND COALESCE(revoked, false) = false`,
-                  [userId],
-                );
-                await qr.query(
-                  'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
-                  [userId],
-                );
-              },
-              false,
-              false,
-              false,
-            ),
-          safeTimeoutMs,
+        await this.database.transaction(
+          null,
+          async (qr) => {
+            await qr.query(`SET LOCAL statement_timeout = ${safeTimeoutMs}`);
+            await qr.query(`SET LOCAL lock_timeout = ${safeTimeoutMs}`);
+            await qr.query(
+              `UPDATE auth.refresh_tokens
+                  SET revoked = true,
+                      updated_at = clock_timestamp()
+                WHERE user_id = $1::text
+                  AND COALESCE(revoked, false) = false`,
+              [userId],
+            );
+            await qr.query(
+              'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
+              [userId],
+            );
+          },
+          false,
+          false,
+          false,
         );
         return;
       } catch (error) {
@@ -1202,12 +1176,13 @@ export class AuthService {
       lastError instanceof Error ? lastError.stack : String(lastError),
     );
 
+    const errorCode = (lastError as { code?: unknown })?.code;
     const isTimeoutError =
-      (typeof (lastError as { code?: unknown })?.code === 'string' &&
-        (lastError as { code: string }).code === '57014') ||
+      (typeof errorCode === 'string' &&
+        (errorCode === '57014' || errorCode === '55P03')) ||
       (lastError instanceof Error &&
         (lastError.name === 'AbortError' ||
-          /statement timeout|query_canceled|timeout|timed out/i.test(
+          /statement timeout|lock timeout|query_canceled|timeout|timed out/i.test(
             lastError.message,
           )));
 
