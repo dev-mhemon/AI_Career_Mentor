@@ -13,6 +13,7 @@ import { AuthAbuseControlModule } from './abuse-control/abuse-control.module.js'
 import { EmailRegistrationProvider } from './services/email-registration.provider.js';
 import { EmailRegistrationService } from './services/email-registration.service.js';
 import { SessionApprovalService } from './services/session-approval.service.js';
+import { OtpSecretStore } from './services/otp-secret-store.service.js';
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'supabase' }),
@@ -22,6 +23,7 @@ import { SessionApprovalService } from './services/session-approval.service.js';
   providers: [
     SupabaseStrategy,
     AuthService,
+    OtpSecretStore,
     EmailRegistrationProvider,
     EmailRegistrationService,
     SessionApprovalService,
@@ -30,5 +32,6 @@ import { SessionApprovalService } from './services/session-approval.service.js';
     { provide: APP_GUARD, useClass: SupabaseAuthGuard },
     { provide: APP_GUARD, useClass: AccessGuard },
   ],
+  exports: [OtpSecretStore],
 })
 export class AuthModule {}

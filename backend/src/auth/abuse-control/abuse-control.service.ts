@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable } from '@nestjs/common';
 import type { OnModuleDestroy } from '@nestjs/common';
 import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -84,6 +84,34 @@ export class AuthAbuseControl implements OnModuleDestroy {
     return this.digest('ip', canonical);
   }
 
+  private async getConnectedClient(): Promise<ReturnType<typeof createClient>> {
+    if (!this.configuration || this.stopped) this.unavailable();
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    try {
+      if (!this.client) {
+        this.client = createClient({
+          url: this.configuration.url,
+          disableOfflineQueue: true,
+          socket: { connectTimeout: timeout, reconnectStrategy: false },
+        });
+        // Error events may contain credentials or connection details. Never log their payload.
+        this.client.on('error', () => undefined);
+      }
+      const client = this.client;
+      if (!client.isReady) {
+        this.connecting ??= client.connect().finally(() => {
+          this.connecting = undefined;
+        });
+        await this.withDeadline(this.connecting, timeout);
+      }
+      return client;
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      this.unavailable();
+    }
+  }
+
   private async evaluate(
     script: string,
     keys: string[],
@@ -106,22 +134,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
       ) * 1000;
     const policyKey = `auth:v1:policy:${this.digest('policy-namespace', 'v1')}`;
     try {
-      if (!this.client) {
-        this.client = createClient({
-          url: this.configuration.url,
-          disableOfflineQueue: true,
-          socket: { connectTimeout: timeout, reconnectStrategy: false },
-        });
-        // Error events may contain credentials or connection details. Never log their payload.
-        this.client.on('error', () => undefined);
-      }
-      const client = this.client;
-      if (!client.isReady) {
-        this.connecting ??= client.connect().finally(() => {
-          this.connecting = undefined;
-        });
-        await this.withDeadline(this.connecting, timeout);
-      }
+      const client = await this.getConnectedClient();
       return (await this.withDeadline(
         client.withCommandOptions({ timeout }).eval(policyGuard + script, {
           keys: [...keys, policyKey],
@@ -129,7 +142,8 @@ export class AuthAbuseControl implements OnModuleDestroy {
         }),
         timeout,
       )) as ScriptResult;
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
       // An ambiguous command is never replayed here. It may already have changed state.
       if (this.client?.isOpen) this.client.destroy();
       this.client = undefined;
@@ -278,11 +292,77 @@ export class AuthAbuseControl implements OnModuleDestroy {
     return { expiresInSeconds: ttl };
   }
 
+  isReady(): boolean {
+    return Boolean(this.configuration && !this.stopped);
+  }
+
+  async setOtpSecret(
+    userId: string,
+    digestHex: string,
+    ttlSeconds = 600,
+  ): Promise<void> {
+    if (!this.configuration || this.stopped) this.unavailable();
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:otp:secret:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).set(key, digestHex, {
+          EX: ttlSeconds,
+        }),
+        timeout,
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      this.unavailable();
+    }
+  }
+
+  async getOtpSecret(userId: string): Promise<string | null> {
+    if (!this.configuration || this.stopped) this.unavailable();
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:otp:secret:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      const val = await this.withDeadline(
+        client.withCommandOptions({ timeout }).get(key),
+        timeout,
+      );
+      return val ?? null;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      this.unavailable();
+    }
+  }
+
+  async deleteOtpSecret(userId: string): Promise<void> {
+    if (!this.configuration || this.stopped) this.unavailable();
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:otp:secret:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).del(key),
+        timeout,
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      this.unavailable();
+    }
+  }
+
   /** The code exists only in memory; Redis reserves the current generation before provider verification. */
   async verifyChallenge(
     contact: Contact,
     code: string,
     verify: (code: string) => Promise<boolean>,
+    secretKey?: string,
   ): Promise<void> {
     if (!this.configuration) this.unavailable();
     if (!/^[0-9]{6}$/.test(code))
@@ -299,6 +379,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
         ],
       );
     const keys = [`auth:v1:challenge:${this.contactKey(contact)}`];
+    if (secretKey) keys.push(secretKey);
     const attempt = randomUUID();
     const max = this.configuration.policy.AUTH_OTP_MAX_FAILURES;
     const begin = await this.evaluate(challengeScript, keys, [
@@ -313,7 +394,16 @@ export class AuthAbuseControl implements OnModuleDestroy {
     let valid: boolean;
     try {
       valid = await verify(code);
-    } catch {
+    } catch (err) {
+      if (err instanceof HttpException) {
+        await this.evaluate(challengeScript, keys, [
+          generation,
+          attempt,
+          'abort',
+          max,
+        ]).catch(() => undefined);
+        throw err;
+      }
       this.unavailable(Math.max(1, Math.ceil(begin[1] / 1000)));
     }
     this.check(

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager, QueryFailedError } from 'typeorm';
 import { DatabaseService } from './database.service.js';
@@ -7,9 +7,13 @@ import { profileComplete } from '../../common/profile-completeness.js';
 import { features } from '../policy.js';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { trustedClientIp } from '../client-ip.js';
-import { normalizeLoginRequest } from '../registration.dto.js';
+import {
+  normalizeLoginRequest,
+  normalizeVerifyEmailRequest,
+} from '../registration.dto.js';
 import type { Request } from 'express';
 import { SessionApprovalService } from './session-approval.service.js';
+import { OtpSecretStore } from './otp-secret-store.service.js';
 export interface JwtIdentity {
   sub: string;
   sessionId: string;
@@ -50,6 +54,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly abuse: AuthAbuseControl,
     private readonly approvals: SessionApprovalService,
+    @Optional() private readonly otpStore?: OtpSecretStore,
   ) {}
 
   private async authUser(authorization: string): Promise<AuthUser> {
@@ -501,6 +506,295 @@ export class AuthService {
       focus_roadmap_id: focus?.id || null,
       effective_access,
       can_delete_account: true,
+    };
+  }
+
+  async verifyEmail(body: unknown, _request?: Request) {
+    void _request;
+    const input = normalizeVerifyEmailRequest(body);
+    const email = input.email;
+    const code = input.code;
+
+    const [user] = await this.database.query(
+      `SELECT u.id, u.email, u.verified_contact, p.provider_subject, p.verified_at
+         FROM public.users u
+         JOIN public.user_auth_providers p
+           ON p.user_id = u.id AND p.provider = 'email'
+        WHERE lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1
+        LIMIT 1`,
+      [email],
+    );
+
+    if (!user) {
+      fail(410, 'VERIFICATION_CODE_EXPIRED', 'Verification challenge expired');
+    }
+
+    if (user.verified_contact === true || user.verified_at !== null) {
+      fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+    }
+
+    const userId = user.id;
+
+    if (!this.otpStore) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'OTP secret store is unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    let committed = false;
+    try {
+      await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
+        await this.confirmGoTrueUser(userId);
+
+        await this.database.transaction(
+          userId,
+          async (db) => {
+            const usersRes = await db.query(
+              `UPDATE public.users
+                  SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                WHERE id = $2 AND verified_contact = false`,
+              [email, userId],
+            );
+            const usersAffected =
+              Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                ? usersRes[1]
+                : (usersRes?.rowCount ?? 0);
+
+            const providersRes = await db.query(
+              `UPDATE public.user_auth_providers
+                  SET verified_at = now(), updated_at = now()
+                WHERE user_id = $1 AND provider = 'email' AND verified_at IS NULL`,
+              [userId],
+            );
+            const providersAffected =
+              Array.isArray(providersRes) && typeof providersRes[1] === 'number'
+                ? providersRes[1]
+                : (providersRes?.rowCount ?? 0);
+
+            if (usersAffected !== 1 || providersAffected !== 1) {
+              fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+            }
+
+            await db.query(
+              'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+              [userId],
+            );
+            await db.query(
+              'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+              [userId],
+            );
+          },
+          false,
+        );
+        committed = true;
+      });
+    } catch (error) {
+      if (!committed) {
+        throw error;
+      }
+    }
+
+    try {
+      return await this.mintAndApproveSession(userId, email);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        const resp = error.getResponse() as any;
+        const status = error.getStatus();
+        const code = resp?.code || 'SESSION_MINT_FAILED';
+        fail(
+          status,
+          code,
+          'Account is verified; sign in with your email and password to start your session',
+          resp?.details || [],
+          false,
+        );
+      }
+      fail(
+        502,
+        'PROVIDER_ERROR',
+        'Account is verified; sign in with your email and password to start your session',
+        [],
+        false,
+      );
+    }
+  }
+
+  private async confirmGoTrueUser(userId: string): Promise<void> {
+    const supabaseUrl = this.config
+      .getOrThrow<string>('SUPABASE_URL')
+      .replace(/\/$/, '');
+    const serviceRoleKey =
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
+      this.config.get<string>('SERVICE_ROLE_KEY');
+
+    let response: Response;
+    try {
+      response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          apikey: serviceRoleKey || '',
+          Authorization: `Bearer ${serviceRoleKey || ''}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email_confirm: true }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message))
+      ) {
+        fail(504, 'PROVIDER_TIMEOUT', 'Email provider timed out', [], true);
+      }
+      fail(
+        502,
+        'PROVIDER_ERROR',
+        'Email delivery could not be confirmed',
+        [],
+        true,
+      );
+    }
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as any;
+      if (
+        response.status === 422 &&
+        /already confirmed/i.test(data?.msg || '')
+      ) {
+        return;
+      }
+      fail(
+        502,
+        'PROVIDER_ERROR',
+        'Email delivery could not be confirmed',
+        [],
+        true,
+      );
+    }
+  }
+
+  private async mintAndApproveSession(userId: string, email: string) {
+    const supabaseUrl = this.config
+      .getOrThrow<string>('SUPABASE_URL')
+      .replace(/\/$/, '');
+    const serviceRoleKey =
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
+      this.config.get<string>('SERVICE_ROLE_KEY');
+    const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
+
+    let linkRes: Response;
+    try {
+      linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+        method: 'POST',
+        headers: {
+          apikey: serviceRoleKey || '',
+          Authorization: `Bearer ${serviceRoleKey || ''}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'magiclink', email }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message))
+      ) {
+        fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
+      }
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    if (!linkRes.ok) {
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    const linkData = (await linkRes.json().catch(() => null)) as any;
+    const tokenHash =
+      linkData?.hashed_token || linkData?.properties?.hashed_token;
+    if (!tokenHash) {
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    let verifyRes: Response;
+    try {
+      verifyRes = await fetch(`${supabaseUrl}/auth/v1/verify`, {
+        method: 'POST',
+        headers: {
+          apikey: anonKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token_hash: tokenHash,
+          type: 'magiclink',
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message))
+      ) {
+        fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
+      }
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    if (!verifyRes.ok) {
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+    }
+
+    const sessionData = (await verifyRes.json().catch(() => null)) as
+      (ProviderSession & { user?: { id?: string } }) | null;
+
+    if (!sessionData?.access_token) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Auth service returned an invalid session',
+      );
+    }
+
+    const identity = this.sessionIdentity(sessionData.access_token);
+    if (identity.sub !== userId) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Auth service returned an invalid session',
+      );
+    }
+
+    const result = await this.database.transaction(
+      userId,
+      async (db) => {
+        await this.approvals.approve(
+          db,
+          userId,
+          identity.sessionId,
+          'email_verification',
+        );
+        return this.meInTransaction(db, userId);
+      },
+      false,
+    );
+
+    return {
+      access_token: sessionData.access_token,
+      refresh_token: sessionData.refresh_token,
+      expires_in: sessionData.expires_in,
+      token_type: 'Bearer' as const,
+      user: result.user,
+      profile_complete: result.profile_complete,
+      next_step: result.profile_complete
+        ? ('app_home' as const)
+        : ('profile_setup' as const),
     };
   }
 }

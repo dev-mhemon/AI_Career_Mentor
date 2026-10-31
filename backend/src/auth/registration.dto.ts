@@ -151,3 +151,24 @@ export function normalizeLoginRequest(value: unknown): LoginRequestDTO {
     invalid('password', 'Enter a password');
   return { ...contact, password: input.password };
 }
+
+export interface VerifyEmailRequestDTO {
+  email: string;
+  code: string;
+}
+
+export function normalizeVerifyEmailRequest(
+  value: unknown,
+): VerifyEmailRequestDTO {
+  const input = object(value);
+  keys(input, ['email', 'code']);
+  const contact = normalizeContact('email', input.email, 'email');
+  if (typeof input.code !== 'string') {
+    invalid('code', 'Verification code must contain six digits');
+  }
+  const code = input.code.trim();
+  if (!/^\d{6}$/.test(code)) {
+    invalid('code', 'Verification code must contain six digits');
+  }
+  return { email: contact.identifier, code };
+}

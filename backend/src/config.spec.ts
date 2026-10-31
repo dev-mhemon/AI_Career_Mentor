@@ -68,4 +68,20 @@ describe('Public runtime key boundary', () => {
       validateConfiguration({ ...base, AUTH_PASSWORD_MIN_LENGTH: '12' }),
     ).not.toThrow();
   });
+  it('validates optional AUTH_OTP_HMAC_SECRET for 32 secret bytes and no template placeholder', () => {
+    for (const secret of [
+      '',
+      'short-secret',
+      'replace_with_at_least_32_random_secret_bytes',
+    ])
+      expect(() =>
+        validateConfiguration({ ...base, AUTH_OTP_HMAC_SECRET: secret }),
+      ).toThrow('AUTH_OTP_HMAC_SECRET');
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AUTH_OTP_HMAC_SECRET: '01234567890123456789012345678901',
+      }),
+    ).not.toThrow();
+  });
 });

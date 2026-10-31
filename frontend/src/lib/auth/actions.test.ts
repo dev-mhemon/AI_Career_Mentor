@@ -7,7 +7,7 @@ import {
   logoutAction,
   signInWithOAuth,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, ApiError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -71,6 +71,7 @@ vi.mock("@/lib/api/client", () => {
     approveOAuthSession: vi.fn(),
     registerUser: vi.fn(),
     resendVerification: vi.fn(),
+    verifyEmail: vi.fn(),
     NetworkError: MockNetworkError,
     ApiError: MockApiError,
   };
@@ -215,17 +216,104 @@ describe("Auth Actions", () => {
       expect(result).toEqual({ error: "Invalid verification request." });
     });
 
-    it("fails closed until EP-A02 backend verification is implemented", async () => {
+    it("returns error if verification context is missing", async () => {
+      mockCookieStore.get.mockReturnValueOnce(undefined);
       const formData = new FormData();
       formData.set("type", "email");
       formData.set("token", "123456");
 
       const result = await verifyOtpAction({}, formData);
-      expect(result).toEqual({
-        error:
-          "Direct OTP verification is temporarily suspended until backend challenge verification (EP-A02) is enabled.",
+      expect(result).toEqual({ error: "Invalid verification request." });
+    });
+
+    it("verifies email via backend EP-A02 and redirects to /dashboard?next_step=profile_setup on profile_setup", async () => {
+      vi.mocked(verifyEmail).mockResolvedValueOnce({
+        access_token: "test-access-token",
+        refresh_token: "test-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "test-user-id",
+          email: "test@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: false,
+        next_step: "profile_setup",
       });
-      expect(mockVerifyOtp).not.toHaveBeenCalled();
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const formData = new FormData();
+      formData.set("type", "email");
+      formData.set("token", "123456");
+
+      await verifyOtpAction({}, formData);
+
+      expect(verifyEmail).toHaveBeenCalledWith({
+        email: "test@example.com",
+        code: "123456",
+      });
+      expect(mockSetSession).toHaveBeenCalledWith({
+        access_token: "test-access-token",
+        refresh_token: "test-refresh-token",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        "",
+        expect.objectContaining({ path: "/verify", maxAge: 0 }),
+      );
+      expect(redirect).toHaveBeenCalledWith(
+        "/dashboard?next_step=profile_setup",
+      );
+    });
+
+    it("verifies email via backend EP-A02 and redirects to /dashboard on app_home", async () => {
+      vi.mocked(verifyEmail).mockResolvedValueOnce({
+        access_token: "test-access-token",
+        refresh_token: "test-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "test-user-id",
+          email: "test@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const formData = new FormData();
+      formData.set("type", "email");
+      formData.set("token", "123456");
+
+      await verifyOtpAction({}, formData);
+
+      expect(redirect).toHaveBeenCalledWith("/dashboard");
+    });
+
+    it("returns error message when verifyEmail throws ApiError", async () => {
+      vi.mocked(verifyEmail).mockRejectedValueOnce(
+        new ApiError(
+          422,
+          "Verification code is invalid",
+          "VERIFICATION_CODE_INVALID",
+        ),
+      );
+
+      const formData = new FormData();
+      formData.set("type", "email");
+      formData.set("token", "000000");
+
+      const result = await verifyOtpAction({}, formData);
+      expect(result).toEqual({ error: "Verification code is invalid" });
     });
   });
 
