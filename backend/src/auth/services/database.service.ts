@@ -50,15 +50,13 @@ export class DatabaseService {
     if (typeof this.source.createQueryRunner === 'function') {
       const qr = this.source.createQueryRunner();
       let transactionStarted = false;
-      let result!: T;
-      let pendingReleaseError: unknown;
-      let hasPendingReleaseError = false;
       try {
         await qr.connect();
         await qr.startTransaction('READ COMMITTED');
         transactionStarted = true;
-        result = await runInTransaction(qr.manager);
+        const result = await runInTransaction(qr.manager);
         await qr.commitTransaction();
+        return result;
       } catch (error) {
         if (transactionStarted) {
           try {
@@ -83,14 +81,8 @@ export class DatabaseService {
               ? releaseError.stack
               : String(releaseError),
           );
-          pendingReleaseError = releaseError;
-          hasPendingReleaseError = true;
         }
       }
-      if (hasPendingReleaseError) {
-        throw pendingReleaseError;
-      }
-      return result;
     }
 
     return this.source.transaction('READ COMMITTED', runInTransaction);

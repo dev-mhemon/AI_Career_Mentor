@@ -147,7 +147,7 @@ describe('C05 R24 foreground activity transaction', () => {
     expect(qr.release).toHaveBeenCalledTimes(1);
   });
 
-  it('propagates qr.release() failure when the transaction otherwise succeeded', async () => {
+  it('logs qr.release() failure without throwing or replacing the committed result after commitTransaction succeeds', async () => {
     const releaseError = new Error('pool release failed after commit');
     const qr = {
       connect: vi.fn().mockResolvedValue(undefined),
@@ -166,7 +166,7 @@ describe('C05 R24 foreground activity transaction', () => {
 
     await expect(
       service.transaction('owner', async () => 'committed'),
-    ).rejects.toBe(releaseError);
+    ).resolves.toBe('committed');
 
     expect(qr.commitTransaction).toHaveBeenCalledTimes(1);
     expect(qr.rollbackTransaction).not.toHaveBeenCalled();
