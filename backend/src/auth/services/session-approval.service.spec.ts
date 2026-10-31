@@ -108,4 +108,37 @@ describe('SessionApprovalService', () => {
       expect(approved).toBe(false);
     });
   });
+
+  describe('revokeAllUserSessions', () => {
+    it('executes UPDATE on private.approved_auth_sessions revoking all unrevoked sessions for user', async () => {
+      const query = vi.fn().mockResolvedValue([[], 3]);
+      const database = { query } as unknown as DatabaseService;
+      const service = new SessionApprovalService(database);
+
+      const count = await service.revokeAllUserSessions(userId);
+
+      expect(count).toBe(3);
+      expect(query).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /UPDATE private\.approved_auth_sessions\s+SET revoked_at = clock_timestamp\(\),\s+updated_at = clock_timestamp\(\)\s+WHERE user_id = \$1::uuid\s+AND revoked_at IS NULL/,
+        ),
+        [userId],
+      );
+    });
+
+    it('uses passed EntityManager when provided', async () => {
+      const dbQuery = vi.fn().mockResolvedValue({ rowCount: 2 });
+      const service = new SessionApprovalService();
+
+      const count = await service.revokeAllUserSessions(userId, {
+        query: dbQuery,
+      } as unknown as EntityManager);
+
+      expect(count).toBe(2);
+      expect(dbQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE private.approved_auth_sessions'),
+        [userId],
+      );
+    });
+  });
 });

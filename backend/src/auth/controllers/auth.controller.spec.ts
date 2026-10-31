@@ -107,4 +107,43 @@ describe('C05 OAuth session response', () => {
     expect(result).toEqual(mockSession);
     expect(refresh).toHaveBeenCalledWith(body);
   });
+
+  it('delegates forgotPassword to authService.forgotPassword', async () => {
+    const mockResponse = {
+      message: 'If the account exists, a code was sent.',
+    };
+    const forgotPassword = vi.fn().mockResolvedValue(mockResponse);
+    const controller = new AuthController(
+      { forgotPassword } as unknown as AuthService,
+      {} as never,
+    );
+    const req = { ip: '127.0.0.1' } as any;
+    const body = { identifier: 'user@example.com' };
+
+    const result = await controller.forgotPassword(req, body);
+    expect(result).toEqual(mockResponse);
+    expect(forgotPassword).toHaveBeenCalledWith(body, req);
+  });
+
+  it('delegates resetPassword to authService.resetPassword', async () => {
+    const mockResponse = {
+      password_reset: true,
+    };
+    const resetPassword = vi.fn().mockResolvedValue(mockResponse);
+    const controller = new AuthController(
+      { resetPassword } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {} as any;
+    const body = {
+      identifier: 'user@example.com',
+      code: '123456',
+      new_password: 'N3w!Password',
+      confirm_new_password: 'N3w!Password',
+    };
+
+    const result = await controller.resetPassword(req, body);
+    expect(result).toEqual(mockResponse);
+    expect(resetPassword).toHaveBeenCalledWith(body, req);
+  });
 });

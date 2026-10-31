@@ -7,6 +7,8 @@ import {
   syncUser,
   logoutUser,
   refreshSession,
+  forgotPassword,
+  resetPassword,
   getMe,
   ApiError,
   UnauthorizedError,
@@ -333,6 +335,66 @@ describe('C05 error contract preservation', () => {
       expect(callArgs[1]?.headers?.Authorization).toBeUndefined();
     });
   });
+    describe('forgotPassword', () => {
+      it('sends POST /auth/forgot-password with identifier without auth header and returns message', async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 202,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: { message: 'If the account exists, a code was sent.' },
+            }),
+        });
+
+        const result = await forgotPassword('user@example.com');
+        expect(result).toEqual({ message: 'If the account exists, a code was sent.' });
+        expect(mockFetch).toHaveBeenCalledWith(
+          'http://localhost:3000/api/v1/auth/forgot-password',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ identifier: 'user@example.com' }),
+          }),
+        );
+        const callArgs = mockFetch.mock.calls[0];
+        expect(callArgs[1]?.headers?.Authorization).toBeUndefined();
+      });
+    });
+
+    describe('resetPassword', () => {
+      it('sends POST /auth/reset-password with payload and returns password_reset', async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: { password_reset: true },
+            }),
+        });
+
+        const result = await resetPassword(
+          'user@example.com',
+          '123456',
+          'N3w!Passw0rd',
+          'N3w!Passw0rd',
+        );
+        expect(result).toEqual({ password_reset: true });
+        expect(mockFetch).toHaveBeenCalledWith(
+          'http://localhost:3000/api/v1/auth/reset-password',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({
+              identifier: 'user@example.com',
+              code: '123456',
+              new_password: 'N3w!Passw0rd',
+              confirm_new_password: 'N3w!Passw0rd',
+            }),
+          }),
+        );
+      });
+    });
+
 });
 
 it('preserves a server Retry-After header when optional body metadata is absent', async () => {

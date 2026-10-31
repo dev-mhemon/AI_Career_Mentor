@@ -55,6 +55,31 @@ export class SessionApprovalService {
     return true;
   }
 
+  async revokeAllUserSessions(
+    userId: string,
+    db?: EntityManager,
+  ): Promise<number> {
+    const runner = db ?? this.database;
+    if (!runner) {
+      fail(500, 'INTERNAL_ERROR', 'Database unavailable');
+    }
+    const result = await runner.query(
+      `UPDATE private.approved_auth_sessions
+          SET revoked_at = clock_timestamp(),
+              updated_at = clock_timestamp()
+        WHERE user_id = $1::uuid
+          AND revoked_at IS NULL`,
+      [userId],
+    );
+    if (Array.isArray(result) && typeof result[1] === 'number') {
+      return result[1];
+    }
+    if (result && typeof (result as any).rowCount === 'number') {
+      return (result as any).rowCount;
+    }
+    return 0;
+  }
+
   async isSessionApproved(
     userId: string,
     sessionId: string,

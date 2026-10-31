@@ -1,8 +1,10 @@
 import { HttpException } from '@nestjs/common';
 import {
+  normalizeForgotPasswordRequest,
   normalizeRefreshTokenRequest,
   normalizeRegisterRequest,
   normalizeResendRequest,
+  normalizeResetPasswordRequest,
 } from './registration.dto.js';
 
 const valid = {
@@ -177,6 +179,128 @@ describe('C05 shared registration and resend input', () => {
             refresh_token: 'valid',
             unknown_prop: true,
           }),
+        ).status,
+      ).toBe(422);
+    });
+  });
+
+  describe('EP-A08 Forgot Password input validation', () => {
+    it('normalizes valid email identifier', () => {
+      expect(
+        normalizeForgotPasswordRequest({ identifier: '  Rahim@Example.COM ' }),
+      ).toEqual({
+        channel: 'email',
+        identifier: 'rahim@example.com',
+      });
+    });
+
+    it('normalizes valid Bangladesh mobile identifier', () => {
+      expect(
+        normalizeForgotPasswordRequest({ identifier: '01712345678' }),
+      ).toEqual({
+        channel: 'phone',
+        identifier: '+8801712345678',
+      });
+      expect(
+        normalizeForgotPasswordRequest({ identifier: '+8801712345678' }),
+      ).toEqual({
+        channel: 'phone',
+        identifier: '+8801712345678',
+      });
+    });
+
+    it('rejects invalid identifier or extra fields', () => {
+      expect(
+        errorOf(() => normalizeForgotPasswordRequest({ identifier: 'invalid' }))
+          .status,
+      ).toBe(422);
+      expect(errorOf(() => normalizeForgotPasswordRequest({})).status).toBe(
+        422,
+      );
+      expect(
+        errorOf(() =>
+          normalizeForgotPasswordRequest({
+            identifier: 'user@example.com',
+            extra: 123,
+          }),
+        ).status,
+      ).toBe(422);
+    });
+  });
+
+  describe('EP-A09 Reset Password input validation', () => {
+    const validReset = {
+      identifier: '  Rahim@Example.COM ',
+      code: '  123456  ',
+      new_password: 'N3w!Passw0rd',
+      confirm_new_password: 'N3w!Passw0rd',
+    };
+
+    it('normalizes valid reset password request', () => {
+      expect(normalizeResetPasswordRequest(validReset)).toEqual({
+        channel: 'email',
+        identifier: 'rahim@example.com',
+        code: '123456',
+        new_password: 'N3w!Passw0rd',
+        confirm_new_password: 'N3w!Passw0rd',
+      });
+    });
+
+    it('rejects code that is not six digits', () => {
+      expect(
+        errorOf(() =>
+          normalizeResetPasswordRequest({ ...validReset, code: '12345' }),
+        ).status,
+      ).toBe(422);
+      expect(
+        errorOf(() =>
+          normalizeResetPasswordRequest({ ...validReset, code: 'abcdef' }),
+        ).status,
+      ).toBe(422);
+    });
+
+    it('rejects password that does not meet policy', () => {
+      const short = errorOf(() =>
+        normalizeResetPasswordRequest({
+          ...validReset,
+          new_password: 'short',
+          confirm_new_password: 'short',
+        }),
+      );
+      expect(short.status).toBe(422);
+      expect(short.body.code).toBe('PASSWORD_POLICY_FAILED');
+
+      const numeric = errorOf(() =>
+        normalizeResetPasswordRequest({
+          ...validReset,
+          new_password: '1234567890',
+          confirm_new_password: '1234567890',
+        }),
+      );
+      expect(numeric.status).toBe(422);
+      expect(numeric.body.code).toBe('PASSWORD_POLICY_FAILED');
+    });
+
+    it('rejects password mismatch', () => {
+      const mismatch = errorOf(() =>
+        normalizeResetPasswordRequest({
+          ...validReset,
+          confirm_new_password: 'different-password',
+        }),
+      );
+      expect(mismatch.status).toBe(422);
+      expect(mismatch.body.details).toEqual([
+        expect.objectContaining({
+          field: 'confirm_new_password',
+          code: 'PASSWORD_MISMATCH',
+        }),
+      ]);
+    });
+
+    it('rejects extra unknown fields', () => {
+      expect(
+        errorOf(() =>
+          normalizeResetPasswordRequest({ ...validReset, extra: true }),
         ).status,
       ).toBe(422);
     });

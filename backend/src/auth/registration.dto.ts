@@ -43,7 +43,7 @@ function keys(value: Record<string, unknown>, allowed: string[]): void {
   if (extra) invalid(extra, 'Field is not allowed');
 }
 
-function invalidPhone(field: 'phone' | 'contact'): never {
+function invalidPhone(field: 'phone' | 'contact' | 'identifier'): never {
   fail(422, 'INVALID_PHONE_NUMBER', 'Enter a Bangladesh mobile number', [
     {
       field,
@@ -56,10 +56,11 @@ function invalidPhone(field: 'phone' | 'contact'): never {
 export function normalizeContact(
   channel: 'email' | 'phone',
   value: unknown,
-  field: 'email' | 'phone' | 'contact' = 'contact',
+  field: 'email' | 'phone' | 'contact' | 'identifier' = 'contact',
 ): NormalizedContact {
   if (typeof value !== 'string') {
-    if (channel === 'phone') invalidPhone(field as 'phone' | 'contact');
+    if (channel === 'phone')
+      invalidPhone(field as 'phone' | 'contact' | 'identifier');
     invalid(field, 'Enter a valid contact');
   }
   if (channel === 'email') {
@@ -73,7 +74,7 @@ export function normalizeContact(
     ? `+88${compact}`
     : compact;
   if (!/^\+8801[3-9][0-9]{8}$/.test(identifier))
-    invalidPhone(field as 'phone' | 'contact');
+    invalidPhone(field as 'phone' | 'contact' | 'identifier');
   return { channel, identifier };
 }
 
@@ -189,4 +190,81 @@ export function normalizeRefreshTokenRequest(
     invalid('refresh_token', 'refresh_token is required');
   }
   return { refresh_token: input.refresh_token.trim() };
+}
+
+export interface ForgotPasswordRequestDTO {
+  identifier: string;
+}
+
+export function normalizeForgotPasswordRequest(
+  value: unknown,
+): NormalizedContact {
+  const input = object(value);
+  keys(input, ['identifier']);
+  if (typeof input.identifier !== 'string') {
+    invalid('identifier', 'Enter an email address or Bangladesh mobile number');
+  }
+  const channel = input.identifier.includes('@') ? 'email' : 'phone';
+  return normalizeContact(channel, input.identifier, 'identifier');
+}
+
+export interface ResetPasswordRequestDTO extends NormalizedContact {
+  code: string;
+  new_password: string;
+  confirm_new_password: string;
+}
+
+export function normalizeResetPasswordRequest(
+  value: unknown,
+  minimumPasswordLength = 8,
+): ResetPasswordRequestDTO {
+  if (
+    !Number.isSafeInteger(minimumPasswordLength) ||
+    minimumPasswordLength < 8 ||
+    minimumPasswordLength > 128
+  )
+    throw new Error('Invalid reset password minimum');
+  const input = object(value);
+  keys(input, ['identifier', 'code', 'new_password', 'confirm_new_password']);
+  if (typeof input.identifier !== 'string') {
+    invalid('identifier', 'Enter an email address or Bangladesh mobile number');
+  }
+  const channel = input.identifier.includes('@') ? 'email' : 'phone';
+  const contact = normalizeContact(channel, input.identifier, 'identifier');
+
+  if (typeof input.code !== 'string') {
+    invalid('code', 'Verification code must contain six digits');
+  }
+  const code = input.code.trim();
+  if (!/^\d{6}$/.test(code)) {
+    invalid('code', 'Verification code must contain six digits');
+  }
+
+  if (
+    typeof input.new_password !== 'string' ||
+    input.new_password.length < minimumPasswordLength ||
+    input.new_password.length > 128 ||
+    /^[0-9]+$/.test(input.new_password)
+  )
+    fail(422, 'PASSWORD_POLICY_FAILED', 'Password does not meet policy', [
+      {
+        field: 'new_password',
+        code: 'PASSWORD_POLICY_FAILED',
+        message: `Use ${minimumPasswordLength}–128 characters and a nonnumeric password`,
+      },
+    ]);
+
+  if (input.confirm_new_password !== input.new_password)
+    invalid(
+      'confirm_new_password',
+      'Passwords do not match',
+      'PASSWORD_MISMATCH',
+    );
+
+  return {
+    ...contact,
+    code,
+    new_password: input.new_password,
+    confirm_new_password: input.confirm_new_password as string,
+  };
 }

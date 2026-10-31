@@ -266,6 +266,40 @@ export function refreshSession(
   });
 }
 
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+export function forgotPassword(
+  identifier: string,
+): Promise<ForgotPasswordResponse> {
+  return apiFetch<ForgotPasswordResponse>('/auth/forgot-password', null, {
+    method: 'POST',
+    body: JSON.stringify({ identifier }),
+  });
+}
+
+export interface ResetPasswordResponse {
+  password_reset: true;
+}
+
+export function resetPassword(
+  identifier: string,
+  code: string,
+  newPassword: string,
+  confirmNewPassword: string,
+): Promise<ResetPasswordResponse> {
+  return apiFetch<ResetPasswordResponse>('/auth/reset-password', null, {
+    method: 'POST',
+    body: JSON.stringify({
+      identifier,
+      code,
+      new_password: newPassword,
+      confirm_new_password: confirmNewPassword,
+    }),
+  });
+}
+
 /**
  * GET /auth/me
  * Returns the current application-level user (role, status).

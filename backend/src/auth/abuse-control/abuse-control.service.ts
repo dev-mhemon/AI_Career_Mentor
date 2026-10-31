@@ -271,6 +271,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
   async issueChallenge(
     contact: Contact,
     providerValiditySeconds?: number,
+    purpose?: string,
   ): Promise<{ expiresInSeconds: number }> {
     if (!this.configuration) this.unavailable();
     const validity =
@@ -282,10 +283,13 @@ export class AuthAbuseControl implements OnModuleDestroy {
       this.configuration.policy.AUTH_OTP_TTL_SECONDS,
     );
     const generation = randomUUID();
+    const challengeKey = purpose
+      ? `auth:v1:challenge:${purpose}:${this.contactKey(contact)}`
+      : `auth:v1:challenge:${this.contactKey(contact)}`;
     this.check(
       await this.evaluate(
         issueScript,
-        [`auth:v1:challenge:${this.contactKey(contact)}`],
+        [challengeKey],
         [generation, ttl * 1000],
       ),
     );
@@ -300,10 +304,13 @@ export class AuthAbuseControl implements OnModuleDestroy {
     userId: string,
     digestHex: string,
     ttlSeconds = 600,
+    purpose?: string,
   ): Promise<void> {
     if (!this.configuration || this.stopped) this.unavailable();
     const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
-    const key = `auth:v1:otp:secret:${userId}`;
+    const key = purpose
+      ? `auth:v1:otp:secret:${purpose}:${userId}`
+      : `auth:v1:otp:secret:${userId}`;
     try {
       const client = await this.getConnectedClient();
       await this.withDeadline(
@@ -320,10 +327,12 @@ export class AuthAbuseControl implements OnModuleDestroy {
     }
   }
 
-  async getOtpSecret(userId: string): Promise<string | null> {
+  async getOtpSecret(userId: string, purpose?: string): Promise<string | null> {
     if (!this.configuration || this.stopped) this.unavailable();
     const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
-    const key = `auth:v1:otp:secret:${userId}`;
+    const key = purpose
+      ? `auth:v1:otp:secret:${purpose}:${userId}`
+      : `auth:v1:otp:secret:${userId}`;
     try {
       const client = await this.getConnectedClient();
       const val = await this.withDeadline(
@@ -339,10 +348,12 @@ export class AuthAbuseControl implements OnModuleDestroy {
     }
   }
 
-  async deleteOtpSecret(userId: string): Promise<void> {
+  async deleteOtpSecret(userId: string, purpose?: string): Promise<void> {
     if (!this.configuration || this.stopped) this.unavailable();
     const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
-    const key = `auth:v1:otp:secret:${userId}`;
+    const key = purpose
+      ? `auth:v1:otp:secret:${purpose}:${userId}`
+      : `auth:v1:otp:secret:${userId}`;
     try {
       const client = await this.getConnectedClient();
       await this.withDeadline(
@@ -363,6 +374,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
     code: string,
     verify: (code: string) => Promise<boolean>,
     secretKey?: string,
+    purpose?: string,
   ): Promise<void> {
     if (!this.configuration) this.unavailable();
     if (!/^[0-9]{6}$/.test(code))
@@ -378,7 +390,10 @@ export class AuthAbuseControl implements OnModuleDestroy {
           },
         ],
       );
-    const keys = [`auth:v1:challenge:${this.contactKey(contact)}`];
+    const challengeKey = purpose
+      ? `auth:v1:challenge:${purpose}:${this.contactKey(contact)}`
+      : `auth:v1:challenge:${this.contactKey(contact)}`;
+    const keys = [challengeKey];
     if (secretKey) keys.push(secretKey);
     const attempt = randomUUID();
     const max = this.configuration.policy.AUTH_OTP_MAX_FAILURES;

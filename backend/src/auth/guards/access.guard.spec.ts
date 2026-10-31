@@ -87,6 +87,33 @@ describe('Reviewed AccessGuard policy order', () => {
       response: { code: 'UNVERIFIED_ACCOUNT' },
     });
   });
+  it('rejects a token whose session was revoked by resetPassword or logout', async () => {
+    const f = fixture({}, [
+      [{ status: 'active', verified_contact: true, session_approved: false }],
+    ]);
+    await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
+      status: 403,
+      response: {
+        code: 'UNVERIFIED_ACCOUNT',
+        message: 'Approved session required',
+      },
+    });
+  });
+  it('fails closed with 401 when sessionId is missing on request user', async () => {
+    const f = fixture({}, []);
+    const context = {
+      ...f.context,
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { sub: '11111111-1111-4111-8111-111111111111' },
+        }),
+      }),
+    } as unknown as ExecutionContext;
+    await expect(f.guard.canActivate(context)).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'AUTH_REQUIRED' },
+    });
+  });
   it('fails closed when the approval lookup is unavailable', async () => {
     const reflector = new Reflector();
     vi.spyOn(reflector, 'getAllAndOverride').mockReturnValue({});
