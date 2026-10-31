@@ -301,7 +301,11 @@ describe("Auth Actions", () => {
 
     it("returns error message when verifyEmail throws ApiError", async () => {
       vi.mocked(verifyEmail).mockRejectedValueOnce(
-        new ApiError(422, "Verification code is invalid", "INVALID_OTP"),
+        new ApiError(
+          422,
+          "Verification code is invalid",
+          "VERIFICATION_CODE_INVALID",
+        ),
       );
 
       const formData = new FormData();

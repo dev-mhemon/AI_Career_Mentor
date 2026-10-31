@@ -526,7 +526,7 @@ export class AuthService {
     );
 
     if (!user) {
-      fail(410, 'OTP_EXPIRED', 'Verification challenge expired');
+      fail(410, 'VERIFICATION_CODE_EXPIRED', 'Verification challenge expired');
     }
 
     if (user.verified_contact === true || user.verified_at !== null) {
@@ -616,7 +616,7 @@ export class AuthService {
       }
       fail(
         502,
-        'EMAIL_PROVIDER_ERROR',
+        'PROVIDER_ERROR',
         'Account is verified; sign in with your email and password to start your session',
         [],
         false,
@@ -654,7 +654,7 @@ export class AuthService {
       }
       fail(
         502,
-        'EMAIL_PROVIDER_ERROR',
+        'PROVIDER_ERROR',
         'Email delivery could not be confirmed',
         [],
         true,
@@ -671,7 +671,7 @@ export class AuthService {
       }
       fail(
         502,
-        'EMAIL_PROVIDER_ERROR',
+        'PROVIDER_ERROR',
         'Email delivery could not be confirmed',
         [],
         true,
@@ -708,18 +708,18 @@ export class AuthService {
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
       }
-      fail(502, 'EMAIL_PROVIDER_ERROR', 'Auth provider error', [], true);
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
     }
 
     if (!linkRes.ok) {
-      fail(502, 'EMAIL_PROVIDER_ERROR', 'Auth provider error', [], true);
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
     }
 
     const linkData = (await linkRes.json().catch(() => null)) as any;
     const tokenHash =
       linkData?.hashed_token || linkData?.properties?.hashed_token;
     if (!tokenHash) {
-      fail(502, 'EMAIL_PROVIDER_ERROR', 'Auth provider error', [], true);
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
     }
 
     let verifyRes: Response;
@@ -744,11 +744,11 @@ export class AuthService {
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
       }
-      fail(502, 'EMAIL_PROVIDER_ERROR', 'Auth provider error', [], true);
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
     }
 
     if (!verifyRes.ok) {
-      fail(502, 'EMAIL_PROVIDER_ERROR', 'Auth provider error', [], true);
+      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
     }
 
     const sessionData = (await verifyRes.json().catch(() => null)) as

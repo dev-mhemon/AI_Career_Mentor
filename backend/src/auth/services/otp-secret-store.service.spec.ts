@@ -115,13 +115,13 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         store.verifyAndConsumeOtp(userId, email, '12345'),
       ).rejects.toMatchObject({
         status: 422,
-        response: { code: 'INVALID_OTP' },
+        response: { code: 'VERIFICATION_CODE_INVALID' },
       });
       await expect(
         store.verifyAndConsumeOtp(userId, email, 'abcdef'),
       ).rejects.toMatchObject({
         status: 422,
-        response: { code: 'INVALID_OTP' },
+        response: { code: 'VERIFICATION_CODE_INVALID' },
       });
       expect(abuseControl.verifyChallenge).not.toHaveBeenCalled();
     });
@@ -206,11 +206,11 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         store.verifyAndConsumeOtp(userId, email, '654321'),
       ).rejects.toMatchObject({
         status: 422,
-        response: { code: 'INVALID_OTP' },
+        response: { code: 'VERIFICATION_CODE_INVALID' },
       });
     });
 
-    it('throws 410 OTP_EXPIRED inside verifyFn when secret is absent or expired in Redis', async () => {
+    it('throws 410 VERIFICATION_CODE_EXPIRED inside verifyFn when secret is absent or expired in Redis', async () => {
       abuseControl.getOtpSecret.mockResolvedValue(null);
 
       abuseControl.verifyChallenge.mockImplementation(
@@ -223,11 +223,11 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         store.verifyAndConsumeOtp(userId, email, '123456'),
       ).rejects.toMatchObject({
         status: 410,
-        response: { code: 'OTP_EXPIRED' },
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
       });
     });
 
-    it('throws 410 OTP_EXPIRED when challenge is expired in abuse-control', async () => {
+    it('throws 410 VERIFICATION_CODE_EXPIRED when challenge is expired in abuse-control', async () => {
       abuseControl.verifyChallenge.mockRejectedValue(
         new HttpException({ code: 'VERIFICATION_CODE_EXPIRED' }, 410),
       );
@@ -236,11 +236,11 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         store.verifyAndConsumeOtp(userId, email, '123456'),
       ).rejects.toMatchObject({
         status: 410,
-        response: { code: 'OTP_EXPIRED' },
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
       });
     });
 
-    it('throws 429 RATE_LIMITED without deleting a possibly newer secret', async () => {
+    it('throws 429 VERIFICATION_ATTEMPTS_EXCEEDED without deleting a possibly newer secret', async () => {
       abuseControl.verifyChallenge.mockRejectedValue(
         new HttpException(
           { code: 'VERIFICATION_ATTEMPTS_EXCEEDED', retryAfterSeconds: 45 },
@@ -252,7 +252,7 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         store.verifyAndConsumeOtp(userId, email, '123456'),
       ).rejects.toMatchObject({
         status: 429,
-        response: { code: 'RATE_LIMITED' },
+        response: { code: 'VERIFICATION_ATTEMPTS_EXCEEDED' },
       });
 
       expect(abuseControl.deleteOtpSecret).not.toHaveBeenCalled();

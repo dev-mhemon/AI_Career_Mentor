@@ -282,14 +282,14 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
       expect(fetch).not.toHaveBeenCalled();
     });
 
-    it('throws 410 OTP_EXPIRED when user is not found in public.users', async () => {
+    it('throws 410 VERIFICATION_CODE_EXPIRED when user is not found in public.users', async () => {
       database.query.mockResolvedValueOnce([]); // public.users + provider check
 
       await expect(
         service.verifyEmail({ email, code }, {} as Request),
       ).rejects.toMatchObject({
         status: 410,
-        response: { code: 'OTP_EXPIRED' },
+        response: { code: 'VERIFICATION_CODE_EXPIRED' },
       });
 
       expect(otpStore.verifyAndConsumeOtp).not.toHaveBeenCalled();
@@ -487,7 +487,7 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
       });
     });
 
-    it('maps GoTrue 500 error to 502 EMAIL_PROVIDER_ERROR', async () => {
+    it('maps GoTrue 500 error to 502 PROVIDER_ERROR', async () => {
       database.query.mockResolvedValueOnce([
         {
           id: userId,
@@ -516,7 +516,7 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         service.verifyEmail({ email, code }, {} as Request),
       ).rejects.toMatchObject({
         status: 502,
-        response: { code: 'EMAIL_PROVIDER_ERROR' },
+        response: { code: 'PROVIDER_ERROR' },
       });
     });
   });
@@ -662,7 +662,7 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
       ).rejects.toMatchObject({
         status: 502,
         response: {
-          code: 'EMAIL_PROVIDER_ERROR',
+          code: 'PROVIDER_ERROR',
           message: expect.stringMatching(
             /sign in with your email and password/i,
           ),

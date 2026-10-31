@@ -69,13 +69,18 @@ export class OtpSecretStore {
     onValid?: () => Promise<void>,
   ): Promise<void> {
     if (!/^\d{6}$/.test(code)) {
-      fail(422, 'INVALID_OTP', 'Verification code must contain six digits', [
-        {
-          field: 'code',
-          code: 'VALIDATION_FAILED',
-          message: 'Enter a six-digit verification code',
-        },
-      ]);
+      fail(
+        422,
+        'VERIFICATION_CODE_INVALID',
+        'Verification code must contain six digits',
+        [
+          {
+            field: 'code',
+            code: 'VALIDATION_FAILED',
+            message: 'Enter a six-digit verification code',
+          },
+        ],
+      );
     }
 
     const normalizedEmail = email.toLowerCase().trim();
@@ -88,7 +93,11 @@ export class OtpSecretStore {
         async (candidateCode: string) => {
           const storedHex = await this.abuse.getOtpSecret(userId);
           if (!storedHex) {
-            fail(410, 'OTP_EXPIRED', 'Verification challenge expired');
+            fail(
+              410,
+              'VERIFICATION_CODE_EXPIRED',
+              'Verification challenge expired',
+            );
           }
           const expectedHex = this.computeDigest(
             userId,
@@ -127,13 +136,21 @@ export class OtpSecretStore {
           respCode === 'VERIFICATION_CODE_EXPIRED' ||
           respCode === 'OTP_EXPIRED'
         ) {
-          fail(410, 'OTP_EXPIRED', 'Verification challenge expired');
+          fail(
+            410,
+            'VERIFICATION_CODE_EXPIRED',
+            'Verification challenge expired',
+          );
         }
         if (
           respCode === 'VERIFICATION_CODE_INVALID' ||
           respCode === 'INVALID_OTP'
         ) {
-          fail(422, 'INVALID_OTP', 'Verification code is invalid');
+          fail(
+            422,
+            'VERIFICATION_CODE_INVALID',
+            'Verification code is invalid',
+          );
         }
         if (
           respCode === 'VERIFICATION_ATTEMPTS_EXCEEDED' ||
@@ -141,7 +158,7 @@ export class OtpSecretStore {
         ) {
           fail(
             429,
-            'RATE_LIMITED',
+            'VERIFICATION_ATTEMPTS_EXCEEDED',
             'Verification attempt limit reached',
             [],
             true,
