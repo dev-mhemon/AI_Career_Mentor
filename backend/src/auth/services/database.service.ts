@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { fail } from '../../common/http.js';
 @Injectable()
 export class DatabaseService {
+  private readonly logger = new Logger(DatabaseService.name);
+
   constructor(private readonly source: DataSource) {}
   async query<T = any>(query: string, parameters?: unknown[]): Promise<T> {
     return this.source.query(query, parameters);
@@ -57,7 +59,16 @@ export class DatabaseService {
         return result;
       } catch (error) {
         if (transactionStarted) {
-          await qr.rollbackTransaction();
+          try {
+            await qr.rollbackTransaction();
+          } catch (rollbackError) {
+            this.logger.error(
+              'Transaction rollback failed',
+              rollbackError instanceof Error
+                ? rollbackError.stack
+                : String(rollbackError),
+            );
+          }
         }
         throw error;
       } finally {

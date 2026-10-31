@@ -77,4 +77,41 @@ describe('C05 R24 foreground activity transaction', () => {
     expect(qr.release).toHaveBeenCalledTimes(1);
     expect(releaseAwaited).toBe(true);
   });
+
+  it('preserves and rethrows the original error if rollbackTransaction rejects, while still releasing query runner', async () => {
+    let releaseAwaited = false;
+    const originalError = Object.assign(
+      new Error('canceling statement due to statement timeout'),
+      { code: '57014' },
+    );
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn(),
+      rollbackTransaction: vi
+        .fn()
+        .mockRejectedValue(new Error('connection terminated unexpectedly')),
+      release: vi.fn(async () => {
+        await Promise.resolve();
+        releaseAwaited = true;
+      }),
+      manager: {
+        query: vi.fn().mockResolvedValue([{ status: 'active' }]),
+      },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => {
+        throw originalError;
+      }),
+    ).rejects.toBe(originalError);
+
+    expect(qr.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(qr.release).toHaveBeenCalledTimes(1);
+    expect(releaseAwaited).toBe(true);
+  });
 });
