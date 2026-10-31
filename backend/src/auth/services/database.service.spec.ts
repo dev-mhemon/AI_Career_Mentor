@@ -114,4 +114,62 @@ describe('C05 R24 foreground activity transaction', () => {
     expect(qr.release).toHaveBeenCalledTimes(1);
     expect(releaseAwaited).toBe(true);
   });
+
+  it('preserves and rethrows the original transaction error when qr.release() also rejects', async () => {
+    const originalError = Object.assign(
+      new Error('canceling statement due to statement timeout'),
+      { code: '57014' },
+    );
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn(),
+      rollbackTransaction: vi.fn().mockResolvedValue(undefined),
+      release: vi
+        .fn()
+        .mockRejectedValue(new Error('pool release failed on broken socket')),
+      manager: {
+        query: vi.fn().mockResolvedValue([{ status: 'active' }]),
+      },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => {
+        throw originalError;
+      }),
+    ).rejects.toBe(originalError);
+
+    expect(qr.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(qr.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates qr.release() failure when the transaction otherwise succeeded', async () => {
+    const releaseError = new Error('pool release failed after commit');
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn().mockResolvedValue(undefined),
+      rollbackTransaction: vi.fn(),
+      release: vi.fn().mockRejectedValue(releaseError),
+      manager: {
+        query: vi.fn().mockResolvedValue([{ status: 'active' }]),
+      },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => 'committed'),
+    ).rejects.toBe(releaseError);
+
+    expect(qr.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(qr.rollbackTransaction).not.toHaveBeenCalled();
+    expect(qr.release).toHaveBeenCalledTimes(1);
+  });
 });
