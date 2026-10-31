@@ -1716,15 +1716,161 @@ describe('AuthService session approval boundary', () => {
         }),
       );
 
-      // Verify GoTrue Admin API called to revoke all GoTrue sessions
-      expect(fetchSpy).toHaveBeenCalledWith(
-        `http://supabase.invalid/auth/v1/admin/users/${userId}/logout`,
-        expect.objectContaining({
-          method: 'POST',
-        }),
+      // Verify GoTrue sessions and refresh tokens invalidated in DB
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE auth.refresh_tokens'),
+        [userId],
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
+        [userId],
       );
 
       // Verify ALL user sessions revoked with transactional query runner
+      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledWith(
+        userId,
+        mockDbRunner,
+      );
+    });
+
+    it('fails with non-retryable 502 PROVIDER_ERROR if GoTrue session revocation fails after transaction commits', async () => {
+      const mockDbRunner = { query: vi.fn() };
+      let transactionCommitted = false;
+      const database = {
+        query: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: userId,
+              email: 'user@example.com',
+              status: 'active',
+              verified_contact: true,
+              verified_at: '2026-01-01T00:00:00Z',
+            },
+          ])
+          .mockImplementation(async () => {
+            expect(transactionCommitted).toBe(true);
+            throw new Error('DB session delete failed');
+          }),
+        transaction: vi.fn(async (_targetUserId, operation) => {
+          const res = await operation(mockDbRunner as never);
+          transactionCommitted = true;
+          return res;
+        }),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_userId, _email, _code, onValid) => {
+          if (onValid) await onValid();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const mockApprovals = {
+        revokeAllUserSessions: vi.fn().mockResolvedValue(1),
+      } as unknown as SessionApprovalService;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: userId }),
+        }),
+      );
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        mockApprovals,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 502,
+        response: {
+          code: 'PROVIDER_ERROR',
+          retryable: false,
+          message: expect.stringContaining(
+            'Password was updated and local sessions were revoked',
+          ),
+        },
+      });
+
+      expect(transactionCommitted).toBe(true);
+      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
+      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledWith(
+        userId,
+        mockDbRunner,
+      );
+    });
+
+    it('fails with non-retryable 504 PROVIDER_TIMEOUT if GoTrue session revocation times out after transaction commits', async () => {
+      const mockDbRunner = { query: vi.fn() };
+      let transactionCommitted = false;
+      const database = {
+        query: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: userId,
+              email: 'user@example.com',
+              status: 'active',
+              verified_contact: true,
+              verified_at: '2026-01-01T00:00:00Z',
+            },
+          ])
+          .mockImplementation(async () => {
+            expect(transactionCommitted).toBe(true);
+            throw new Error('Connection timed out');
+          }),
+        transaction: vi.fn(async (_targetUserId, operation) => {
+          const res = await operation(mockDbRunner as never);
+          transactionCommitted = true;
+          return res;
+        }),
+      } as unknown as DatabaseService;
+
+      const mockOtpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_userId, _email, _code, onValid) => {
+          if (onValid) await onValid();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const mockApprovals = {
+        revokeAllUserSessions: vi.fn().mockResolvedValue(1),
+      } as unknown as SessionApprovalService;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: userId }),
+        }),
+      );
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as never,
+        mockApprovals,
+        mockOtpStore,
+      );
+
+      await expect(service.resetPassword(resetBody)).rejects.toMatchObject({
+        status: 504,
+        response: {
+          code: 'PROVIDER_TIMEOUT',
+          retryable: false,
+          message: expect.stringContaining(
+            'Password was updated and local sessions were revoked',
+          ),
+        },
+      });
+
+      expect(transactionCommitted).toBe(true);
+      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
       expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledWith(
         userId,
         mockDbRunner,

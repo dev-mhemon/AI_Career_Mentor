@@ -64,6 +64,7 @@ REVOKE ALL ON FUNCTION private.approve_auth_session(uuid,uuid,text) FROM PUBLIC,
 GRANT EXECUTE ON FUNCTION private.approve_auth_session(uuid,uuid,text) TO service_role;
 
 REVOKE UPDATE ON private.approved_auth_sessions FROM service_role;
+DELETE FROM private.approved_auth_sessions WHERE revoked_at IS NOT NULL;
 ALTER TABLE private.approved_auth_sessions DROP COLUMN IF EXISTS updated_at;
 ALTER TABLE private.approved_auth_sessions DROP COLUMN IF EXISTS revoked_at;
 

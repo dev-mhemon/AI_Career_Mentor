@@ -1031,31 +1031,15 @@ export class AuthService {
       input.identifier,
       input.code,
       async () => {
-        let goTrueUpdated = false;
-        try {
-          await this.database.transaction(
-            userId,
-            async (db) => {
-              await this.approvals.revokeAllUserSessions(userId, db);
-              await this.updateGoTrueUserPassword(userId, input.new_password);
-              await this.revokeGoTrueUserSessions(userId);
-              goTrueUpdated = true;
-            },
-            true,
-          );
-        } catch (err) {
-          if (goTrueUpdated) {
-            for (let attempt = 0; attempt < 3; attempt++) {
-              try {
-                await this.approvals.revokeAllUserSessions(userId);
-                break;
-              } catch {
-                // Best-effort fallback retry
-              }
-            }
-          }
-          throw err;
-        }
+        await this.database.transaction(
+          userId,
+          async (db) => {
+            await this.approvals.revokeAllUserSessions(userId, db);
+            await this.updateGoTrueUserPassword(userId, input.new_password);
+          },
+          true,
+        );
+        await this.revokeGoTrueUserSessions(userId);
       },
       'reset_password',
     );
@@ -1117,23 +1101,52 @@ export class AuthService {
   }
 
   private async revokeGoTrueUserSessions(userId: string): Promise<void> {
-    try {
-      const supabaseUrl = this.config
-        .getOrThrow<string>('SUPABASE_URL')
-        .replace(/\/$/, '');
-      const serviceRoleKey =
-        this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
-        this.config.get<string>('SERVICE_ROLE_KEY');
-      await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}/logout`, {
-        method: 'POST',
-        headers: {
-          apikey: serviceRoleKey || '',
-          Authorization: `Bearer ${serviceRoleKey || ''}`,
-        },
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => null);
-    } catch {
-      // Best-effort GoTrue session invalidation
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await this.database.query(
+          `UPDATE auth.refresh_tokens
+              SET revoked = true,
+                  updated_at = clock_timestamp()
+            WHERE user_id = $1::text
+              AND COALESCE(revoked, false) = false`,
+          [userId],
+        );
+        await this.database.query(
+          'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
+          [userId],
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+      }
     }
+
+    this.logger.error(
+      `Failed to revoke GoTrue sessions for user ${userId}`,
+      lastError instanceof Error ? lastError.stack : String(lastError),
+    );
+
+    if (
+      lastError instanceof Error &&
+      (lastError.name === 'AbortError' ||
+        /timeout|timed out/i.test(lastError.message))
+    ) {
+      fail(
+        504,
+        'PROVIDER_TIMEOUT',
+        'Password was updated and local sessions were revoked, but auth session revocation timed out. Please sign in with your new password.',
+        [],
+        false,
+      );
+    }
+
+    fail(
+      502,
+      'PROVIDER_ERROR',
+      'Password was updated and local sessions were revoked, but auth session revocation failed. Please sign in with your new password.',
+      [],
+      false,
+    );
   }
 }
