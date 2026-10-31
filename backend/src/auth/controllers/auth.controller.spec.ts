@@ -81,6 +81,9 @@ describe('C05 OAuth session response', () => {
     const result = await controller.logout(req);
     expect(result).toEqual({ logged_out: true });
     expect(logout).toHaveBeenCalledWith(req.user, 'Bearer test-token');
+    expect(
+      Reflect.getMetadata('access-policy', AuthController.prototype.logout),
+    ).toEqual({ allowSuspended: true });
   });
 
   it('delegates refresh to authService.refresh', async () => {

@@ -40,6 +40,7 @@ export class AuthController {
   }
   @Post('logout')
   @HttpCode(200)
+  @Policy({ allowSuspended: true })
   logout(@Req() req: any) {
     return this.auth.logout(req.user, req.headers?.authorization);
   }
