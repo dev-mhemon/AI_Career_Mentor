@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { fail } from '../../common/http.js';
 @Injectable()
 export class DatabaseService {
+  private readonly logger = new Logger(DatabaseService.name);
+
   constructor(private readonly source: DataSource) {}
   async query<T = any>(query: string, parameters?: unknown[]): Promise<T> {
     return this.source.query(query, parameters);
@@ -13,9 +15,12 @@ export class DatabaseService {
     operation: (db: EntityManager) => Promise<T>,
     active = true,
     foreground = false,
+    useServiceRole = true,
   ): Promise<T> {
-    return this.source.transaction('READ COMMITTED', async (db) => {
-      await db.query('SET LOCAL ROLE service_role');
+    const runInTransaction = async (db: EntityManager): Promise<T> => {
+      if (useServiceRole) {
+        await db.query('SET LOCAL ROLE service_role');
+      }
       if (userId) {
         await db.query(
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
@@ -40,6 +45,46 @@ export class DatabaseService {
         );
       }
       return result;
-    });
+    };
+
+    if (typeof this.source.createQueryRunner === 'function') {
+      const qr = this.source.createQueryRunner();
+      let transactionStarted = false;
+      try {
+        await qr.connect();
+        await qr.startTransaction('READ COMMITTED');
+        transactionStarted = true;
+        const result = await runInTransaction(qr.manager);
+        await qr.commitTransaction();
+        return result;
+      } catch (error) {
+        if (transactionStarted) {
+          try {
+            await qr.rollbackTransaction();
+          } catch (rollbackError) {
+            this.logger.error(
+              'Transaction rollback failed',
+              rollbackError instanceof Error
+                ? rollbackError.stack
+                : String(rollbackError),
+            );
+          }
+        }
+        throw error;
+      } finally {
+        try {
+          await qr.release();
+        } catch (releaseError) {
+          this.logger.error(
+            'Transaction release failed',
+            releaseError instanceof Error
+              ? releaseError.stack
+              : String(releaseError),
+          );
+        }
+      }
+    }
+
+    return this.source.transaction('READ COMMITTED', runInTransaction);
   }
 }

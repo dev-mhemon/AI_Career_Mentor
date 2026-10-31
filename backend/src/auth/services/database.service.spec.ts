@@ -47,4 +47,129 @@ describe('C05 R24 foreground activity transaction', () => {
       query.mock.calls.some(([sql]) => sql.includes('UPDATE public.users')),
     ).toBe(false);
   });
+  it('releases query runner without calling rollbackTransaction if startTransaction rejects after connect', async () => {
+    let releaseAwaited = false;
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi
+        .fn()
+        .mockRejectedValue(new Error('BEGIN failed after connect')),
+      commitTransaction: vi.fn(),
+      rollbackTransaction: vi.fn(),
+      release: vi.fn(async () => {
+        await Promise.resolve();
+        releaseAwaited = true;
+      }),
+      manager: { query: vi.fn() },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => 'unreachable'),
+    ).rejects.toThrow('BEGIN failed after connect');
+
+    expect(qr.connect).toHaveBeenCalledTimes(1);
+    expect(qr.startTransaction).toHaveBeenCalledWith('READ COMMITTED');
+    expect(qr.rollbackTransaction).not.toHaveBeenCalled();
+    expect(qr.release).toHaveBeenCalledTimes(1);
+    expect(releaseAwaited).toBe(true);
+  });
+
+  it('preserves and rethrows the original error if rollbackTransaction rejects, while still releasing query runner', async () => {
+    let releaseAwaited = false;
+    const originalError = Object.assign(
+      new Error('canceling statement due to statement timeout'),
+      { code: '57014' },
+    );
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn(),
+      rollbackTransaction: vi
+        .fn()
+        .mockRejectedValue(new Error('connection terminated unexpectedly')),
+      release: vi.fn(async () => {
+        await Promise.resolve();
+        releaseAwaited = true;
+      }),
+      manager: {
+        query: vi.fn().mockResolvedValue([{ status: 'active' }]),
+      },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => {
+        throw originalError;
+      }),
+    ).rejects.toBe(originalError);
+
+    expect(qr.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(qr.release).toHaveBeenCalledTimes(1);
+    expect(releaseAwaited).toBe(true);
+  });
+
+  it('preserves and rethrows the original transaction error when qr.release() also rejects', async () => {
+    const originalError = Object.assign(
+      new Error('canceling statement due to statement timeout'),
+      { code: '57014' },
+    );
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn(),
+      rollbackTransaction: vi.fn().mockResolvedValue(undefined),
+      release: vi
+        .fn()
+        .mockRejectedValue(new Error('pool release failed on broken socket')),
+      manager: {
+        query: vi.fn().mockResolvedValue([{ status: 'active' }]),
+      },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => {
+        throw originalError;
+      }),
+    ).rejects.toBe(originalError);
+
+    expect(qr.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(qr.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs qr.release() failure without throwing or replacing the committed result after commitTransaction succeeds', async () => {
+    const releaseError = new Error('pool release failed after commit');
+    const qr = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn().mockResolvedValue(undefined),
+      rollbackTransaction: vi.fn(),
+      release: vi.fn().mockRejectedValue(releaseError),
+      manager: {
+        query: vi.fn().mockResolvedValue([{ status: 'active' }]),
+      },
+    };
+    const source = {
+      createQueryRunner: vi.fn(() => qr),
+    };
+    const service = new DatabaseService(source as unknown as DataSource);
+
+    await expect(
+      service.transaction('owner', async () => 'committed'),
+    ).resolves.toBe('committed');
+
+    expect(qr.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(qr.rollbackTransaction).not.toHaveBeenCalled();
+    expect(qr.release).toHaveBeenCalledTimes(1);
+  });
 });

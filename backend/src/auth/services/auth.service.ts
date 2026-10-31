@@ -604,6 +604,10 @@ export class AuthService {
       if (!committed) {
         throw error;
       }
+      this.logger.error(
+        `OTP consumption failed after email verification commit for user ${userId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
 
     try {
@@ -1026,39 +1030,52 @@ export class AuthService {
 
     const userId = user.id;
 
-    await this.otpStore.verifyAndConsumeOtp(
-      userId,
-      input.identifier,
-      input.code,
-      async () => {
-        let goTrueUpdated = false;
-        try {
-          await this.database.transaction(
-            userId,
-            async (db) => {
-              await this.approvals.revokeAllUserSessions(userId, db);
-              await this.updateGoTrueUserPassword(userId, input.new_password);
-              await this.revokeGoTrueUserSessions(userId);
-              goTrueUpdated = true;
-            },
-            true,
-          );
-        } catch (err) {
-          if (goTrueUpdated) {
-            for (let attempt = 0; attempt < 3; attempt++) {
-              try {
-                await this.approvals.revokeAllUserSessions(userId);
-                break;
-              } catch {
-                // Best-effort fallback retry
+    let committed = false;
+    try {
+      await this.otpStore.verifyAndConsumeOtp(
+        userId,
+        input.identifier,
+        input.code,
+        async () => {
+          let passwordUpdated = false;
+          try {
+            await this.database.transaction(
+              userId,
+              async (db) => {
+                await this.approvals.revokeAllUserSessions(userId, db);
+                await this.updateGoTrueUserPassword(userId, input.new_password);
+                passwordUpdated = true;
+              },
+              true,
+            );
+            committed = true;
+          } catch (error) {
+            if (passwordUpdated) {
+              for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                  await this.approvals.revokeAllUserSessions(userId);
+                  break;
+                } catch {
+                  // Best-effort compensating local session revocation
+                }
               }
             }
+            throw error;
           }
-          throw err;
-        }
-      },
-      'reset_password',
-    );
+        },
+        'reset_password',
+      );
+    } catch (error) {
+      if (!committed) {
+        throw error;
+      }
+      this.logger.error(
+        `OTP consumption failed after password reset commit for user ${user.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+
+    await this.revokeGoTrueUserSessions(userId);
 
     return {
       password_reset: true as const,
@@ -1117,23 +1134,74 @@ export class AuthService {
   }
 
   private async revokeGoTrueUserSessions(userId: string): Promise<void> {
-    try {
-      const supabaseUrl = this.config
-        .getOrThrow<string>('SUPABASE_URL')
-        .replace(/\/$/, '');
-      const serviceRoleKey =
-        this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
-        this.config.get<string>('SERVICE_ROLE_KEY');
-      await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}/logout`, {
-        method: 'POST',
-        headers: {
-          apikey: serviceRoleKey || '',
-          Authorization: `Bearer ${serviceRoleKey || ''}`,
-        },
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => null);
-    } catch {
-      // Best-effort GoTrue session invalidation
+    const configuredTimeout = Number(this.config.get('GOTRUE_TIMEOUT_MS'));
+    const timeoutMs =
+      Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : 5000;
+    const safeTimeoutMs = Math.max(1, Math.trunc(timeoutMs));
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await this.database.transaction(
+          null,
+          async (qr) => {
+            await qr.query(`SET LOCAL statement_timeout = ${safeTimeoutMs}`);
+            await qr.query(`SET LOCAL lock_timeout = ${safeTimeoutMs}`);
+            await qr.query(
+              `UPDATE auth.refresh_tokens
+                  SET revoked = true,
+                      updated_at = clock_timestamp()
+                WHERE user_id = $1::text
+                  AND COALESCE(revoked, false) = false`,
+              [userId],
+            );
+            await qr.query(
+              'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
+              [userId],
+            );
+          },
+          false,
+          false,
+          false,
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+      }
     }
+
+    this.logger.error(
+      `Failed to revoke GoTrue sessions for user ${userId}`,
+      lastError instanceof Error ? lastError.stack : String(lastError),
+    );
+
+    const errorCode = (lastError as { code?: unknown })?.code;
+    const isTimeoutError =
+      (typeof errorCode === 'string' &&
+        (errorCode === '57014' || errorCode === '55P03')) ||
+      (lastError instanceof Error &&
+        (lastError.name === 'AbortError' ||
+          /statement timeout|lock timeout|query_canceled|timeout|timed out/i.test(
+            lastError.message,
+          )));
+
+    if (isTimeoutError) {
+      fail(
+        504,
+        'PROVIDER_TIMEOUT',
+        'Password was updated and local sessions were revoked, but auth session revocation timed out. Please sign in with your new password.',
+        [],
+        false,
+      );
+    }
+
+    fail(
+      502,
+      'PROVIDER_ERROR',
+      'Password was updated and local sessions were revoked, but auth session revocation failed. Please sign in with your new password.',
+      [],
+      false,
+    );
   }
 }
