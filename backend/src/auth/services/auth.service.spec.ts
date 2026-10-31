@@ -1403,8 +1403,7 @@ describe('AuthService session approval boundary', () => {
       );
 
       expect(response).toEqual({
-        success: true,
-        data: { message: 'If the account exists, a code was sent.' },
+        message: 'If the account exists, a code was sent.',
       });
       expect(
         mockEmailProvider.sendPasswordResetChallenge,
@@ -1450,8 +1449,7 @@ describe('AuthService session approval boundary', () => {
       );
 
       expect(response).toEqual({
-        success: true,
-        data: { message: 'If the account exists, a code was sent.' },
+        message: 'If the account exists, a code was sent.',
       });
       expect(mockEmailProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
         'user@example.com',
@@ -1498,8 +1496,7 @@ describe('AuthService session approval boundary', () => {
       );
 
       expect(response).toEqual({
-        success: true,
-        data: { message: 'If the account exists, a code was sent.' },
+        message: 'If the account exists, a code was sent.',
       });
       expect(mockEmailProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
         'user@example.com',
@@ -1700,8 +1697,7 @@ describe('AuthService session approval boundary', () => {
       const response = await service.resetPassword(resetBody);
 
       expect(response).toEqual({
-        success: true,
-        data: { password_reset: true },
+        password_reset: true,
       });
 
       // Verify transaction called with user lock

@@ -977,10 +977,7 @@ export class AuthService {
     }
 
     return {
-      success: true,
-      data: {
-        message: 'If the account exists, a code was sent.',
-      },
+      message: 'If the account exists, a code was sent.',
     };
   }
 
@@ -1064,10 +1061,7 @@ export class AuthService {
     );
 
     return {
-      success: true,
-      data: {
-        password_reset: true,
-      },
+      password_reset: true as const,
     };
   }
 

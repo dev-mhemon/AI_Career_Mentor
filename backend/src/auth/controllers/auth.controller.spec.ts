@@ -110,8 +110,7 @@ describe('C05 OAuth session response', () => {
 
   it('delegates forgotPassword to authService.forgotPassword', async () => {
     const mockResponse = {
-      success: true,
-      data: { message: 'If the account exists, a code was sent.' },
+      message: 'If the account exists, a code was sent.',
     };
     const forgotPassword = vi.fn().mockResolvedValue(mockResponse);
     const controller = new AuthController(
@@ -128,8 +127,7 @@ describe('C05 OAuth session response', () => {
 
   it('delegates resetPassword to authService.resetPassword', async () => {
     const mockResponse = {
-      success: true,
-      data: { password_reset: true },
+      password_reset: true,
     };
     const resetPassword = vi.fn().mockResolvedValue(mockResponse);
     const controller = new AuthController(
