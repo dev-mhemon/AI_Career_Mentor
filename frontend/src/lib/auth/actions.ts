@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { loginUser, registerUser, resendVerification, verifyEmail, NetworkError, ApiError } from '@/lib/api/client';
+import { loginUser, registerUser, resendVerification, verifyEmail, logoutUser, NetworkError, ApiError } from '@/lib/api/client';
 
 /**
  * Server Actions for authentication flows.
@@ -270,6 +270,16 @@ export async function signInWithOAuth(
 
 export async function logoutAction(): Promise<void> {
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    try {
+      await logoutUser(session.access_token);
+    } catch {
+      // Best-effort backend revocation before clearing local session
+    }
+  }
   await supabase.auth.signOut();
   redirect('/login');
 }

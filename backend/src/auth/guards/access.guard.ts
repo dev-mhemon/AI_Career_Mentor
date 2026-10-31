@@ -22,17 +22,24 @@ export class AccessGuard implements CanActivate {
       async (db) => {
         const [u] = await db.query(
           `SELECT u.status,u.verified_contact,
-             private.has_approved_session(u.id,$2::uuid) AS session_approved
+             private.has_approved_session(u.id,$2::uuid) AS session_approved,
+             EXISTS (
+               SELECT 1
+                 FROM private.approved_auth_sessions a
+                WHERE a.user_id = u.id
+                  AND a.session_id = $2::uuid
+                  AND a.revoked_at IS NULL
+             ) AS unrevoked_session_approved
              FROM public.users u WHERE u.id=$1`,
           [req.user.sub, req.user.sessionId],
         );
         if (!u) fail(401, 'AUTH_REQUIRED', 'Application account required');
         if (!p.allowSuspended && u.status !== 'active')
           fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
-        if (
-          !p.accountInspection &&
-          (!u.verified_contact || !u.session_approved)
-        )
+        const approved = p.allowSuspended
+          ? Boolean(u.session_approved || u.unrevoked_session_approved)
+          : Boolean(u.session_approved);
+        if (!p.accountInspection && (!u.verified_contact || !approved))
           fail(403, 'UNVERIFIED_ACCOUNT', 'Approved session required');
         if (p.admin) {
           const [a] = await db.query(

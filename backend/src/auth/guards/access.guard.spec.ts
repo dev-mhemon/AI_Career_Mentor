@@ -50,6 +50,35 @@ describe('Reviewed AccessGuard policy order', () => {
     ]);
     expect(await f.guard.canActivate(f.context)).toBe(true);
   });
+  it('allows suspended user with unrevoked approved session on AZ-SUSP routes like logout', async () => {
+    const f = fixture({ allowSuspended: true }, [
+      [
+        {
+          status: 'suspended',
+          verified_contact: true,
+          session_approved: false,
+          unrevoked_session_approved: true,
+        },
+      ],
+    ]);
+    expect(await f.guard.canActivate(f.context)).toBe(true);
+  });
+  it('denies suspended user on AZ-SUSP route when session is revoked or unapproved', async () => {
+    const f = fixture({ allowSuspended: true }, [
+      [
+        {
+          status: 'suspended',
+          verified_contact: true,
+          session_approved: false,
+          unrevoked_session_approved: false,
+        },
+      ],
+    ]);
+    await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'UNVERIFIED_ACCOUNT' },
+    });
+  });
   it('denies an active verified account when the current session is unapproved', async () => {
     const f = fixture({}, [
       [{ status: 'active', verified_contact: true, session_approved: false }],

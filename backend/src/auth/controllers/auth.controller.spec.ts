@@ -66,4 +66,45 @@ describe('C05 OAuth session response', () => {
     expect(result).toEqual(mockSession);
     expect(verifyEmail).toHaveBeenCalledWith(body, req);
   });
+
+  it('delegates logout to authService.logout with user identity and authorization header', async () => {
+    const logout = vi.fn().mockResolvedValue({ logged_out: true });
+    const controller = new AuthController(
+      { logout } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {
+      user: { sub: 'user-uuid', sessionId: 'session-uuid' },
+      headers: { authorization: 'Bearer test-token' },
+    } as any;
+
+    const result = await controller.logout(req);
+    expect(result).toEqual({ logged_out: true });
+    expect(logout).toHaveBeenCalledWith(req.user, 'Bearer test-token');
+    expect(
+      Reflect.getMetadata('access-policy', AuthController.prototype.logout),
+    ).toEqual({ allowSuspended: true });
+  });
+
+  it('delegates refresh to authService.refresh', async () => {
+    const mockSession = {
+      access_token: 'new-token',
+      refresh_token: 'new-refresh',
+      expires_in: 3600,
+      token_type: 'Bearer',
+      user: { id: 'user-1' },
+      profile_complete: true,
+      next_step: 'app_home',
+    };
+    const refresh = vi.fn().mockResolvedValue(mockSession);
+    const controller = new AuthController(
+      { refresh } as unknown as AuthService,
+      {} as never,
+    );
+    const body = { refresh_token: 'valid-refresh-token' };
+
+    const result = await controller.refresh(body);
+    expect(result).toEqual(mockSession);
+    expect(refresh).toHaveBeenCalledWith(body);
+  });
 });

@@ -7,7 +7,7 @@ import {
   logoutAction,
   signInWithOAuth,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, logoutUser, ApiError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -72,6 +72,7 @@ vi.mock("@/lib/api/client", () => {
     registerUser: vi.fn(),
     resendVerification: vi.fn(),
     verifyEmail: vi.fn(),
+    logoutUser: vi.fn(),
     NetworkError: MockNetworkError,
     ApiError: MockApiError,
   };
@@ -543,8 +544,39 @@ describe("Auth Actions", () => {
   });
 
   describe("logoutAction", () => {
-    it("calls signOut and redirects to login", async () => {
+    it("calls backend logoutUser with access token before signOut and redirects to login", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: "active-token" } },
+      });
+      vi.mocked(logoutUser).mockResolvedValueOnce({ logged_out: true });
+
       await logoutAction();
+
+      expect(logoutUser).toHaveBeenCalledWith("active-token");
+      expect(mockSignOut).toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("proceeds with signOut and redirect even if backend logoutUser throws", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: "expired-token" } },
+      });
+      vi.mocked(logoutUser).mockRejectedValueOnce(new Error("Network failed"));
+
+      await logoutAction();
+
+      expect(logoutUser).toHaveBeenCalledWith("expired-token");
+      expect(mockSignOut).toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("proceeds with signOut and redirect when no active session exists", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: null },
+      });
+
+      await logoutAction();
+
       expect(mockSignOut).toHaveBeenCalled();
       expect(redirect).toHaveBeenCalledWith("/login");
     });

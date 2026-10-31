@@ -5,6 +5,8 @@ import {
   registerUser,
   resendVerification,
   syncUser,
+  logoutUser,
+  refreshSession,
   getMe,
   ApiError,
   UnauthorizedError,
@@ -274,6 +276,61 @@ describe('C05 error contract preservation', () => {
     await expect(getMe(MOCK_TOKEN)).rejects.toMatchObject({
       message: 'Service temporarily unavailable. Please try again.',
       retryable: true,
+    });
+  });
+
+  describe('logoutUser', () => {
+    it('calls POST /auth/logout with Bearer token', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true, data: { logged_out: true } }),
+      });
+
+      const result = await logoutUser(MOCK_TOKEN);
+
+      expect(result).toEqual({ logged_out: true });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/v1/auth/logout',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: `Bearer ${MOCK_TOKEN}`,
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('refreshSession', () => {
+    it('calls POST /auth/refresh with refresh_token body and no Authorization header', async () => {
+      const mockSession = {
+        access_token: 'new-token',
+        refresh_token: 'new-refresh',
+        expires_in: 3600,
+        token_type: 'Bearer' as const,
+        user: MOCK_USER_RESPONSE,
+        profile_complete: true,
+        next_step: 'app_home' as const,
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true, data: mockSession }),
+      });
+
+      const result = await refreshSession('my-refresh-token');
+
+      expect(result).toEqual(mockSession);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/v1/auth/refresh',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ refresh_token: 'my-refresh-token' }),
+        }),
+      );
+      const callArgs = mockFetch.mock.calls[0];
+      expect(callArgs[1]?.headers?.Authorization).toBeUndefined();
     });
   });
 });
