@@ -948,6 +948,7 @@ export class AuthService {
       throw error;
     }
 
+    let expiresInSeconds = 600;
     try {
       const delivery = await this.emailProvider.sendChallenge({
         id: identity.sub,
@@ -955,7 +956,10 @@ export class AuthService {
         email,
         verified: false,
       });
-      if (delivery.expiresInSeconds !== 600) {
+      if (
+        typeof delivery?.expiresInSeconds !== 'number' ||
+        delivery.expiresInSeconds <= 0
+      ) {
         fail(
           502,
           'EMAIL_PROVIDER_ERROR',
@@ -964,6 +968,7 @@ export class AuthService {
           true,
         );
       }
+      expiresInSeconds = delivery.expiresInSeconds;
     } catch (error) {
       if (error instanceof HttpException) throw error;
       if (
@@ -985,7 +990,7 @@ export class AuthService {
     return {
       verification_channel: 'email' as const,
       contact_masked: this.maskEmailContact(email),
-      expires_in_seconds: 600,
+      expires_in_seconds: expiresInSeconds,
       resend_available_at: new Date(
         Date.now() + retryAfterSeconds * 1000,
       ).toISOString(),

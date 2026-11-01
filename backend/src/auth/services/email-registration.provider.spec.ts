@@ -475,6 +475,55 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       );
     });
 
+    it('throws error when AUTH_EMAIL_FROM is malformed with RESEND_API_KEY', () => {
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'RESEND_API_KEY') return 're_test_key_123';
+          if (key === 'AUTH_EMAIL_FROM') return 'not-a-valid-email';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      expect(() => createEmailTransportFromConfig(customConfig)).toThrow(
+        'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+      );
+    });
+
+    it('creates Resend transport when AUTH_EMAIL_FROM uses named sender format', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'RESEND_API_KEY') return 're_test_key_123';
+          if (key === 'AUTH_EMAIL_FROM')
+            return 'Career Mentor <mentor@example.com>';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await transport!('test@example.com', '112233');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.resend.com/emails',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer re_test_key_123',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: 'Career Mentor <mentor@example.com>',
+            to: ['test@example.com'],
+            subject: 'Your verification code',
+            text: 'Your verification code is: 112233',
+          }),
+        }),
+      );
+    });
+
     it('creates Resend transport from RESEND_API_KEY when AUTH_EMAIL_FROM is provided', async () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal('fetch', mockFetch);

@@ -160,7 +160,56 @@ describe('Public runtime key boundary', () => {
       validateConfiguration({
         ...base,
         RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'not-an-email',
+      }),
+    ).toThrow(
+      'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+    );
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'Career Mentor <not-an-email>',
+      }),
+    ).toThrow(
+      'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+    );
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'Career Mentor <mentor@example.com',
+      }),
+    ).toThrow(
+      'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+    );
+
+    // Bare email format
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
         AUTH_EMAIL_FROM: 'noreply@example.com',
+      }),
+    ).not.toThrow();
+
+    // Resend named sender format
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'Career Mentor <mentor@example.com>',
+      }),
+    ).not.toThrow();
+
+    // Resend quoted named sender format
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: '"Career Mentor" <mentor@example.com>',
       }),
     ).not.toThrow();
   });

@@ -1,7 +1,10 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { fail } from '../../common/http.js';
-import { validateEmailWebhookUrl } from '../../config.js';
+import {
+  validateAuthEmailFrom,
+  validateEmailWebhookUrl,
+} from '../../config.js';
 import { DatabaseService } from './database.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 
@@ -122,6 +125,7 @@ export function createEmailTransportFromConfig(
     if (!fromAddress) {
       throw new Error('AUTH_EMAIL_FROM is required when RESEND_API_KEY is set');
     }
+    validateAuthEmailFrom(fromAddress);
     return async (to: string, otp: string, signal?: AbortSignal) => {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
