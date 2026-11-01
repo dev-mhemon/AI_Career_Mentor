@@ -190,6 +190,8 @@ export async function saveProfileSetupAction(
     }
   }
 
+  let committedProfile: ProfileResponse | null | undefined = _prevState.profile;
+
   if (Object.keys(fieldErrors).length > 0) {
     const firstMessage = Object.values(fieldErrors)[0] ?? 'Please fix the highlighted fields.';
     return {
@@ -197,6 +199,7 @@ export async function saveProfileSetupAction(
       code: 'VALIDATION_FAILED',
       fieldErrors,
       values,
+      ...(committedProfile !== undefined ? { profile: committedProfile } : {}),
     };
   }
 
@@ -211,7 +214,23 @@ export async function saveProfileSetupAction(
         error: 'Authentication session is required. Please sign in again.',
         code: 'AUTH_REQUIRED',
         values,
+        ...(committedProfile !== undefined ? { profile: committedProfile } : {}),
       };
+    }
+
+    const learningBody: UpdateLearningSettingsBody = {};
+    if (timezone.length > 0) {
+      learningBody.timezone = timezone;
+    }
+    if (parsedHours !== undefined) {
+      learningBody.preferred_daily_hours = parsedHours;
+    }
+
+    if (Object.keys(learningBody).length > 0) {
+      committedProfile = await updateLearningSettings(
+        session.access_token,
+        learningBody,
+      );
     }
 
     const profileBody: UpdateProfileBody = {
@@ -229,22 +248,11 @@ export async function saveProfileSetupAction(
       profileBody.existing_skills_none = false;
     }
 
-    let updatedProfile = await updateProfile(session.access_token, profileBody);
-
-    const learningBody: UpdateLearningSettingsBody = {};
-    if (timezone.length > 0) {
-      learningBody.timezone = timezone;
-    }
-    if (parsedHours !== undefined) {
-      learningBody.preferred_daily_hours = parsedHours;
-    }
-
-    if (Object.keys(learningBody).length > 0) {
-      updatedProfile = await updateLearningSettings(
-        session.access_token,
-        learningBody,
-      );
-    }
+    const updatedProfile = await updateProfile(
+      session.access_token,
+      profileBody,
+    );
+    committedProfile = updatedProfile;
 
     return {
       success: true,
@@ -269,6 +277,7 @@ export async function saveProfileSetupAction(
         error: 'Unable to reach the server. Please try again.',
         retryable: true,
         values,
+        ...(committedProfile !== undefined ? { profile: committedProfile } : {}),
       };
     }
     if (err instanceof ApiError) {
@@ -290,12 +299,14 @@ export async function saveProfileSetupAction(
         fieldErrors:
           Object.keys(apiFieldErrors).length > 0 ? apiFieldErrors : undefined,
         values,
+        ...(committedProfile !== undefined ? { profile: committedProfile } : {}),
       };
     }
     return {
       error: 'An unexpected error occurred while saving your profile.',
       retryable: true,
       values,
+      ...(committedProfile !== undefined ? { profile: committedProfile } : {}),
     };
   }
 }

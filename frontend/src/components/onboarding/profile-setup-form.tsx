@@ -139,11 +139,12 @@ export function ProfileSetupForm({
     skillsNoneTouched: false,
   }));
 
-  const [dismissedErrorState, setDismissedErrorState] =
+  const [dismissedActionState, setDismissedActionState] =
     useState<ProfileSetupActionState | null>(null);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
 
   const { values, hasDraft, skillsNoneTouched } = formState;
+  const effectiveProfile = state.profile ?? initialProfile;
 
   // Mount effect: safely restores draft from sessionStorage, detects timezone, and initializes skillsNoneTouched
   useEffect(() => {
@@ -281,7 +282,9 @@ export function ProfileSetupForm({
     });
   }, [initialProfile, loadError, userId]);
 
-  const isErrorDismissed = state === dismissedErrorState;
+  const isActionStateDismissed = state === dismissedActionState;
+  const isErrorDismissed = isActionStateDismissed;
+  const isSuccessVisible = Boolean(state.success) && !isActionStateDismissed;
 
   // Effect 1: Success handling - clears draft and reconciles values when save succeeds
   useEffect(() => {
@@ -323,14 +326,14 @@ export function ProfileSetupForm({
   }, [state, isErrorDismissed]);
 
   /**
-   * Updates a controlled field value, dismisses stale errors, and persists the local draft in sessionStorage.
+   * Updates a controlled field value, dismisses stale action errors/success banners, and persists the local draft in sessionStorage.
    */
   const updateField = <K extends keyof ProfileSetupFormValues>(
     key: K,
     nextValue: ProfileSetupFormValues[K],
     overrideTouched?: boolean,
   ) => {
-    setDismissedErrorState(state);
+    setDismissedActionState(state);
     const nextTouched = overrideTouched ?? skillsNoneTouched;
     const updatedValues: ProfileSetupFormValues = { ...values, [key]: nextValue };
     setFormState((prev) => ({
@@ -349,10 +352,12 @@ export function ProfileSetupForm({
     updateField('existing_skills_none', nextSkillsNone, true);
   };
 
-  const activeProfile = state.profile ?? initialProfile;
+  const baselineSkillsNone = Boolean(effectiveProfile?.existing_skills_none);
+  const effectiveSkillsNoneTouched =
+    skillsNoneTouched || values.existing_skills_none !== baselineSkillsNone;
   const fieldErrors = isErrorDismissed ? {} : (state.fieldErrors ?? {});
-  const storedSkills = activeProfile?.existing_skills ?? [];
-  const showDraftRestored = hasDraft && !state.success;
+  const storedSkills = effectiveProfile?.existing_skills ?? [];
+  const showDraftRestored = hasDraft && !isSuccessVisible;
 
   return (
     <div className="flex flex-col gap-6">
@@ -427,7 +432,7 @@ export function ProfileSetupForm({
         </div>
       )}
 
-      {state.success && state.message && (
+      {isSuccessVisible && state.message && (
         <div
           role="status"
           aria-live="polite"
@@ -571,7 +576,7 @@ export function ProfileSetupForm({
           <input
             type="hidden"
             name="existing_skills_none_touched"
-            value={skillsNoneTouched ? 'true' : 'false'}
+            value={effectiveSkillsNoneTouched ? 'true' : 'false'}
           />
           <div className="flex items-center justify-between gap-4">
             <div className="flex flex-col gap-1">

@@ -170,6 +170,12 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         timezone: 'Asia/Dhaka',
         preferred_daily_hours: 2,
       });
+
+      const learningOrder =
+        vi.mocked(updateLearningSettings).mock.invocationCallOrder[0] ?? 0;
+      const profileOrder =
+        vi.mocked(updateProfile).mock.invocationCallOrder[0] ?? 0;
+      expect(learningOrder).toBeLessThan(profileOrder);
     });
 
     it('omits existing_skills_none when untoggled so stored self-reported skills are preserved', async () => {
@@ -228,8 +234,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(updateLearningSettings).not.toHaveBeenCalled();
     });
 
-    it('maps backend 422 INVALID_TIMEZONE and field details while preserving entered values', async () => {
-      vi.mocked(updateProfile).mockResolvedValueOnce(MOCK_PROFILE);
+    it('maps backend 422 INVALID_TIMEZONE without calling updateProfile so stored skills are not cleared', async () => {
       vi.mocked(updateLearningSettings).mockRejectedValueOnce(
         new ApiError(
           422,
@@ -245,6 +250,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       formData.set('education', '');
       formData.set('experience_level', 'beginner');
       formData.set('existing_skills_none', 'true');
+      formData.set('existing_skills_none_touched', 'true');
       formData.set('timezone', 'Invalid/Zone');
       formData.set('preferred_daily_hours', '1.5');
 
@@ -255,6 +261,37 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result.values?.current_role).toBe('Backend Learner');
       expect(result.values?.timezone).toBe('Invalid/Zone');
       expect(result.values?.preferred_daily_hours).toBe('1.5');
+      expect(updateProfile).not.toHaveBeenCalled();
+    });
+
+    it('returns committed profile snapshot when updateLearningSettings succeeds but updateProfile fails', async () => {
+      const committedLearningProfile = {
+        ...MOCK_PROFILE,
+        timezone: 'Europe/Berlin',
+        preferred_daily_hours: 3.5,
+      };
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(
+        committedLearningProfile,
+      );
+      vi.mocked(updateProfile).mockRejectedValueOnce(
+        new NetworkError('Transient failure during profile patch'),
+      );
+
+      const formData = new FormData();
+      formData.set('current_role', 'Platform Engineer');
+      formData.set('education', 'BSc CS');
+      formData.set('experience_level', 'mid');
+      formData.set('existing_skills_none', 'false');
+      formData.set('existing_skills_none_touched', 'false');
+      formData.set('timezone', 'Europe/Berlin');
+      formData.set('preferred_daily_hours', '3.5');
+
+      const result = await saveProfileSetupAction({}, formData);
+
+      expect(result.error).toContain('Unable to reach the server');
+      expect(result.retryable).toBe(true);
+      expect(result.profile).toEqual(committedLearningProfile);
+      expect(result.values?.current_role).toBe('Platform Engineer');
     });
 
     it('preserves user inputs and retry metadata on 429 RATE_LIMITED and 503 SERVICE_UNAVAILABLE', async () => {

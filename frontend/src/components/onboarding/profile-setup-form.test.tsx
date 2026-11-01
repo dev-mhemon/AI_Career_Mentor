@@ -472,9 +472,13 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
       window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-edit-after-save'),
     ).toBeNull();
 
-    // 2. User edits a field after success
+    // 2. User edits a field after success -> stale success message is immediately dismissed and new draft is saved
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
     fireEvent.change(roleInput, { target: { value: 'Lead Architect' } });
+
+    expect(
+      screen.queryByText(/প্রোফাইল সংরক্ষিত হয়েছে/i),
+    ).not.toBeInTheDocument();
 
     // Draft must now be saved in sessionStorage and NOT wiped by the success effect
     const savedDraft = window.sessionStorage.getItem(
@@ -483,6 +487,82 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     expect(savedDraft).not.toBeNull();
     const parsed = JSON.parse(savedDraft!);
     expect(parsed.values.current_role).toBe('Lead Architect');
+
+    // 3. Subsequent save succeeds -> success message re-appears
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      values: {
+        current_role: 'Lead Architect',
+        education: 'BSc in CSE',
+        experience_level: 'mid',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '2',
+      },
+    });
+
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+
+    // 4. Toggling existing_skills_none also immediately dismisses the success message
+    const noneSwitch = screen.getByRole('switch', {
+      name: /none — complete beginner/i,
+    });
+    fireEvent.click(noneSwitch);
+    expect(
+      screen.queryByText(/প্রোফাইল সংরক্ষিত হয়েছে/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('reflects updated state.profile for stored skills indicator even on partial failure', async () => {
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      error: 'Unable to reach the server. Please try again.',
+      retryable: true,
+      profile: {
+        ...EMPTY_PROFILE,
+        existing_skills: [
+          {
+            skill_id: 'skill-ts',
+            name: 'TypeScript',
+            alias_resolved: true,
+            learning_state: 'learning',
+            source: 'self_reported',
+          },
+        ],
+        existing_skills_none: false,
+      },
+      values: {
+        current_role: 'Platform Engineer',
+        education: '',
+        experience_level: 'mid',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '2',
+      },
+    });
+
+    render(
+      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-partial-profile" />,
+    );
+
+    expect(screen.queryByText(/TypeScript/)).not.toBeInTheDocument();
+
+    const submitBtn = screen.getByRole('button', {
+      name: /প্রোফাইল সংরক্ষণ করুন/i,
+    });
+
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /unable to reach the server/i,
+    );
+    expect(screen.getByText(/TypeScript/)).toBeInTheDocument();
   });
 
   it('reconciles controlled form inputs with state.values upon successful save', async () => {
