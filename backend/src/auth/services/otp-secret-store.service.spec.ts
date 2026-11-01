@@ -427,4 +427,94 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
       );
     });
   });
+
+  describe('verify_phone purpose domain separation (EP-A03)', () => {
+    const phone = '+8801712345678';
+
+    it('produces distinct HMAC digests for verify_phone vs verify_email and reset_password', () => {
+      const phoneDigest = store.computeDigest(
+        userId,
+        phone,
+        '123456',
+        'verify_phone',
+      );
+      const emailDigest = store.computeDigest(
+        userId,
+        phone,
+        '123456',
+        'verify_email',
+      );
+      const resetDigest = store.computeDigest(
+        userId,
+        phone,
+        '123456',
+        'reset_password',
+      );
+      expect(phoneDigest).not.toBe(emailDigest);
+      expect(phoneDigest).not.toBe(resetDigest);
+    });
+
+    it('stores verify_phone OTP with phone channel and verify_phone purpose', async () => {
+      abuseControl.issueChallenge.mockResolvedValueOnce({
+        expiresInSeconds: 600,
+      });
+      abuseControl.setOtpSecret.mockResolvedValueOnce(undefined);
+
+      const res = await store.storeOtp(
+        userId,
+        ' +8801712345678 ',
+        '123456',
+        600,
+        'verify_phone',
+      );
+      expect(res).toEqual({ expiresInSeconds: 600 });
+      expect(abuseControl.issueChallenge).toHaveBeenCalledWith(
+        { channel: 'phone', identifier: phone },
+        600,
+        'verify_phone',
+      );
+      expect(abuseControl.setOtpSecret).toHaveBeenCalledWith(
+        userId,
+        store.computeDigest(userId, phone, '123456', 'verify_phone'),
+        600,
+        'verify_phone',
+      );
+    });
+
+    it('verifies verify_phone challenge with phone channel and domain-separated secret key', async () => {
+      let capturedContact: unknown;
+      let capturedSecretKey: string | undefined;
+      let capturedPurpose: string | undefined;
+      let capturedValid: boolean | undefined;
+
+      abuseControl.verifyChallenge.mockImplementation(
+        async (contact, _code, verifyFn, secretKey, purpose) => {
+          capturedContact = contact;
+          capturedSecretKey = secretKey;
+          capturedPurpose = purpose;
+          abuseControl.getOtpSecret.mockResolvedValueOnce(
+            store.computeDigest(userId, phone, '123456', 'verify_phone'),
+          );
+          capturedValid = await verifyFn('123456');
+        },
+      );
+
+      const onValid = vi.fn().mockResolvedValue(undefined);
+      await store.verifyAndConsumeOtp(
+        userId,
+        phone,
+        '123456',
+        onValid,
+        'verify_phone',
+      );
+
+      expect(capturedContact).toEqual({ channel: 'phone', identifier: phone });
+      expect(capturedSecretKey).toBe(
+        `auth:v1:otp:secret:verify_phone:${userId}`,
+      );
+      expect(capturedPurpose).toBe('verify_phone');
+      expect(capturedValid).toBe(true);
+      expect(onValid).toHaveBeenCalledTimes(1);
+    });
+  });
 });

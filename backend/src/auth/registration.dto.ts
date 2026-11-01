@@ -174,6 +174,27 @@ export function normalizeVerifyEmailRequest(
   return { email: contact.identifier, code };
 }
 
+export interface VerifyPhoneRequestDTO {
+  phone: string;
+  code: string;
+}
+
+export function normalizeVerifyPhoneRequest(
+  value: unknown,
+): VerifyPhoneRequestDTO {
+  const input = object(value);
+  keys(input, ['phone', 'code']);
+  const contact = normalizeContact('phone', input.phone, 'phone');
+  if (typeof input.code !== 'string') {
+    invalid('code', 'Verification code must contain six digits');
+  }
+  const code = input.code.trim();
+  if (!/^\d{6}$/.test(code)) {
+    invalid('code', 'Verification code must contain six digits');
+  }
+  return { phone: contact.identifier, code };
+}
+
 export interface RefreshTokenRequestDTO {
   refresh_token: string;
 }

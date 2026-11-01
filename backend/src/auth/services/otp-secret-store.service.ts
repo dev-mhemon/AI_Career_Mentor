@@ -4,6 +4,8 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { fail } from '../../common/http.js';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 
+export type OtpPurpose = 'verify_email' | 'verify_phone' | 'reset_password';
+
 @Injectable()
 export class OtpSecretStore {
   constructor(
@@ -36,53 +38,57 @@ export class OtpSecretStore {
 
   computeDigest(
     userId: string,
-    email: string,
+    contact: string,
     code: string,
-    purpose: 'verify_email' | 'reset_password' = 'verify_email',
+    purpose: OtpPurpose = 'verify_email',
   ): string {
     const secret = this.getHmacSecret();
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedContact = contact.toLowerCase().trim();
     const domainPrefix =
-      purpose === 'reset_password'
-        ? 'auth:v1:otp:reset_password'
-        : 'auth:v1:otp';
+      purpose === 'verify_email' ? 'auth:v1:otp' : `auth:v1:otp:${purpose}`;
     return createHmac('sha256', secret)
-      .update(`${domainPrefix}:${userId}:${normalizedEmail}:${code}`)
+      .update(`${domainPrefix}:${userId}:${normalizedContact}:${code}`)
       .digest('hex');
   }
 
   async storeOtp(
     userId: string,
-    email: string,
+    contact: string,
     otp: string,
     ttlSeconds = 600,
-    purpose: 'verify_email' | 'reset_password' = 'verify_email',
+    purpose: OtpPurpose = 'verify_email',
   ): Promise<{ expiresInSeconds: number }> {
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedContact = contact.toLowerCase().trim();
+    const channel = purpose === 'verify_phone' ? 'phone' : 'email';
     const challenge =
-      purpose === 'reset_password'
+      purpose === 'verify_email'
         ? await this.abuse.issueChallenge(
-            { channel: 'email', identifier: normalizedEmail },
+            { channel, identifier: normalizedContact },
             ttlSeconds,
-            'reset_password',
           )
         : await this.abuse.issueChallenge(
-            { channel: 'email', identifier: normalizedEmail },
+            { channel, identifier: normalizedContact },
             ttlSeconds,
+            purpose,
           );
-    const digestHex = this.computeDigest(userId, normalizedEmail, otp, purpose);
-    if (purpose === 'reset_password') {
+    const digestHex = this.computeDigest(
+      userId,
+      normalizedContact,
+      otp,
+      purpose,
+    );
+    if (purpose === 'verify_email') {
       await this.abuse.setOtpSecret(
         userId,
         digestHex,
         challenge.expiresInSeconds,
-        'reset_password',
       );
     } else {
       await this.abuse.setOtpSecret(
         userId,
         digestHex,
         challenge.expiresInSeconds,
+        purpose,
       );
     }
     return { expiresInSeconds: challenge.expiresInSeconds };
@@ -90,10 +96,10 @@ export class OtpSecretStore {
 
   async verifyAndConsumeOtp(
     userId: string,
-    email: string,
+    contact: string,
     code: string,
     onValid?: () => Promise<void>,
-    purpose: 'verify_email' | 'reset_password' = 'verify_email',
+    purpose: OtpPurpose = 'verify_email',
   ): Promise<void> {
     if (!/^\d{6}$/.test(code)) {
       fail(
@@ -110,18 +116,19 @@ export class OtpSecretStore {
       );
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedContact = contact.toLowerCase().trim();
+    const channel = purpose === 'verify_phone' ? 'phone' : 'email';
     const secretKey =
-      purpose === 'reset_password'
-        ? `auth:v1:otp:secret:reset_password:${userId}`
-        : `auth:v1:otp:secret:${userId}`;
+      purpose === 'verify_email'
+        ? `auth:v1:otp:secret:${userId}`
+        : `auth:v1:otp:secret:${purpose}:${userId}`;
 
     try {
       const candidateCallback = async (candidateCode: string) => {
         const storedHex =
-          purpose === 'reset_password'
-            ? await this.abuse.getOtpSecret(userId, 'reset_password')
-            : await this.abuse.getOtpSecret(userId);
+          purpose === 'verify_email'
+            ? await this.abuse.getOtpSecret(userId)
+            : await this.abuse.getOtpSecret(userId, purpose);
         if (!storedHex) {
           fail(
             410,
@@ -131,7 +138,7 @@ export class OtpSecretStore {
         }
         const expectedHex = this.computeDigest(
           userId,
-          normalizedEmail,
+          normalizedContact,
           candidateCode,
           purpose,
         );
@@ -158,20 +165,20 @@ export class OtpSecretStore {
         return matches;
       };
 
-      if (purpose === 'reset_password') {
+      if (purpose === 'verify_email') {
         await this.abuse.verifyChallenge(
-          { channel: 'email', identifier: normalizedEmail },
+          { channel, identifier: normalizedContact },
           code,
           candidateCallback,
           secretKey,
-          'reset_password',
         );
       } else {
         await this.abuse.verifyChallenge(
-          { channel: 'email', identifier: normalizedEmail },
+          { channel, identifier: normalizedContact },
           code,
           candidateCallback,
           secretKey,
+          purpose,
         );
       }
     } catch (error) {

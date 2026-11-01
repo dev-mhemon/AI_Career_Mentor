@@ -67,6 +67,35 @@ describe('C05 OAuth session response', () => {
     expect(verifyEmail).toHaveBeenCalledWith(body, req);
   });
 
+  it('delegates verifyPhone to authService.verifyPhone with public policy', async () => {
+    const mockSession = {
+      access_token: 'token',
+      refresh_token: 'refresh',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      next_step: 'profile_setup',
+      profile_complete: false,
+      user: { id: 'user-1', phone: '+8801712345678', verified_contact: true },
+    };
+    const verifyPhone = vi.fn().mockResolvedValue(mockSession);
+    const controller = new AuthController(
+      { verifyPhone } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {} as any;
+    const body = { phone: '+8801712345678', code: '123456' };
+
+    const result = await controller.verifyPhone(req, body);
+    expect(result).toEqual(mockSession);
+    expect(verifyPhone).toHaveBeenCalledWith(body, req);
+    expect(
+      Reflect.getMetadata(
+        'access-policy',
+        AuthController.prototype.verifyPhone,
+      ),
+    ).toEqual({ public: true });
+  });
+
   it('delegates logout to authService.logout with user identity and authorization header', async () => {
     const logout = vi.fn().mockResolvedValue({ logged_out: true });
     const controller = new AuthController(

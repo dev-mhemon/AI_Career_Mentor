@@ -118,6 +118,11 @@ export interface VerifyEmailBody {
   code: string;
 }
 
+export interface VerifyPhoneBody {
+  phone: string;
+  code: string;
+}
+
 // ─── Core Fetch Wrapper ──────────────────────────────────────
 
 async function apiFetch<T>(
@@ -225,6 +230,13 @@ export function resendVerification(body: ResendVerificationBody): Promise<Regist
 
 export function verifyEmail(body: VerifyEmailBody): Promise<AuthSessionResponse> {
   return apiFetch<AuthSessionResponse>('/auth/verify-email', null, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function verifyPhone(body: VerifyPhoneBody): Promise<AuthSessionResponse> {
+  return apiFetch<AuthSessionResponse>('/auth/verify-phone', null, {
     method: 'POST',
     body: JSON.stringify(body),
   });

@@ -9,7 +9,7 @@ import {
   forgotPasswordAction,
   resetPasswordAction,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, logoutUser, forgotPassword, resetPassword, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, ApiError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -74,6 +74,7 @@ vi.mock("@/lib/api/client", () => {
     registerUser: vi.fn(),
     resendVerification: vi.fn(),
     verifyEmail: vi.fn(),
+    verifyPhone: vi.fn(),
     logoutUser: vi.fn(),
     forgotPassword: vi.fn(),
     resetPassword: vi.fn(),
@@ -319,6 +320,55 @@ describe("Auth Actions", () => {
 
       const result = await verifyOtpAction({}, formData);
       expect(result).toEqual({ error: "Verification code is invalid" });
+    });
+
+    it("verifies phone via backend EP-A03 and redirects to /dashboard?next_step=profile_setup", async () => {
+      const phoneContext = Buffer.from(
+        JSON.stringify({ type: "phone", identifier: "+8801712345678" }),
+      ).toString("base64url");
+      mockCookieStore.get.mockReturnValueOnce({ value: phoneContext });
+
+      vi.mocked(verifyPhone).mockResolvedValueOnce({
+        access_token: "phone-access-token",
+        refresh_token: "phone-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "test-user-id",
+          email: null,
+          phone: "+8801712345678",
+          role: "USER",
+          status: "active",
+          linked_providers: ["phone"],
+          verified_contact: true,
+        },
+        profile_complete: false,
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const formData = new FormData();
+      formData.set("type", "phone");
+      formData.set("token", "123456");
+
+      await verifyOtpAction({}, formData);
+
+      expect(verifyPhone).toHaveBeenCalledWith({
+        phone: "+8801712345678",
+        code: "123456",
+      });
+      expect(mockSetSession).toHaveBeenCalledWith({
+        access_token: "phone-access-token",
+        refresh_token: "phone-refresh-token",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        "",
+        expect.objectContaining({ path: "/verify", maxAge: 0 }),
+      );
+      expect(redirect).toHaveBeenCalledWith(
+        "/dashboard?next_step=profile_setup",
+      );
     });
   });
 

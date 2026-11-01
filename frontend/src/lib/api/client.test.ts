@@ -4,6 +4,7 @@ import {
   approveOAuthSession,
   registerUser,
   resendVerification,
+  verifyPhone,
   syncUser,
   logoutUser,
   refreshSession,
@@ -204,6 +205,47 @@ describe('API Client', () => {
           body: JSON.stringify({
             channel: 'email',
             contact: 'test@example.com',
+          }),
+        }),
+      );
+      expect(result).toEqual(responseData);
+    });
+  });
+
+  describe('verifyPhone', () => {
+    it('calls POST /auth/verify-phone without Authorization header and returns AuthSessionResponse', async () => {
+      const responseData = {
+        access_token: 'access-phone-1',
+        refresh_token: 'refresh-phone-1',
+        expires_in: 3600,
+        token_type: 'Bearer' as const,
+        user: {
+          ...MOCK_USER_RESPONSE,
+          email: null,
+          phone: '+8801712345678',
+          linked_providers: ['phone'],
+        },
+        profile_complete: false,
+        next_step: 'profile_setup' as const,
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true, data: responseData }),
+      });
+
+      const result = await verifyPhone({
+        phone: '+8801712345678',
+        code: '123456',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3000/api/v1/auth/verify-phone',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            phone: '+8801712345678',
+            code: '123456',
           }),
         }),
       );
