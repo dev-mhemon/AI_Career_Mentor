@@ -176,7 +176,7 @@ describe('C05 OAuth session response', () => {
     expect(resetPassword).toHaveBeenCalledWith(body, req);
   });
 
-  it('delegates linkIdentity to authService.linkIdentity', async () => {
+  it('delegates linkIdentity to authService.linkIdentity with allowUnverifiedContact policy', async () => {
     const mockResponse = {
       linked_providers: ['email', 'google'],
     };
@@ -198,6 +198,12 @@ describe('C05 OAuth session response', () => {
       'Bearer test-token',
       body,
     );
+    expect(
+      Reflect.getMetadata(
+        'access-policy',
+        AuthController.prototype.linkIdentity,
+      ),
+    ).toEqual({ allowUnverifiedContact: true });
   });
 
   it('delegates addContact to authService.addContact with allowUnverifiedContact policy', async () => {

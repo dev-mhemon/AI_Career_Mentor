@@ -107,6 +107,7 @@ export async function GET(request: Request) {
 
       if (flow === "link") {
         try {
+          await approveOAuthSession(session.access_token, provider);
           await linkSocialIdentity(session.access_token, provider);
           return NextResponse.redirect(`${origin}/dashboard?linked=${provider}`);
         } catch {

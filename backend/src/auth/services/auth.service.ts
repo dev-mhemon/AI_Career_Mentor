@@ -557,13 +557,36 @@ export class AuthService {
     }
 
     let committed = false;
+    let goTrueConfirmed = false;
     try {
       await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
-        await this.confirmGoTrueUser(userId, !user.email ? email : undefined);
-
         await this.database.transaction(
           userId,
           async (db) => {
+            const [userRow] = await db.query(
+              'SELECT id, status, email, verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+              [userId],
+            );
+            if (!userRow || userRow.status !== 'active') {
+              fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+            }
+            if (userRow.verified_contact) {
+              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+            }
+
+            const [providerRow] = await db.query(
+              `SELECT id, contact_value, provider_subject, verified_at
+                 FROM public.user_auth_providers
+                WHERE user_id = $1
+                  AND provider = 'email'
+                  AND (lower(contact_value) = $2 OR lower(provider_subject) = $2)
+                FOR UPDATE`,
+              [userId, email],
+            );
+            if (!providerRow || providerRow.verified_at !== null) {
+              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+            }
+
             const usersRes = await db.query(
               `UPDATE public.users
                   SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
@@ -578,8 +601,8 @@ export class AuthService {
             const providersRes = await db.query(
               `UPDATE public.user_auth_providers
                   SET verified_at = now(), updated_at = now()
-                WHERE user_id = $1 AND provider = 'email' AND verified_at IS NULL`,
-              [userId],
+                WHERE user_id = $1 AND provider = 'email' AND (lower(contact_value) = $2 OR lower(provider_subject) = $2) AND verified_at IS NULL`,
+              [userId, email],
             );
             const providersAffected =
               Array.isArray(providersRes) && typeof providersRes[1] === 'number'
@@ -598,12 +621,21 @@ export class AuthService {
               'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
               [userId],
             );
+
+            await this.confirmGoTrueUser(userId, email);
+            goTrueConfirmed = true;
           },
-          false,
+          true,
         );
         committed = true;
       });
     } catch (error) {
+      if (!committed && goTrueConfirmed) {
+        this.logger.error(
+          `Post-confirmation DB commit failed for user ${userId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
       if (!committed) {
         throw error;
       }

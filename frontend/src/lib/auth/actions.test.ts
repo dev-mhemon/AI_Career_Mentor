@@ -574,7 +574,7 @@ describe("Auth Actions", () => {
       expect(response.headers.get("location")).toBe("http://localhost:3001/login?error=oauth_failed");
     });
 
-    it("handles flow=link by calling linkSocialIdentity and redirecting to /dashboard?linked=${provider}", async () => {
+    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /dashboard?linked=${provider}", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -587,6 +587,12 @@ describe("Auth Actions", () => {
           },
         },
       });
+      vi.mocked(approveOAuthSession).mockResolvedValueOnce({
+        user: { id: "user-123", email: "user@example.com", phone: null, status: "active", verified_contact: true, role: "USER", linked_providers: ["email"] },
+        profile_complete: true,
+        verified_contact_required: false,
+        next_step: "app_home",
+      });
       vi.mocked(linkSocialIdentity).mockResolvedValueOnce({
         linked_providers: ["email", "google"],
       });
@@ -596,14 +602,44 @@ describe("Auth Actions", () => {
       );
       const response = await authCallbackGet(request);
       expect(mockExchangeCodeForSession).toHaveBeenCalledWith("mock-code");
+      expect(approveOAuthSession).toHaveBeenCalledWith(
+        "mock-link-access-token",
+        "google",
+      );
       expect(linkSocialIdentity).toHaveBeenCalledWith(
         "mock-link-access-token",
         "google",
       );
-      expect(approveOAuthSession).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
         "http://localhost:3001/dashboard?linked=google",
+      );
+    });
+
+    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when approveOAuthSession throws during flow=link", async () => {
+      mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: "mock-link-access-token",
+            user: {
+              id: "user-123",
+              identities: [{ provider: "google", id: "google-123" }],
+            },
+          },
+        },
+      });
+      vi.mocked(approveOAuthSession).mockRejectedValueOnce(new Error("Approval failed"));
+
+      const request = new Request(
+        "http://localhost:3001/auth/callback?code=mock-code&provider=google&flow=link",
+      );
+      const response = await authCallbackGet(request);
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(linkSocialIdentity).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "http://localhost:3001/dashboard?error=link_failed",
       );
     });
 

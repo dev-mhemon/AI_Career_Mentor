@@ -98,6 +98,7 @@ export class AuthController {
   /** EP-A11: Links an authenticated social OAuth identity (Google or Facebook) to the user account. */
   @Post('identities/link')
   @HttpCode(200)
+  @Policy({ allowUnverifiedContact: true })
   linkIdentity(@Req() req: any, @Body() body: unknown) {
     return this.auth.linkIdentity(req.user, req.headers?.authorization, body);
   }
