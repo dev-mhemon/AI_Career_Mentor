@@ -183,4 +183,34 @@ describe('Reviewed AccessGuard policy order', () => {
       response: { code: 'FEATURE_DISABLED' },
     });
   });
+  it('allows active unverified-contact user when allowUnverifiedContact is true', async () => {
+    const f = fixture({ allowUnverifiedContact: true }, [
+      [{ status: 'active', verified_contact: false, session_approved: false }],
+    ]);
+    expect(await f.guard.canActivate(f.context)).toBe(true);
+  });
+  it('denies unapproved session on verified account even when allowUnverifiedContact is true', async () => {
+    const f = fixture({ allowUnverifiedContact: true }, [
+      [{ status: 'active', verified_contact: true, session_approved: false }],
+    ]);
+    await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'UNVERIFIED_ACCOUNT' },
+    });
+  });
+  it('denies suspended user when allowUnverifiedContact is true', async () => {
+    const f = fixture({ allowUnverifiedContact: true }, [
+      [
+        {
+          status: 'suspended',
+          verified_contact: false,
+          session_approved: false,
+        },
+      ],
+    ]);
+    await expect(f.guard.canActivate(f.context)).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'ACCOUNT_SUSPENDED' },
+    });
+  });
 });

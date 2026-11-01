@@ -8,8 +8,10 @@ import {
   signInWithOAuth,
   forgotPasswordAction,
   resetPasswordAction,
+  linkIdentityAction,
+  addContactAction,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -22,6 +24,7 @@ const mockGetSession = vi.fn();
 const mockVerifyOtp = vi.fn();
 const mockResend = vi.fn();
 const mockSignInWithOAuth = vi.fn();
+const mockLinkIdentity = vi.fn();
 const mockExchangeCodeForSession = vi.fn();
 const verificationContext = Buffer.from(
   JSON.stringify({ type: "email", identifier: "test@example.com" }),
@@ -42,6 +45,7 @@ vi.mock("@/lib/supabase/server", () => ({
       verifyOtp: mockVerifyOtp,
       resend: mockResend,
       signInWithOAuth: mockSignInWithOAuth,
+      linkIdentity: mockLinkIdentity,
       exchangeCodeForSession: mockExchangeCodeForSession,
     },
   }),
@@ -78,6 +82,8 @@ vi.mock("@/lib/api/client", () => {
     logoutUser: vi.fn(),
     forgotPassword: vi.fn(),
     resetPassword: vi.fn(),
+    linkSocialIdentity: vi.fn(),
+    addContact: vi.fn(),
     NetworkError: MockNetworkError,
     ApiError: MockApiError,
   };
@@ -568,6 +574,109 @@ describe("Auth Actions", () => {
       expect(response.headers.get("location")).toBe("http://localhost:3001/login?error=oauth_failed");
     });
 
+    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /dashboard?linked=${provider}", async () => {
+      mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: "mock-link-access-token",
+            user: {
+              id: "user-123",
+              identities: [{ provider: "google", id: "google-123" }],
+            },
+          },
+        },
+      });
+      vi.mocked(approveOAuthSession).mockResolvedValueOnce({
+        user: { id: "user-123", email: "user@example.com", phone: null, status: "active", verified_contact: true, role: "USER", linked_providers: ["email"] },
+        profile_complete: true,
+        verified_contact_required: false,
+        next_step: "app_home",
+      });
+      vi.mocked(linkSocialIdentity).mockResolvedValueOnce({
+        linked_providers: ["email", "google"],
+      });
+
+      const request = new Request(
+        "http://localhost:3001/auth/callback?code=mock-code&provider=google&flow=link",
+      );
+      const response = await authCallbackGet(request);
+      expect(mockExchangeCodeForSession).toHaveBeenCalledWith("mock-code");
+      expect(approveOAuthSession).toHaveBeenCalledWith(
+        "mock-link-access-token",
+        "google",
+      );
+      expect(linkSocialIdentity).toHaveBeenCalledWith(
+        "mock-link-access-token",
+        "google",
+      );
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "http://localhost:3001/dashboard?linked=google",
+      );
+    });
+
+    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when approveOAuthSession throws during flow=link", async () => {
+      mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: "mock-link-access-token",
+            user: {
+              id: "user-123",
+              identities: [{ provider: "google", id: "google-123" }],
+            },
+          },
+        },
+      });
+      vi.mocked(approveOAuthSession).mockRejectedValueOnce(new Error("Approval failed"));
+
+      const request = new Request(
+        "http://localhost:3001/auth/callback?code=mock-code&provider=google&flow=link",
+      );
+      const response = await authCallbackGet(request);
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(linkSocialIdentity).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "http://localhost:3001/dashboard?error=link_failed",
+      );
+    });
+
+    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
+      mockExchangeCodeForSession.mockResolvedValueOnce({
+        error: new Error("Exchange error"),
+      });
+
+      const request = new Request(
+        "http://localhost:3001/auth/callback?code=mock-code&provider=google&flow=link",
+      );
+      const response = await authCallbackGet(request);
+      expect(mockExchangeCodeForSession).toHaveBeenCalledWith("mock-code");
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "http://localhost:3001/dashboard?error=link_failed",
+      );
+    });
+
+    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
+      mockExchangeCodeForSession.mockRejectedValueOnce(
+        new Error("Unexpected exchange failure"),
+      );
+
+      const request = new Request(
+        "http://localhost:3001/auth/callback?code=mock-code&provider=google&flow=link",
+      );
+      const response = await authCallbackGet(request);
+      expect(mockExchangeCodeForSession).toHaveBeenCalledWith("mock-code");
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "http://localhost:3001/dashboard?error=link_failed",
+      );
+    });
+
     it("signs out with scope: 'local' and redirects to /login?error=sync_failed if approveOAuthSession throws ApiError", async () => {
       const { ApiError } = await import("@/lib/api/client");
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
@@ -707,4 +816,106 @@ describe("Auth Actions", () => {
     });
   });
 
+  describe("linkIdentityAction (EP-A11)", () => {
+    it("links social identity directly when already linked in Supabase", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: "active-token",
+            user: { identities: [{ provider: "google" }] },
+          },
+        },
+      });
+      vi.mocked(linkSocialIdentity).mockResolvedValueOnce({
+        linked_providers: ["email", "google"],
+      });
+
+      const result = await linkIdentityAction("google");
+      expect(result).toEqual({
+        success: true,
+        linked_providers: ["email", "google"],
+      });
+      expect(linkSocialIdentity).toHaveBeenCalledWith("active-token", "google");
+    });
+
+    it("initiates Supabase OAuth identity linking redirect when not yet linked", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: "active-token",
+            user: { identities: [{ provider: "email" }] },
+          },
+        },
+      });
+      mockLinkIdentity.mockResolvedValueOnce({
+        data: { url: "https://accounts.google.com/o/oauth2/auth" },
+        error: null,
+      });
+      vi.mocked(redirect).mockImplementationOnce(() => {
+        throw new Error("NEXT_REDIRECT");
+      });
+
+      await expect(linkIdentityAction("google")).rejects.toThrow("NEXT_REDIRECT");
+      expect(mockLinkIdentity).toHaveBeenCalledWith({
+        provider: "google",
+        options: {
+          redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3001"}/auth/callback?flow=link&provider=google`,
+        },
+      });
+      expect(redirect).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/auth");
+    });
+
+    it("returns error when session is missing", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: null },
+      });
+
+      const result = await linkIdentityAction("facebook");
+      expect(result).toEqual({
+        error: "Authentication session is required to link an identity.",
+      });
+      expect(linkSocialIdentity).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("addContactAction (EP-A12)", () => {
+    it("stages contact, sets verification context cookie, and redirects to /verify?type=email", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: "active-token" } },
+      });
+      vi.mocked(addContact).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "c****@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:01:00.000Z",
+      });
+
+      const formData = new FormData();
+      formData.set("channel", "email");
+      formData.set("contact", "candidate@example.com");
+
+      await addContactAction({}, formData);
+
+      expect(addContact).toHaveBeenCalledWith("active-token", {
+        channel: "email",
+        contact: "candidate@example.com",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        expect.any(String),
+        expect.objectContaining({ path: "/verify", maxAge: 600 })
+      );
+      expect(redirect).toHaveBeenCalledWith("/verify?type=email");
+    });
+
+    it("returns error when contact is empty", async () => {
+      const formData = new FormData();
+      formData.set("channel", "email");
+      formData.set("contact", "   ");
+
+      const result = await addContactAction({}, formData);
+      expect(result).toEqual({ error: "Email is required." });
+      expect(addContact).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -1,6 +1,8 @@
 import { HttpException } from '@nestjs/common';
 import {
+  normalizeAddContactRequest,
   normalizeForgotPasswordRequest,
+  normalizeLinkIdentityRequest,
   normalizeRefreshTokenRequest,
   normalizeRegisterRequest,
   normalizeResendRequest,
@@ -364,6 +366,122 @@ describe('C05 shared registration and resend input', () => {
           normalizeVerifyPhoneRequest({
             phone: '01712345678',
             code: '123456',
+            extra: true,
+          }),
+        ).status,
+      ).toBe(422);
+    });
+  });
+
+  describe('EP-A11 Link Identity input validation', () => {
+    it('normalizes google and facebook provider values', () => {
+      expect(normalizeLinkIdentityRequest({ provider: ' Google ' })).toEqual({
+        provider: 'google',
+      });
+      expect(normalizeLinkIdentityRequest({ provider: 'FACEBOOK' })).toEqual({
+        provider: 'facebook',
+      });
+    });
+
+    it('rejects unsupported or missing provider with 422 INVALID_ENUM_VALUE field detail', () => {
+      const invalid = errorOf(() =>
+        normalizeLinkIdentityRequest({ provider: 'github' }),
+      );
+      expect(invalid.status).toBe(422);
+      expect(invalid.body.code).toBe('VALIDATION_FAILED');
+      expect(invalid.body.details).toEqual([
+        expect.objectContaining({
+          field: 'provider',
+          code: 'INVALID_ENUM_VALUE',
+        }),
+      ]);
+
+      const missing = errorOf(() => normalizeLinkIdentityRequest({}));
+      expect(missing.status).toBe(422);
+      expect(missing.body.code).toBe('VALIDATION_FAILED');
+      expect(missing.body.details).toEqual([
+        expect.objectContaining({
+          field: 'provider',
+          code: 'INVALID_ENUM_VALUE',
+        }),
+      ]);
+    });
+
+    it('rejects extra unknown fields', () => {
+      expect(
+        errorOf(() =>
+          normalizeLinkIdentityRequest({ provider: 'google', extra: true }),
+        ).status,
+      ).toBe(422);
+    });
+  });
+
+  describe('EP-A12 Add Contact input validation', () => {
+    it('normalizes email and Bangladesh phone contacts', () => {
+      expect(
+        normalizeAddContactRequest({
+          channel: ' email ',
+          contact: '  Candidate@Example.COM  ',
+        }),
+      ).toEqual({
+        channel: 'email',
+        identifier: 'candidate@example.com',
+      });
+
+      expect(
+        normalizeAddContactRequest({
+          channel: 'PHONE',
+          contact: ' 01712345678 ',
+        }),
+      ).toEqual({
+        channel: 'phone',
+        identifier: '+8801712345678',
+      });
+    });
+
+    it('rejects invalid phone number with 422 INVALID_PHONE_NUMBER', () => {
+      const invalidPhone = errorOf(() =>
+        normalizeAddContactRequest({
+          channel: 'phone',
+          contact: '12345',
+        }),
+      );
+      expect(invalidPhone.status).toBe(422);
+      expect(invalidPhone.body.code).toBe('INVALID_PHONE_NUMBER');
+    });
+
+    it('rejects invalid email or channel', () => {
+      const invalidEmail = errorOf(() =>
+        normalizeAddContactRequest({
+          channel: 'email',
+          contact: 'not-an-email',
+        }),
+      );
+      expect(invalidEmail.status).toBe(422);
+      expect(invalidEmail.body.code).toBe('VALIDATION_FAILED');
+
+      const invalidChannel = errorOf(() =>
+        normalizeAddContactRequest({
+          channel: 'sms',
+          contact: 'candidate@example.com',
+        }),
+      );
+      expect(invalidChannel.status).toBe(422);
+      expect(invalidChannel.body.code).toBe('VALIDATION_FAILED');
+      expect(invalidChannel.body.details).toEqual([
+        expect.objectContaining({
+          field: 'channel',
+          code: 'INVALID_ENUM_VALUE',
+        }),
+      ]);
+    });
+
+    it('rejects extra unknown fields', () => {
+      expect(
+        errorOf(() =>
+          normalizeAddContactRequest({
+            channel: 'email',
+            contact: 'candidate@example.com',
             extra: true,
           }),
         ).status,

@@ -12,6 +12,8 @@ import {
   logoutUser,
   forgotPassword,
   resetPassword,
+  linkSocialIdentity,
+  addContact,
   NetworkError,
   ApiError,
 } from '@/lib/api/client';
@@ -394,4 +396,105 @@ export async function resetPasswordAction(
   }
 
   redirect('/login?reset=success');
+}
+
+/**
+ * Server action for EP-A11 (`POST /api/v1/auth/identities/link`) to link Google or Facebook to the current verified account.
+ */
+export async function linkIdentityAction(
+  provider: 'google' | 'facebook',
+): Promise<AuthActionResult & { linked_providers?: string[] }> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return { error: 'Authentication session is required to link an identity.' };
+    }
+
+    const alreadyLinked = session.user?.identities?.some(
+      (i) => i.provider === provider,
+    );
+    if (alreadyLinked) {
+      const result = await linkSocialIdentity(session.access_token, provider);
+      return { success: true, linked_providers: result.linked_providers };
+    }
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+    const { data, error } = await supabase.auth.linkIdentity({
+      provider,
+      options: {
+        redirectTo: `${siteUrl}/auth/callback?flow=link&provider=${provider}`,
+      },
+    });
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    if (data?.url) {
+      redirect(data.url);
+    }
+
+    return { error: 'Failed to initiate identity linking. Missing redirect URL.' };
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
+      throw err;
+    }
+    if (err instanceof NetworkError) {
+      return { error: 'Unable to reach the server. Please try again later.' };
+    }
+    if (err instanceof ApiError) {
+      return { error: err.message };
+    }
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : 'An unexpected error occurred while linking identity.',
+    };
+  }
+}
+
+/**
+ * Server action for EP-A12 (`POST /api/v1/auth/contact`) to add and verify an email or phone contact.
+ */
+export async function addContactAction(
+  _prevState: AuthActionResult,
+  formData: FormData,
+): Promise<AuthActionResult> {
+  const channelRaw = (formData.get('channel') as string)?.trim().toLowerCase();
+  const channel: 'email' | 'phone' = channelRaw === 'phone' ? 'phone' : 'email';
+  const contact = (formData.get('contact') as string)?.trim();
+
+  if (!contact) {
+    return {
+      error: channel === 'phone' ? 'Phone number is required.' : 'Email is required.',
+    };
+  }
+
+  try {
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return { error: 'Authentication session is required to add a contact.' };
+    }
+
+    await addContact(session.access_token, { channel, contact });
+    await setVerificationContext({ type: channel, identifier: contact });
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      return { error: 'Unable to reach the server. Please try again later.' };
+    }
+    if (err instanceof ApiError) {
+      return { error: err.message };
+    }
+    return { error: 'An unexpected error occurred while adding contact.' };
+  }
+
+  redirect(`/verify?type=${channel}`);
+
 }

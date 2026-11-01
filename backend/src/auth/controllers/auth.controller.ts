@@ -95,4 +95,23 @@ export class AuthController {
   me(@Req() req: any) {
     return this.auth.me(req.user.sub);
   }
+  /** EP-A11: Links an authenticated social OAuth identity (Google or Facebook) to the user account. */
+  @Post('identities/link')
+  @HttpCode(200)
+  @Policy({ allowUnverifiedContact: true })
+  linkIdentity(@Req() req: any, @Body() body: unknown) {
+    return this.auth.linkIdentity(req.user, req.headers?.authorization, body);
+  }
+  /** EP-A12: Adds and initiates verification for a supported email or phone contact. */
+  @Post('contact')
+  @HttpCode(202)
+  @Policy({ allowUnverifiedContact: true })
+  addContact(@Req() req: any, @Body() body: unknown) {
+    return this.auth.addContact(
+      req.user,
+      req.headers?.authorization,
+      body,
+      req,
+    );
+  }
 }

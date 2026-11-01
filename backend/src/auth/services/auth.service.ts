@@ -8,7 +8,9 @@ import { features } from '../policy.js';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { trustedClientIp } from '../client-ip.js';
 import {
+  normalizeAddContactRequest,
   normalizeForgotPasswordRequest,
+  normalizeLinkIdentityRequest,
   normalizeLoginRequest,
   normalizeRefreshTokenRequest,
   normalizeResetPasswordRequest,
@@ -555,13 +557,36 @@ export class AuthService {
     }
 
     let committed = false;
+    let goTrueConfirmed = false;
     try {
       await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
-        await this.confirmGoTrueUser(userId);
-
         await this.database.transaction(
           userId,
           async (db) => {
+            const [userRow] = await db.query(
+              'SELECT id, status, email, verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+              [userId],
+            );
+            if (!userRow || userRow.status !== 'active') {
+              fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+            }
+            if (userRow.verified_contact) {
+              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+            }
+
+            const [providerRow] = await db.query(
+              `SELECT id, contact_value, provider_subject, verified_at
+                 FROM public.user_auth_providers
+                WHERE user_id = $1
+                  AND provider = 'email'
+                  AND (lower(contact_value) = $2 OR lower(provider_subject) = $2)
+                FOR UPDATE`,
+              [userId, email],
+            );
+            if (!providerRow || providerRow.verified_at !== null) {
+              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+            }
+
             const usersRes = await db.query(
               `UPDATE public.users
                   SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
@@ -576,8 +601,8 @@ export class AuthService {
             const providersRes = await db.query(
               `UPDATE public.user_auth_providers
                   SET verified_at = now(), updated_at = now()
-                WHERE user_id = $1 AND provider = 'email' AND verified_at IS NULL`,
-              [userId],
+                WHERE user_id = $1 AND provider = 'email' AND (lower(contact_value) = $2 OR lower(provider_subject) = $2) AND verified_at IS NULL`,
+              [userId, email],
             );
             const providersAffected =
               Array.isArray(providersRes) && typeof providersRes[1] === 'number'
@@ -596,12 +621,21 @@ export class AuthService {
               'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
               [userId],
             );
+
+            await this.confirmGoTrueUser(userId, email);
+            goTrueConfirmed = true;
           },
-          false,
+          true,
         );
         committed = true;
       });
     } catch (error) {
+      if (!committed && goTrueConfirmed) {
+        this.logger.error(
+          `Post-confirmation DB commit failed for user ${userId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
       if (!committed) {
         throw error;
       }
@@ -634,6 +668,328 @@ export class AuthService {
         false,
       );
     }
+  }
+
+  /**
+   * Masks email address for C05 RegistrationPendingDTO display.
+   */
+  private maskEmailContact(email: string): string {
+    const at = email.lastIndexOf('@');
+    return `${email[0]}****${email.slice(at)}`;
+  }
+
+  /**
+   * EP-A11: Links an authenticated Google or Facebook OAuth identity to an existing verified account.
+   */
+  async linkIdentity(
+    identity: JwtIdentity,
+    authorization: string | undefined,
+    body: unknown,
+  ) {
+    if (!identity?.sub || !identity?.sessionId || !authorization) {
+      fail(401, 'AUTH_REQUIRED', 'A valid Auth session is required');
+    }
+    const input = normalizeLinkIdentityRequest(body);
+    const provider = input.provider;
+
+    const user = await this.authUser(authorization);
+    if (user.id !== identity.sub) {
+      fail(401, 'INVALID_TOKEN', 'Identity mismatch');
+    }
+
+    const matchedIdentity = (user.identities || []).find(
+      (i) => i.provider === provider,
+    );
+    if (!matchedIdentity) {
+      fail(
+        422,
+        'PROVIDER_MISMATCH',
+        'Provider is not linked to this Auth identity',
+      );
+    }
+
+    const providerSubject = (
+      matchedIdentity.identity_data?.sub ||
+      matchedIdentity.id ||
+      ''
+    ).trim();
+    if (!providerSubject) {
+      fail(
+        422,
+        'PROVIDER_MISMATCH',
+        'Provider identity subject is missing or invalid',
+      );
+    }
+
+    const confirmedEmail = user.email_confirmed_at
+      ? user.email?.trim().toLowerCase() || null
+      : null;
+
+    return this.database
+      .transaction(
+        identity.sub,
+        async (db) => {
+          const [account] = await db.query(
+            'SELECT verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+            [identity.sub],
+          );
+          if (!account) {
+            fail(401, 'AUTH_REQUIRED', 'Application account not found');
+          }
+          if (!account.verified_contact) {
+            fail(
+              403,
+              'VERIFIED_CONTACT_REQUIRED',
+              'A verified contact is required before linking a social identity',
+            );
+          }
+
+          const [conflict] = await db.query(
+            `SELECT user_id
+               FROM public.user_auth_providers
+              WHERE provider = $1::public.auth_provider
+                AND provider_subject = $2
+                AND user_id <> $3
+              LIMIT 1`,
+            [provider, providerSubject, identity.sub],
+          );
+          if (conflict) {
+            fail(
+              409,
+              'IDENTITY_LINK_CONFLICT',
+              'Identity belongs to another application account',
+            );
+          }
+
+          await db.query(
+            `INSERT INTO public.user_auth_providers
+               (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+             VALUES ($1, $2::public.auth_provider, $3, $4, $5, false)
+             ON CONFLICT (user_id, provider) DO UPDATE
+               SET provider_subject = EXCLUDED.provider_subject,
+                   contact_value = COALESCE(EXCLUDED.contact_value, public.user_auth_providers.contact_value),
+                   verified_at = COALESCE(EXCLUDED.verified_at, public.user_auth_providers.verified_at),
+                   updated_at = now()`,
+            [
+              identity.sub,
+              provider,
+              providerSubject,
+              confirmedEmail,
+              user.email_confirmed_at || null,
+            ],
+          );
+
+          const [row] = await db.query(
+            `SELECT ARRAY(
+               SELECT provider::text
+                 FROM public.user_auth_providers
+                WHERE user_id = $1
+                ORDER BY provider
+             ) AS linked_providers`,
+            [identity.sub],
+          );
+          return {
+            linked_providers: (row?.linked_providers ?? [provider]) as string[],
+          };
+        },
+        true,
+        true,
+      )
+      .catch((error: unknown) => {
+        if (
+          error instanceof QueryFailedError &&
+          error.driverError?.code === '23505'
+        ) {
+          fail(
+            409,
+            'IDENTITY_LINK_CONFLICT',
+            'Identity belongs to another application account',
+          );
+        }
+        throw error;
+      });
+  }
+
+  /**
+   * EP-A12: Adds and initiates verification for a supported contact on an authenticated account.
+   */
+  async addContact(
+    identity: JwtIdentity,
+    authorization: string | undefined,
+    body: unknown,
+    request?: Request,
+  ) {
+    if (!identity?.sub || !identity?.sessionId || !authorization) {
+      fail(401, 'AUTH_REQUIRED', 'A valid Auth session is required');
+    }
+    const input = normalizeAddContactRequest(body);
+    if (input.channel !== 'email') {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Phone contact verification is temporarily unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    const user = await this.authUser(authorization);
+    if (user.id !== identity.sub) {
+      fail(401, 'INVALID_TOKEN', 'Identity mismatch');
+    }
+
+    if (!this.abuse.isReady() || !this.otpStore || !this.emailProvider) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Email verification is temporarily unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+    this.emailProvider.ready();
+
+    const email = input.identifier;
+    const ip = request ? trustedClientIp(request) : '127.0.0.1';
+    const { retryAfterSeconds } = await this.abuse.reserveSend(
+      { channel: 'email', identifier: email },
+      ip,
+    );
+
+    try {
+      await this.database.transaction(
+        identity.sub,
+        async (db) => {
+          await db.query(
+            'SELECT pg_advisory_xact_lock(hashtextextended($1, 1))',
+            [`auth:pending-email:${email}`],
+          );
+
+          const [self] = await db.query(
+            'SELECT verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+            [identity.sub],
+          );
+          if (self?.verified_contact) {
+            fail(
+              409,
+              'ALREADY_VERIFIED',
+              'Account already has a verified contact',
+            );
+          }
+
+          const [otherUser] = await db.query(
+            'SELECT id FROM public.users WHERE lower(email::text) = $1 AND id <> $2 LIMIT 1 FOR UPDATE',
+            [email, identity.sub],
+          );
+          const [otherProvider] = await db.query(
+            `SELECT user_id
+               FROM public.user_auth_providers
+              WHERE provider = 'email'
+                AND lower(contact_value) = $1
+                AND user_id <> $2
+              LIMIT 1
+              FOR UPDATE`,
+            [email, identity.sub],
+          );
+          if (otherUser || otherProvider) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Contact already registered',
+            );
+          }
+
+          const [selfProvider] = await db.query(
+            `SELECT contact_value, verified_at
+               FROM public.user_auth_providers
+              WHERE user_id = $1 AND provider = 'email'
+              FOR UPDATE`,
+            [identity.sub],
+          );
+          if (selfProvider?.verified_at) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Contact already registered',
+            );
+          }
+
+          await db.query(
+            `INSERT INTO public.user_auth_providers
+               (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+             VALUES (
+               $1,
+               'email',
+               $2,
+               $3,
+               NULL,
+               NOT EXISTS (SELECT 1 FROM public.user_auth_providers WHERE user_id = $1 AND is_primary = true)
+             )
+             ON CONFLICT (user_id, provider) DO UPDATE
+               SET provider_subject = EXCLUDED.provider_subject,
+                   contact_value = EXCLUDED.contact_value,
+                   verified_at = NULL,
+                   updated_at = now()`,
+            [identity.sub, identity.sub, email],
+          );
+        },
+        true,
+        true,
+      );
+    } catch (error) {
+      if (
+        error instanceof QueryFailedError &&
+        error.driverError?.code === '23505'
+      ) {
+        fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+      }
+      throw error;
+    }
+
+    try {
+      const delivery = await this.emailProvider.sendChallenge({
+        id: identity.sub,
+        subject: identity.sub,
+        email,
+        verified: false,
+      });
+      if (delivery.expiresInSeconds !== 600) {
+        fail(
+          502,
+          'EMAIL_PROVIDER_ERROR',
+          'Email delivery could not be confirmed',
+          [],
+          true,
+        );
+      }
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' ||
+          /timeout|timed out/i.test(error.message))
+      ) {
+        fail(504, 'PROVIDER_TIMEOUT', 'Email provider timed out', [], true);
+      }
+      fail(
+        502,
+        'EMAIL_PROVIDER_ERROR',
+        'Email delivery could not be confirmed',
+        [],
+        true,
+      );
+    }
+
+    return {
+      verification_channel: 'email' as const,
+      contact_masked: this.maskEmailContact(email),
+      expires_in_seconds: 600,
+      resend_available_at: new Date(
+        Date.now() + retryAfterSeconds * 1000,
+      ).toISOString(),
+    };
   }
 
   /**
@@ -780,7 +1136,10 @@ export class AuthService {
     }
   }
 
-  private async confirmGoTrueUser(userId: string): Promise<void> {
+  private async confirmGoTrueUser(
+    userId: string,
+    email?: string,
+  ): Promise<void> {
     const supabaseUrl = this.config
       .getOrThrow<string>('SUPABASE_URL')
       .replace(/\/$/, '');
@@ -797,7 +1156,9 @@ export class AuthService {
           Authorization: `Bearer ${serviceRoleKey || ''}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email_confirm: true }),
+        body: JSON.stringify(
+          email ? { email, email_confirm: true } : { email_confirm: true },
+        ),
         signal: AbortSignal.timeout(10000),
       });
     } catch (error) {

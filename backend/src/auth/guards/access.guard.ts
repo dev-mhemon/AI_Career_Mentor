@@ -9,6 +9,9 @@ export class AccessGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly database: DatabaseService,
   ) {}
+  /**
+   * Evaluates route access policy against user account status, verified contact, session approval, and feature controls.
+   */
   async canActivate(context: ExecutionContext) {
     const p =
       this.reflector.getAllAndOverride<AccessPolicy>('access-policy', [
@@ -42,7 +45,13 @@ export class AccessGuard implements CanActivate {
         const approved = p.allowSuspended
           ? Boolean(u.session_approved || u.unrevoked_session_approved)
           : Boolean(u.session_approved);
-        if (!p.accountInspection && (!u.verified_contact || !approved))
+        const unverifiedContactExempt =
+          Boolean(p.allowUnverifiedContact) && !u.verified_contact;
+        if (
+          !p.accountInspection &&
+          !unverifiedContactExempt &&
+          (!u.verified_contact || !approved)
+        )
           fail(403, 'UNVERIFIED_ACCOUNT', 'Approved session required');
         if (p.admin) {
           const [a] = await db.query(

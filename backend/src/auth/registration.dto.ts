@@ -295,3 +295,52 @@ export function normalizeResetPasswordRequest(
     confirm_new_password: input.confirm_new_password as string,
   };
 }
+
+/**
+ * Request payload for linking a social OAuth identity (EP-A11).
+ */
+export interface LinkIdentityRequestDTO {
+  provider: 'google' | 'facebook';
+}
+
+/**
+ * Validates and normalizes social identity linking request (EP-A11).
+ */
+export function normalizeLinkIdentityRequest(
+  value: unknown,
+): LinkIdentityRequestDTO {
+  const input = object(value);
+  keys(input, ['provider']);
+  const provider =
+    typeof input.provider === 'string'
+      ? input.provider.trim().toLowerCase()
+      : input.provider;
+  if (provider !== 'google' && provider !== 'facebook') {
+    invalid('provider', 'Choose google or facebook', 'INVALID_ENUM_VALUE');
+  }
+  return { provider };
+}
+
+/**
+ * Request payload for adding a verified contact (EP-A12).
+ */
+export interface AddContactRequestDTO {
+  channel: 'email' | 'phone';
+  contact: string;
+}
+
+/**
+ * Validates and normalizes add-contact request into channel and normalized contact (EP-A12).
+ */
+export function normalizeAddContactRequest(value: unknown): NormalizedContact {
+  const input = object(value);
+  keys(input, ['channel', 'contact']);
+  const channel =
+    typeof input.channel === 'string'
+      ? input.channel.trim().toLowerCase()
+      : input.channel;
+  if (channel !== 'email' && channel !== 'phone') {
+    invalid('channel', 'Choose email or phone', 'INVALID_ENUM_VALUE');
+  }
+  return normalizeContact(channel, input.contact, 'contact');
+}

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { approveOAuthSession, ApiError, NetworkError } from "@/lib/api/client";
+import { approveOAuthSession, linkSocialIdentity, ApiError, NetworkError } from "@/lib/api/client";
 
 async function safeSignOut(
   supabase: {
@@ -70,6 +70,9 @@ export async function GET(request: Request) {
 
     if (exchangeError) {
       console.error("Auth code exchange failed");
+      if (flow === "link") {
+        return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+      }
       await safeSignOut(supabase);
       return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
     }
@@ -83,6 +86,9 @@ export async function GET(request: Request) {
       } = await supabase.auth.getSession();
 
       if (!session) {
+        if (flow === "link") {
+          return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+        }
         await safeSignOut(supabase);
         return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
       }
@@ -92,8 +98,21 @@ export async function GET(request: Request) {
         (i) => i.provider === provider,
       );
       if (!hasMatchingIdentity) {
+        if (flow === "link") {
+          return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+        }
         await safeSignOut(supabase);
         return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
+      }
+
+      if (flow === "link") {
+        try {
+          await approveOAuthSession(session.access_token, provider);
+          await linkSocialIdentity(session.access_token, provider);
+          return NextResponse.redirect(`${origin}/dashboard?linked=${provider}`);
+        } catch {
+          return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+        }
       }
 
       const approved = await approveOAuthSession(session.access_token, provider);
@@ -116,6 +135,9 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?verified=true`);
   } catch (err) {
     console.error("Auth callback failed");
+    if (flow === "link") {
+      return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+    }
     await safeSignOut(supabase);
     if (
       err instanceof ApiError ||

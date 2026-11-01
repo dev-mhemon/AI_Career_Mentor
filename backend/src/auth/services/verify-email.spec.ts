@@ -65,6 +65,32 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         async (_id: string, op: (db: EntityManager) => Promise<unknown>) => {
           const txDb = {
             query: vi.fn().mockImplementation(async (sql: string) => {
+              if (
+                sql.includes('FROM public.users') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: userId,
+                    status: 'active',
+                    email,
+                    verified_contact: false,
+                  },
+                ];
+              }
+              if (
+                sql.includes('FROM public.user_auth_providers') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: 'mock-provider-id',
+                    contact_value: email,
+                    provider_subject: userId,
+                    verified_at: null,
+                  },
+                ];
+              }
               if (sql.includes('UPDATE public.users')) {
                 return [[], 1];
               }
@@ -198,12 +224,12 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         expect.any(Function),
       );
 
-      // 2. GoTrue admin PUT called with email_confirm: true
+      // 2. GoTrue admin PUT called with email and email_confirm: true
       expect(fetch).toHaveBeenCalledWith(
         `http://supabase.invalid/auth/v1/admin/users/${userId}`,
         expect.objectContaining({
           method: 'PUT',
-          body: JSON.stringify({ email_confirm: true }),
+          body: JSON.stringify({ email, email_confirm: true }),
         }),
       );
 
@@ -211,7 +237,7 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
       expect(database.transaction).toHaveBeenCalledWith(
         userId,
         expect.any(Function),
-        false,
+        true,
       );
 
       // 4. Session approved via SessionApprovalService with email_verification
@@ -233,6 +259,35 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
           email,
           verified_contact: true,
         },
+      });
+    });
+
+    it('updates and confirms GoTrue with email when user has no email yet (added contact)', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email: null,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      const result = await service.verifyEmail({ email, code }, {} as Request);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `http://supabase.invalid/auth/v1/admin/users/${userId}`,
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ email, email_confirm: true }),
+        }),
+      );
+
+      expect(result).toMatchObject({
+        access_token: validToken,
+        refresh_token: 'refresh_token_synthetic',
+        token_type: 'Bearer',
+        next_step: 'profile_setup',
       });
     });
   });
@@ -328,6 +383,32 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         async (_id: string, op: (db: EntityManager) => Promise<unknown>) => {
           const txDb = {
             query: vi.fn().mockImplementation(async (sql: string) => {
+              if (
+                sql.includes('FROM public.users') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: userId,
+                    status: 'active',
+                    email,
+                    verified_contact: false,
+                  },
+                ];
+              }
+              if (
+                sql.includes('FROM public.user_auth_providers') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: 'mock-provider-id',
+                    contact_value: email,
+                    provider_subject: userId,
+                    verified_at: null,
+                  },
+                ];
+              }
               if (sql.includes('UPDATE public.users')) {
                 // 0 rows affected
                 return [[], 0];
@@ -367,6 +448,32 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         async (_id: string, op: (db: EntityManager) => Promise<unknown>) => {
           const txDb = {
             query: vi.fn().mockImplementation(async (sql: string) => {
+              if (
+                sql.includes('FROM public.users') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: userId,
+                    status: 'active',
+                    email,
+                    verified_contact: false,
+                  },
+                ];
+              }
+              if (
+                sql.includes('FROM public.user_auth_providers') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: 'mock-provider-id',
+                    contact_value: email,
+                    provider_subject: userId,
+                    verified_at: null,
+                  },
+                ];
+              }
               if (sql.includes('UPDATE public.users')) {
                 return [[], 1];
               }
@@ -388,6 +495,59 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         response: { code: 'ALREADY_VERIFIED' },
       });
 
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+
+    it('throws 409 ALREADY_VERIFIED and never calls GoTrue if public.user_auth_providers has no matching pending row (concurrent replacement)', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      database.transaction.mockImplementation(
+        async (_id: string, op: (db: EntityManager) => Promise<unknown>) => {
+          const txDb = {
+            query: vi.fn().mockImplementation(async (sql: string) => {
+              if (
+                sql.includes('FROM public.users') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                return [
+                  {
+                    id: userId,
+                    status: 'active',
+                    email,
+                    verified_contact: false,
+                  },
+                ];
+              }
+              if (
+                sql.includes('FROM public.user_auth_providers') &&
+                sql.includes('FOR UPDATE')
+              ) {
+                // 0 rows returned because contact_value was replaced concurrently
+                return [];
+              }
+              return [];
+            }),
+          } as unknown as EntityManager;
+          return op(txDb);
+        },
+      );
+
+      await expect(
+        service.verifyEmail({ email, code }, {} as Request),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'ALREADY_VERIFIED' },
+      });
+
+      expect(fetch).not.toHaveBeenCalled();
       expect(approvals.approve).not.toHaveBeenCalled();
     });
   });
