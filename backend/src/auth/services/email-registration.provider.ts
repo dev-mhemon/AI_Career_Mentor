@@ -1,6 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { fail } from '../../common/http.js';
+import { validateEmailWebhookUrl } from '../../config.js';
 import { DatabaseService } from './database.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 
@@ -23,17 +24,153 @@ export type EmailDispatchTransport = (
   signal?: AbortSignal,
 ) => Promise<void>;
 
+const EMAIL_TRANSPORT_URL_KEYS = [
+  'AUTH_EMAIL_WEBHOOK_URL',
+  'AUTH_EMAIL_TRANSPORT_URL',
+  'EMAIL_TRANSPORT_URL',
+  'MAILPIT_URL',
+] as const;
+
+/**
+ * Resolves and instantiates a runtime email dispatch transport from application configuration.
+ * Supports:
+ * 1) Native Mailpit HTTP send API (MAILPIT_URL) posting `{ From: { Email }, To: [{ Email }], Subject, Text }`.
+ * 2) Generic HTTP webhook (AUTH_EMAIL_WEBHOOK_URL / AUTH_EMAIL_TRANSPORT_URL / EMAIL_TRANSPORT_URL)
+ *    posting `{ to, otp, subject }` with optional `Bearer ${AUTH_EMAIL_TRANSPORT_KEY}`.
+ * 3) Resend API (RESEND_API_KEY with required AUTH_EMAIL_FROM).
+ * Enforces https: for remote endpoints and allows http: only for explicit loopback addresses.
+ * Returns undefined if no valid transport configuration is present, failing closed with 503 SERVICE_UNAVAILABLE in ready().
+ */
+export function createEmailTransportFromConfig(
+  config?: ConfigService,
+): EmailDispatchTransport | undefined {
+  if (!config) return undefined;
+
+  for (const key of EMAIL_TRANSPORT_URL_KEYS) {
+    const rawVal = config.get<string>(key);
+    if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
+      validateEmailWebhookUrl(rawVal, key);
+    }
+  }
+
+  const rawMailpitUrl = config.get<string>('MAILPIT_URL')?.trim();
+  if (rawMailpitUrl) {
+    const mailpitBaseUrl = rawMailpitUrl.replace(/\/+$/, '');
+    const mailpitSendUrl = mailpitBaseUrl.endsWith('/api/v1/send')
+      ? mailpitBaseUrl
+      : `${mailpitBaseUrl}/api/v1/send`;
+    const fromAddress =
+      config.get<string>('AUTH_EMAIL_FROM')?.trim() || 'noreply@mentor.local';
+    return async (to: string, otp: string, signal?: AbortSignal) => {
+      const response = await fetch(mailpitSendUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          From: { Email: fromAddress },
+          To: [{ Email: to }],
+          Subject: 'Your verification code',
+          Text: `Your verification code is: ${otp}`,
+        }),
+        redirect: 'error',
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Mailpit HTTP send failed with status ${response.status}`,
+        );
+      }
+    };
+  }
+
+  const webhookUrl =
+    config.get<string>('AUTH_EMAIL_WEBHOOK_URL')?.trim() ||
+    config.get<string>('AUTH_EMAIL_TRANSPORT_URL')?.trim() ||
+    config.get<string>('EMAIL_TRANSPORT_URL')?.trim();
+  if (webhookUrl) {
+    const apiKey = config.get<string>('AUTH_EMAIL_TRANSPORT_KEY')?.trim();
+    return async (to: string, otp: string, signal?: AbortSignal) => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          to,
+          otp,
+          subject: 'Your verification code',
+        }),
+        redirect: 'error',
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Email transport HTTP dispatch failed with status ${response.status}`,
+        );
+      }
+    };
+  }
+
+  const resendApiKey = config.get<string>('RESEND_API_KEY')?.trim();
+  if (resendApiKey) {
+    const fromAddress = config.get<string>('AUTH_EMAIL_FROM')?.trim();
+    if (!fromAddress) {
+      throw new Error('AUTH_EMAIL_FROM is required when RESEND_API_KEY is set');
+    }
+    return async (to: string, otp: string, signal?: AbortSignal) => {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromAddress,
+          to: [to],
+          subject: 'Your verification code',
+          text: `Your verification code is: ${otp}`,
+        }),
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Resend email dispatch failed with status ${response.status}`,
+        );
+      }
+    };
+  }
+
+  return undefined;
+}
+
 /** A provider implementation must reconcile ambiguous creation before returning an identity. */
 @Injectable()
 export class EmailRegistrationProvider {
   private transport?: EmailDispatchTransport;
 
+  /**
+   * Initializes email registration provider with optional database, config, and OTP stores.
+   * Automatically configures a runtime transport from ConfigService when transport settings are present.
+   */
   constructor(
     @Optional() private readonly config?: ConfigService,
     @Optional() private readonly database?: DatabaseService,
     @Optional() private readonly otpStore?: OtpSecretStore,
-  ) {}
+  ) {
+    if (this.config) {
+      const configuredTransport = createEmailTransportFromConfig(this.config);
+      if (configuredTransport) {
+        this.transport = configuredTransport;
+      }
+    }
+  }
 
+  /** Sets or overrides the active email dispatch transport. */
   setTransport(transport: EmailDispatchTransport): void {
     this.transport = transport;
   }

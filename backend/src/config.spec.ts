@@ -84,4 +84,84 @@ describe('Public runtime key boundary', () => {
       }),
     ).not.toThrow();
   });
+  it('validates optional email webhook transport URLs: enforces https for remote and allows http only for loopback', () => {
+    const keys = [
+      'AUTH_EMAIL_WEBHOOK_URL',
+      'AUTH_EMAIL_TRANSPORT_URL',
+      'EMAIL_TRANSPORT_URL',
+      'MAILPIT_URL',
+    ];
+
+    for (const key of keys) {
+      // Rejects malformed URL
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          [key]: 'not-a-valid-url',
+        }),
+      ).toThrow(`Invalid ${key}: malformed URL`);
+
+      // Rejects non-loopback http
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          [key]: 'http://mail.example.com/dispatch',
+        }),
+      ).toThrow(
+        `Invalid ${key}: non-loopback transport requires https: protocol`,
+      );
+
+      // Accepts loopback http (localhost, 127.0.0.1, [::1])
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          [key]: 'http://localhost:8025/api/v1/send',
+        }),
+      ).not.toThrow();
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          [key]: 'http://127.0.0.1:8025/api/v1/send',
+        }),
+      ).not.toThrow();
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          [key]: 'http://[::1]:8025/api/v1/send',
+        }),
+      ).not.toThrow();
+
+      // Accepts remote https
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          [key]: 'https://mail.example.com/dispatch',
+        }),
+      ).not.toThrow();
+    }
+  });
+  it('requires AUTH_EMAIL_FROM when RESEND_API_KEY is configured', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+      }),
+    ).toThrow('AUTH_EMAIL_FROM is required when RESEND_API_KEY is set');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: '   ',
+      }),
+    ).toThrow('AUTH_EMAIL_FROM is required when RESEND_API_KEY is set');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'noreply@example.com',
+      }),
+    ).not.toThrow();
+  });
 });
