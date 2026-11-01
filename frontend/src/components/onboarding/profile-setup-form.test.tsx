@@ -601,4 +601,56 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('UTC');
     expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4);
   });
+
+  it('reconciles cleared education (null -> "") when saving empty education', async () => {
+    const profileWithEducation: ProfileResponse = {
+      ...EMPTY_PROFILE,
+      current_role: 'Full Stack Engineer',
+      education: 'BSc in CSE',
+      experience_level: 'mid',
+    };
+
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      profile: {
+        ...profileWithEducation,
+        education: null,
+      },
+      values: {
+        current_role: 'Full Stack Engineer',
+        education: '',
+        experience_level: 'mid',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '2',
+      },
+    });
+
+    render(
+      <ProfileSetupForm
+        initialProfile={profileWithEducation}
+        userId="user-clear-edu"
+      />,
+    );
+
+    const educationInput = screen.getByLabelText(/education — optional/i);
+    expect(educationInput).toHaveValue('BSc in CSE');
+
+    // User clears the field
+    fireEvent.change(educationInput, { target: { value: '' } });
+    expect(educationInput).toHaveValue('');
+
+    const submitBtn = screen.getByRole('button', {
+      name: /প্রোফাইল সংরক্ষণ করুন/i,
+    });
+
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    // Reconciles to ""
+    expect(educationInput).toHaveValue('');
+    expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+  });
 });

@@ -41,6 +41,7 @@ export class ProfileService {
     return {
       current_role: p.current_role_title,
       education: p.education,
+      education_level: p.education,
       experience_level: p.experience_level,
       existing_skills: skills,
       existing_skills_none: p.existing_skills_none,
@@ -127,12 +128,19 @@ export class ProfileService {
         const none =
           input.existing_skills_none ??
           (input.existing_skills?.length ? false : old.existing_skills_none);
+        const educationInput = input.education ?? input.education_level;
+        const education =
+          educationInput !== undefined
+            ? educationInput.trim() === ''
+              ? null
+              : educationInput.trim()
+            : old.education;
         await db.query(
           `UPDATE public.user_profiles SET current_role_title=$2,education=$3,experience_level=$4,self_reported_skill_ids=$5,existing_skills_none=$6 WHERE user_id=$1`,
           [
             id,
             input.current_role ?? old.current_role_title,
-            input.education ?? old.education,
+            education,
             input.experience_level ?? old.experience_level,
             skillIds,
             none,

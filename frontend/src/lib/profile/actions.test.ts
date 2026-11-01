@@ -158,12 +158,15 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result.success).toBe(true);
       expect(updateProfile).toHaveBeenCalledWith('valid-token', {
         current_role: 'Student',
+        education: '',
+        education_level: '',
         experience_level: 'beginner',
         existing_skills_none: true,
       });
-      // Ensures optional blank education is omitted and no artificial skills are sent
+      // Ensures blank education sends explicit empty string and no artificial skills are sent
       const sentBody = vi.mocked(updateProfile).mock.calls[0]?.[1];
-      expect(sentBody).not.toHaveProperty('education');
+      expect(sentBody.education).toBe('');
+      expect(sentBody.education_level).toBe('');
       expect(sentBody).not.toHaveProperty('existing_skills');
 
       expect(updateLearningSettings).toHaveBeenCalledWith('valid-token', {
@@ -201,9 +204,40 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(updateProfile).toHaveBeenCalledWith('valid-token', {
         current_role: 'Frontend Developer',
         education: 'BSc CSE',
+        education_level: 'BSc CSE',
         experience_level: 'junior',
       });
       expect(updateLearningSettings).not.toHaveBeenCalled();
+    });
+
+    it('submitting blank education sends education_level: "" in updateProfile and reconciles cleared null value', async () => {
+      vi.mocked(updateProfile).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        current_role: 'Lead Architect',
+        education: null,
+        experience_level: 'senior',
+      });
+
+      const formData = new FormData();
+      formData.set('current_role', 'Lead Architect');
+      formData.set('education', '   ');
+      formData.set('experience_level', 'senior');
+      formData.set('existing_skills_none', 'false');
+      formData.set('existing_skills_none_touched', 'false');
+      formData.set('timezone', '');
+      formData.set('preferred_daily_hours', '');
+
+      const result = await saveProfileSetupAction({}, formData);
+
+      expect(result.success).toBe(true);
+      expect(updateProfile).toHaveBeenCalledWith('valid-token', {
+        current_role: 'Lead Architect',
+        education: '',
+        education_level: '',
+        experience_level: 'senior',
+      });
+      expect(result.values?.education).toBe('');
+      expect(result.profile?.education).toBeNull();
     });
 
     it('rejects missing current_role, invalid experience_level, and non-half-hour daily hours while preserving user inputs', async () => {

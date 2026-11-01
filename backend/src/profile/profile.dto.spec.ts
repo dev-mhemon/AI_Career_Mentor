@@ -50,4 +50,22 @@ describe('Foundation validation', () => {
       ),
     ).not.toHaveLength(0);
   });
+  it('accepts empty string and whitespace for education and education_level to support clearing', async () => {
+    const p1 = plainToInstance(ProfilePatch, { education: '' });
+    expect(await validate(p1)).toHaveLength(0);
+
+    const p2 = plainToInstance(ProfilePatch, { education: '   ' });
+    expect(p2.education).toBe('');
+    expect(await validate(p2)).toHaveLength(0);
+
+    const p3 = plainToInstance(ProfilePatch, { education_level: '' });
+    expect(await validate(p3)).toHaveLength(0);
+
+    const p4 = plainToInstance(ProfilePatch, { education_level: '   ' });
+    expect(p4.education_level).toBe('');
+    expect(await validate(p4)).toHaveLength(0);
+
+    const p5 = plainToInstance(ProfilePatch, { education: 'a'.repeat(201) });
+    expect(await validate(p5)).not.toHaveLength(0);
+  });
 });

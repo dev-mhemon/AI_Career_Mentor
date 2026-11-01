@@ -235,12 +235,10 @@ export async function saveProfileSetupAction(
 
     const profileBody: UpdateProfileBody = {
       current_role,
+      education,
+      education_level: education,
       experience_level: experience_level as ExperienceLevel,
     };
-
-    if (education.length > 0) {
-      profileBody.education = education;
-    }
 
     if (existing_skills_none) {
       profileBody.existing_skills_none = true;
@@ -260,7 +258,7 @@ export async function saveProfileSetupAction(
       profile: updatedProfile,
       values: {
         current_role: updatedProfile.current_role ?? current_role,
-        education: updatedProfile.education ?? education,
+        education: updatedProfile.education ?? '',
         experience_level: updatedProfile.experience_level ?? experience_level,
         existing_skills_none: updatedProfile.existing_skills_none,
         timezone: updatedProfile.timezone ?? timezone,

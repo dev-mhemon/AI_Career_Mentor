@@ -28,12 +28,23 @@ export class ProfilePatch {
   @IsNotEmpty()
   @MaxLength(120)
   current_role?: string;
+  /**
+   * Optional education background. Accepts empty string to clear existing value.
+   */
   @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @Transform(trim)
-  @IsNotEmpty()
   @MaxLength(200)
   education?: string;
+
+  /**
+   * Optional education level alias. Accepts empty string to clear existing value.
+   */
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @Transform(trim)
+  @MaxLength(200)
+  education_level?: string;
   @ValidateIf((_object, value) => value !== undefined)
   @IsIn(['beginner', 'junior', 'mid', 'senior'])
   experience_level?: string;

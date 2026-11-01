@@ -419,7 +419,14 @@ export interface SkillInputBody {
 
 export interface UpdateProfileBody {
   current_role?: string;
+  /**
+   * Optional education background (max 200 characters). Blank string clears existing education.
+   */
   education?: string;
+  /**
+   * Optional education level alias (max 200 characters). Blank string clears existing education.
+   */
+  education_level?: string;
   experience_level?: ExperienceLevel;
   existing_skills?: SkillInputBody[];
   existing_skills_none?: boolean;
