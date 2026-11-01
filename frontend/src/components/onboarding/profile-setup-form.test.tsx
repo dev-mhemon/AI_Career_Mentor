@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ProfileSetupForm } from '@/components/onboarding/profile-setup-form';
 import type { ProfileResponse } from '@/lib/api/client';
@@ -35,6 +35,10 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders Step 1 of 5 progressbar, accessible labels, optional education, and no forced Junior fallback', () => {
@@ -167,41 +171,47 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
   });
 
   it('performs SSR-safe initial render followed by mount useEffect draft restoration and browser timezone detection', () => {
-    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
-      timeZone: 'Europe/London',
-    } as Intl.ResolvedDateTimeFormatOptions);
+    const tzSpy = vi
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({
+        timeZone: 'Europe/London',
+      } as Intl.ResolvedDateTimeFormatOptions);
 
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-42',
-      JSON.stringify({
-        user_id: 'user-42',
-        values: {
-          current_role: 'Cloud Architect',
-          education: 'MSc in CS',
-          experience_level: 'senior',
-          existing_skills_none: false,
-          timezone: '',
-          preferred_daily_hours: '3',
-        },
-      }),
-    );
+    try {
+      window.sessionStorage.setItem(
+        'mentor_onboarding_profile_draft:user-42',
+        JSON.stringify({
+          user_id: 'user-42',
+          values: {
+            current_role: 'Cloud Architect',
+            education: 'MSc in CS',
+            experience_level: 'senior',
+            existing_skills_none: false,
+            timezone: '',
+            preferred_daily_hours: '3',
+          },
+        }),
+      );
 
-    render(
-      <ProfileSetupForm
-        initialProfile={{ ...EMPTY_PROFILE, timezone: null }}
-        userId="user-42"
-      />,
-    );
+      render(
+        <ProfileSetupForm
+          initialProfile={{ ...EMPTY_PROFILE, timezone: null }}
+          userId="user-42"
+        />,
+      );
 
-    // After mount effect runs, restored draft values and detected timezone are applied
-    expect(screen.getByRole('status')).toHaveTextContent(/ড্রাফট সংরক্ষিত/i);
-    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
-      'Cloud Architect',
-    );
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('MSc in CS');
-    expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
-    expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('Europe/London');
-    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3);
+      // After mount effect runs, restored draft values and detected timezone are applied
+      expect(screen.getByRole('status')).toHaveTextContent(/ড্রাফট সংরক্ষিত/i);
+      expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
+        'Cloud Architect',
+      );
+      expect(screen.getByLabelText(/education — optional/i)).toHaveValue('MSc in CS');
+      expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
+      expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('Europe/London');
+      expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3);
+    } finally {
+      tzSpy.mockRestore();
+    }
   });
 
   it('preserves skillsNoneTouched across reload when draft existing_skills_none differs from initialProfile', () => {
