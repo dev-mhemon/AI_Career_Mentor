@@ -38,12 +38,18 @@ export function validateEmailWebhookUrl(
   );
 }
 
+const EMAIL_LOCAL_PART =
+  "[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*";
+const EMAIL_DOMAIN_PART =
+  '[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+';
+
 /**
  * Matches a bare email address (e.g. user@example.com) or Resend-supported named sender
- * format (e.g. "Career Mentor <mentor@example.com>"), rejecting consecutive dots in the domain.
+ * format (e.g. "Career Mentor <mentor@example.com>"), strictly validating local and domain parts.
  */
-export const AUTH_EMAIL_FROM_PATTERN =
-  /^(?:[^\r\n<>]*<[^\s@<>]+@[^\s@<>.]+(?:\.[^\s@<>.]+)+>|[^\s@<>]+@[^\s@<>.]+(?:\.[^\s@<>.]+)+)$/;
+export const AUTH_EMAIL_FROM_PATTERN = new RegExp(
+  `^(?:[^\\r\\n<>]*<${EMAIL_LOCAL_PART}@${EMAIL_DOMAIN_PART}>|${EMAIL_LOCAL_PART}@${EMAIL_DOMAIN_PART})$`,
+);
 
 /**
  * Validates AUTH_EMAIL_FROM sender address format for Resend.
