@@ -13,6 +13,9 @@ import {
   linkSocialIdentity,
   addContact,
   getMe,
+  getProfile,
+  updateProfile,
+  updateLearningSettings,
   ApiError,
   UnauthorizedError,
   NetworkError,
@@ -515,5 +518,100 @@ it('preserves a server Retry-After header when optional body metadata is absent'
     retryAfterSeconds: 12,
     requestId: 'header-id',
     retryable: true,
+  });
+});
+
+describe('EP-P01 getProfile, EP-P02 updateProfile, and EP-P04 updateLearningSettings', () => {
+  const MOCK_PROFILE_RESPONSE = {
+    current_role: 'Student',
+    education: null,
+    experience_level: 'beginner' as const,
+    existing_skills: [],
+    existing_skills_none: true,
+    learning_preference: null,
+    preferred_daily_hours: 2,
+    timezone: 'Asia/Dhaka',
+    timezone_detected: true,
+    active_career_goal_ids: [],
+    profile_complete: false,
+    missing_fields: ['learning_preference', 'active_career_goal_ids'],
+    updated_at: '2026-11-01T00:00:00.000Z',
+  };
+
+  it('calls GET /profile with Bearer token and returns ProfileResponse', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: MOCK_PROFILE_RESPONSE }),
+    });
+
+    const result = await getProfile(MOCK_TOKEN);
+    expect(result).toEqual(MOCK_PROFILE_RESPONSE);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/profile',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+  });
+
+  it('calls PATCH /profile with Bearer token and preserves optional education & beginner None', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: MOCK_PROFILE_RESPONSE }),
+    });
+
+    const result = await updateProfile(MOCK_TOKEN, {
+      current_role: 'Student',
+      experience_level: 'beginner',
+      existing_skills_none: true,
+    });
+    expect(result).toEqual(MOCK_PROFILE_RESPONSE);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/profile',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          current_role: 'Student',
+          experience_level: 'beginner',
+          existing_skills_none: true,
+        }),
+      }),
+    );
+  });
+
+  it('calls PATCH /profile/learning-settings with Bearer token and learning settings payload', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: MOCK_PROFILE_RESPONSE }),
+    });
+
+    const result = await updateLearningSettings(MOCK_TOKEN, {
+      timezone: 'Asia/Dhaka',
+      preferred_daily_hours: 2,
+    });
+    expect(result).toEqual(MOCK_PROFILE_RESPONSE);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/profile/learning-settings',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: 2,
+        }),
+      }),
+    );
   });
 });

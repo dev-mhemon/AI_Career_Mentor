@@ -122,7 +122,7 @@ export async function GET(request: Request) {
           : approved.next_step === "add_verified_contact"
             ? "/dashboard?prompt=verify_contact"
             : approved.next_step === "profile_setup"
-              ? "/dashboard?next_step=profile_setup"
+              ? "/onboarding/profile"
               : "/dashboard";
 
       return NextResponse.redirect(`${origin}${destination}`);

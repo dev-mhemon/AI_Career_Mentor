@@ -320,8 +320,7 @@ export function resetPassword(
 }
 
 /**
- * GET /auth/me
- * Returns the current application-level user (role, status).
+ * Request payload for social identity linking (EP-A11).
  */
 export interface LinkIdentityBody {
   provider: 'google' | 'facebook';
@@ -364,7 +363,105 @@ export function addContact(
   });
 }
 
+/**
+ * GET /auth/me
+ * Returns the current application-level user (role, status).
+ */
 export async function getMe(accessToken: string): Promise<UserResponse> {
   const data = await apiFetch<{ user: UserResponse }>('/auth/me', accessToken);
   return data.user;
+}
+
+// ─── Profile API Types & Functions (C05 §14.3 / §15.3) ───────
+
+export type ExperienceLevel = 'beginner' | 'junior' | 'mid' | 'senior';
+export type LearningPreference = 'reading' | 'hands_on' | 'visual' | 'mixed';
+
+export interface ProfileSkillDTO {
+  skill_id: string;
+  name: string;
+  alias_resolved: boolean;
+  learning_state: 'not_started' | 'learning' | 'practicing' | 'proficient';
+  source: 'self_reported' | 'evidence';
+}
+
+export interface UnresolvedSkillCandidateDTO {
+  skill_id: string;
+  name: string;
+}
+
+export interface UnresolvedSkillDTO {
+  input: string;
+  candidates: UnresolvedSkillCandidateDTO[];
+}
+
+export interface ProfileResponse {
+  current_role: string | null;
+  education: string | null;
+  experience_level: ExperienceLevel | null;
+  existing_skills: ProfileSkillDTO[];
+  existing_skills_none: boolean;
+  learning_preference: LearningPreference | null;
+  preferred_daily_hours: number | null;
+  timezone: string | null;
+  timezone_detected: boolean;
+  active_career_goal_ids: string[];
+  profile_complete: boolean;
+  missing_fields: string[];
+  unresolved_skills?: UnresolvedSkillDTO[];
+  progress_initialization?: string;
+  updated_at: string;
+}
+
+export interface SkillInputBody {
+  name: string;
+}
+
+export interface UpdateProfileBody {
+  current_role?: string;
+  education?: string;
+  experience_level?: ExperienceLevel;
+  existing_skills?: SkillInputBody[];
+  existing_skills_none?: boolean;
+}
+
+export interface UpdateLearningSettingsBody {
+  timezone?: string;
+  preferred_daily_hours?: number;
+}
+
+/**
+ * GET /profile (EP-P01)
+ * Loads the authenticated user's profile, skills, learning settings, and completeness state.
+ */
+export function getProfile(accessToken: string): Promise<ProfileResponse> {
+  return apiFetch<ProfileResponse>('/profile', accessToken);
+}
+
+/**
+ * PATCH /profile (EP-P02)
+ * Partially updates the user's background (role, optional education, experience level) and self-reported skills / beginner None flag.
+ */
+export function updateProfile(
+  accessToken: string,
+  body: UpdateProfileBody,
+): Promise<ProfileResponse> {
+  return apiFetch<ProfileResponse>('/profile', accessToken, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * PATCH /profile/learning-settings (EP-P04)
+ * Updates the user's IANA timezone and preferred daily learning hours (0.5 to 12 in 0.5-hour steps).
+ */
+export function updateLearningSettings(
+  accessToken: string,
+  body: UpdateLearningSettingsBody,
+): Promise<ProfileResponse> {
+  return apiFetch<ProfileResponse>('/profile/learning-settings', accessToken, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
 }

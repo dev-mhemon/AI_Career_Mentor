@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { logoutAction } from "@/lib/auth/actions";
 import { getAppUser } from "@/lib/auth/user";
 
@@ -5,9 +6,8 @@ import { getAppUser } from "@/lib/auth/user";
  * Dashboard page — MVP placeholder for authenticated + ACTIVE users.
  *
  * The layout already enforces the ACTIVE status guard.
- * This page shows a simple welcome state with a logout button.
- *
- * Future phases will add: tasks, roadmap, progress, AI mentor.
+ * Profile completion is never required to access the dashboard (C01 §7);
+ * users can navigate to `/onboarding/profile` at any time.
  */
 export default async function DashboardPage() {
   const user = await getAppUser();
@@ -22,14 +22,22 @@ export default async function DashboardPage() {
         <p className="mb-8 text-sm text-foreground/40">
           Career guidance features will be available in upcoming phases.
         </p>
-        <form action={logoutAction}>
-          <button
-            type="submit"
-            className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <Link
+            href="/onboarding/profile"
+            className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           >
-            Sign Out
-          </button>
-        </form>
+            প্রোফাইল সেটআপ (Profile Setup)
+          </Link>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+            >
+              Sign Out
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
