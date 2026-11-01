@@ -1,6 +1,43 @@
 import { readAbuseConfiguration } from './auth/abuse-control/config.js';
 import { trustedProxyCidrs } from './auth/client-ip.js';
 
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * Validates an email webhook or transport URL.
+ * Requires https: for remote hosts; http: is accepted only for explicit loopback addresses.
+ * Throws an Error if the URL is malformed, uses an unsupported protocol, or uses http: on a non-loopback host.
+ */
+export function validateEmailWebhookUrl(
+  rawUrl: unknown,
+  keyName = 'email transport URL',
+): URL {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+    throw new Error(`Invalid ${keyName}: URL must be a non-empty string`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    throw new Error(`Invalid ${keyName}: malformed URL`);
+  }
+  if (parsed.protocol === 'https:') {
+    return parsed;
+  }
+  if (parsed.protocol === 'http:') {
+    const hostname = parsed.hostname.toLowerCase();
+    if (LOOPBACK_HOSTNAMES.has(hostname)) {
+      return parsed;
+    }
+    throw new Error(
+      `Invalid ${keyName}: non-loopback transport requires https: protocol`,
+    );
+  }
+  throw new Error(
+    `Invalid ${keyName}: protocol must be https: (or http: for loopback hosts)`,
+  );
+}
+
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
   const required = [
@@ -37,6 +74,28 @@ export function validateConfiguration(raw: Record<string, unknown>) {
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('Invalid DB_PORT');
   if (raw.SUPABASE_JWKS_URL) new URL(String(raw.SUPABASE_JWKS_URL));
+  const emailWebhookKeys = [
+    'AUTH_EMAIL_WEBHOOK_URL',
+    'AUTH_EMAIL_TRANSPORT_URL',
+    'EMAIL_TRANSPORT_URL',
+    'MAILPIT_URL',
+  ] as const;
+  for (const emailKey of emailWebhookKeys) {
+    if (
+      raw[emailKey] !== undefined &&
+      raw[emailKey] !== null &&
+      raw[emailKey] !== ''
+    ) {
+      validateEmailWebhookUrl(raw[emailKey], emailKey);
+    }
+  }
+  if (raw.RESEND_API_KEY) {
+    const fromAddress =
+      typeof raw.AUTH_EMAIL_FROM === 'string' ? raw.AUTH_EMAIL_FROM.trim() : '';
+    if (!fromAddress) {
+      throw new Error('AUTH_EMAIL_FROM is required when RESEND_API_KEY is set');
+    }
+  }
   if (raw.AUTH_PASSWORD_MIN_LENGTH !== undefined) {
     const minimum = String(raw.AUTH_PASSWORD_MIN_LENGTH);
     if (

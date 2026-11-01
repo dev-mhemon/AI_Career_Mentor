@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { PassportModule } from '@nestjs/passport';
@@ -24,7 +25,16 @@ import { OtpSecretStore } from './services/otp-secret-store.service.js';
     SupabaseStrategy,
     AuthService,
     OtpSecretStore,
-    EmailRegistrationProvider,
+    {
+      provide: EmailRegistrationProvider,
+      /** Instantiates the shared EmailRegistrationProvider configured with runtime transport from ConfigService. */
+      useFactory: (
+        config: ConfigService,
+        database: DatabaseService,
+        otpStore: OtpSecretStore,
+      ) => new EmailRegistrationProvider(config, database, otpStore),
+      inject: [ConfigService, DatabaseService, OtpSecretStore],
+    },
     EmailRegistrationService,
     SessionApprovalService,
     DatabaseService,

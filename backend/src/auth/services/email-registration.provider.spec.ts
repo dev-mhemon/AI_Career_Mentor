@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConfigService } from '@nestjs/config';
-import { EmailRegistrationProvider } from './email-registration.provider.js';
+import {
+  EmailRegistrationProvider,
+  createEmailTransportFromConfig,
+} from './email-registration.provider.js';
 import type { DatabaseService } from './database.service.js';
 import type { OtpSecretStore } from './otp-secret-store.service.js';
 
@@ -256,6 +259,302 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       });
 
       expect(otpStore.storeOtp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createEmailTransportFromConfig and runtime wiring', () => {
+    it('returns undefined if config is undefined or has no transport keys', () => {
+      expect(createEmailTransportFromConfig(undefined)).toBeUndefined();
+      expect(createEmailTransportFromConfig(config)).toBeUndefined();
+    });
+
+    it('rejects non-loopback http webhook URLs', () => {
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'AUTH_EMAIL_WEBHOOK_URL')
+            return 'http://remote.mail.service/api/v1/send';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      expect(() => createEmailTransportFromConfig(customConfig)).toThrow(
+        'Invalid AUTH_EMAIL_WEBHOOK_URL: non-loopback transport requires https: protocol',
+      );
+    });
+
+    it('rejects malformed MAILPIT_URL at configuration time', () => {
+      const badMailpitConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'MAILPIT_URL') return 'not-a-valid-url';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+      expect(() => createEmailTransportFromConfig(badMailpitConfig)).toThrow(
+        'Invalid MAILPIT_URL: malformed URL',
+      );
+    });
+
+    it('creates native Mailpit transport from MAILPIT_URL and normalizes base URL', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'MAILPIT_URL') return 'http://127.0.0.1:8025';
+          if (key === 'AUTH_EMAIL_FROM') return 'custom@mentor.local';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await transport!('test@example.com', '789012');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:8025/api/v1/send',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            From: { Email: 'custom@mentor.local' },
+            To: [{ Email: 'test@example.com' }],
+            Subject: 'Your verification code',
+            Text: 'Your verification code is: 789012',
+          }),
+          redirect: 'error',
+        }),
+      );
+    });
+
+    it('normalizes trailing slashes on MAILPIT_URL ending in /api/v1/send/', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'MAILPIT_URL')
+            return 'http://127.0.0.1:8025/api/v1/send/';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await transport!('test@example.com', '123456');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:8025/api/v1/send',
+        expect.objectContaining({
+          method: 'POST',
+          redirect: 'error',
+        }),
+      );
+    });
+
+    it('creates native Mailpit transport with default sender and throws on non-ok status', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+      );
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'MAILPIT_URL') return 'http://127.0.0.1:8025/api/v1/send';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await expect(transport!('test@example.com', '789012')).rejects.toThrow(
+        'Mailpit HTTP send failed with status 500',
+      );
+    });
+
+    it('creates HTTP webhook transport from AUTH_EMAIL_TRANSPORT_URL on loopback', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'AUTH_EMAIL_TRANSPORT_URL')
+            return 'http://127.0.0.1:8025/api/v1/send';
+          if (key === 'AUTH_EMAIL_TRANSPORT_KEY') return 'secret-key-123';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await transport!('test@example.com', '654321');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:8025/api/v1/send',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer secret-key-123',
+          },
+          body: JSON.stringify({
+            to: 'test@example.com',
+            otp: '654321',
+            subject: 'Your verification code',
+          }),
+          redirect: 'error',
+        }),
+      );
+    });
+
+    it('creates HTTP webhook transport from AUTH_EMAIL_WEBHOOK_URL with https', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'AUTH_EMAIL_WEBHOOK_URL')
+            return 'https://mail.example.com/api/v1/send';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await transport!('test@example.com', '123456');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://mail.example.com/api/v1/send',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: 'test@example.com',
+            otp: '123456',
+            subject: 'Your verification code',
+          }),
+          redirect: 'error',
+        }),
+      );
+    });
+
+    it('throws error when HTTP webhook transport returns non-ok status', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+      );
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'EMAIL_TRANSPORT_URL')
+            return 'http://127.0.0.1:8025/api/v1/send';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      await expect(transport!('test@example.com', '654321')).rejects.toThrow(
+        'Email transport HTTP dispatch failed with status 500',
+      );
+    });
+
+    it('throws error when RESEND_API_KEY is configured without AUTH_EMAIL_FROM', () => {
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'RESEND_API_KEY') return 're_test_key_123';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      expect(() => createEmailTransportFromConfig(customConfig)).toThrow(
+        'AUTH_EMAIL_FROM is required when RESEND_API_KEY is set',
+      );
+    });
+
+    it('creates Resend transport from RESEND_API_KEY when AUTH_EMAIL_FROM is provided', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'RESEND_API_KEY') return 're_test_key_123';
+          if (key === 'AUTH_EMAIL_FROM') return 'mentor@career.test';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeDefined();
+
+      await transport!('test@example.com', '112233');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.resend.com/emails',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer re_test_key_123',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: 'mentor@career.test',
+            to: ['test@example.com'],
+            subject: 'Your verification code',
+            text: 'Your verification code is: 112233',
+          }),
+          redirect: 'error',
+        }),
+      );
+    });
+
+    it('fails closed and does not recognize silent no-op transport', () => {
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'AUTH_EMAIL_TRANSPORT') return 'local';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(customConfig);
+      expect(transport).toBeUndefined();
+    });
+
+    it('automatically wires transport in constructor when transport config is present in ConfigService', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return 'secret-at-least-32-bytes-long-for-hmac!';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'service-role-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          if (key === 'MAILPIT_URL') return 'http://127.0.0.1:8025/api/v1/send';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const autoWiredProvider = new EmailRegistrationProvider(
+        customConfig,
+        database as unknown as DatabaseService,
+        otpStore as unknown as OtpSecretStore,
+      );
+
+      // ready() passes without needing setTransport!
+      expect(() => autoWiredProvider.ready()).not.toThrow();
+
+      const identity = {
+        id: userId,
+        subject: userId,
+        email,
+        verified: false,
+      };
+      const delivery = await autoWiredProvider.sendChallenge(identity);
+      expect(delivery).toEqual({ expiresInSeconds: 580 });
+      expect(otpStore.storeOtp).toHaveBeenCalledWith(userId, email, '123456');
     });
   });
 });
