@@ -505,6 +505,7 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
             subject: 'Your verification code',
             text: 'Your verification code is: 112233',
           }),
+          redirect: 'error',
         }),
       );
     });

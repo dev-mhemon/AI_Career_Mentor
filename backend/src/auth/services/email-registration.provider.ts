@@ -135,6 +135,7 @@ export function createEmailTransportFromConfig(
           subject: 'Your verification code',
           text: `Your verification code is: ${otp}`,
         }),
+        redirect: 'error',
         signal,
       });
       if (!response.ok) {
