@@ -2578,5 +2578,291 @@ describe('AuthService session approval boundary', () => {
         response: { code: 'ALREADY_VERIFIED' },
       });
     });
+
+    it('propagates custom effective expiresInSeconds from sendChallenge to client', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const emailProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 300 }),
+      } as unknown as EmailRegistrationProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        emailProvider,
+      );
+
+      const result = await service.addContact(identity, authHeader, {
+        channel: 'email',
+        contact: 'candidate@example.com',
+      });
+
+      expect(result.expires_in_seconds).toBe(300);
+    });
+
+    it('rejects with 502 EMAIL_PROVIDER_ERROR when sendChallenge returns non-positive expiresInSeconds', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const emailProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 0 }),
+      } as unknown as EmailRegistrationProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        emailProvider,
+      );
+
+      await expect(
+        service.addContact(identity, authHeader, {
+          channel: 'email',
+          contact: 'candidate@example.com',
+        }),
+      ).rejects.toMatchObject({
+        status: 502,
+        response: { code: 'EMAIL_PROVIDER_ERROR' },
+      });
+    });
+
+    it('rejects with 400 CHALLENGE_EXPIRED when challenge is already expired at delivery time', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const emailProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+          expiresAt: new Date(Date.now() - 5000),
+        }),
+      } as unknown as EmailRegistrationProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        emailProvider,
+      );
+
+      await expect(
+        service.addContact(identity, authHeader, {
+          channel: 'email',
+          contact: 'candidate@example.com',
+        }),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: { code: 'CHALLENGE_EXPIRED' },
+      });
+    });
+
+    it('dynamically computes remainingSeconds when future expiresAt timestamp is provided', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const emailProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+          expiresAt: new Date(Date.now() + 250000),
+        }),
+      } as unknown as EmailRegistrationProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        emailProvider,
+      );
+
+      const result = await service.addContact(identity, authHeader, {
+        channel: 'email',
+        contact: 'candidate@example.com',
+      });
+
+      expect(result.expires_in_seconds).toBeGreaterThanOrEqual(248);
+      expect(result.expires_in_seconds).toBeLessThanOrEqual(250);
+    });
+
+    it('rounds sub-second remaining lifetime up to 1 second using Math.ceil', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const emailProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+          expiresAt: new Date(Date.now() + 400),
+        }),
+      } as unknown as EmailRegistrationProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        emailProvider,
+      );
+
+      const result = await service.addContact(identity, authHeader, {
+        channel: 'email',
+        contact: 'candidate@example.com',
+      });
+
+      expect(result.expires_in_seconds).toBe(1);
+    });
   });
 });

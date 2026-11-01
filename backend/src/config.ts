@@ -38,6 +38,31 @@ export function validateEmailWebhookUrl(
   );
 }
 
+const EMAIL_LOCAL_PART =
+  "[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*";
+const EMAIL_DOMAIN_PART =
+  '[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+';
+
+/**
+ * Matches a bare email address (e.g. user@example.com) or Resend-supported named sender
+ * format (e.g. "Career Mentor <mentor@example.com>"), strictly validating local and domain parts.
+ */
+export const AUTH_EMAIL_FROM_PATTERN = new RegExp(
+  `^(?:[^\\r\\n<>]*<${EMAIL_LOCAL_PART}@${EMAIL_DOMAIN_PART}>|${EMAIL_LOCAL_PART}@${EMAIL_DOMAIN_PART})$`,
+);
+
+/**
+ * Validates AUTH_EMAIL_FROM sender address format for Resend.
+ * Accepts bare email addresses and named sender addresses (Name <email@domain>).
+ */
+export function validateAuthEmailFrom(fromAddress: string): void {
+  if (!AUTH_EMAIL_FROM_PATTERN.test(fromAddress)) {
+    throw new Error(
+      'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+    );
+  }
+}
+
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
   const required = [
@@ -95,6 +120,7 @@ export function validateConfiguration(raw: Record<string, unknown>) {
     if (!fromAddress) {
       throw new Error('AUTH_EMAIL_FROM is required when RESEND_API_KEY is set');
     }
+    validateAuthEmailFrom(fromAddress);
   }
   if (raw.AUTH_PASSWORD_MIN_LENGTH !== undefined) {
     const minimum = String(raw.AUTH_PASSWORD_MIN_LENGTH);
