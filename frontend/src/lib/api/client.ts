@@ -323,6 +323,47 @@ export function resetPassword(
  * GET /auth/me
  * Returns the current application-level user (role, status).
  */
+export interface LinkIdentityBody {
+  provider: 'google' | 'facebook';
+}
+
+export interface LinkIdentityResponse {
+  linked_providers: string[];
+}
+
+/**
+ * POST /auth/identities/link
+ * Links a Google or Facebook OAuth identity to an existing verified account.
+ */
+export function linkSocialIdentity(
+  accessToken: string,
+  provider: 'google' | 'facebook',
+): Promise<LinkIdentityResponse> {
+  return apiFetch<LinkIdentityResponse>('/auth/identities/link', accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ provider }),
+  });
+}
+
+export interface AddContactBody {
+  channel: 'email' | 'phone';
+  contact: string;
+}
+
+/**
+ * POST /auth/contact
+ * Adds and initiates verification for a contact on an authenticated account.
+ */
+export function addContact(
+  accessToken: string,
+  body: AddContactBody,
+): Promise<RegistrationPendingResponse> {
+  return apiFetch<RegistrationPendingResponse>('/auth/contact', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getMe(accessToken: string): Promise<UserResponse> {
   const data = await apiFetch<{ user: UserResponse }>('/auth/me', accessToken);
   return data.user;

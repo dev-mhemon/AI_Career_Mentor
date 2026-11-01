@@ -235,6 +235,35 @@ describe('M01-04 EP-A02 POST /api/v1/auth/verify-email', () => {
         },
       });
     });
+
+    it('updates and confirms GoTrue with email when user has no email yet (added contact)', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email: null,
+          verified_contact: false,
+          provider_subject: userId,
+          verified_at: null,
+        },
+      ]);
+
+      const result = await service.verifyEmail({ email, code }, {} as Request);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `http://supabase.invalid/auth/v1/admin/users/${userId}`,
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ email, email_confirm: true }),
+        }),
+      );
+
+      expect(result).toMatchObject({
+        access_token: validToken,
+        refresh_token: 'refresh_token_synthetic',
+        token_type: 'Bearer',
+        next_step: 'profile_setup',
+      });
+    });
   });
 
   describe('Step 1: Validation and Already Verified check', () => {

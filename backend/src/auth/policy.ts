@@ -11,11 +11,13 @@ export interface AccessPolicy {
   public?: boolean;
   bootstrap?: boolean;
   allowSuspended?: boolean;
+  allowUnverifiedContact?: boolean;
   accountInspection?: boolean;
   admin?: boolean;
   feature?: Feature;
   existingRead?: boolean;
 }
+/** Attaches access-control policy metadata to controller routes. */
 export const Policy = (policy: AccessPolicy) =>
   SetMetadata('access-policy', policy);
 export const features: Feature[] = [

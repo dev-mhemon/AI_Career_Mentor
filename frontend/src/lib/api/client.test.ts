@@ -10,6 +10,8 @@ import {
   refreshSession,
   forgotPassword,
   resetPassword,
+  linkSocialIdentity,
+  addContact,
   getMe,
   ApiError,
   UnauthorizedError,
@@ -437,6 +439,66 @@ describe('C05 error contract preservation', () => {
       });
     });
 
+});
+
+describe('EP-A11 linkSocialIdentity and EP-A12 addContact', () => {
+  it('calls POST /auth/identities/link with Bearer token and provider', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { linked_providers: ['email', 'google'] },
+        }),
+    });
+
+    const result = await linkSocialIdentity(MOCK_TOKEN, 'google');
+    expect(result).toEqual({ linked_providers: ['email', 'google'] });
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/auth/identities/link',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+        body: JSON.stringify({ provider: 'google' }),
+      }),
+    );
+  });
+
+  it('calls POST /auth/contact with Bearer token and returns RegistrationPendingResponse', async () => {
+    const pendingData = {
+      verification_channel: 'email' as const,
+      contact_masked: 'c****@example.com',
+      expires_in_seconds: 600,
+      resend_available_at: '2026-01-01T00:01:00.000Z',
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({ success: true, data: pendingData }),
+    });
+
+    const result = await addContact(MOCK_TOKEN, {
+      channel: 'email',
+      contact: 'candidate@example.com',
+    });
+    expect(result).toEqual(pendingData);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/auth/contact',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+        body: JSON.stringify({
+          channel: 'email',
+          contact: 'candidate@example.com',
+        }),
+      }),
+    );
+  });
 });
 
 it('preserves a server Retry-After header when optional body metadata is absent', async () => {

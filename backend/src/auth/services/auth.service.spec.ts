@@ -2195,4 +2195,388 @@ describe('AuthService session approval boundary', () => {
       });
     });
   });
+
+  describe('linkIdentity (EP-A11)', () => {
+    const identity = { sub: userId, sessionId };
+    const authHeader = `Bearer ${accessToken()}`;
+
+    it('links Google OAuth identity to verified account and returns linked_providers', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            email: 'candidate@example.com',
+            email_confirmed_at: '2026-01-01T00:00:00Z',
+            identities: [
+              {
+                provider: 'google',
+                id: 'google-row-id',
+                identity_data: { sub: 'google-sub-123' },
+              },
+            ],
+          }),
+        }),
+      );
+
+      const query = vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact FROM public.users')) {
+          return [{ verified_contact: true }];
+        }
+        if (sql.includes('AND user_id <> $3')) {
+          return [];
+        }
+        if (sql.includes('SELECT ARRAY(')) {
+          return [{ linked_providers: ['email', 'google'] }];
+        }
+        return [];
+      });
+
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      const result = await service.linkIdentity(identity, authHeader, {
+        provider: 'google',
+      });
+
+      expect(result).toEqual({
+        linked_providers: ['email', 'google'],
+      });
+      expect(database.transaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Function),
+        true,
+        true,
+      );
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO public.user_auth_providers'),
+        [
+          userId,
+          'google',
+          'google-sub-123',
+          'candidate@example.com',
+          '2026-01-01T00:00:00Z',
+        ],
+      );
+    });
+
+    it('rejects with 403 VERIFIED_CONTACT_REQUIRED when account has no verified contact', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [
+              {
+                provider: 'facebook',
+                id: 'fb-sub-123',
+                identity_data: { sub: 'fb-sub-123' },
+              },
+            ],
+          }),
+        }),
+      );
+
+      const query = vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact FROM public.users')) {
+          return [{ verified_contact: false }];
+        }
+        return [];
+      });
+
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.linkIdentity(identity, authHeader, { provider: 'facebook' }),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'VERIFIED_CONTACT_REQUIRED' },
+      });
+    });
+
+    it('rejects with 422 PROVIDER_MISMATCH when requested provider is not attached to Auth user', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'email', id: userId }],
+          }),
+        }),
+      );
+
+      const service = new AuthService(
+        { transaction: vi.fn() } as unknown as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.linkIdentity(identity, authHeader, { provider: 'google' }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'PROVIDER_MISMATCH' },
+      });
+    });
+
+    it('rejects with 409 IDENTITY_LINK_CONFLICT when provider subject belongs to another user', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [
+              {
+                provider: 'google',
+                id: 'google-sub-conflict',
+                identity_data: { sub: 'google-sub-conflict' },
+              },
+            ],
+          }),
+        }),
+      );
+
+      const query = vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact FROM public.users')) {
+          return [{ verified_contact: true }];
+        }
+        if (sql.includes('AND user_id <> $3')) {
+          return [{ user_id: '22222222-2222-4222-8222-222222222222' }];
+        }
+        return [];
+      });
+
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.linkIdentity(identity, authHeader, { provider: 'google' }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'IDENTITY_LINK_CONFLICT' },
+      });
+    });
+  });
+
+  describe('addContact (EP-A12)', () => {
+    const identity = { sub: userId, sessionId };
+    const authHeader = `Bearer ${accessToken()}`;
+
+    it('stages unverified email contact, dispatches OTP challenge, and returns 202 RegistrationPendingDTO', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const query = vi.fn().mockResolvedValue([]);
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const otpStore = {} as unknown as OtpSecretStore;
+      const emailProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
+      } as unknown as EmailRegistrationProvider;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        otpStore,
+        emailProvider,
+      );
+
+      const result = await service.addContact(identity, authHeader, {
+        channel: 'email',
+        contact: 'Candidate@Example.com',
+      });
+
+      expect(result).toEqual({
+        verification_channel: 'email',
+        contact_masked: 'c****@example.com',
+        expires_in_seconds: 600,
+        resend_available_at: expect.any(String),
+      });
+      expect(abuse.reserveSend).toHaveBeenCalledWith(
+        { channel: 'email', identifier: 'candidate@example.com' },
+        '127.0.0.1',
+      );
+      expect(emailProvider.sendChallenge).toHaveBeenCalledWith({
+        id: userId,
+        subject: userId,
+        email: 'candidate@example.com',
+        verified: false,
+      });
+    });
+
+    it('rejects phone channel with 503 SERVICE_UNAVAILABLE while SMS gateway is disabled', async () => {
+      const service = new AuthService(
+        { transaction: vi.fn() } as unknown as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.addContact(identity, authHeader, {
+          channel: 'phone',
+          contact: '01712345678',
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: { code: 'SERVICE_UNAVAILABLE' },
+      });
+    });
+
+    it('rejects with 409 CONTACT_ALREADY_REGISTERED when email is already registered to another user', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const query = vi.fn(async (sql: string) => {
+        if (
+          sql.includes('SELECT id FROM public.users WHERE lower(email::text)')
+        ) {
+          return [{ id: '22222222-2222-4222-8222-222222222222' }];
+        }
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        { ready: vi.fn() } as unknown as EmailRegistrationProvider,
+      );
+
+      await expect(
+        service.addContact(identity, authHeader, {
+          channel: 'email',
+          contact: 'taken@example.com',
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'CONTACT_ALREADY_REGISTERED' },
+      });
+    });
+
+    it('rejects with 409 ALREADY_VERIFIED when user already has verified_contact: true', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            identities: [{ provider: 'facebook', id: 'fb-123' }],
+          }),
+        }),
+      );
+
+      const query = vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact FROM public.users')) {
+          return [{ verified_contact: true }];
+        }
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        { ready: vi.fn() } as unknown as EmailRegistrationProvider,
+      );
+
+      await expect(
+        service.addContact(identity, authHeader, {
+          channel: 'email',
+          contact: 'new@example.com',
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'ALREADY_VERIFIED' },
+      });
+    });
+  });
 });

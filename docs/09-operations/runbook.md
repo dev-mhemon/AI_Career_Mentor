@@ -41,6 +41,13 @@ CI pins CLI/Node, uses fresh checkout-owned disposable project and upstream regi
 
 Future H-IDEM service policy (C05 R14): acknowledged Redis key loss fails mutations closed until TTL-preserving recovery or24h loss boundary. Not yet implemented; no generic replay guarantee. Deployment destination, cloud secrets, purge scheduling/SLAs, provider privacy, PITR and owner release sign-off remain pending.
 
+## Hosted Supabase project configuration (EP-A11)
+
+For deployers configuring hosted Supabase environments:
+- Enable 'Manual Linking' in the hosted Supabase project's Auth settings to permit `supabase.auth.linkIdentity`.
+  - In Supabase Dashboard: Navigate to **Authentication -> Configuration -> Users & Security**, and toggle on **Allow manual linking** (`enable_manual_linking = true`).
+  - Or via Management API: Ensure the project Auth config has `enable_manual_linking: true` matching `supabase/config.toml`.
+
 ## Disposable Auth Redis tests (M01-02)
 
 The shared enabler uses Redis 7+ as ephemeral storage only. Its independent test service is separate from Supabase and uses no persistent volume. From Git Bash at the repository root:

@@ -175,4 +175,59 @@ describe('C05 OAuth session response', () => {
     expect(result).toEqual(mockResponse);
     expect(resetPassword).toHaveBeenCalledWith(body, req);
   });
+
+  it('delegates linkIdentity to authService.linkIdentity', async () => {
+    const mockResponse = {
+      linked_providers: ['email', 'google'],
+    };
+    const linkIdentity = vi.fn().mockResolvedValue(mockResponse);
+    const controller = new AuthController(
+      { linkIdentity } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {
+      user: { sub: 'user-uuid', sessionId: 'session-uuid' },
+      headers: { authorization: 'Bearer test-token' },
+    } as any;
+    const body = { provider: 'google' };
+
+    const result = await controller.linkIdentity(req, body);
+    expect(result).toEqual(mockResponse);
+    expect(linkIdentity).toHaveBeenCalledWith(
+      req.user,
+      'Bearer test-token',
+      body,
+    );
+  });
+
+  it('delegates addContact to authService.addContact with allowUnverifiedContact policy', async () => {
+    const mockResponse = {
+      verification_channel: 'email',
+      contact_masked: 'c****@example.com',
+      expires_in_seconds: 600,
+      resend_available_at: '2026-01-01T00:01:00.000Z',
+    };
+    const addContact = vi.fn().mockResolvedValue(mockResponse);
+    const controller = new AuthController(
+      { addContact } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {
+      user: { sub: 'user-uuid', sessionId: 'session-uuid' },
+      headers: { authorization: 'Bearer test-token' },
+    } as any;
+    const body = { channel: 'email', contact: 'candidate@example.com' };
+
+    const result = await controller.addContact(req, body);
+    expect(result).toEqual(mockResponse);
+    expect(addContact).toHaveBeenCalledWith(
+      req.user,
+      'Bearer test-token',
+      body,
+      req,
+    );
+    expect(
+      Reflect.getMetadata('access-policy', AuthController.prototype.addContact),
+    ).toEqual({ allowUnverifiedContact: true });
+  });
 });
