@@ -26,6 +26,7 @@ export class AuthController {
   verifyEmail(@Req() req: any, @Body() body: unknown) {
     return this.auth.verifyEmail(body, req);
   }
+  /** EP-A03: Verifies Bangladesh mobile OTP and mints authenticated session. */
   @Post('verify-phone')
   @HttpCode(200)
   @Policy({ public: true })

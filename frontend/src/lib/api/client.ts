@@ -118,6 +118,9 @@ export interface VerifyEmailBody {
   code: string;
 }
 
+/**
+ * Request payload for phone verification (EP-A03).
+ */
 export interface VerifyPhoneBody {
   phone: string;
   code: string;
@@ -235,6 +238,10 @@ export function verifyEmail(body: VerifyEmailBody): Promise<AuthSessionResponse>
   });
 }
 
+/**
+ * POST /auth/verify-phone
+ * Verifies 6-digit OTP code for Bangladesh mobile number and returns approved auth session.
+ */
 export function verifyPhone(body: VerifyPhoneBody): Promise<AuthSessionResponse> {
   return apiFetch<AuthSessionResponse>('/auth/verify-phone', null, {
     method: 'POST',

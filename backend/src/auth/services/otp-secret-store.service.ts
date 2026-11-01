@@ -36,6 +36,9 @@ export class OtpSecretStore {
     return randomInt(100000, 1000000).toString();
   }
 
+  /**
+   * Computes domain-separated HMAC digest for an OTP challenge code.
+   */
   computeDigest(
     userId: string,
     contact: string,
@@ -51,6 +54,9 @@ export class OtpSecretStore {
       .digest('hex');
   }
 
+  /**
+   * Issues rate-limited OTP challenge and stores HMAC digest in Redis.
+   */
   async storeOtp(
     userId: string,
     contact: string,
@@ -94,6 +100,9 @@ export class OtpSecretStore {
     return { expiresInSeconds: challenge.expiresInSeconds };
   }
 
+  /**
+   * Verifies and atomically consumes challenge OTP secret in Redis upon valid callback.
+   */
   async verifyAndConsumeOtp(
     userId: string,
     contact: string,

@@ -166,6 +166,9 @@ export async function registerAction(
   redirect(`/verify?type=${type}`);
 }
 
+/**
+ * Server action verifying email or phone OTP via backend EP-A02 / EP-A03 and establishing session.
+ */
 export async function verifyOtpAction(
   _prevState: AuthActionResult,
   formData: FormData,

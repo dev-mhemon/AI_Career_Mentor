@@ -174,11 +174,17 @@ export function normalizeVerifyEmailRequest(
   return { email: contact.identifier, code };
 }
 
+/**
+ * Request payload for phone verification (EP-A03).
+ */
 export interface VerifyPhoneRequestDTO {
   phone: string;
   code: string;
 }
 
+/**
+ * Validates and normalizes phone verification request into E.164 phone and 6-digit code.
+ */
 export function normalizeVerifyPhoneRequest(
   value: unknown,
 ): VerifyPhoneRequestDTO {
