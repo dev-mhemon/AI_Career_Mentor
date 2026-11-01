@@ -40,10 +40,10 @@ export function validateEmailWebhookUrl(
 
 /**
  * Matches a bare email address (e.g. user@example.com) or Resend-supported named sender
- * format (e.g. "Career Mentor <mentor@example.com>").
+ * format (e.g. "Career Mentor <mentor@example.com>"), rejecting consecutive dots in the domain.
  */
 export const AUTH_EMAIL_FROM_PATTERN =
-  /^(?:[^\r\n<>]*<[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+>|[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+)$/;
+  /^(?:[^\r\n<>]*<[^\s@<>]+@[^\s@<>.]+(?:\.[^\s@<>.]+)+>|[^\s@<>]+@[^\s@<>.]+(?:\.[^\s@<>.]+)+)$/;
 
 /**
  * Validates AUTH_EMAIL_FROM sender address format for Resend.

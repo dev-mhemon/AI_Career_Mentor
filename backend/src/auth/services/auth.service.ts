@@ -968,7 +968,24 @@ export class AuthService {
           true,
         );
       }
-      expiresInSeconds = delivery.expiresInSeconds;
+
+      const expiresAt =
+        delivery.expiresAt instanceof Date
+          ? delivery.expiresAt
+          : typeof delivery.expiresAt === 'string'
+            ? new Date(delivery.expiresAt)
+            : undefined;
+
+      const remainingSeconds =
+        expiresAt && !isNaN(expiresAt.getTime())
+          ? Math.ceil((expiresAt.getTime() - Date.now()) / 1000)
+          : delivery.expiresInSeconds;
+
+      if (remainingSeconds <= 0) {
+        fail(400, 'CHALLENGE_EXPIRED', 'Verification challenge expired');
+      }
+
+      expiresInSeconds = remainingSeconds;
     } catch (error) {
       if (error instanceof HttpException) throw error;
       if (

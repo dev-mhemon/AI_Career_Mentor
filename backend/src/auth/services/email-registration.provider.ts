@@ -19,6 +19,8 @@ export interface PendingEmailIdentity {
 export interface EmailDelivery {
   /** Confirmed provider challenge lifetime; never inferred from a Redis reservation. */
   expiresInSeconds: number;
+  /** Optional absolute challenge expiration timestamp when provided by adapter or caller. */
+  expiresAt?: Date;
 }
 
 export type EmailDispatchTransport = (

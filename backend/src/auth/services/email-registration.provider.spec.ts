@@ -489,6 +489,20 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       );
     });
 
+    it('throws error when AUTH_EMAIL_FROM has consecutive dots in domain with RESEND_API_KEY', () => {
+      const customConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'RESEND_API_KEY') return 're_test_key_123';
+          if (key === 'AUTH_EMAIL_FROM') return 'mentor@example..com';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      expect(() => createEmailTransportFromConfig(customConfig)).toThrow(
+        'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+      );
+    });
+
     it('creates Resend transport when AUTH_EMAIL_FROM uses named sender format', async () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal('fetch', mockFetch);

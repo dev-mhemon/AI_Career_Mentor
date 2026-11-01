@@ -186,6 +186,27 @@ describe('Public runtime key boundary', () => {
       'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
     );
 
+    // Rejects consecutive dots in domain
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'mentor@example..com',
+      }),
+    ).toThrow(
+      'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+    );
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        RESEND_API_KEY: 're_synthetic_key_123',
+        AUTH_EMAIL_FROM: 'Career Mentor <mentor@example..com>',
+      }),
+    ).toThrow(
+      'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+    );
+
     // Bare email format
     expect(() =>
       validateConfiguration({
