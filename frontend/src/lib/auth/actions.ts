@@ -8,6 +8,7 @@ import {
   registerUser,
   resendVerification,
   verifyEmail,
+  verifyPhone,
   logoutUser,
   forgotPassword,
   resetPassword,
@@ -165,6 +166,9 @@ export async function registerAction(
   redirect(`/verify?type=${type}`);
 }
 
+/**
+ * Server action verifying email or phone OTP via backend EP-A02 / EP-A03 and establishing session.
+ */
 export async function verifyOtpAction(
   _prevState: AuthActionResult,
   formData: FormData,
@@ -175,19 +179,24 @@ export async function verifyOtpAction(
   if (!type || !token) {
     return { error: 'Invalid verification request.' };
   }
+  if (type !== 'email' && type !== 'phone') {
+    return { error: 'Invalid verification request.' };
+  }
   const context = await getVerificationContext(type);
   if (!context) return { error: 'Invalid verification request.' };
 
-  if (type !== 'email') {
-    return { error: 'Phone verification is temporarily unavailable.' };
-  }
-
   let destination = '/dashboard';
   try {
-    const session = await verifyEmail({
-      email: context.identifier,
-      code: token,
-    });
+    const session =
+      type === 'email'
+        ? await verifyEmail({
+            email: context.identifier,
+            code: token,
+          })
+        : await verifyPhone({
+            phone: context.identifier,
+            code: token,
+          });
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.setSession({
       access_token: session.access_token,

@@ -5,6 +5,7 @@ import {
   normalizeRegisterRequest,
   normalizeResendRequest,
   normalizeResetPasswordRequest,
+  normalizeVerifyPhoneRequest,
 } from './registration.dto.js';
 
 const valid = {
@@ -301,6 +302,70 @@ describe('C05 shared registration and resend input', () => {
       expect(
         errorOf(() =>
           normalizeResetPasswordRequest({ ...validReset, extra: true }),
+        ).status,
+      ).toBe(422);
+    });
+  });
+
+  describe('EP-A03 Verify Phone input validation', () => {
+    it('normalizes local 017... and +8801... phone numbers with 6-digit code', () => {
+      expect(
+        normalizeVerifyPhoneRequest({
+          phone: ' 01712345678 ',
+          code: ' 123456 ',
+        }),
+      ).toEqual({
+        phone: '+8801712345678',
+        code: '123456',
+      });
+
+      expect(
+        normalizeVerifyPhoneRequest({
+          phone: '+8801812345678',
+          code: '654321',
+        }),
+      ).toEqual({
+        phone: '+8801812345678',
+        code: '654321',
+      });
+    });
+
+    it('rejects invalid phone number with 422 INVALID_PHONE_NUMBER', () => {
+      const invalid = errorOf(() =>
+        normalizeVerifyPhoneRequest({ phone: '12345', code: '123456' }),
+      );
+      expect(invalid.status).toBe(422);
+      expect(invalid.body.code).toBe('INVALID_PHONE_NUMBER');
+      expect(invalid.body.details).toEqual([
+        expect.objectContaining({
+          field: 'phone',
+          code: 'INVALID_PHONE_NUMBER',
+        }),
+      ]);
+    });
+
+    it('rejects non-6-digit code with 422 VALIDATION_FAILED', () => {
+      const shortCode = errorOf(() =>
+        normalizeVerifyPhoneRequest({ phone: '01712345678', code: '12345' }),
+      );
+      expect(shortCode.status).toBe(422);
+      expect(shortCode.body.code).toBe('VALIDATION_FAILED');
+
+      const alphaCode = errorOf(() =>
+        normalizeVerifyPhoneRequest({ phone: '01712345678', code: 'abcdef' }),
+      );
+      expect(alphaCode.status).toBe(422);
+      expect(alphaCode.body.code).toBe('VALIDATION_FAILED');
+    });
+
+    it('rejects extra unknown fields', () => {
+      expect(
+        errorOf(() =>
+          normalizeVerifyPhoneRequest({
+            phone: '01712345678',
+            code: '123456',
+            extra: true,
+          }),
         ).status,
       ).toBe(422);
     });

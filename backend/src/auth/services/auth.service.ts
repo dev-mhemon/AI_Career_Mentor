@@ -13,6 +13,7 @@ import {
   normalizeRefreshTokenRequest,
   normalizeResetPasswordRequest,
   normalizeVerifyEmailRequest,
+  normalizeVerifyPhoneRequest,
 } from '../registration.dto.js';
 import type { Request } from 'express';
 import { SessionApprovalService } from './session-approval.service.js';
@@ -635,6 +636,150 @@ export class AuthService {
     }
   }
 
+  /**
+   * EP-A03: Verifies Bangladesh mobile OTP challenge, updates application account, and mints approved session.
+   */
+  async verifyPhone(body: unknown, _request?: Request) {
+    void _request;
+    const input = normalizeVerifyPhoneRequest(body);
+    const phone = input.phone;
+    const code = input.code;
+
+    const [user] = await this.database.query(
+      `SELECT u.id, u.phone, u.verified_contact, p.provider_subject, p.verified_at
+         FROM public.users u
+         JOIN public.user_auth_providers p
+           ON p.user_id = u.id AND p.provider = 'phone'
+        WHERE p.contact_value = $1 OR COALESCE(u.phone, '') = $1
+        LIMIT 1`,
+      [phone],
+    );
+
+    if (!user) {
+      fail(410, 'VERIFICATION_CODE_EXPIRED', 'Verification challenge expired');
+    }
+
+    if (user.verified_contact === true || user.verified_at !== null) {
+      fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+    }
+
+    const userId = user.id;
+
+    if (!this.otpStore) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'OTP secret store is unavailable',
+        [],
+        true,
+        5,
+      );
+    }
+
+    let committed = false;
+    let providerConfirmAttempted = false;
+    try {
+      await this.otpStore.verifyAndConsumeOtp(
+        userId,
+        phone,
+        code,
+        async () => {
+          providerConfirmAttempted = true;
+          await this.confirmGoTruePhoneUser(userId);
+
+          await this.database.transaction(
+            userId,
+            async (db) => {
+              const usersRes = await db.query(
+                `UPDATE public.users
+                    SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                  WHERE id = $2 AND verified_contact = false`,
+                [phone, userId],
+              );
+              const usersAffected =
+                Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                  ? usersRes[1]
+                  : (usersRes?.rowCount ?? 0);
+
+              const providersRes = await db.query(
+                `UPDATE public.user_auth_providers
+                    SET verified_at = now(), updated_at = now()
+                  WHERE user_id = $1 AND provider = 'phone' AND verified_at IS NULL`,
+                [userId],
+              );
+              const providersAffected =
+                Array.isArray(providersRes) &&
+                typeof providersRes[1] === 'number'
+                  ? providersRes[1]
+                  : (providersRes?.rowCount ?? 0);
+
+              if (usersAffected !== 1 || providersAffected !== 1) {
+                fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+              }
+
+              await db.query(
+                'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                [userId],
+              );
+              await db.query(
+                'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                [userId],
+              );
+            },
+            false,
+          );
+          committed = true;
+        },
+        'verify_phone',
+      );
+    } catch (error) {
+      if (!committed) {
+        if (providerConfirmAttempted) {
+          const synthEmail = `phone-${userId}@synthetic.mentor`;
+          try {
+            await this.cleanupSyntheticPhoneEmail(userId, synthEmail);
+          } catch (cleanupErr) {
+            this.logger.error(
+              `Failed to clean up synthetic phone email for user ${userId}`,
+              cleanupErr instanceof Error
+                ? cleanupErr.stack
+                : String(cleanupErr),
+            );
+          }
+        }
+        throw error;
+      }
+      this.logger.error(
+        `OTP consumption failed after phone verification commit for user ${userId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+
+    try {
+      return await this.mintAndApproveSession(userId, phone, 'phone');
+    } catch (error) {
+      if (error instanceof HttpException) {
+        const resp = error.getResponse() as any;
+        const status = error.getStatus();
+        const code = resp?.code || 'SESSION_MINT_FAILED';
+        fail(
+          status,
+          code,
+          'Account is verified; sign in with your phone and password to start your session',
+          resp?.details || [],
+          false,
+        );
+      }
+      fail(
+        502,
+        'PROVIDER_ERROR',
+        'Account is verified; sign in with your phone and password to start your session',
+        [],
+        false,
+      );
+    }
+  }
+
   private async confirmGoTrueUser(userId: string): Promise<void> {
     const supabaseUrl = this.config
       .getOrThrow<string>('SUPABASE_URL')
@@ -690,60 +835,31 @@ export class AuthService {
     }
   }
 
-  private async mintAndApproveSession(userId: string, email: string) {
+  /**
+   * Confirms phone number on GoTrue user record and attaches ephemeral synthetic email for session minting.
+   */
+  private async confirmGoTruePhoneUser(userId: string): Promise<void> {
     const supabaseUrl = this.config
       .getOrThrow<string>('SUPABASE_URL')
       .replace(/\/$/, '');
     const serviceRoleKey =
       this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
       this.config.get<string>('SERVICE_ROLE_KEY');
-    const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
 
-    let linkRes: Response;
+    const synthEmail = `phone-${userId}@synthetic.mentor`;
+    let response: Response;
     try {
-      linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
-        method: 'POST',
+      response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+        method: 'PUT',
         headers: {
           apikey: serviceRoleKey || '',
           Authorization: `Bearer ${serviceRoleKey || ''}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ type: 'magiclink', email }),
-        signal: AbortSignal.timeout(10000),
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        (error.name === 'AbortError' ||
-          /timeout|timed out/i.test(error.message))
-      ) {
-        fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
-      }
-      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
-    }
-
-    if (!linkRes.ok) {
-      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
-    }
-
-    const linkData = (await linkRes.json().catch(() => null)) as any;
-    const tokenHash =
-      linkData?.hashed_token || linkData?.properties?.hashed_token;
-    if (!tokenHash) {
-      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
-    }
-
-    let verifyRes: Response;
-    try {
-      verifyRes = await fetch(`${supabaseUrl}/auth/v1/verify`, {
-        method: 'POST',
-        headers: {
-          apikey: anonKey,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
-          token_hash: tokenHash,
-          type: 'magiclink',
+          phone_confirm: true,
+          email: synthEmail,
+          email_confirm: true,
         }),
         signal: AbortSignal.timeout(10000),
       });
@@ -753,60 +869,201 @@ export class AuthService {
         (error.name === 'AbortError' ||
           /timeout|timed out/i.test(error.message))
       ) {
-        fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
+        fail(504, 'PROVIDER_TIMEOUT', 'SMS provider timed out', [], true);
       }
-      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
-    }
-
-    if (!verifyRes.ok) {
-      fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
-    }
-
-    const sessionData = (await verifyRes.json().catch(() => null)) as
-      (ProviderSession & { user?: { id?: string } }) | null;
-
-    if (!sessionData?.access_token) {
       fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        'Auth service returned an invalid session',
+        502,
+        'PROVIDER_ERROR',
+        'Phone verification could not be confirmed',
+        [],
+        true,
       );
     }
 
-    const identity = this.sessionIdentity(sessionData.access_token);
-    if (identity.sub !== userId) {
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as any;
+      if (
+        response.status === 422 &&
+        /already confirmed/i.test(data?.msg || '')
+      ) {
+        return;
+      }
       fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        'Auth service returned an invalid session',
+        502,
+        'PROVIDER_ERROR',
+        'Phone verification could not be confirmed',
+        [],
+        true,
       );
     }
+  }
 
-    const result = await this.database.transaction(
-      userId,
-      async (db) => {
-        await this.approvals.approve(
-          db,
-          userId,
-          identity.sessionId,
-          'email_verification',
-        );
-        return this.meInTransaction(db, userId);
-      },
-      false,
+  /**
+   * Cleans up temporary synthetic email and email identity from GoTrue auth tables.
+   */
+  private async cleanupSyntheticPhoneEmail(
+    userId: string,
+    syntheticEmail: string,
+    db?: EntityManager,
+  ): Promise<void> {
+    const executor = db ?? this.database;
+    await executor.query(
+      'UPDATE auth.users SET email = NULL, email_confirmed_at = NULL WHERE id = $1 AND email = $2',
+      [userId, syntheticEmail],
     );
+    await executor.query(
+      "DELETE FROM auth.identities WHERE user_id = $1 AND provider = 'email' AND identity_data->>'email' = $2",
+      [userId, syntheticEmail],
+    );
+  }
 
-    return {
-      access_token: sessionData.access_token,
-      refresh_token: sessionData.refresh_token,
-      expires_in: sessionData.expires_in,
-      token_type: 'Bearer' as const,
-      user: result.user,
-      profile_complete: result.profile_complete,
-      next_step: result.profile_complete
-        ? ('app_home' as const)
-        : ('profile_setup' as const),
-    };
+  /**
+   * Mints GoTrue session via magiclink flow and registers approved session in private store.
+   */
+  private async mintAndApproveSession(
+    userId: string,
+    contact: string,
+    channel: 'email' | 'phone' = 'email',
+  ) {
+    const supabaseUrl = this.config
+      .getOrThrow<string>('SUPABASE_URL')
+      .replace(/\/$/, '');
+    const serviceRoleKey =
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
+      this.config.get<string>('SERVICE_ROLE_KEY');
+    const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
+
+    const synthEmail = `phone-${userId}@synthetic.mentor`;
+    const targetEmail = channel === 'phone' ? synthEmail : contact;
+
+    try {
+      let linkRes: Response;
+      try {
+        linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+          method: 'POST',
+          headers: {
+            apikey: serviceRoleKey || '',
+            Authorization: `Bearer ${serviceRoleKey || ''}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            type: 'magiclink',
+            email: targetEmail,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' ||
+            /timeout|timed out/i.test(error.message))
+        ) {
+          fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
+        }
+        fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+      }
+
+      if (!linkRes.ok) {
+        fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+      }
+
+      const linkData = (await linkRes.json().catch(() => null)) as any;
+      const tokenHash =
+        linkData?.hashed_token || linkData?.properties?.hashed_token;
+      if (!tokenHash) {
+        fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+      }
+
+      let verifyRes: Response;
+      try {
+        verifyRes = await fetch(`${supabaseUrl}/auth/v1/verify`, {
+          method: 'POST',
+          headers: {
+            apikey: anonKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            token_hash: tokenHash,
+            type: 'magiclink',
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' ||
+            /timeout|timed out/i.test(error.message))
+        ) {
+          fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
+        }
+        fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+      }
+
+      if (!verifyRes.ok) {
+        fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
+      }
+
+      const sessionData = (await verifyRes.json().catch(() => null)) as
+        (ProviderSession & { user?: { id?: string } }) | null;
+
+      if (!sessionData?.access_token) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Auth service returned an invalid session',
+        );
+      }
+
+      const identity = this.sessionIdentity(sessionData.access_token);
+      if (identity.sub !== userId) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Auth service returned an invalid session',
+        );
+      }
+
+      const result = await this.database.transaction(
+        userId,
+        async (db) => {
+          if (channel === 'phone') {
+            await this.cleanupSyntheticPhoneEmail(userId, synthEmail, db);
+          }
+          await this.approvals.approve(
+            db,
+            userId,
+            identity.sessionId,
+            'email_verification',
+          );
+          return this.meInTransaction(db, userId);
+        },
+        false,
+      );
+
+      return {
+        access_token: sessionData.access_token,
+        refresh_token: sessionData.refresh_token,
+        expires_in: sessionData.expires_in,
+        token_type: 'Bearer' as const,
+        user: result.user,
+        profile_complete: result.profile_complete,
+        next_step: result.profile_complete
+          ? ('app_home' as const)
+          : ('profile_setup' as const),
+      };
+    } catch (mintError) {
+      if (channel === 'phone') {
+        try {
+          await this.cleanupSyntheticPhoneEmail(userId, synthEmail);
+        } catch (cleanupErr) {
+          this.logger.error(
+            `Failed to clean up synthetic phone email for user ${userId}`,
+            cleanupErr instanceof Error ? cleanupErr.stack : String(cleanupErr),
+          );
+        }
+      }
+      throw mintError;
+    }
   }
 
   async logout(identity: JwtIdentity, authorization?: string) {
