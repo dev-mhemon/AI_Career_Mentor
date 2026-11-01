@@ -25,6 +25,7 @@ const ONBOARDING_STEPS = [
 export interface ProfileSetupFormProps {
   initialProfile: ProfileResponse | null;
   loadError?: string;
+  userId?: string;
 }
 
 /**
@@ -42,128 +43,284 @@ function detectBrowserTimezone(): string {
 }
 
 /**
- * Builds initial controlled form state and draft flag from `initialProfile` and `sessionStorage` without fabricating skills or forcing a `junior` fallback.
+ * Returns the account-scoped sessionStorage key for draft isolation.
  */
-function buildInitialState(profile: ProfileResponse | null): {
-  values: ProfileSetupFormValues;
-  hasDraft: boolean;
-} {
-  const base: ProfileSetupFormValues = {
+function getDraftStorageKey(userId?: string): string {
+  return userId ? `${DRAFT_STORAGE_KEY}:${userId}` : DRAFT_STORAGE_KEY;
+}
+
+/**
+ * Persists an account-scoped form draft and touched state to sessionStorage.
+ */
+function saveDraft(
+  userId: string | undefined,
+  formValues: ProfileSetupFormValues,
+  skillsNoneTouched: boolean,
+): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const payload = {
+      ...formValues,
+      user_id: userId,
+      values: formValues,
+      skills_none_touched: skillsNoneTouched,
+    };
+    window.sessionStorage.setItem(
+      getDraftStorageKey(userId),
+      JSON.stringify(payload),
+    );
+  } catch {
+    // Ignore sessionStorage write errors
+  }
+}
+
+/**
+ * Clears account-scoped and legacy draft storage entries.
+ */
+function clearDraft(userId?: string): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(getDraftStorageKey(userId));
+    if (userId) {
+      window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore sessionStorage removal errors
+  }
+}
+
+/**
+ * Builds server-deterministic initial controlled form state using ONLY initialProfile props.
+ * Avoids hydration mismatch by not reading window, sessionStorage, or browser Intl during initial render.
+ */
+function buildInitialState(
+  profile: ProfileResponse | null,
+): ProfileSetupFormValues {
+  return {
     current_role: profile?.current_role ?? '',
     education: profile?.education ?? '',
     experience_level: profile?.experience_level ?? '',
     existing_skills_none: profile?.existing_skills_none ?? false,
-    timezone: profile?.timezone || detectBrowserTimezone(),
+    timezone: profile?.timezone ?? '',
     preferred_daily_hours:
       profile?.preferred_daily_hours !== null &&
       profile?.preferred_daily_hours !== undefined
         ? String(profile.preferred_daily_hours)
         : '',
   };
-
-  if (typeof window !== 'undefined') {
-    try {
-      const rawDraft = window.sessionStorage.getItem(DRAFT_STORAGE_KEY);
-      if (rawDraft) {
-        const parsed = JSON.parse(rawDraft) as Partial<ProfileSetupFormValues>;
-        return {
-          hasDraft: true,
-          values: {
-            current_role:
-              typeof parsed.current_role === 'string'
-                ? parsed.current_role
-                : base.current_role,
-            education:
-              typeof parsed.education === 'string'
-                ? parsed.education
-                : base.education,
-            experience_level:
-              typeof parsed.experience_level === 'string'
-                ? parsed.experience_level
-                : base.experience_level,
-            existing_skills_none:
-              typeof parsed.existing_skills_none === 'boolean'
-                ? parsed.existing_skills_none
-                : base.existing_skills_none,
-            timezone:
-              typeof parsed.timezone === 'string' && parsed.timezone.length > 0
-                ? parsed.timezone
-                : base.timezone,
-            preferred_daily_hours:
-              typeof parsed.preferred_daily_hours === 'string'
-                ? parsed.preferred_daily_hours
-                : base.preferred_daily_hours,
-          },
-        };
-      }
-    } catch {
-      // Ignore sessionStorage read errors
-    }
-  }
-
-  return { values: base, hasDraft: false };
 }
 
 /**
  * Screen 07 (`/onboarding/profile`) client form component consuming EP-P01, EP-P02, and EP-P04.
  * Preserves optional education, explicit beginner `None`, and user inputs across failed loads/saves.
+ * Enforces account-scoped draft isolation and SSR hydration safety.
  */
 export function ProfileSetupForm({
   initialProfile,
   loadError,
+  userId,
 }: ProfileSetupFormProps) {
   const [state, formAction, isPending] = useActionState<
     ProfileSetupActionState,
     FormData
   >(saveProfileSetupAction, {});
 
-  const [initial] = useState(() => buildInitialState(initialProfile));
-  const [values, setValues] = useState<ProfileSetupFormValues>(initial.values);
-  const [skillsNoneTouched, setSkillsNoneTouched] = useState(false);
+  const [formState, setFormState] = useState<{
+    values: ProfileSetupFormValues;
+    hasDraft: boolean;
+    skillsNoneTouched: boolean;
+  }>(() => ({
+    values: buildInitialState(initialProfile),
+    hasDraft: false,
+    skillsNoneTouched: false,
+  }));
+
+  const [dismissedErrorState, setDismissedErrorState] =
+    useState<ProfileSetupActionState | null>(null);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
 
+  const { values, hasDraft, skillsNoneTouched } = formState;
+
+  // Mount effect: safely restores draft from sessionStorage, detects timezone, and initializes skillsNoneTouched
   useEffect(() => {
-    if (state.success) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const detectedTz = detectBrowserTimezone();
+    const storageKey = getDraftStorageKey(userId);
+    let restoredValues: Partial<ProfileSetupFormValues> | null = null;
+    let storedTouched: boolean | undefined = undefined;
+
+    // 1. Unconditionally clean up legacy un-scoped draft when userId is present
+    if (userId) {
       try {
         window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
       } catch {
-        // Ignore sessionStorage removal errors
+        // Ignore legacy storage removal errors
       }
-    } else if (state.error && errorAlertRef.current) {
+    }
+
+    // 2. Read and parse account-scoped draft
+    try {
+      const rawDraft = window.sessionStorage.getItem(storageKey);
+      if (rawDraft) {
+        let parsed: unknown = null;
+        try {
+          parsed = JSON.parse(rawDraft);
+        } catch {
+          window.sessionStorage.removeItem(storageKey);
+          parsed = null;
+        }
+
+        if (parsed && typeof parsed === 'object') {
+          const draftObj = parsed as {
+            user_id?: unknown;
+            values?: unknown;
+            skills_none_touched?: unknown;
+          };
+          const draftUserId =
+            typeof draftObj.user_id === 'string' ? draftObj.user_id : undefined;
+
+          // Account-scoped isolation: reject and clear draft belonging to another user
+          if (userId && draftUserId && draftUserId !== userId) {
+            window.sessionStorage.removeItem(storageKey);
+          } else {
+            const payloadValues =
+              draftObj.values && typeof draftObj.values === 'object'
+                ? (draftObj.values as Record<string, unknown>)
+                : (parsed as Record<string, unknown>);
+
+            if (payloadValues && typeof payloadValues === 'object') {
+              restoredValues = payloadValues as Partial<ProfileSetupFormValues>;
+              storedTouched =
+                typeof draftObj.skills_none_touched === 'boolean'
+                  ? draftObj.skills_none_touched
+                  : typeof payloadValues.skills_none_touched === 'boolean'
+                    ? (payloadValues.skills_none_touched as boolean)
+                    : undefined;
+            } else {
+              window.sessionStorage.removeItem(storageKey);
+            }
+          }
+        } else if (rawDraft) {
+          window.sessionStorage.removeItem(storageKey);
+        }
+      }
+    } catch {
+      // Ignore sessionStorage read errors
+    }
+
+    const serverTz = initialProfile?.timezone;
+    const serverSkillsNone = Boolean(initialProfile?.existing_skills_none);
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFormState((prev) => {
+      if (restoredValues) {
+        const draftTz =
+          typeof restoredValues.timezone === 'string' &&
+          restoredValues.timezone.length > 0
+            ? restoredValues.timezone
+            : serverTz || detectedTz;
+
+        const draftSkillsNone =
+          typeof restoredValues.existing_skills_none === 'boolean'
+            ? restoredValues.existing_skills_none
+            : serverSkillsNone;
+
+        const isTouched =
+          storedTouched !== undefined
+            ? storedTouched
+            : draftSkillsNone !== serverSkillsNone;
+
+        return {
+          hasDraft: true,
+          skillsNoneTouched: isTouched,
+          values: {
+            current_role:
+              typeof restoredValues?.current_role === 'string'
+                ? restoredValues.current_role
+                : prev.values.current_role,
+            education:
+              typeof restoredValues?.education === 'string'
+                ? restoredValues.education
+                : prev.values.education,
+            experience_level:
+              typeof restoredValues?.experience_level === 'string'
+                ? restoredValues.experience_level
+                : prev.values.experience_level,
+            existing_skills_none:
+              typeof restoredValues?.existing_skills_none === 'boolean'
+                ? restoredValues.existing_skills_none
+                : prev.values.existing_skills_none,
+            timezone: draftTz,
+            preferred_daily_hours:
+              typeof restoredValues?.preferred_daily_hours === 'string'
+                ? restoredValues.preferred_daily_hours
+                : prev.values.preferred_daily_hours,
+          },
+        };
+      }
+
+      if (!serverTz) {
+        return {
+          ...prev,
+          values: {
+            ...prev.values,
+            timezone: prev.values.timezone || detectedTz,
+          },
+        };
+      }
+
+      return prev;
+    });
+  }, [initialProfile, userId]);
+
+  const isErrorDismissed = state === dismissedErrorState;
+
+  useEffect(() => {
+    if (state.success) {
+      clearDraft(userId);
+    } else if (state.error && !isErrorDismissed && errorAlertRef.current) {
       errorAlertRef.current.focus();
     }
-  }, [state]);
+  }, [state, isErrorDismissed, userId]);
 
   /**
-   * Updates a controlled field value and persists the local draft in `sessionStorage`.
+   * Updates a controlled field value, dismisses stale errors, and persists the local draft in sessionStorage.
    */
   const updateField = <K extends keyof ProfileSetupFormValues>(
     key: K,
     nextValue: ProfileSetupFormValues[K],
+    overrideTouched?: boolean,
   ) => {
-    setValues((prev) => {
-      const updated = { ...prev, [key]: nextValue };
-      try {
-        window.sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(updated));
-      } catch {
-        // Ignore sessionStorage write errors
-      }
-      return updated;
-    });
+    setDismissedErrorState(state);
+    const nextTouched = overrideTouched ?? skillsNoneTouched;
+    const updatedValues: ProfileSetupFormValues = { ...values, [key]: nextValue };
+    setFormState((prev) => ({
+      ...prev,
+      values: updatedValues,
+      skillsNoneTouched: nextTouched,
+    }));
+    saveDraft(userId, updatedValues, nextTouched);
   };
 
   /**
-   * Toggles the explicit beginner `None` (`existing_skills_none`) switch.
+   * Toggles the explicit beginner `None` (`existing_skills_none`) switch and persists touched state.
    */
   const handleToggleSkillsNone = () => {
-    setSkillsNoneTouched(true);
-    updateField('existing_skills_none', !values.existing_skills_none);
+    const nextSkillsNone = !values.existing_skills_none;
+    updateField('existing_skills_none', nextSkillsNone, true);
   };
 
   const activeProfile = state.profile ?? initialProfile;
-  const fieldErrors = state.fieldErrors ?? {};
+  const fieldErrors = isErrorDismissed ? {} : (state.fieldErrors ?? {});
   const storedSkills = activeProfile?.existing_skills ?? [];
-  const showDraftRestored = initial.hasDraft && !state.success;
+  const showDraftRestored = hasDraft && !state.success;
 
   return (
     <div className="flex flex-col gap-6">
@@ -220,7 +377,7 @@ export function ProfileSetupForm({
         </p>
       )}
 
-      {state.error && (
+      {state.error && !isErrorDismissed && (
         <div
           ref={errorAlertRef}
           role="alert"

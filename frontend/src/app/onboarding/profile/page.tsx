@@ -37,7 +37,7 @@ export default async function OnboardingProfilePage() {
     );
   }
 
-  const { profile, loadError, unauthorized, suspended } =
+  const { profile, loadError, unauthorized, suspended, userId } =
     await loadProfileForSetup();
 
   if (unauthorized) {
@@ -99,7 +99,11 @@ export default async function OnboardingProfilePage() {
           </p>
         </div>
 
-        <ProfileSetupForm initialProfile={profile} loadError={loadError} />
+        <ProfileSetupForm
+          initialProfile={profile}
+          loadError={loadError}
+          userId={userId ?? user.id}
+        />
       </main>
     </div>
   );

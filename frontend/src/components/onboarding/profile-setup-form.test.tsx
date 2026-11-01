@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ProfileSetupForm } from '@/components/onboarding/profile-setup-form';
 import type { ProfileResponse } from '@/lib/api/client';
+import { saveProfileSetupAction } from '@/lib/profile/actions';
 
 vi.mock('@/lib/profile/actions', () => ({
   saveProfileSetupAction: vi.fn(),
@@ -32,6 +33,7 @@ const EMPTY_PROFILE: ProfileResponse = {
 
 describe('ProfileSetupForm (M01-09 Screen 07)', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     window.sessionStorage.clear();
   });
 
@@ -162,5 +164,245 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     expect(
       screen.getByRole('switch', { name: /none — complete beginner/i }),
     ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('performs SSR-safe initial render followed by mount useEffect draft restoration and browser timezone detection', () => {
+    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+      timeZone: 'Europe/London',
+    } as Intl.ResolvedDateTimeFormatOptions);
+
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-42',
+      JSON.stringify({
+        user_id: 'user-42',
+        values: {
+          current_role: 'Cloud Architect',
+          education: 'MSc in CS',
+          experience_level: 'senior',
+          existing_skills_none: false,
+          timezone: '',
+          preferred_daily_hours: '3',
+        },
+      }),
+    );
+
+    render(
+      <ProfileSetupForm
+        initialProfile={{ ...EMPTY_PROFILE, timezone: null }}
+        userId="user-42"
+      />,
+    );
+
+    // After mount effect runs, restored draft values and detected timezone are applied
+    expect(screen.getByRole('status')).toHaveTextContent(/ড্রাফট সংরক্ষিত/i);
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
+      'Cloud Architect',
+    );
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('MSc in CS');
+    expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
+    expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('Europe/London');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3);
+  });
+
+  it('preserves skillsNoneTouched across reload when draft existing_skills_none differs from initialProfile', () => {
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-99',
+      JSON.stringify({
+        user_id: 'user-99',
+        values: {
+          current_role: 'Junior QA',
+          education: '',
+          experience_level: 'beginner',
+          existing_skills_none: true,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2',
+        },
+        skills_none_touched: true,
+      }),
+    );
+
+    const { container } = render(
+      <ProfileSetupForm
+        initialProfile={{ ...EMPTY_PROFILE, existing_skills_none: false }}
+        userId="user-99"
+      />,
+    );
+
+    const noneSwitch = screen.getByRole('switch', {
+      name: /none — complete beginner/i,
+    });
+    expect(noneSwitch).toHaveAttribute('aria-checked', 'true');
+
+    // Confirm hidden input existing_skills_none_touched is true
+    const touchedInput = container.querySelector(
+      'input[name="existing_skills_none_touched"]',
+    ) as HTMLInputElement;
+    expect(touchedInput).not.toBeNull();
+    expect(touchedInput.value).toBe('true');
+  });
+
+  it('immediately dismisses form-level alert, field errors, and aria-invalid upon user edit and restores them on subsequent failed submit', async () => {
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      error: 'Validation failed. Please correct the highlighted errors.',
+      fieldErrors: {
+        current_role: 'বর্তমান পেশা বা ভূমিকা আবশ্যক (Current role is required).',
+      },
+    });
+
+    render(<ProfileSetupForm initialProfile={EMPTY_PROFILE} />);
+
+    const submitBtn = screen.getByRole('button', {
+      name: /প্রোফাইল সংরক্ষণ করুন/i,
+    });
+
+    // 1. Submit form to trigger action error
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    const initialAlerts = screen.getAllByRole('alert');
+    expect(initialAlerts.length).toBe(2);
+    expect(screen.getByText(/validation failed/i)).toBeInTheDocument();
+    const roleInput = screen.getByLabelText(/current role \/ profession/i);
+    expect(roleInput).toHaveAttribute('aria-invalid', 'true');
+    expect(
+      screen.getByText(/বর্তমান পেশা বা ভূমিকা আবশ্যক/i),
+    ).toBeInTheDocument();
+
+    // 2. User edits the field -> stale error and aria-invalid must be dismissed immediately
+    fireEvent.change(roleInput, { target: { value: 'Frontend Developer' } });
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(roleInput).toHaveAttribute('aria-invalid', 'false');
+    expect(
+      screen.queryByText(/বর্তমান পেশা বা ভূমিকা আবশ্যক/i),
+    ).not.toBeInTheDocument();
+
+    // 3. User submits again and server returns another error
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      error: 'Please select an experience level.',
+      fieldErrors: {
+        experience_level: 'অভিজ্ঞতার স্তর নির্বাচন আবশ্যক (Experience level is required).',
+      },
+    });
+
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    const secondAlerts = screen.getAllByRole('alert');
+    expect(secondAlerts.length).toBe(2);
+    expect(screen.getByText(/please select an experience level/i)).toBeInTheDocument();
+    const levelSelect = screen.getByLabelText(/experience level/i);
+    expect(levelSelect).toHaveAttribute('aria-invalid', 'true');
+    expect(
+      screen.getByText(/অভিজ্ঞতার স্তর নির্বাচন আবশ্যক/i),
+    ).toBeInTheDocument();
+  });
+
+  it('rejects and clears a sessionStorage draft belonging to a different user_id (account isolation)', () => {
+    // Draft belonging to user-A
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-B',
+      JSON.stringify({
+        user_id: 'user-A',
+        values: {
+          current_role: 'Account A Leaked Role',
+          education: 'Secret College',
+          experience_level: 'senior',
+          existing_skills_none: true,
+          timezone: 'Asia/Tokyo',
+          preferred_daily_hours: '4',
+        },
+      }),
+    );
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft',
+      JSON.stringify({
+        user_id: 'user-A',
+        current_role: 'Legacy Leaked Role',
+      }),
+    );
+
+    render(
+      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-B" />,
+    );
+
+    // Account B must not see Account A's draft
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    // Stale drafts should be removed from sessionStorage
+    expect(
+      window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-B'),
+    ).toBeNull();
+    expect(
+      window.sessionStorage.getItem('mentor_onboarding_profile_draft'),
+    ).toBeNull();
+  });
+
+  it('unconditionally removes malformed legacy un-scoped draft and restores valid user-scoped draft without blocking', () => {
+    // Malformed JSON in legacy un-scoped key
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft',
+      '{ invalid json corrupt draft',
+    );
+
+    // Valid user-scoped draft
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-valid',
+      JSON.stringify({
+        user_id: 'user-valid',
+        values: {
+          current_role: 'Security Engineer',
+          education: 'BSc in Software Engineering',
+          experience_level: 'mid',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '3',
+        },
+      }),
+    );
+
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        userId="user-valid"
+      />,
+    );
+
+    // Corrupt legacy un-scoped draft must be cleaned up
+    expect(
+      window.sessionStorage.getItem('mentor_onboarding_profile_draft'),
+    ).toBeNull();
+
+    // Valid user-scoped draft must be restored properly
+    expect(screen.getByRole('status')).toHaveTextContent(/ড্রাফট সংরক্ষিত/i);
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
+      'Security Engineer',
+    );
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue(
+      'BSc in Software Engineering',
+    );
+    expect(screen.getByLabelText(/experience level/i)).toHaveValue('mid');
+  });
+
+  it('cleans up malformed JSON in scoped draft key without throwing', () => {
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-corrupt',
+      '{ corrupt json',
+    );
+
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        userId="user-corrupt"
+      />,
+    );
+
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
+    expect(
+      window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-corrupt'),
+    ).toBeNull();
   });
 });

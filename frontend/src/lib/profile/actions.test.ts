@@ -95,6 +95,21 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result).toEqual({ profile: MOCK_PROFILE });
     });
 
+    it('returns userId when session.user.id is present', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            user: { id: 'user-xyz' },
+          },
+        },
+      });
+      vi.mocked(getProfile).mockResolvedValueOnce(MOCK_PROFILE);
+
+      const result = await loadProfileForSetup();
+      expect(result).toEqual({ profile: MOCK_PROFILE, userId: 'user-xyz' });
+    });
+
     it('returns unauthorized on 401 ApiError', async () => {
       vi.mocked(getProfile).mockRejectedValueOnce(
         new ApiError(401, 'Unauthorized', 'TOKEN_EXPIRED'),

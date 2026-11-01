@@ -71,6 +71,7 @@ function isValidExperienceLevel(value: string): value is ExperienceLevel {
  */
 export async function loadProfileForSetup(): Promise<{
   profile: ProfileResponse | null;
+  userId?: string;
   loadError?: string;
   unauthorized?: boolean;
   suspended?: boolean;
@@ -86,7 +87,17 @@ export async function loadProfileForSetup(): Promise<{
     }
 
     const profile = await getProfile(session.access_token);
-    return { profile };
+    const result: {
+      profile: ProfileResponse | null;
+      userId?: string;
+      loadError?: string;
+      unauthorized?: boolean;
+      suspended?: boolean;
+    } = { profile };
+    if (session.user?.id) {
+      result.userId = session.user.id;
+    }
+    return result;
   } catch (err) {
     if (err instanceof ApiError) {
       if (err.statusCode === 401) {
