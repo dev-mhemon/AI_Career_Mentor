@@ -152,6 +152,7 @@ export function ProfileSetupForm({
     }
 
     const detectedTz = detectBrowserTimezone();
+    const fallbackTz = loadError ? '' : detectedTz;
     const storageKey = getDraftStorageKey(userId);
     let restoredValues: Partial<ProfileSetupFormValues> | null = null;
     let storedTouched: boolean | undefined = undefined;
@@ -225,7 +226,7 @@ export function ProfileSetupForm({
           typeof restoredValues.timezone === 'string' &&
           restoredValues.timezone.length > 0
             ? restoredValues.timezone
-            : serverTz || detectedTz;
+            : serverTz || fallbackTz;
 
         const draftSkillsNone =
           typeof restoredValues.existing_skills_none === 'boolean'
@@ -266,7 +267,7 @@ export function ProfileSetupForm({
         };
       }
 
-      if (!serverTz) {
+      if (!serverTz && !loadError) {
         return {
           ...prev,
           values: {
@@ -278,17 +279,48 @@ export function ProfileSetupForm({
 
       return prev;
     });
-  }, [initialProfile, userId]);
+  }, [initialProfile, loadError, userId]);
 
   const isErrorDismissed = state === dismissedErrorState;
 
+  // Effect 1: Success handling - clears draft and reconciles values when save succeeds
   useEffect(() => {
     if (state.success) {
       clearDraft(userId);
-    } else if (state.error && !isErrorDismissed && errorAlertRef.current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFormState((prev) => {
+        if (!state.values) {
+          return prev.hasDraft ? { ...prev, hasDraft: false } : prev;
+        }
+
+        return {
+          hasDraft: false,
+          skillsNoneTouched: false,
+          values: {
+            current_role: state.values.current_role ?? prev.values.current_role,
+            education: state.values.education ?? prev.values.education,
+            experience_level:
+              state.values.experience_level ?? prev.values.experience_level,
+            existing_skills_none:
+              typeof state.values.existing_skills_none === 'boolean'
+                ? state.values.existing_skills_none
+                : prev.values.existing_skills_none,
+            timezone: state.values.timezone ?? prev.values.timezone,
+            preferred_daily_hours:
+              state.values.preferred_daily_hours ??
+              prev.values.preferred_daily_hours,
+          },
+        };
+      });
+    }
+  }, [state, userId]);
+
+  // Effect 2: Error alert focus - focuses alert when error occurs and is not dismissed
+  useEffect(() => {
+    if (state.error && !isErrorDismissed && errorAlertRef.current) {
       errorAlertRef.current.focus();
     }
-  }, [state, isErrorDismissed, userId]);
+  }, [state, isErrorDismissed]);
 
   /**
    * Updates a controlled field value, dismisses stale errors, and persists the local draft in sessionStorage.

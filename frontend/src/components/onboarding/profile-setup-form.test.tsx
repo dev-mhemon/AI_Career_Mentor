@@ -415,4 +415,110 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
       window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-corrupt'),
     ).toBeNull();
   });
+
+  it('does not auto-detect browser timezone when loadError is present and initialProfile is null with no saved draft', () => {
+    const tzSpy = vi
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({
+        timeZone: 'Asia/Tokyo',
+      } as Intl.ResolvedDateTimeFormatOptions);
+
+    try {
+      render(
+        <ProfileSetupForm
+          initialProfile={null}
+          loadError="Unable to reach the server. Please enter your details below."
+          userId="user-load-err"
+        />,
+      );
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/unable to reach the server/i);
+      // Timezone input must remain blank instead of auto-detecting Asia/Tokyo
+      expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('');
+    } finally {
+      tzSpy.mockRestore();
+    }
+  });
+
+  it('persists new draft in sessionStorage when editing a field after a successful save without being wiped', async () => {
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      values: {
+        current_role: 'Full Stack Engineer',
+        education: 'BSc in CSE',
+        experience_level: 'mid',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '2',
+      },
+    });
+
+    render(
+      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-edit-after-save" />,
+    );
+
+    const submitBtn = screen.getByRole('button', {
+      name: /প্রোফাইল সংরক্ষণ করুন/i,
+    });
+
+    // 1. Submit and succeed
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+    expect(
+      window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-edit-after-save'),
+    ).toBeNull();
+
+    // 2. User edits a field after success
+    const roleInput = screen.getByLabelText(/current role \/ profession/i);
+    fireEvent.change(roleInput, { target: { value: 'Lead Architect' } });
+
+    // Draft must now be saved in sessionStorage and NOT wiped by the success effect
+    const savedDraft = window.sessionStorage.getItem(
+      'mentor_onboarding_profile_draft:user-edit-after-save',
+    );
+    expect(savedDraft).not.toBeNull();
+    const parsed = JSON.parse(savedDraft!);
+    expect(parsed.values.current_role).toBe('Lead Architect');
+  });
+
+  it('reconciles controlled form inputs with state.values upon successful save', async () => {
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      values: {
+        current_role: 'Senior Staff Engineer',
+        education: 'MSc in Software Engineering',
+        experience_level: 'senior',
+        existing_skills_none: false,
+        timezone: 'UTC',
+        preferred_daily_hours: '4',
+      },
+    });
+
+    render(
+      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-reconcile" />,
+    );
+
+    const submitBtn = screen.getByRole('button', {
+      name: /প্রোফাইল সংরক্ষণ করুন/i,
+    });
+
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
+      'Senior Staff Engineer',
+    );
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue(
+      'MSc in Software Engineering',
+    );
+    expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
+    expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('UTC');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4);
+  });
 });
