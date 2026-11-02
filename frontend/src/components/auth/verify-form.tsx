@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
 import {
   loadVerificationDraft,
-  saveVerificationDraft,
   saveFallbackVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,

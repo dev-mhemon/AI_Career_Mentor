@@ -457,14 +457,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
 
     it('propagates resend cooldown 429 and retryAfterSeconds from abuse control', async () => {
       abuse.reserveSend.mockImplementationOnce(() =>
-        fail(
-          429,
-          'RESEND_COOLDOWN_ACTIVE',
-          'Cooldown active',
-          [],
-          true,
-          45,
-        ),
+        fail(429, 'RESEND_COOLDOWN_ACTIVE', 'Cooldown active', [], true, 45),
       );
 
       await expect(
@@ -504,7 +497,13 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         },
       ]);
       otpStore.verifyAndConsumeOtp.mockImplementationOnce(() =>
-        fail(503, 'SERVICE_UNAVAILABLE', 'OTP secret store unavailable', [], true),
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'OTP secret store unavailable',
+          [],
+          true,
+        ),
       );
 
       await expect(
