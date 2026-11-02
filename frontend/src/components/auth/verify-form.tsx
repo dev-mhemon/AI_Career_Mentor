@@ -1,12 +1,13 @@
 'use client';
 
 import { useActionState, useState, useEffect, useRef, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
 import {
   loadVerificationDraft,
   saveVerificationDraft,
   updateVerificationDraftExpiry,
+  clearVerificationDraft,
   type VerificationDraft,
 } from '@/lib/auth/verification-draft';
 
@@ -16,6 +17,7 @@ import {
  * SSR hydration mismatches (sessionStorage is unavailable on the server).
  */
 function VerifyFormContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const channelParam = (searchParams.get('channel') || searchParams.get('type')) as
     | 'email'
@@ -47,6 +49,14 @@ function VerifyFormContent() {
     setIsDraftExpired(expired);
   }, [channelParam]);
 
+  /** Successful verification navigation & draft clearance. */
+  useEffect(() => {
+    if (state?.success && state?.redirectTo) {
+      clearVerificationDraft();
+      router.push(state.redirectTo);
+    }
+  }, [state, router]);
+
   /** Cooldown timer: single-responsibility effect. */
   useEffect(() => {
     if (cooldown > 0) {
@@ -66,39 +76,44 @@ function VerifyFormContent() {
     setResendError(null);
     setResendSuccess(null);
 
-    const identifierToSend = draft?.normalized_identifier || reenteredIdentifier.trim();
-    const result = await resendOtpAction(channelParam, identifierToSend);
+    try {
+      const identifierToSend = draft?.normalized_identifier || reenteredIdentifier.trim();
+      const result = await resendOtpAction(channelParam, identifierToSend);
 
-    if (result.error) {
-      setResendError(result.error);
-    } else {
-      setResendSuccess('Verification code sent successfully.');
-      setCooldown(60);
-      if (result.expiresInSeconds) {
-        const updated = updateVerificationDraftExpiry(
-          result.expiresInSeconds,
-          result.contactMasked,
-        );
-        if (updated) {
-          setDraft(updated);
-          setIsDraftExpired(false);
-        } else if (identifierToSend) {
-          /* No existing draft — create a replacement (expired was cleared or fresh tab). */
-          const replacement = saveVerificationDraft({
-            channel: channelParam,
-            identifier: identifierToSend,
-            contactMasked: result.contactMasked,
-            expiresInSeconds: result.expiresInSeconds,
-            context: 'registration',
-          });
-          if (replacement) {
-            setDraft(replacement);
+      if (result.error) {
+        setResendError(result.error);
+      } else {
+        setResendSuccess('Verification code sent successfully.');
+        setCooldown(60);
+        if (result.expiresInSeconds) {
+          const updated = updateVerificationDraftExpiry(
+            result.expiresInSeconds,
+            result.contactMasked,
+          );
+          if (updated) {
+            setDraft(updated);
             setIsDraftExpired(false);
+          } else if (identifierToSend) {
+            /* No existing draft — create a replacement (expired was cleared or fresh tab). */
+            const replacement = saveVerificationDraft({
+              channel: channelParam,
+              identifier: identifierToSend,
+              contactMasked: result.contactMasked,
+              expiresInSeconds: result.expiresInSeconds,
+              context: 'registration',
+            });
+            if (replacement) {
+              setDraft(replacement);
+              setIsDraftExpired(false);
+            }
           }
         }
       }
+    } catch {
+      setResendError('Failed to resend verification code. Please try again.');
+    } finally {
+      setIsResending(false);
     }
-    setIsResending(false);
   };
 
   if (!channelParam || !['email', 'phone'].includes(channelParam)) {

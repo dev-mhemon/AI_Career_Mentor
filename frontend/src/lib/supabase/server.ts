@@ -11,7 +11,7 @@ import { cookies } from "next/headers";
  * This client is NOT a singleton — call it per-request to get
  * a fresh cookie-bound instance.
  */
-export async function createSupabaseServerClient() {
+export async function createSupabaseServerClient(options?: { readOnly?: boolean }) {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -23,9 +23,12 @@ export async function createSupabaseServerClient() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
+          if (options?.readOnly) {
+            return;
+          }
           try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
+            cookiesToSet.forEach(({ name, value, options: cookieOptions }) =>
+              cookieStore.set(name, value, cookieOptions),
             );
           } catch {
             // setAll can throw in Server Components where cookies
@@ -33,6 +36,10 @@ export async function createSupabaseServerClient() {
             // handles session refresh for those requests.
           }
         },
+      },
+      auth: {
+        autoRefreshToken: !options?.readOnly,
+        persistSession: !options?.readOnly,
       },
     },
   );

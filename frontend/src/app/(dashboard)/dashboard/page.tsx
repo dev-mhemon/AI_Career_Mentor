@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { logoutAction } from "@/lib/auth/actions";
-import { getAppUser } from "@/lib/auth/user";
+import { getAppUserResult } from "@/lib/auth/user";
 
 /**
  * Dashboard page — MVP placeholder for authenticated + ACTIVE users.
@@ -10,7 +10,8 @@ import { getAppUser } from "@/lib/auth/user";
  * users can navigate to `/onboarding/profile` or `/settings` at any time.
  */
 export default async function DashboardPage() {
-  const user = await getAppUser();
+  const result = await getAppUserResult();
+  const user = result.data;
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center bg-background px-4">

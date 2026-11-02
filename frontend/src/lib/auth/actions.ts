@@ -25,6 +25,7 @@ import {
 export interface AuthActionResult {
   error?: string;
   success?: boolean;
+  redirectTo?: string;
 }
 
 const VERIFICATION_CONTEXT_COOKIE = 'mentor_verification_context';
@@ -234,7 +235,7 @@ export async function verifyOtpAction(
     }
     return { error: 'An unexpected error occurred during verification.' };
   }
-  redirect(destination);
+  return { success: true, redirectTo: destination };
 }
 
 /**
@@ -249,7 +250,12 @@ export async function resendOtpAction(
   expiresInSeconds?: number;
   contactMasked?: string;
 }> {
-  let identifier = reenteredIdentifier?.trim();
+  if (type !== 'email' && type !== 'phone') {
+    return { error: 'Invalid verification channel.' };
+  }
+  const rawIdentifier =
+    typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';
+  let identifier = rawIdentifier;
   if (!identifier) {
     const context = await getVerificationContext(type);
     if (context) identifier = context.identifier;

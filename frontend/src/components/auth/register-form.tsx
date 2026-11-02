@@ -1,10 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useEffect } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { saveVerificationDraft } from "@/lib/auth/verification-draft";
+import {
+  saveVerificationDraft,
+  clearVerificationDraft,
+} from "@/lib/auth/verification-draft";
 
 /**
  * Registration form component for email and phone account creation.
@@ -17,6 +20,12 @@ export function RegisterForm() {
   >(registerAction, {});
 
   const [activeTab, setActiveTab] = useState<"email" | "phone">("email");
+
+  useEffect(() => {
+    if (state?.error || (state as Record<string, unknown>)?.fieldErrors) {
+      clearVerificationDraft();
+    }
+  }, [state]);
 
   return (
     <div className="flex flex-col gap-6">

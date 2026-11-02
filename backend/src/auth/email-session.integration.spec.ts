@@ -409,6 +409,12 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         TEST_USER_ID,
         TEST_SESSION_ID,
       );
+      expect(database.transaction).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.any(Function),
+        false,
+        false,
+      );
 
       // Step 5: Logout (A06)
       const logoutResult = await authService.logout(

@@ -2,7 +2,6 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
   getMe,
   getCurrentUserState,
-  refreshSession,
   UnauthorizedError,
   type UserResponse,
   type CurrentUserStateResponse,
@@ -14,74 +13,125 @@ import {
 export type AppSessionState = CurrentUserStateResponse;
 
 /**
- * Executes an authenticated read against `/auth/me` with at most one canonical EP-A07 refresh retry on 401.
- * Only signs out on explicit 401 / UnauthorizedError after a failed refresh — transient errors (5xx, 429,
- * network) return `null` without destroying the session, preventing accidental sign-out on flaky networks.
+ * Discriminated result of resolving a session in read-only Server Components.
+ * Distinguishes unauthenticated states from transient backend failures.
  */
-async function fetchWithSingleRefresh<T>(
+export type ReadOnlySessionResult<T> =
+  | { status: 'authenticated'; data: T }
+  | { status: 'unauthenticated'; data: null }
+  | { status: 'transient_error'; data: null; error: unknown };
+
+/**
+ * Checks whether a session or JWT access token is expired without triggering auto-refresh.
+ * Inspects numeric `expires_at` (epoch seconds) and JWT `exp` payload claim.
+ */
+export function isSessionExpired(session: {
+  expires_at?: number;
+  access_token?: string;
+}): boolean {
+  if (typeof session.expires_at === 'number' && session.expires_at > 0) {
+    return session.expires_at <= Math.floor(Date.now() / 1000);
+  }
+  if (session.access_token && typeof session.access_token === 'string') {
+    const parts = session.access_token.split('.');
+    if (parts.length === 3) {
+      try {
+        const payload = JSON.parse(
+          Buffer.from(parts[1], 'base64url').toString('utf8'),
+        );
+        if (typeof payload.exp === 'number' && payload.exp > 0) {
+          return payload.exp <= Math.floor(Date.now() / 1000);
+        }
+      } catch {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Executes a read-only authenticated request against the backend auth endpoints.
+ *
+ * In Next.js Server Components, cookies are strictly read-only; attempts to rotate tokens,
+ * call setSession, or call signOut cannot persist cookie mutations to the browser response.
+ * Token rotation and session lifetime management are strictly handled by Edge Proxy
+ * (`frontend/src/proxy.ts`) and Server Actions (`frontend/src/lib/auth/actions.ts`).
+ *
+ * Uses `createSupabaseServerClient({ readOnly: true })` with `autoRefreshToken: false`
+ * and checks token expiry before calling the fetcher so expired sessions return
+ * `unauthenticated` without stranding rotated tokens in swallowed cookie writes.
+ *
+ * Distinguishes:
+ *  - 'authenticated': valid session and successful backend response
+ *  - 'unauthenticated': missing session, expired session, or 401 UnauthorizedError
+ *  - 'transient_error': valid non-expired session, but backend threw 5xx, 429, or network error
+ */
+async function fetchReadOnlySession<T>(
   fetcher: (accessToken: string) => Promise<T>,
-): Promise<T | null> {
+): Promise<ReadOnlySessionResult<T>> {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient({ readOnly: true });
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
     if (!session?.access_token) {
-      return null;
+      return { status: 'unauthenticated', data: null };
+    }
+
+    if (isSessionExpired(session)) {
+      return { status: 'unauthenticated', data: null };
     }
 
     try {
-      return await fetcher(session.access_token);
+      const data = await fetcher(session.access_token);
+      return { status: 'authenticated', data };
     } catch (err) {
-      /* Only retry on 401 Unauthorized — transient errors return null without sign-out. */
-      if (!(err instanceof UnauthorizedError)) {
-        return null;
+      if (err instanceof UnauthorizedError) {
+        return { status: 'unauthenticated', data: null };
       }
-
-      if (!session.refresh_token) {
-        await supabase.auth.signOut().catch(() => undefined);
-        return null;
-      }
-
-      try {
-        const refreshed = await refreshSession(session.refresh_token);
-        const { error } = await supabase.auth.setSession({
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token,
-        });
-        if (error) {
-          await supabase.auth.signOut().catch(() => undefined);
-          return null;
-        }
-        return await fetcher(refreshed.access_token);
-      } catch (refreshErr) {
-        /* Sign out only on auth rejection (401) during refresh — transient errors preserve session. */
-        if (refreshErr instanceof UnauthorizedError) {
-          await supabase.auth.signOut().catch(() => undefined);
-        }
-        return null;
-      }
+      return { status: 'transient_error', data: null, error: err };
     }
-  } catch {
-    return null;
+  } catch (err) {
+    return { status: 'transient_error', data: null, error: err };
   }
 }
 
 /**
- * Retrieves the authenticated user's full EP-A13 (`GET /api/v1/auth/me`) account and effective-access state.
- * Performs at most one refresh per 401 and signs out cleanly on auth failure only.
+ * Retrieves the authenticated user's full EP-A13 (`GET /api/v1/auth/me`) account and effective-access state,
+ * with explicit status discrimination (authenticated, unauthenticated, transient_error).
  */
-export async function getAppSessionState(): Promise<AppSessionState | null> {
-  return fetchWithSingleRefresh((accessToken) =>
+export async function getAppSessionStateResult(): Promise<ReadOnlySessionResult<AppSessionState>> {
+  return fetchReadOnlySession((accessToken) =>
     getCurrentUserState(accessToken),
   );
 }
 
 /**
- * Retrieves the authenticated user's application status from NestJS (`GET /api/v1/auth/me`).
- * Performs at most one refresh per 401 and signs out cleanly on auth failure only.
+ * Retrieves the authenticated user's application status from NestJS (`GET /api/v1/auth/me`),
+ * with explicit status discrimination (authenticated, unauthenticated, transient_error).
+ */
+export async function getAppUserResult(): Promise<ReadOnlySessionResult<UserResponse>> {
+  return fetchReadOnlySession((accessToken) => getMe(accessToken));
+}
+
+/**
+ * Backward-compatible helper retrieving the authenticated user's full EP-A13 account state.
+ * Returns null on unauthenticated or transient error states without cookie mutations.
+ * In route layouts and settings pages, prefer `getAppSessionStateResult()` to surface transient outages.
+ */
+export async function getAppSessionState(): Promise<AppSessionState | null> {
+  const result = await getAppSessionStateResult();
+  return result.status === 'authenticated' ? result.data : null;
+}
+
+/**
+ * Backward-compatible helper retrieving the authenticated user's application status from NestJS.
+ * Returns null on unauthenticated or transient error states without cookie mutations.
+ * In route layouts and dashboards, prefer `getAppUserResult()` to surface transient outages.
  */
 export async function getAppUser(): Promise<UserResponse | null> {
-  return fetchWithSingleRefresh((accessToken) => getMe(accessToken));
+  const result = await getAppUserResult();
+  return result.status === 'authenticated' ? result.data : null;
 }

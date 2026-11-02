@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { getAppSessionState } from '@/lib/auth/user';
+import { getAppSessionStateResult } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
 
 /**
@@ -8,12 +8,46 @@ import { logoutAction } from '@/lib/auth/actions';
  * Preserves `effective_access`, `profile_complete`, `focus_roadmap_id`, and `can_delete_account` metadata with working sign-out.
  */
 export default async function SettingsPage() {
-  const state = await getAppSessionState();
+  const result = await getAppSessionStateResult();
 
-  if (!state) {
+  if (result.status === 'unauthenticated') {
     redirect('/login');
   }
 
+  if (result.status === 'transient_error') {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <main className="mx-auto flex min-h-[60vh] max-w-lg flex-col justify-center px-4 py-12">
+          <div role="alert" className="flex flex-col gap-4">
+            <h1 className="text-2xl font-bold text-foreground">
+              সার্ভিস সাময়িকভাবে অনুপলব্ধ (Service Temporarily Unavailable)
+            </h1>
+            <p className="text-sm text-foreground/70">
+              আমরা আপনার সেটিংস ও অ্যাকাউন্টের তথ্য লোড করতে পারছি না। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।
+            </p>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <Link
+                href="/settings"
+                className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+              >
+                আবার চেষ্টা করুন (Try again)
+              </Link>
+              <form action={logoutAction}>
+                <button
+                  type="submit"
+                  className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+                >
+                  Sign Out
+                </button>
+              </form>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const state = result.data;
   const { user, profile_complete, effective_access, can_delete_account } = state;
   const isSuspended = user.status === 'suspended';
 

@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { VerifyForm } from '@/components/auth/verify-form';
-import { resendOtpAction } from '@/lib/auth/actions';
+import { verifyOtpAction, resendOtpAction } from '@/lib/auth/actions';
 import { useSearchParams } from 'next/navigation';
 import {
   saveVerificationDraft,
   clearVerificationDraft,
   VERIFICATION_DRAFT_STORAGE_KEY,
 } from '@/lib/auth/verification-draft';
+
+const mockPush = vi.fn();
 
 vi.mock('@/lib/auth/actions', () => ({
   verifyOtpAction: vi.fn(),
@@ -16,6 +18,9 @@ vi.mock('@/lib/auth/actions', () => ({
 
 vi.mock('next/navigation', () => ({
   useSearchParams: vi.fn(),
+  useRouter: () => ({
+    push: mockPush,
+  }),
 }));
 
 describe('VerifyForm', () => {
@@ -198,7 +203,7 @@ describe('VerifyForm', () => {
     expect(parsed.contact_masked).toBe('r****@example.com');
   });
 
-  it('does not clear verification draft on form submit (draft preserved for failed attempts)', async () => {
+  it('does not clear verification draft on failed verification submit (draft preserved for failed attempts)', async () => {
     saveVerificationDraft({
       channel: 'email',
       identifier: 'candidate@example.com',
@@ -207,6 +212,9 @@ describe('VerifyForm', () => {
     vi.mocked(useSearchParams).mockReturnValue(
       new URLSearchParams('?channel=email'),
     );
+    vi.mocked(verifyOtpAction).mockResolvedValueOnce({
+      error: 'Invalid verification code',
+    });
 
     render(<VerifyForm />);
 
@@ -215,14 +223,85 @@ describe('VerifyForm', () => {
       expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
     });
 
+    const tokenInput = screen.getByLabelText(/enter the verification code/i);
+    fireEvent.change(tokenInput, { target: { value: '123456' } });
+
     /* Submit the form */
     const submitButton = screen.getByRole('button', { name: /verify code/i });
-    fireEvent.click(submitButton);
+    await act(async () => {
+      fireEvent.click(submitButton);
+    });
 
     /* Draft should still exist in sessionStorage (not cleared prematurely) */
     expect(
       window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
     ).not.toBeNull();
+  });
+
+  it('clears draft and navigates on successful verification submit', async () => {
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'candidate@example.com',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    vi.mocked(verifyOtpAction).mockResolvedValueOnce({
+      success: true,
+      redirectTo: '/onboarding/profile',
+    });
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    const tokenInput = screen.getByLabelText(/enter the verification code/i);
+    fireEvent.change(tokenInput, { target: { value: '123456' } });
+
+    const submitButton = screen.getByRole('button', { name: /verify code/i });
+    await act(async () => {
+      fireEvent.click(submitButton);
+    });
+
+    await waitFor(() => {
+      expect(
+        window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
+      ).toBeNull();
+      expect(mockPush).toHaveBeenCalledWith('/onboarding/profile');
+    });
+  });
+
+  it('handles rejected resendOtpAction promise gracefully and resets isResending', async () => {
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'candidate@example.com',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    vi.mocked(resendOtpAction).mockRejectedValueOnce(new Error('Network crash'));
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    await act(async () => {
+      fireEvent.click(resendButton);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/failed to resend verification code\. please try again\./i),
+      ).toBeInTheDocument();
+      expect(resendButton).not.toBeDisabled();
+    });
   });
 
   it('uses SMS channel text with phone channel', async () => {

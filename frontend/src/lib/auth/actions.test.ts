@@ -255,7 +255,7 @@ describe("Auth Actions", () => {
       expect(result).toEqual({ error: "Invalid verification request." });
     });
 
-    it("verifies email via backend EP-A02 and redirects to /onboarding/profile on profile_setup", async () => {
+    it("verifies email via backend EP-A02 and returns redirectTo /onboarding/profile on profile_setup", async () => {
       vi.mocked(verifyEmail).mockResolvedValueOnce({
         access_token: "test-access-token",
         refresh_token: "test-refresh-token",
@@ -279,7 +279,7 @@ describe("Auth Actions", () => {
       formData.set("type", "email");
       formData.set("token", "123456");
 
-      await verifyOtpAction({}, formData);
+      const result = await verifyOtpAction({}, formData);
 
       expect(verifyEmail).toHaveBeenCalledWith({
         email: "test@example.com",
@@ -294,9 +294,10 @@ describe("Auth Actions", () => {
         "",
         expect.objectContaining({ path: "/verify", maxAge: 0 }),
       );
-      expect(redirect).toHaveBeenCalledWith(
-        "/onboarding/profile",
-      );
+      expect(result).toEqual({
+        success: true,
+        redirectTo: "/onboarding/profile",
+      });
     });
 
     it("verifies email using identifier from formData when cookie is missing", async () => {
@@ -324,13 +325,16 @@ describe("Auth Actions", () => {
       formData.set("identifier", "reentered@example.com");
       formData.set("token", "123456");
 
-      await verifyOtpAction({}, formData);
+      const result = await verifyOtpAction({}, formData);
 
       expect(verifyEmail).toHaveBeenCalledWith({
         email: "reentered@example.com",
         code: "123456",
       });
-      expect(redirect).toHaveBeenCalledWith("/onboarding/profile");
+      expect(result).toEqual({
+        success: true,
+        redirectTo: "/onboarding/profile",
+      });
     });
 
     it("verifies email via backend EP-A02 and redirects to /dashboard on app_home", async () => {
@@ -357,9 +361,12 @@ describe("Auth Actions", () => {
       formData.set("type", "email");
       formData.set("token", "123456");
 
-      await verifyOtpAction({}, formData);
+      const result = await verifyOtpAction({}, formData);
 
-      expect(redirect).toHaveBeenCalledWith("/dashboard");
+      expect(result).toEqual({
+        success: true,
+        redirectTo: "/dashboard",
+      });
     });
 
     it("returns error message when verifyEmail throws ApiError", async () => {
@@ -408,7 +415,7 @@ describe("Auth Actions", () => {
       formData.set("type", "phone");
       formData.set("token", "123456");
 
-      await verifyOtpAction({}, formData);
+      const result = await verifyOtpAction({}, formData);
 
       expect(verifyPhone).toHaveBeenCalledWith({
         phone: "+8801712345678",
@@ -423,9 +430,10 @@ describe("Auth Actions", () => {
         "",
         expect.objectContaining({ path: "/verify", maxAge: 0 }),
       );
-      expect(redirect).toHaveBeenCalledWith(
-        "/onboarding/profile",
-      );
+      expect(result).toEqual({
+        success: true,
+        redirectTo: "/onboarding/profile",
+      });
     });
   });
 
@@ -484,6 +492,11 @@ describe("Auth Actions", () => {
         channel: "email",
         contact: "reentered@example.com",
       });
+    });
+
+    it("returns error on invalid channel", async () => {
+      const result = await resendOtpAction("sms" as unknown as "phone");
+      expect(result).toEqual({ error: "Invalid verification channel." });
     });
   });
 

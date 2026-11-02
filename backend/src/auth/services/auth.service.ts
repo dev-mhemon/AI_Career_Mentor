@@ -1548,7 +1548,7 @@ export class AuthService {
         return this.meInTransaction(db, identity.sub);
       },
       false,
-      true,
+      false,
     );
 
     return {
