@@ -1,9 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { RegisterForm } from "@/components/auth/register-form";
+import { registerAction } from "@/lib/auth/actions";
+
+const mockClearVerificationDraft = vi.fn();
+const mockSaveVerificationDraft = vi.fn();
 
 vi.mock("@/lib/auth/actions", () => ({
   registerAction: vi.fn(),
+}));
+
+vi.mock("@/lib/auth/verification-draft", () => ({
+  saveVerificationDraft: (...args: unknown[]) => mockSaveVerificationDraft(...args),
+  clearVerificationDraft: () => mockClearVerificationDraft(),
 }));
 
 vi.mock("@/components/auth/oauth-buttons", () => ({
@@ -11,6 +20,10 @@ vi.mock("@/components/auth/oauth-buttons", () => ({
 }));
 
 describe("RegisterForm", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders email, password, and confirm password fields", () => {
     render(<RegisterForm />);
 
@@ -57,5 +70,34 @@ describe("RegisterForm", () => {
 
     expect(passwordInput).toHaveAttribute("minLength", "8");
     expect(confirmInput).toHaveAttribute("minLength", "8");
+  });
+
+  it("clears verification draft on rejected submission with state error", async () => {
+    vi.mocked(registerAction).mockResolvedValueOnce({
+      error: "Registration failed. User already exists.",
+    });
+
+    render(<RegisterForm />);
+
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm password/i), {
+      target: { value: "password123" },
+    });
+    fireEvent.click(screen.getByLabelText(/agree to the privacy policy/i));
+
+    const button = screen.getByRole("button", { name: /create account/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(mockClearVerificationDraft).toHaveBeenCalled();
+      expect(screen.getByText(/registration failed/i)).toBeInTheDocument();
+    });
   });
 });

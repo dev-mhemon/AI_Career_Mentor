@@ -6,12 +6,15 @@ import { cookies } from "next/headers";
  * (Server Components, Server Actions, Route Handlers).
  *
  * Uses HttpOnly cookies via next/headers for secure session storage.
- * The cookie adapter reads/writes through the Next.js cookie API.
+ * When `options.readOnly` is true, suppresses cookie write operations and intercepts
+ * `/auth/v1/token` endpoint requests with a non-retryable response so token rotation
+ * cannot be triggered during Server Component renders. Edge Proxy (`frontend/src/proxy.ts`)
+ * remains the sole token refresh authority.
  *
  * This client is NOT a singleton — call it per-request to get
  * a fresh cookie-bound instance.
  */
-export async function createSupabaseServerClient() {
+export async function createSupabaseServerClient(options?: { readOnly?: boolean }) {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -23,9 +26,12 @@ export async function createSupabaseServerClient() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
+          if (options?.readOnly) {
+            return;
+          }
           try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options),
+            cookiesToSet.forEach(({ name, value, options: cookieOptions }) =>
+              cookieStore.set(name, value, cookieOptions),
             );
           } catch {
             // setAll can throw in Server Components where cookies
@@ -33,6 +39,36 @@ export async function createSupabaseServerClient() {
             // handles session refresh for those requests.
           }
         },
+      },
+      global: {
+        fetch: options?.readOnly
+          ? (input, init) => {
+              const urlStr =
+                typeof input === "string"
+                  ? input
+                  : input instanceof URL
+                    ? input.toString()
+                    : (input as Request).url;
+              if (urlStr.includes("/auth/v1/token")) {
+                // In read-only Server Components, prevent token rotation requests that
+                // would strand rotated refresh tokens in swallowed setAll cookie writes.
+                return Promise.resolve(
+                  new Response(
+                    JSON.stringify({
+                      error: "read_only_mode",
+                      error_description:
+                        "Token refresh is forbidden in read-only Server Components",
+                    }),
+                    {
+                      status: 400,
+                      headers: { "Content-Type": "application/json" },
+                    },
+                  ),
+                );
+              }
+              return fetch(input, init);
+            }
+          : fetch,
       },
     },
   );

@@ -1,10 +1,18 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useEffect } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import {
+  saveVerificationDraft,
+  clearVerificationDraft,
+} from "@/lib/auth/verification-draft";
 
+/**
+ * Registration form component for email and phone account creation.
+ * Saves sanitized R18 verification draft in sessionStorage before navigation.
+ */
 export function RegisterForm() {
   const [state, formAction, isPending] = useActionState<
     AuthActionResult,
@@ -12,6 +20,12 @@ export function RegisterForm() {
   >(registerAction, {});
 
   const [activeTab, setActiveTab] = useState<"email" | "phone">("email");
+
+  useEffect(() => {
+    if (state?.error || (state as Record<string, unknown>)?.fieldErrors) {
+      clearVerificationDraft();
+    }
+  }, [state]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -40,7 +54,23 @@ export function RegisterForm() {
         </button>
       </div>
 
-      <form action={formAction} className="flex flex-col gap-4">
+      <form
+        action={formAction}
+        onSubmit={(e) => {
+          const form = e.currentTarget;
+          const identifier = (
+            form.elements.namedItem("identifier") as HTMLInputElement
+          )?.value;
+          if (identifier) {
+            saveVerificationDraft({
+              channel: activeTab,
+              identifier,
+              context: "registration",
+            });
+          }
+        }}
+        className="flex flex-col gap-4"
+      >
         <input type="hidden" name="type" value={activeTab} />
 
         <div className="flex flex-col gap-1.5">

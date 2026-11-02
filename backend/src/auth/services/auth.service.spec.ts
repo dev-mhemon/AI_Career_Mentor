@@ -1243,7 +1243,7 @@ describe('AuthService session approval boundary', () => {
         userId,
         expect.any(Function),
         false,
-        true,
+        false,
       );
     });
 
