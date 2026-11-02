@@ -77,6 +77,9 @@ async function getVerificationContext(
   }
 }
 
+/**
+ * Server action authenticating user credentials via backend EP-A05 and establishing session.
+ */
 export async function loginAction(
   _prevState: AuthActionResult,
   formData: FormData,
@@ -101,7 +104,7 @@ export async function loginAction(
       session.user.status !== 'suspended' &&
       session.next_step === 'profile_setup'
     )
-      destination = '/dashboard?next_step=profile_setup';
+      destination = '/onboarding/profile';
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -208,7 +211,7 @@ export async function verifyOtpAction(
     await clearVerificationContext();
     destination =
       session.next_step === 'profile_setup'
-        ? '/dashboard?next_step=profile_setup'
+        ? '/onboarding/profile'
         : session.next_step === 'add_verified_contact'
           ? '/dashboard?next_step=add_verified_contact'
           : '/dashboard';

@@ -15,7 +15,7 @@ import { createServerClient } from "@supabase/ssr";
  *  - Replace NestJS guards
  */
 
-const PROTECTED_ROUTES = ["/dashboard"];
+const PROTECTED_ROUTES = ["/dashboard", "/onboarding"];
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

@@ -74,3 +74,58 @@ describe('C05 EP-C05 transaction feature boundary', () => {
     ).toBe(false);
   });
 });
+
+describe('ProfileService.patch explicit clearing of education and education_level', () => {
+  it.each([
+    [{ education: '' }],
+    [{ education: '   ' }],
+    [{ education_level: '' }],
+    [{ education_level: '   ' }],
+  ])('clears education to null in DB when input is %j', async (input) => {
+    const oldProfile = {
+      user_id: 'user-1',
+      current_role_title: 'Developer',
+      education: 'BSc in CSE',
+      experience_level: 'junior',
+      self_reported_skill_ids: [],
+      existing_skills_none: false,
+      learning_preference: 'mixed',
+      preferred_daily_hours: 2,
+      timezone: 'Asia/Dhaka',
+      timezone_detected: true,
+    };
+    const query = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM public.user_profiles')) {
+        return [oldProfile];
+      }
+      if (sql.includes('UPDATE public.user_profiles')) {
+        return [];
+      }
+      if (sql.includes('SELECT id FROM public.career_goals')) {
+        return [];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) {
+        return [{ ...oldProfile, education: null }];
+      }
+      if (sql.includes('SELECT s.id AS skill_id')) {
+        return [];
+      }
+      return [];
+    });
+    const transaction = vi.fn((_id, operation) => operation({ query }));
+    const service = new ProfileService({
+      transaction,
+    } as unknown as DatabaseService);
+
+    const result = (await service.patch('user-1', input as any)) as any;
+
+    const updateCall = query.mock.calls.find(([sql]) =>
+      sql.includes('UPDATE public.user_profiles'),
+    );
+    expect(updateCall).toBeDefined();
+    // $3 is education in: UPDATE public.user_profiles SET current_role_title=$2,education=$3,experience_level=$4...
+    expect(updateCall![1][2]).toBeNull();
+    expect(result.education).toBeNull();
+    expect(result.education_level).toBeNull();
+  });
+});

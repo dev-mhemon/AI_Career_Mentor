@@ -130,6 +130,23 @@ describe("Auth Actions", () => {
       });
       expect(redirect).toHaveBeenCalledWith("/dashboard");
     });
+
+    it("redirects active user to /onboarding/profile when next_step is profile_setup", async () => {
+      const formData = new FormData();
+      formData.set("email", "newuser@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        access_token: "approved-access",
+        refresh_token: "approved-refresh",
+        user: { status: "active" },
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      await loginAction({}, formData);
+      expect(redirect).toHaveBeenCalledWith("/onboarding/profile");
+    });
   });
 
   describe("registerAction", () => {
@@ -238,7 +255,7 @@ describe("Auth Actions", () => {
       expect(result).toEqual({ error: "Invalid verification request." });
     });
 
-    it("verifies email via backend EP-A02 and redirects to /dashboard?next_step=profile_setup on profile_setup", async () => {
+    it("verifies email via backend EP-A02 and redirects to /onboarding/profile on profile_setup", async () => {
       vi.mocked(verifyEmail).mockResolvedValueOnce({
         access_token: "test-access-token",
         refresh_token: "test-refresh-token",
@@ -278,7 +295,7 @@ describe("Auth Actions", () => {
         expect.objectContaining({ path: "/verify", maxAge: 0 }),
       );
       expect(redirect).toHaveBeenCalledWith(
-        "/dashboard?next_step=profile_setup",
+        "/onboarding/profile",
       );
     });
 
@@ -328,7 +345,7 @@ describe("Auth Actions", () => {
       expect(result).toEqual({ error: "Verification code is invalid" });
     });
 
-    it("verifies phone via backend EP-A03 and redirects to /dashboard?next_step=profile_setup", async () => {
+    it("verifies phone via backend EP-A03 and redirects to /onboarding/profile", async () => {
       const phoneContext = Buffer.from(
         JSON.stringify({ type: "phone", identifier: "+8801712345678" }),
       ).toString("base64url");
@@ -373,7 +390,7 @@ describe("Auth Actions", () => {
         expect.objectContaining({ path: "/verify", maxAge: 0 }),
       );
       expect(redirect).toHaveBeenCalledWith(
-        "/dashboard?next_step=profile_setup",
+        "/onboarding/profile",
       );
     });
   });
@@ -547,6 +564,35 @@ describe("Auth Actions", () => {
       );
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe("http://localhost:3001/dashboard");
+    });
+
+    it("redirects OAuth user to /onboarding/profile when next_step is profile_setup", async () => {
+      mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: "mock-oauth-access-token",
+            user: {
+              id: "user-123",
+              identities: [{ provider: "google", id: "google-sub-123" }],
+            },
+          },
+        },
+      });
+      (approveOAuthSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        user: { id: "user-123", status: "active", verified_contact: true },
+        next_step: "profile_setup",
+        profile_complete: false,
+      });
+
+      const request = new Request(
+        "http://localhost:3001/auth/callback?code=mock-code&provider=google",
+      );
+      const response = await authCallbackGet(request);
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "http://localhost:3001/onboarding/profile",
+      );
     });
 
     it("signs out with scope: 'local' and redirects to /login?error=oauth_failed if user lacks matching identity", async () => {
