@@ -1,0 +1,277 @@
+/**
+ * R18 verification draft state helper for Screen 03/04/02/22 verification flows.
+ * Stores only `{ channel, normalized_identifier, contact_masked, expires_at, context }` in `sessionStorage`.
+ */
+
+export const VERIFICATION_DRAFT_STORAGE_KEY = 'mentor_verification_draft';
+
+/** Maximum allowed R18 verification draft lifetime in seconds (10 minutes). */
+export const MAX_VERIFICATION_DRAFT_TTL_SECONDS = 600;
+
+/** Supported verification delivery channels under C05/C09 R18. */
+export type VerificationChannel = 'email' | 'phone';
+
+/** Local UI flow context that initiated the verification challenge. */
+export type VerificationDraftContext =
+  | 'registration'
+  | 'unverified_login'
+  | 'secondary_contact';
+
+/** Exact C09/C05 R18 sessionStorage verification draft payload. */
+export interface VerificationDraft {
+  channel: VerificationChannel;
+  normalized_identifier: string;
+  contact_masked: string;
+  expires_at: string;
+  context: VerificationDraftContext;
+}
+
+/** Input parameters for creating or updating an R18 verification draft. */
+export interface SaveVerificationDraftInput {
+  channel: VerificationChannel;
+  identifier: string;
+  contactMasked?: string;
+  expiresInSeconds?: number;
+  context?: VerificationDraftContext;
+}
+
+const ALLOWED_DRAFT_KEYS = new Set([
+  'channel',
+  'normalized_identifier',
+  'contact_masked',
+  'expires_at',
+  'context',
+]);
+
+const FORBIDDEN_SECRET_KEYS = [
+  'password',
+  'confirm_password',
+  'confirmPassword',
+  'code',
+  'token',
+  'access_token',
+  'refresh_token',
+];
+
+/**
+ * Normalizes an email or Bangladesh phone identifier for R18 verification/resend requests.
+ */
+export function normalizeVerificationIdentifier(
+  channel: VerificationChannel,
+  rawIdentifier: string,
+): string {
+  const trimmed = rawIdentifier.trim();
+  if (!trimmed) return '';
+  if (channel === 'email') {
+    return trimmed.toLowerCase();
+  }
+  const compact = trimmed.replace(/[\s-]/g, '');
+  if (/^01[3-9]\d{8}$/.test(compact)) {
+    return `+88${compact}`;
+  }
+  return compact;
+}
+
+/**
+ * Generates a display-safe masked contact string when server masking is not yet available.
+ */
+export function maskVerificationContact(
+  channel: VerificationChannel,
+  normalizedIdentifier: string,
+): string {
+  if (!normalizedIdentifier) return '****';
+  if (channel === 'email') {
+    const atIndex = normalizedIdentifier.lastIndexOf('@');
+    if (atIndex <= 0) return '****';
+    return `${normalizedIdentifier[0]}****${normalizedIdentifier.slice(atIndex)}`;
+  }
+  if (normalizedIdentifier.length >= 6) {
+    return `${normalizedIdentifier.slice(0, 6)}****${normalizedIdentifier.slice(-2)}`;
+  }
+  return '****';
+}
+
+/**
+ * Computes the ISO expiry timestamp enforcing `min(challenge expiry, 10 minutes)` per R18.
+ */
+export function computeDraftExpiresAt(
+  challengeExpiresInSeconds?: number,
+  nowMs: number = Date.now(),
+): string {
+  const requested =
+    typeof challengeExpiresInSeconds === 'number' &&
+    Number.isFinite(challengeExpiresInSeconds) &&
+    challengeExpiresInSeconds > 0
+      ? Math.floor(challengeExpiresInSeconds)
+      : MAX_VERIFICATION_DRAFT_TTL_SECONDS;
+  const clampedSeconds = Math.min(requested, MAX_VERIFICATION_DRAFT_TTL_SECONDS);
+  return new Date(nowMs + clampedSeconds * 1000).toISOString();
+}
+
+/**
+ * Builds the canonical PII-free verification route path (`/verify?channel=<channel>`).
+ */
+export function buildVerificationPath(channel: VerificationChannel): string {
+  return `/verify?channel=${encodeURIComponent(channel)}`;
+}
+
+/**
+ * Removes the R18 verification draft from browser `sessionStorage`.
+ */
+export function clearVerificationDraft(): void {
+  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  try {
+    window.sessionStorage.removeItem(VERIFICATION_DRAFT_STORAGE_KEY);
+  } catch {
+    // Ignore storage access errors in restricted environments
+  }
+}
+
+/**
+ * Saves a sanitized R18 verification draft into `sessionStorage`, excluding passwords, codes, and tokens.
+ */
+export function saveVerificationDraft(
+  input: SaveVerificationDraftInput,
+  nowMs: number = Date.now(),
+): VerificationDraft | null {
+  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  if (input.channel !== 'email' && input.channel !== 'phone') return null;
+
+  const normalized = normalizeVerificationIdentifier(
+    input.channel,
+    input.identifier,
+  );
+  if (!normalized) return null;
+
+  const draft: VerificationDraft = {
+    channel: input.channel,
+    normalized_identifier: normalized,
+    contact_masked:
+      input.contactMasked?.trim() ||
+      maskVerificationContact(input.channel, normalized),
+    expires_at: computeDraftExpiresAt(input.expiresInSeconds, nowMs),
+    context: input.context ?? 'registration',
+  };
+
+  try {
+    window.sessionStorage.setItem(
+      VERIFICATION_DRAFT_STORAGE_KEY,
+      JSON.stringify(draft),
+    );
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Loads and validates the R18 verification draft from `sessionStorage`, clearing it if expired or malformed.
+ */
+export function loadVerificationDraft(
+  expectedChannel?: VerificationChannel | null,
+  nowMs: number = Date.now(),
+): { draft: VerificationDraft | null; expired: boolean } {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return { draft: null, expired: false };
+  }
+
+  let raw: string | null = null;
+  try {
+    raw = window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY);
+  } catch {
+    return { draft: null, expired: false };
+  }
+
+  if (!raw) {
+    return { draft: null, expired: false };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      clearVerificationDraft();
+      return { draft: null, expired: false };
+    }
+
+    const keys = Object.keys(parsed);
+    if (
+      keys.length !== ALLOWED_DRAFT_KEYS.size ||
+      keys.some((k) => !ALLOWED_DRAFT_KEYS.has(k)) ||
+      FORBIDDEN_SECRET_KEYS.some((k) => k in parsed)
+    ) {
+      clearVerificationDraft();
+      return { draft: null, expired: false };
+    }
+
+    if (
+      (parsed.channel !== 'email' && parsed.channel !== 'phone') ||
+      typeof parsed.normalized_identifier !== 'string' ||
+      !parsed.normalized_identifier.trim() ||
+      typeof parsed.contact_masked !== 'string' ||
+      !parsed.contact_masked.trim() ||
+      typeof parsed.expires_at !== 'string' ||
+      !['registration', 'unverified_login', 'secondary_contact'].includes(
+        String(parsed.context),
+      )
+    ) {
+      clearVerificationDraft();
+      return { draft: null, expired: false };
+    }
+
+    const expiresAtMs = Date.parse(parsed.expires_at);
+    if (
+      !Number.isFinite(expiresAtMs) ||
+      expiresAtMs <= nowMs ||
+      expiresAtMs - nowMs > MAX_VERIFICATION_DRAFT_TTL_SECONDS * 1000
+    ) {
+      clearVerificationDraft();
+      return { draft: null, expired: true };
+    }
+
+    if (expectedChannel && parsed.channel !== expectedChannel) {
+      return { draft: null, expired: false };
+    }
+
+    return {
+      draft: {
+        channel: parsed.channel,
+        normalized_identifier: parsed.normalized_identifier,
+        contact_masked: parsed.contact_masked,
+        expires_at: parsed.expires_at,
+        context: parsed.context as VerificationDraftContext,
+      },
+      expired: false,
+    };
+  } catch {
+    clearVerificationDraft();
+    return { draft: null, expired: false };
+  }
+}
+
+/**
+ * Updates the active R18 verification draft expiry from server resend metadata (`min(challenge expiry, 10min)`).
+ */
+export function updateVerificationDraftExpiry(
+  expiresInSeconds: number,
+  contactMasked?: string,
+  nowMs: number = Date.now(),
+): VerificationDraft | null {
+  const { draft } = loadVerificationDraft(undefined, nowMs);
+  if (!draft) return null;
+
+  const updated: VerificationDraft = {
+    ...draft,
+    contact_masked: contactMasked?.trim() || draft.contact_masked,
+    expires_at: computeDraftExpiresAt(expiresInSeconds, nowMs),
+  };
+
+  try {
+    window.sessionStorage.setItem(
+      VERIFICATION_DRAFT_STORAGE_KEY,
+      JSON.stringify(updated),
+    );
+    return updated;
+  } catch {
+    return null;
+  }
+}

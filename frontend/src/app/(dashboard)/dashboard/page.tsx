@@ -7,7 +7,7 @@ import { getAppUser } from "@/lib/auth/user";
  *
  * The layout already enforces the ACTIVE status guard.
  * Profile completion is never required to access the dashboard (C01 §7);
- * users can navigate to `/onboarding/profile` at any time.
+ * users can navigate to `/onboarding/profile` or `/settings` at any time.
  */
 export default async function DashboardPage() {
   const user = await getAppUser();
@@ -28,6 +28,12 @@ export default async function DashboardPage() {
             className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           >
             প্রোফাইল সেটআপ (Profile Setup)
+          </Link>
+          <Link
+            href="/settings"
+            className="inline-flex h-11 items-center justify-center rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+          >
+            অ্যাকাউন্ট ও সেটিংস (Settings)
           </Link>
           <form action={logoutAction}>
             <button

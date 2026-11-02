@@ -364,12 +364,43 @@ export function addContact(
 }
 
 /**
+ * Full EP-A13 (`GET /api/v1/auth/me`) current-user and effective-access payload.
+ */
+export interface CurrentUserStateResponse {
+  user: UserResponse;
+  profile_complete: boolean;
+  focus_roadmap_id: string | null;
+  effective_access: Record<string, boolean>;
+  can_delete_account: boolean;
+}
+
+/**
  * GET /auth/me
  * Returns the current application-level user (role, status).
  */
 export async function getMe(accessToken: string): Promise<UserResponse> {
   const data = await apiFetch<{ user: UserResponse }>('/auth/me', accessToken);
   return data.user;
+}
+
+/**
+ * GET /auth/me (EP-A13)
+ * Returns the full current-user metadata including `effective_access`, `profile_complete`, `focus_roadmap_id`, and `can_delete_account`.
+ */
+export async function getCurrentUserState(
+  accessToken: string,
+): Promise<CurrentUserStateResponse> {
+  const data = await apiFetch< Partial<CurrentUserStateResponse> & { user: UserResponse } >(
+    '/auth/me',
+    accessToken,
+  );
+  return {
+    user: data.user,
+    profile_complete: Boolean(data.profile_complete),
+    focus_roadmap_id: data.focus_roadmap_id ?? null,
+    effective_access: data.effective_access ?? {},
+    can_delete_account: data.can_delete_account ?? true,
+  };
 }
 
 // ─── Profile API Types & Functions (C05 §14.3 / §15.3) ───────

@@ -117,6 +117,9 @@ export async function loginAction(
   redirect(destination);
 }
 
+/**
+ * Server action registering a new account via backend EP-A01.
+ */
 export async function registerAction(
   _prevState: AuthActionResult,
   formData: FormData,
@@ -168,7 +171,7 @@ export async function registerAction(
   }
 
   await setVerificationContext({ type, identifier });
-  redirect(`/verify?type=${type}`);
+  redirect(`/verify?channel=${type}`);
 }
 
 /**
@@ -178,8 +181,10 @@ export async function verifyOtpAction(
   _prevState: AuthActionResult,
   formData: FormData,
 ): Promise<AuthActionResult> {
-  const type = formData.get('type') as 'email' | 'phone';
-  const token = formData.get('token') as string;
+  const type = ((formData.get('channel') || formData.get('type')) as string)?.trim() as
+    | 'email'
+    | 'phone';
+  const token = (formData.get('token') as string)?.trim();
 
   if (!type || !token) {
     return { error: 'Invalid verification request.' };
@@ -187,19 +192,24 @@ export async function verifyOtpAction(
   if (type !== 'email' && type !== 'phone') {
     return { error: 'Invalid verification request.' };
   }
-  const context = await getVerificationContext(type);
-  if (!context) return { error: 'Invalid verification request.' };
+
+  let identifier = (formData.get('identifier') as string)?.trim();
+  if (!identifier) {
+    const context = await getVerificationContext(type);
+    if (context) identifier = context.identifier;
+  }
+  if (!identifier) return { error: 'Invalid verification request.' };
 
   let destination = '/dashboard';
   try {
     const session =
       type === 'email'
         ? await verifyEmail({
-            email: context.identifier,
+            email: identifier,
             code: token,
           })
         : await verifyPhone({
-            phone: context.identifier,
+            phone: identifier,
             code: token,
           });
     const supabase = await createSupabaseServerClient();
@@ -227,20 +237,36 @@ export async function verifyOtpAction(
   redirect(destination);
 }
 
+/**
+ * Server action resending verification code via backend EP-A04.
+ */
 export async function resendOtpAction(
   type: 'email' | 'phone',
-): Promise<{ error?: string; success?: boolean }> {
-  const context = await getVerificationContext(type);
-  if (!context) return { error: 'Invalid verification request.' };
-  const identifier = context.identifier;
+  reenteredIdentifier?: string,
+): Promise<{
+  error?: string;
+  success?: boolean;
+  expiresInSeconds?: number;
+  contactMasked?: string;
+}> {
+  let identifier = reenteredIdentifier?.trim();
+  if (!identifier) {
+    const context = await getVerificationContext(type);
+    if (context) identifier = context.identifier;
+  }
+  if (!identifier) return { error: 'Invalid verification request.' };
 
   try {
-    await resendVerification({
+    const result = await resendVerification({
       channel: type,
       contact: identifier,
     });
-    await setVerificationContext(context);
-    return { success: true };
+    await setVerificationContext({ type, identifier });
+    return {
+      success: true,
+      expiresInSeconds: result.expires_in_seconds,
+      contactMasked: result.contact_masked,
+    };
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -257,6 +283,9 @@ export async function resendOtpAction(
   }
 }
 
+/**
+ * Server action initiating Supabase OAuth sign-in.
+ */
 export async function signInWithOAuth(
   provider: 'google' | 'facebook',
 ): Promise<{ error?: string }> {
@@ -292,6 +321,9 @@ export async function signInWithOAuth(
   }
 }
 
+/**
+ * Server action signing out the user locally and from the backend.
+ */
 export async function logoutAction(): Promise<void> {
   const supabase = await createSupabaseServerClient();
   const {
@@ -308,6 +340,9 @@ export async function logoutAction(): Promise<void> {
   redirect('/login');
 }
 
+/**
+ * Server action initiating password recovery via EP-A08.
+ */
 export async function forgotPasswordAction(
   _prevState: AuthActionResult,
   formData: FormData,
@@ -344,6 +379,9 @@ export async function forgotPasswordAction(
   redirect('/reset-password');
 }
 
+/**
+ * Server action confirming password reset via EP-A09.
+ */
 export async function resetPasswordAction(
   _prevState: AuthActionResult,
   formData: FormData,
@@ -498,6 +536,5 @@ export async function addContactAction(
     return { error: 'An unexpected error occurred while adding contact.' };
   }
 
-  redirect(`/verify?type=${channel}`);
-
+  redirect(`/verify?channel=${channel}`);
 }

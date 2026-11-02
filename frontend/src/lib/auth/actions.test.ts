@@ -229,7 +229,7 @@ describe("Auth Actions", () => {
         confirm_password: "password123",
         privacy_consent: true,
       });
-      expect(redirect).toHaveBeenCalledWith("/verify?type=email");
+      expect(redirect).toHaveBeenCalledWith("/verify?channel=email");
       expect(mockCookieStore.set).toHaveBeenCalledWith(
         "mentor_verification_context",
         expect.any(String),
@@ -297,6 +297,40 @@ describe("Auth Actions", () => {
       expect(redirect).toHaveBeenCalledWith(
         "/onboarding/profile",
       );
+    });
+
+    it("verifies email using identifier from formData when cookie is missing", async () => {
+      vi.mocked(verifyEmail).mockResolvedValueOnce({
+        access_token: "test-access-token",
+        refresh_token: "test-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "test-user-id",
+          email: "reentered@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: false,
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const formData = new FormData();
+      formData.set("channel", "email");
+      formData.set("identifier", "reentered@example.com");
+      formData.set("token", "123456");
+
+      await verifyOtpAction({}, formData);
+
+      expect(verifyEmail).toHaveBeenCalledWith({
+        email: "reentered@example.com",
+        code: "123456",
+      });
+      expect(redirect).toHaveBeenCalledWith("/onboarding/profile");
     });
 
     it("verifies email via backend EP-A02 and redirects to /dashboard on app_home", async () => {
@@ -405,7 +439,11 @@ describe("Auth Actions", () => {
       });
 
       const result = await resendOtpAction("email");
-      expect(result).toEqual({ success: true });
+      expect(result).toEqual({
+        success: true,
+        expiresInSeconds: 600,
+        contactMasked: "t***@example.com",
+      });
       expect(resendVerification).toHaveBeenCalledWith({
         channel: "email",
         contact: "test@example.com",
@@ -426,6 +464,25 @@ describe("Auth Actions", () => {
       expect(result).toEqual({
         error:
           "Email delivery is temporarily rate-limited. Please try again later.",
+      });
+    });
+    it("resends verification using reentered identifier when context cookie is absent", async () => {
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "r****@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
+
+      const result = await resendOtpAction("email", "reentered@example.com");
+      expect(result).toEqual({
+        success: true,
+        expiresInSeconds: 600,
+        contactMasked: "r****@example.com",
+      });
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: "email",
+        contact: "reentered@example.com",
       });
     });
   });
@@ -951,7 +1008,7 @@ describe("Auth Actions", () => {
         expect.any(String),
         expect.objectContaining({ path: "/verify", maxAge: 600 })
       );
-      expect(redirect).toHaveBeenCalledWith("/verify?type=email");
+      expect(redirect).toHaveBeenCalledWith("/verify?channel=email");
     });
 
     it("returns error when contact is empty", async () => {
