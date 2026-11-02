@@ -56,6 +56,7 @@ function saveDraft(
   userId: string | undefined,
   formValues: ProfileSetupFormValues,
   skillsNoneTouched: boolean,
+  educationTouched: boolean,
 ): void {
   if (typeof window === 'undefined') {
     return;
@@ -66,6 +67,7 @@ function saveDraft(
       user_id: userId,
       values: formValues,
       skills_none_touched: skillsNoneTouched,
+      education_touched: educationTouched,
     };
     window.sessionStorage.setItem(
       getDraftStorageKey(userId),
@@ -102,7 +104,7 @@ function buildInitialState(
 ): ProfileSetupFormValues {
   return {
     current_role: profile?.current_role ?? '',
-    education: profile?.education ?? '',
+    education: profile?.education ?? profile?.education_level ?? '',
     experience_level: profile?.experience_level ?? '',
     existing_skills_none: profile?.existing_skills_none ?? false,
     timezone: profile?.timezone ?? '',
@@ -133,17 +135,19 @@ export function ProfileSetupForm({
     values: ProfileSetupFormValues;
     hasDraft: boolean;
     skillsNoneTouched: boolean;
+    educationTouched: boolean;
   }>(() => ({
     values: buildInitialState(initialProfile),
     hasDraft: false,
     skillsNoneTouched: false,
+    educationTouched: false,
   }));
 
   const [dismissedActionState, setDismissedActionState] =
     useState<ProfileSetupActionState | null>(null);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
 
-  const { values, hasDraft, skillsNoneTouched } = formState;
+  const { values, hasDraft, skillsNoneTouched, educationTouched } = formState;
   const effectiveProfile = state.profile ?? initialProfile;
 
   // Mount effect: safely restores draft from sessionStorage, detects timezone, and initializes skillsNoneTouched
@@ -157,6 +161,7 @@ export function ProfileSetupForm({
     const storageKey = getDraftStorageKey(userId);
     let restoredValues: Partial<ProfileSetupFormValues> | null = null;
     let storedTouched: boolean | undefined = undefined;
+    let storedEducationTouched: boolean | undefined = undefined;
 
     // 1. Unconditionally clean up legacy un-scoped draft when userId is present
     if (userId) {
@@ -184,6 +189,7 @@ export function ProfileSetupForm({
             user_id?: unknown;
             values?: unknown;
             skills_none_touched?: unknown;
+            education_touched?: unknown;
           };
           const draftUserId =
             typeof draftObj.user_id === 'string' ? draftObj.user_id : undefined;
@@ -205,6 +211,12 @@ export function ProfileSetupForm({
                   : typeof payloadValues.skills_none_touched === 'boolean'
                     ? (payloadValues.skills_none_touched as boolean)
                     : undefined;
+              storedEducationTouched =
+                typeof draftObj.education_touched === 'boolean'
+                  ? draftObj.education_touched
+                  : typeof payloadValues.education_touched === 'boolean'
+                    ? (payloadValues.education_touched as boolean)
+                    : undefined;
             } else {
               window.sessionStorage.removeItem(storageKey);
             }
@@ -219,6 +231,9 @@ export function ProfileSetupForm({
 
     const serverTz = initialProfile?.timezone;
     const serverSkillsNone = Boolean(initialProfile?.existing_skills_none);
+    const serverEducation =
+      initialProfile?.education ?? initialProfile?.education_level ?? '';
+    const hasServerBaseline = Boolean(initialProfile) && !loadError;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFormState((prev) => {
@@ -239,18 +254,35 @@ export function ProfileSetupForm({
             ? storedTouched
             : draftSkillsNone !== serverSkillsNone;
 
+        const rawDraftEducation =
+          typeof restoredValues.education === 'string'
+            ? restoredValues.education
+            : typeof (restoredValues as { education_level?: unknown })
+                  .education_level === 'string'
+              ? (restoredValues as { education_level: string }).education_level
+              : undefined;
+
+        const restoredEducationTouched =
+          typeof storedEducationTouched === 'boolean'
+            ? storedEducationTouched
+            : hasServerBaseline &&
+              typeof rawDraftEducation === 'string' &&
+              rawDraftEducation.trim().length > 0 &&
+              rawDraftEducation !== serverEducation;
+
         return {
           hasDraft: true,
           skillsNoneTouched: isTouched,
+          educationTouched: restoredEducationTouched,
           values: {
             current_role:
               typeof restoredValues?.current_role === 'string'
                 ? restoredValues.current_role
                 : prev.values.current_role,
             education:
-              typeof restoredValues?.education === 'string'
-                ? restoredValues.education
-                : prev.values.education,
+              restoredEducationTouched && typeof rawDraftEducation === 'string'
+                ? rawDraftEducation
+                : serverEducation,
             experience_level:
               typeof restoredValues?.experience_level === 'string'
                 ? restoredValues.experience_level
@@ -299,6 +331,7 @@ export function ProfileSetupForm({
         return {
           hasDraft: false,
           skillsNoneTouched: false,
+          educationTouched: false,
           values: {
             current_role: state.values.current_role ?? prev.values.current_role,
             education: state.values.education ?? prev.values.education,
@@ -335,13 +368,16 @@ export function ProfileSetupForm({
   ) => {
     setDismissedActionState(state);
     const nextTouched = overrideTouched ?? skillsNoneTouched;
+    const nextEducationTouched =
+      key === 'education' ? true : educationTouched;
     const updatedValues: ProfileSetupFormValues = { ...values, [key]: nextValue };
     setFormState((prev) => ({
       ...prev,
       values: updatedValues,
       skillsNoneTouched: nextTouched,
+      educationTouched: nextEducationTouched,
     }));
-    saveDraft(userId, updatedValues, nextTouched);
+    saveDraft(userId, updatedValues, nextTouched, nextEducationTouched);
   };
 
   /**
@@ -482,6 +518,11 @@ export function ProfileSetupForm({
 
         {/* Education (Optional, <= 200 chars) */}
         <div className="flex flex-col gap-1.5">
+          <input
+            type="hidden"
+            name="education_touched"
+            value={educationTouched ? 'true' : 'false'}
+          />
           <label
             htmlFor="education"
             className="text-sm font-medium text-foreground"

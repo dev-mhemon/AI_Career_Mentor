@@ -649,8 +649,200 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
       fireEvent.click(submitBtn);
     });
 
-    // Reconciles to ""
+    // Reconciles to "" and resets education_touched to "false"
     expect(educationInput).toHaveValue('');
     expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+  });
+
+  it('tracks education_touched across edits and reload without overwriting server education from an untouched blank draft', () => {
+    const profileWithEducation: ProfileResponse = {
+      ...EMPTY_PROFILE,
+      current_role: 'Backend Engineer',
+      education: 'BSc in Software Engineering',
+      experience_level: 'mid',
+    };
+
+    // 1. Untouched draft saved during a previous loadError (education: '', education_touched: false)
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-edu-touched',
+      JSON.stringify({
+        user_id: 'user-edu-touched',
+        skills_none_touched: false,
+        education_touched: false,
+        values: {
+          current_role: 'Senior Backend Engineer',
+          education: '',
+          experience_level: 'senior',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2.5',
+        },
+      }),
+    );
+
+    const { container, unmount } = render(
+      <ProfileSetupForm
+        initialProfile={profileWithEducation}
+        userId="user-edu-touched"
+      />,
+    );
+
+    const educationInput = screen.getByLabelText(/education — optional/i);
+    const getTouchedInput = (root: HTMLElement) =>
+      root.querySelector('input[name="education_touched"]') as HTMLInputElement;
+
+    // Must keep server education ('BSc in Software Engineering') instead of overwriting with untouched blank draft
+    expect(educationInput).toHaveValue('BSc in Software Engineering');
+    expect(getTouchedInput(container)).toHaveValue('false');
+
+    // 2. User explicitly clears education -> education_touched becomes 'true' and persists in sessionStorage
+    fireEvent.change(educationInput, { target: { value: '' } });
+    expect(educationInput).toHaveValue('');
+    expect(getTouchedInput(container)).toHaveValue('true');
+
+    // Editing another field preserves education_touched = true in draft
+    fireEvent.change(screen.getByLabelText(/current role \/ profession/i), {
+      target: { value: 'Staff Backend Engineer' },
+    });
+
+    unmount();
+
+    // 3. Remounting restores cleared education ('') and education_touched = 'true'
+    const { container: remountContainer } = render(
+      <ProfileSetupForm
+        initialProfile={profileWithEducation}
+        userId="user-edu-touched"
+      />,
+    );
+
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('');
+    expect(getTouchedInput(remountContainer)).toHaveValue('true');
+  });
+
+  it('correctly handles legacy draft education inference based on server baseline availability', () => {
+    const getTouchedInput = (root: HTMLElement) =>
+      root.querySelector('input[name="education_touched"]') as HTMLInputElement;
+
+    // Case 1: When server baseline is unavailable (initialProfile={null}), do NOT infer edit from legacy draft
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-legacy-no-baseline',
+      JSON.stringify({
+        user_id: 'user-legacy-no-baseline',
+        values: {
+          current_role: 'Software Engineer',
+          education_level: 'Diploma in CSE',
+          experience_level: 'junior',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2',
+        },
+      }),
+    );
+
+    const { container: container1, unmount: unmount1 } = render(
+      <ProfileSetupForm
+        initialProfile={null}
+        loadError="Network timeout fetching profile."
+        userId="user-legacy-no-baseline"
+      />,
+    );
+
+    // Without a server baseline or explicit touch metadata, do not infer touch
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('');
+    expect(getTouchedInput(container1)).toHaveValue('false');
+
+    unmount1();
+
+    // Case 2: An empty legacy draft without touch metadata is an untouched default (e.g. from failed load),
+    // and must NOT be inferred as an intentional clear or overwrite server education
+    const profileWithEducation: ProfileResponse = {
+      ...EMPTY_PROFILE,
+      current_role: 'Lead Architect',
+      education: 'BSc in Computer Science',
+      experience_level: 'senior',
+    };
+
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-legacy-untouched-default',
+      JSON.stringify({
+        user_id: 'user-legacy-untouched-default',
+        values: {
+          current_role: 'Lead Architect',
+          education_level: '',
+          experience_level: 'senior',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2',
+        },
+      }),
+    );
+
+    const { container: container2, unmount: unmount2 } = render(
+      <ProfileSetupForm
+        initialProfile={profileWithEducation}
+        userId="user-legacy-untouched-default"
+      />,
+    );
+
+    // Empty legacy draft without explicit touch metadata must not overwrite server baseline
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('BSc in Computer Science');
+    expect(getTouchedInput(container2)).toHaveValue('false');
+
+    unmount2();
+
+    // Case 3: Explicit touch metadata (education_touched: true) is required to treat an empty draft as an intentional clear
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-explicit-intentional-clear',
+      JSON.stringify({
+        user_id: 'user-explicit-intentional-clear',
+        education_touched: true,
+        values: {
+          current_role: 'Lead Architect',
+          education_level: '',
+          experience_level: 'senior',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2',
+        },
+      }),
+    );
+
+    const { container: container3, unmount: unmount3 } = render(
+      <ProfileSetupForm
+        initialProfile={profileWithEducation}
+        userId="user-explicit-intentional-clear"
+      />,
+    );
+
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('');
+    expect(getTouchedInput(container3)).toHaveValue('true');
+
+    unmount3();
+
+    // Case 4: Non-empty legacy draft differing from server baseline is preserved as touched
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-legacy-nonempty-edit',
+      JSON.stringify({
+        user_id: 'user-legacy-nonempty-edit',
+        values: {
+          current_role: 'Lead Architect',
+          education_level: 'MSc in Software Engineering',
+          experience_level: 'senior',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2',
+        },
+      }),
+    );
+
+    const { container: container4 } = render(
+      <ProfileSetupForm
+        initialProfile={profileWithEducation}
+        userId="user-legacy-nonempty-edit"
+      />,
+    );
+
+    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('MSc in Software Engineering');
+    expect(getTouchedInput(container4)).toHaveValue('true');
   });
 });

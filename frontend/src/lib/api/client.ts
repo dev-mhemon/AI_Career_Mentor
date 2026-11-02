@@ -398,6 +398,7 @@ export interface UnresolvedSkillDTO {
 export interface ProfileResponse {
   current_role: string | null;
   education: string | null;
+  education_level?: string | null;
   experience_level: ExperienceLevel | null;
   existing_skills: ProfileSkillDTO[];
   existing_skills_none: boolean;

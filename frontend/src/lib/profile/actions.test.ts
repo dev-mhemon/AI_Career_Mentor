@@ -147,6 +147,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       const formData = new FormData();
       formData.set('current_role', '  Student  ');
       formData.set('education', '   ');
+      formData.set('education_touched', 'false');
       formData.set('experience_level', 'beginner');
       formData.set('existing_skills_none', 'true');
       formData.set('existing_skills_none_touched', 'true');
@@ -158,15 +159,13 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result.success).toBe(true);
       expect(updateProfile).toHaveBeenCalledWith('valid-token', {
         current_role: 'Student',
-        education: '',
-        education_level: '',
         experience_level: 'beginner',
         existing_skills_none: true,
       });
-      // Ensures blank education sends explicit empty string and no artificial skills are sent
+      // Ensures untouched blank education is omitted and no artificial skills are sent
       const sentBody = vi.mocked(updateProfile).mock.calls[0]?.[1];
-      expect(sentBody.education).toBe('');
-      expect(sentBody.education_level).toBe('');
+      expect(sentBody).not.toHaveProperty('education');
+      expect(sentBody).not.toHaveProperty('education_level');
       expect(sentBody).not.toHaveProperty('existing_skills');
 
       expect(updateLearningSettings).toHaveBeenCalledWith('valid-token', {
@@ -210,7 +209,36 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(updateLearningSettings).not.toHaveBeenCalled();
     });
 
-    it('submitting blank education sends education_level: "" in updateProfile and reconciles cleared null value', async () => {
+    it('omits education when blank and education_touched is false, and sends education_level: "" when education_touched is true', async () => {
+      // 1. Untouched blank education (e.g. after profile load failure) omits education from PATCH /profile
+      vi.mocked(updateProfile).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        current_role: 'Lead Architect',
+        education: 'MSc CS',
+        experience_level: 'senior',
+      });
+
+      const untouchedFormData = new FormData();
+      untouchedFormData.set('current_role', 'Lead Architect');
+      untouchedFormData.set('education', '   ');
+      untouchedFormData.set('education_touched', 'false');
+      untouchedFormData.set('experience_level', 'senior');
+      untouchedFormData.set('existing_skills_none', 'false');
+      untouchedFormData.set('existing_skills_none_touched', 'false');
+      untouchedFormData.set('timezone', '');
+      untouchedFormData.set('preferred_daily_hours', '');
+
+      const untouchedResult = await saveProfileSetupAction({}, untouchedFormData);
+
+      expect(untouchedResult.success).toBe(true);
+      expect(updateProfile).toHaveBeenCalledWith('valid-token', {
+        current_role: 'Lead Architect',
+        experience_level: 'senior',
+      });
+      expect(untouchedResult.values?.education).toBe('MSc CS');
+
+      // 2. Touched blank education explicitly sends education: "" and education_level: "" to clear DB field
+      vi.mocked(updateProfile).mockClear();
       vi.mocked(updateProfile).mockResolvedValueOnce({
         ...MOCK_PROFILE,
         current_role: 'Lead Architect',
@@ -218,26 +246,50 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         experience_level: 'senior',
       });
 
-      const formData = new FormData();
-      formData.set('current_role', 'Lead Architect');
-      formData.set('education', '   ');
-      formData.set('experience_level', 'senior');
-      formData.set('existing_skills_none', 'false');
-      formData.set('existing_skills_none_touched', 'false');
-      formData.set('timezone', '');
-      formData.set('preferred_daily_hours', '');
+      const touchedFormData = new FormData();
+      touchedFormData.set('current_role', 'Lead Architect');
+      touchedFormData.set('education', '   ');
+      touchedFormData.set('education_touched', 'true');
+      touchedFormData.set('experience_level', 'senior');
+      touchedFormData.set('existing_skills_none', 'false');
+      touchedFormData.set('existing_skills_none_touched', 'false');
+      touchedFormData.set('timezone', '');
+      touchedFormData.set('preferred_daily_hours', '');
 
-      const result = await saveProfileSetupAction({}, formData);
+      const touchedResult = await saveProfileSetupAction({}, touchedFormData);
 
-      expect(result.success).toBe(true);
+      expect(touchedResult.success).toBe(true);
       expect(updateProfile).toHaveBeenCalledWith('valid-token', {
         current_role: 'Lead Architect',
         education: '',
         education_level: '',
         experience_level: 'senior',
       });
-      expect(result.values?.education).toBe('');
-      expect(result.profile?.education).toBeNull();
+      expect(touchedResult.values?.education).toBe('');
+      expect(touchedResult.profile?.education).toBeNull();
+
+      // 3. Populated education with education_touched = false omits education from PATCH /profile so server data is not overwritten
+      vi.mocked(updateProfile).mockClear();
+      vi.mocked(updateProfile).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        current_role: 'Lead Architect',
+        education: 'BSc CSE',
+        experience_level: 'senior',
+      });
+
+      const populatedUntouchedFormData = new FormData();
+      populatedUntouchedFormData.set('current_role', 'Lead Architect');
+      populatedUntouchedFormData.set('education', 'BSc CSE');
+      populatedUntouchedFormData.set('education_touched', 'false');
+      populatedUntouchedFormData.set('experience_level', 'senior');
+
+      const populatedResult = await saveProfileSetupAction({}, populatedUntouchedFormData);
+
+      expect(populatedResult.success).toBe(true);
+      expect(updateProfile).toHaveBeenCalledWith('valid-token', {
+        current_role: 'Lead Architect',
+        experience_level: 'senior',
+      });
     });
 
     it('rejects missing current_role, invalid experience_level, and non-half-hour daily hours while preserving user inputs', async () => {

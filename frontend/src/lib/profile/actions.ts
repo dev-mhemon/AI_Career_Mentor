@@ -132,7 +132,10 @@ export async function saveProfileSetupAction(
   formData: FormData,
 ): Promise<ProfileSetupActionState> {
   const currentRoleRaw = (formData.get('current_role') as string | null) ?? '';
-  const educationRaw = (formData.get('education') as string | null) ?? '';
+  const educationRaw =
+    (formData.get('education') as string | null) ??
+    (formData.get('education_level') as string | null) ??
+    '';
   const experienceLevelRaw = (formData.get('experience_level') as string | null) ?? '';
   const existingSkillsNoneRaw = (formData.get('existing_skills_none') as string | null) ?? 'false';
   const existingSkillsNoneTouched =
@@ -142,6 +145,9 @@ export async function saveProfileSetupAction(
 
   const current_role = currentRoleRaw.trim();
   const education = educationRaw.trim();
+  const educationTouched = formData.has('education_touched')
+    ? (formData.get('education_touched') as string | null) === 'true'
+    : education.length > 0;
   const experience_level = experienceLevelRaw.trim();
   const existing_skills_none =
     existingSkillsNoneRaw === 'true' || existingSkillsNoneRaw === 'on';
@@ -235,10 +241,13 @@ export async function saveProfileSetupAction(
 
     const profileBody: UpdateProfileBody = {
       current_role,
-      education,
-      education_level: education,
       experience_level: experience_level as ExperienceLevel,
     };
+
+    if (educationTouched) {
+      profileBody.education = education;
+      profileBody.education_level = education;
+    }
 
     if (existing_skills_none) {
       profileBody.existing_skills_none = true;
