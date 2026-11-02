@@ -86,15 +86,24 @@ function VerifyFormContent() {
         setResendSuccess('Verification code sent successfully.');
         setCooldown(60);
         if (result.expiresInSeconds) {
-          const updated = updateVerificationDraftExpiry(
-            result.expiresInSeconds,
-            result.contactMasked,
-          );
-          if (updated) {
-            setDraft(updated);
-            setIsDraftExpired(false);
+          if (
+            draft &&
+            draft.channel === channelParam &&
+            draft.normalized_identifier === identifierToSend
+          ) {
+            const updated = updateVerificationDraftExpiry(
+              result.expiresInSeconds,
+              result.contactMasked,
+              Date.now(),
+              channelParam,
+              identifierToSend,
+            );
+            if (updated) {
+              setDraft(updated);
+              setIsDraftExpired(false);
+            }
           } else if (identifierToSend) {
-            /* No existing draft — create a replacement (expired was cleared or fresh tab). */
+            /* No matching active draft — create a replacement draft for the current resend channel and identifier. */
             const replacement = saveVerificationDraft({
               channel: channelParam,
               identifier: identifierToSend,

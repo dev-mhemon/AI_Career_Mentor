@@ -232,6 +232,8 @@ describe('VerifyForm', () => {
       fireEvent.click(submitButton);
     });
 
+    expect(verifyOtpAction).toHaveBeenCalled();
+
     /* Draft should still exist in sessionStorage (not cleared prematurely) */
     expect(
       window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
@@ -314,5 +316,47 @@ describe('VerifyForm', () => {
       expect(screen.getByLabelText(/sent to your phone via SMS/i)).toBeInTheDocument();
     });
     expect(screen.queryByText(/SMS instead/i)).not.toBeInTheDocument();
+  });
+
+  it('does not apply a stored email draft when resending in phone verification channel', async () => {
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'candidate@example.com',
+      contactMasked: 'c****@example.com',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=phone'),
+    );
+    vi.mocked(resendOtpAction).mockResolvedValueOnce({
+      success: true,
+      expiresInSeconds: 600,
+      contactMasked: '+88017****89',
+    });
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/phone number/i)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/phone number/i), {
+      target: { value: '01712345689' },
+    });
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    await act(async () => {
+      fireEvent.click(resendButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+    });
+
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY)!,
+    );
+    expect(stored.channel).toBe('phone');
+    expect(stored.normalized_identifier).toBe('+8801712345689');
   });
 });

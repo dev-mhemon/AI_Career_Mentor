@@ -431,7 +431,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
   });
 
   describe('2. Failure Matrix: Outages, Limits & Boundaries', () => {
-    it('fails closed with 503 SERVICE_UNAVAILABLE when Redis abuse control is unavailable', async () => {
+    it('propagates 503 SERVICE_UNAVAILABLE from abuse control on register', async () => {
       abuse.reserveSend.mockRejectedValueOnce({
         status: 503,
         response: { code: 'SERVICE_UNAVAILABLE', retryable: true },
@@ -452,7 +452,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
       });
     });
 
-    it('enforces lockout / rate-limiting with canonical 429 and Retry-After', async () => {
+    it('propagates resend cooldown 429 and Retry-After from abuse control', async () => {
       abuse.reserveSend.mockRejectedValueOnce({
         status: 429,
         response: {
@@ -723,7 +723,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
       });
     });
 
-    it('rejects verification if challenge is expired (410) or already verified (409)', async () => {
+    it('rejects verification on missing contact (410) or already verified contact (409)', async () => {
       // 410: Contact not found in database lookup
       database.query.mockResolvedValueOnce([]);
       await expect(
@@ -808,12 +808,17 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
       });
     });
 
-    it('allows suspended users to log out idempotently', async () => {
-      const logoutResult = await authService.logout(
+    it('returns success for repeated logout requests', async () => {
+      const firstLogoutResult = await authService.logout(
         { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
         `Bearer ${validAccessToken}`,
       );
-      expect(logoutResult).toEqual({ logged_out: true });
+      const secondLogoutResult = await authService.logout(
+        { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
+        `Bearer ${validAccessToken}`,
+      );
+      expect(firstLogoutResult).toEqual({ logged_out: true });
+      expect(secondLogoutResult).toEqual({ logged_out: true });
       expect(approvals.revokeSession).toHaveBeenCalledWith(
         TEST_USER_ID,
         TEST_SESSION_ID,

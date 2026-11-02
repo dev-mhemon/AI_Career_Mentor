@@ -250,14 +250,24 @@ export function loadVerificationDraft(
 
 /**
  * Updates the active R18 verification draft expiry from server resend metadata (`min(challenge expiry, 10min)`).
+ * If `expectedChannel` or `expectedIdentifier` is provided, ensures the stored draft matches both before updating.
  */
 export function updateVerificationDraftExpiry(
   expiresInSeconds: number,
   contactMasked?: string,
   nowMs: number = Date.now(),
+  expectedChannel?: VerificationChannel,
+  expectedIdentifier?: string,
 ): VerificationDraft | null {
-  const { draft } = loadVerificationDraft(undefined, nowMs);
+  const { draft } = loadVerificationDraft(expectedChannel, nowMs);
   if (!draft) return null;
+
+  if (
+    expectedIdentifier &&
+    draft.normalized_identifier !== expectedIdentifier
+  ) {
+    return null;
+  }
 
   const updated: VerificationDraft = {
     ...draft,

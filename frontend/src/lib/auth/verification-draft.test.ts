@@ -191,6 +191,30 @@ describe('R18 verification draft helper', () => {
       expect(new Date(updated!.expires_at).getTime()).toBe(now + 10000 + 300 * 1000);
     });
 
+    it('rejects expiry update when expectedChannel or expectedIdentifier does not match stored draft', () => {
+      const now = 1700000000000;
+      saveVerificationDraft(
+        {
+          channel: 'email',
+          identifier: 'user@example.com',
+          expiresInSeconds: 60,
+        },
+        now,
+      );
+
+      // Channel mismatch
+      const wrongChannel = updateVerificationDraftExpiry(300, undefined, now, 'phone');
+      expect(wrongChannel).toBeNull();
+
+      // Identifier mismatch
+      const wrongIdentifier = updateVerificationDraftExpiry(300, undefined, now, 'email', 'different@example.com');
+      expect(wrongIdentifier).toBeNull();
+
+      // Matching channel and identifier succeeds
+      const matched = updateVerificationDraftExpiry(300, undefined, now, 'email', 'user@example.com');
+      expect(matched).not.toBeNull();
+    });
+
     it('clearVerificationDraft removes draft from sessionStorage', () => {
       saveVerificationDraft({
         channel: 'email',
