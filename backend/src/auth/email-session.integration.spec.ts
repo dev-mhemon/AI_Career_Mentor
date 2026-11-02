@@ -432,10 +432,9 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
 
   describe('2. Failure Matrix: Outages, Limits & Boundaries', () => {
     it('propagates 503 SERVICE_UNAVAILABLE from abuse control on register', async () => {
-      abuse.reserveSend.mockRejectedValueOnce({
-        status: 503,
-        response: { code: 'SERVICE_UNAVAILABLE', retryable: true },
-      });
+      abuse.reserveSend.mockImplementationOnce(() =>
+        fail(503, 'SERVICE_UNAVAILABLE', 'Abuse control unavailable', [], true),
+      );
 
       await expect(
         registrationService.register(
@@ -449,18 +448,24 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         ),
       ).rejects.toMatchObject({
         status: 503,
-      });
-    });
-
-    it('propagates resend cooldown 429 and Retry-After from abuse control', async () => {
-      abuse.reserveSend.mockRejectedValueOnce({
-        status: 429,
         response: {
-          code: 'RESEND_COOLDOWN_ACTIVE',
-          retryAfterSeconds: 45,
+          code: 'SERVICE_UNAVAILABLE',
           retryable: true,
         },
       });
+    });
+
+    it('propagates resend cooldown 429 and retryAfterSeconds from abuse control', async () => {
+      abuse.reserveSend.mockImplementationOnce(() =>
+        fail(
+          429,
+          'RESEND_COOLDOWN_ACTIVE',
+          'Cooldown active',
+          [],
+          true,
+          45,
+        ),
+      );
 
       await expect(
         registrationService.resend(
@@ -469,6 +474,11 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         ),
       ).rejects.toMatchObject({
         status: 429,
+        response: {
+          code: 'RESEND_COOLDOWN_ACTIVE',
+          retryAfterSeconds: 45,
+          retryable: true,
+        },
       });
     });
 
@@ -493,13 +503,9 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
           verified_at: null,
         },
       ]);
-      otpStore.verifyAndConsumeOtp.mockRejectedValueOnce({
-        status: 503,
-        response: {
-          code: 'SERVICE_UNAVAILABLE',
-          retryable: true,
-        },
-      });
+      otpStore.verifyAndConsumeOtp.mockImplementationOnce(() =>
+        fail(503, 'SERVICE_UNAVAILABLE', 'OTP secret store unavailable', [], true),
+      );
 
       await expect(
         authService.verifyEmail({ email: TEST_EMAIL, code: '123456' }),
@@ -507,6 +513,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         status: 503,
         response: {
           code: 'SERVICE_UNAVAILABLE',
+          retryable: true,
         },
       });
     });
@@ -720,6 +727,10 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         authService.verifyEmail({ email: TEST_EMAIL, code: '123456' }),
       ).rejects.toMatchObject({
         status: 504,
+        response: {
+          code: 'PROVIDER_TIMEOUT',
+          retryable: true,
+        },
       });
     });
 
@@ -733,6 +744,9 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         }),
       ).rejects.toMatchObject({
         status: 410,
+        response: {
+          code: 'VERIFICATION_CODE_EXPIRED',
+        },
       });
 
       // 409: Contact already verified
@@ -749,6 +763,9 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
         authService.verifyEmail({ email: TEST_EMAIL, code: '123456' }),
       ).rejects.toMatchObject({
         status: 409,
+        response: {
+          code: 'ALREADY_VERIFIED',
+        },
       });
     });
 

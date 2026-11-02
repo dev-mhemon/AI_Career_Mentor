@@ -7,6 +7,7 @@ import {
   computeDraftExpiresAt,
   buildVerificationPath,
   saveVerificationDraft,
+  saveFallbackVerificationDraft,
   loadVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,
@@ -213,6 +214,65 @@ describe('R18 verification draft helper', () => {
       // Matching channel and identifier succeeds
       const matched = updateVerificationDraftExpiry(300, undefined, now, 'email', 'user@example.com');
       expect(matched).not.toBeNull();
+    });
+
+    it('saveFallbackVerificationDraft saves when storage is missing or expired, but leaves another flow live draft intact', () => {
+      const now = 1700000000000;
+
+      // 1. Storage is empty: fallback saves successfully
+      const savedWhenEmpty = saveFallbackVerificationDraft(
+        {
+          channel: 'email',
+          identifier: 'fallback-user@example.com',
+          expiresInSeconds: 300,
+        },
+        now,
+      );
+      expect(savedWhenEmpty).not.toBeNull();
+      expect(savedWhenEmpty?.normalized_identifier).toBe('fallback-user@example.com');
+
+      // 2. Storage has an active live draft: fallback returns null and leaves live draft intact
+      const liveAttempt = saveFallbackVerificationDraft(
+        {
+          channel: 'email',
+          identifier: 'older-form@example.com',
+          expiresInSeconds: 300,
+        },
+        now + 5000,
+      );
+      expect(liveAttempt).toBeNull();
+      const rawAfter = JSON.parse(
+        window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY)!,
+      );
+      expect(rawAfter.normalized_identifier).toBe('fallback-user@example.com');
+
+      // 3. Storage has an expired draft: fallback clears expired and saves
+      const expiredAttempt = saveFallbackVerificationDraft(
+        {
+          channel: 'email',
+          identifier: 'resurrected@example.com',
+          expiresInSeconds: 300,
+        },
+        now + 301 * 1000, // 301 seconds later -> original draft expired
+      );
+      expect(expiredAttempt).not.toBeNull();
+      expect(expiredAttempt?.normalized_identifier).toBe('resurrected@example.com');
+
+      // 4. Storage has an active email draft: phone fallback returns null and leaves email draft intact
+      const channelMismatchAttempt = saveFallbackVerificationDraft(
+        {
+          channel: 'phone',
+          identifier: '01712345678',
+          expiresInSeconds: 300,
+        },
+        now + 302 * 1000,
+      );
+      expect(channelMismatchAttempt).toBeNull();
+      const rawAfterChannel = JSON.parse(
+        window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY)!,
+      );
+      expect(rawAfterChannel.channel).toBe('email');
+      expect(rawAfterChannel.normalized_identifier).toBe('resurrected@example.com');
     });
 
     it('clearVerificationDraft removes draft from sessionStorage', () => {

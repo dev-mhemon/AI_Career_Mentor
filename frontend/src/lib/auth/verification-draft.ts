@@ -33,6 +33,11 @@ export interface SaveVerificationDraftInput {
   contactMasked?: string;
   expiresInSeconds?: number;
   context?: VerificationDraftContext;
+  /**
+   * When true, verifies that sessionStorage is currently missing or expired before saving.
+   * If an active live draft exists for another identifier or channel, returns null without overwriting.
+   */
+  onlyIfMissingOrExpired?: boolean;
 }
 
 const ALLOWED_DRAFT_KEYS = new Set([
@@ -129,6 +134,7 @@ export function clearVerificationDraft(): void {
 
 /**
  * Saves a sanitized R18 verification draft into `sessionStorage`, excluding passwords, codes, and tokens.
+ * If `input.onlyIfMissingOrExpired` is true, will not overwrite an existing live draft from another flow.
  */
 export function saveVerificationDraft(
   input: SaveVerificationDraftInput,
@@ -136,6 +142,23 @@ export function saveVerificationDraft(
 ): VerificationDraft | null {
   if (typeof window === 'undefined' || !window.sessionStorage) return null;
   if (input.channel !== 'email' && input.channel !== 'phone') return null;
+
+  if (input.onlyIfMissingOrExpired) {
+    const { draft: currentLive } = loadVerificationDraft(null, nowMs);
+    if (currentLive) {
+      const normalized = normalizeVerificationIdentifier(
+        input.channel,
+        input.identifier,
+      );
+      if (
+        currentLive.channel !== input.channel ||
+        currentLive.normalized_identifier !== normalized
+      ) {
+        // Storage holds an active live draft for a different flow; do not overwrite.
+        return null;
+      }
+    }
+  }
 
   const normalized = normalizeVerificationIdentifier(
     input.channel,
@@ -162,6 +185,21 @@ export function saveVerificationDraft(
   } catch {
     return null;
   }
+}
+
+/**
+ * Saves a fallback verification draft only if sessionStorage is currently missing or expired.
+ * If storage contains an active live draft for another identifier or channel, leaves it intact
+ * and returns null to prevent overwriting newer flows.
+ */
+export function saveFallbackVerificationDraft(
+  input: SaveVerificationDraftInput,
+  nowMs: number = Date.now(),
+): VerificationDraft | null {
+  return saveVerificationDraft(
+    { ...input, onlyIfMissingOrExpired: true },
+    nowMs,
+  );
 }
 
 /**

@@ -6,6 +6,7 @@ import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/a
 import {
   loadVerificationDraft,
   saveVerificationDraft,
+  saveFallbackVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,
   type VerificationDraft,
@@ -67,7 +68,8 @@ function VerifyFormContent() {
 
   /**
    * Handles resend: calls server action, updates or creates draft on success.
-   * If no draft exists (expired/cleared), persists a replacement draft via saveVerificationDraft.
+   * If updateVerificationDraftExpiry returns null (expired or cleared draft), falls back
+   * to saveVerificationDraft while preserving the original draft context.
    */
   const handleResend = async () => {
     if (!channelParam || cooldown > 0) return;
@@ -86,35 +88,29 @@ function VerifyFormContent() {
         setResendSuccess('Verification code sent successfully.');
         setCooldown(60);
         if (result.expiresInSeconds) {
-          if (
-            draft &&
-            draft.channel === channelParam &&
-            draft.normalized_identifier === identifierToSend
-          ) {
-            const updated = updateVerificationDraftExpiry(
-              result.expiresInSeconds,
-              result.contactMasked,
-              Date.now(),
-              channelParam,
-              identifierToSend,
-            );
-            if (updated) {
-              setDraft(updated);
-              setIsDraftExpired(false);
-            }
-          } else if (identifierToSend) {
-            /* No matching active draft — create a replacement draft for the current resend channel and identifier. */
-            const replacement = saveVerificationDraft({
-              channel: channelParam,
-              identifier: identifierToSend,
-              contactMasked: result.contactMasked,
-              expiresInSeconds: result.expiresInSeconds,
-              context: 'registration',
-            });
-            if (replacement) {
-              setDraft(replacement);
-              setIsDraftExpired(false);
-            }
+          const updated = identifierToSend
+            ? updateVerificationDraftExpiry(
+                result.expiresInSeconds,
+                result.contactMasked,
+                Date.now(),
+                channelParam,
+                identifierToSend,
+              )
+            : null;
+          const next =
+            updated ??
+            (identifierToSend
+              ? saveFallbackVerificationDraft({
+                  channel: channelParam,
+                  identifier: identifierToSend,
+                  contactMasked: result.contactMasked || draft?.contact_masked,
+                  expiresInSeconds: result.expiresInSeconds,
+                  context: draft?.context ?? 'registration',
+                })
+              : null);
+          if (next) {
+            setDraft(next);
+            setIsDraftExpired(false);
           }
         }
       }

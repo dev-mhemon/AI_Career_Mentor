@@ -203,6 +203,99 @@ describe('VerifyForm', () => {
     expect(parsed.contact_masked).toBe('r****@example.com');
   });
 
+  it('falls back to saving fresh draft on resend when stored draft expired in sessionStorage, preserving context', async () => {
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'context-user@example.com',
+      context: 'unverified_login',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    vi.mocked(resendOtpAction).mockResolvedValueOnce({
+      success: true,
+      expiresInSeconds: 600,
+      contactMasked: 'c****@example.com',
+    });
+
+    render(<VerifyForm />);
+
+    /* Wait for draft to load into state */
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    /* Simulate sessionStorage expiring while the user remains on the page */
+    window.sessionStorage.clear();
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    await act(async () => {
+      fireEvent.click(resendButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+    });
+
+    /* Fallback save should have stored a fresh draft preserving the original context */
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY)!,
+    );
+    expect(stored).not.toBeNull();
+    expect(stored.normalized_identifier).toBe('context-user@example.com');
+    expect(stored.context).toBe('unverified_login');
+  });
+
+  it('does not overwrite newer live draft from another flow when resend completes in an older form', async () => {
+    /* Form initializes with older draft */
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'older-candidate@example.com',
+      context: 'registration',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    vi.mocked(resendOtpAction).mockResolvedValueOnce({
+      success: true,
+      expiresInSeconds: 600,
+      contactMasked: 'o****@example.com',
+    });
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    /* While user was in this form, another flow saved a NEWER live draft in sessionStorage */
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'newer-candidate@example.com',
+      contactMasked: 'n****@example.com',
+      expiresInSeconds: 600,
+      context: 'registration',
+    });
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    await act(async () => {
+      fireEvent.click(resendButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+    });
+
+    /* Newer draft in sessionStorage must remain completely untouched */
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY)!,
+    );
+    expect(stored.normalized_identifier).toBe('newer-candidate@example.com');
+    expect(stored.contact_masked).toBe('n****@example.com');
+  });
+
   it('does not clear verification draft on failed verification submit (draft preserved for failed attempts)', async () => {
     saveVerificationDraft({
       channel: 'email',
@@ -356,7 +449,7 @@ describe('VerifyForm', () => {
     const stored = JSON.parse(
       window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY)!,
     );
-    expect(stored.channel).toBe('phone');
-    expect(stored.normalized_identifier).toBe('+8801712345689');
+    expect(stored.channel).toBe('email');
+    expect(stored.normalized_identifier).toBe('candidate@example.com');
   });
 });
