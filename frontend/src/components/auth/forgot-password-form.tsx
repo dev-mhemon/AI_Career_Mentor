@@ -100,7 +100,7 @@ export function ForgotPasswordForm() {
               previousDraftRef.current = existing;
             }
             saveVerificationDraft({
-              channel,
+              channel: identifier.includes("@") ? "email" : "phone",
               identifier,
               context: "password_recovery",
             });

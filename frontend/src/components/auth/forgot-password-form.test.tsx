@@ -87,6 +87,56 @@ describe("ForgotPasswordForm", () => {
     });
   });
 
+  it("derives draft channel as email when an email is submitted while on phone tab", async () => {
+    render(<ForgotPasswordForm />);
+
+    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    fireEvent.click(phoneTab);
+
+    const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "user-name@example.com" } });
+    expect(input.checkValidity()).toBe(true);
+
+    const form = input.closest("form")!;
+    fireEvent.submit(form);
+
+    expect(mockSaveVerificationDraft).toHaveBeenCalledWith({
+      channel: "email",
+      identifier: "user-name@example.com",
+      context: "password_recovery",
+    });
+  });
+
+  it("saves recovery draft with phone channel when a phone number is submitted on phone tab", async () => {
+    render(<ForgotPasswordForm />);
+
+    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    fireEvent.click(phoneTab);
+
+    const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "+8801712345678" } });
+    expect(input.checkValidity()).toBe(true);
+
+    const form = input.closest("form")!;
+    fireEvent.submit(form);
+
+    expect(mockSaveVerificationDraft).toHaveBeenCalledWith({
+      channel: "phone",
+      identifier: "+8801712345678",
+      context: "password_recovery",
+    });
+  });
+
+  it("fails browser constraint validation when a phone number is entered on email tab", () => {
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "+8801712345678" } });
+
+    expect(input.checkValidity()).toBe(false);
+    expect(input.validity.typeMismatch).toBe(true);
+  });
+
   it("clears verification draft and displays error on rejected submission", async () => {
     vi.mocked(forgotPasswordAction).mockResolvedValueOnce({
       error: "Too many recovery attempts. Please try again later.",
