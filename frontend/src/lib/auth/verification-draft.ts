@@ -1,5 +1,5 @@
 /**
- * R18 verification draft state helper for Screen 03/04/02/22 verification flows.
+ * R18 verification draft state helper for Screen 03/04/02/05/06/22 verification and recovery flows.
  * Stores only `{ channel, normalized_identifier, contact_masked, expires_at, context }` in `sessionStorage`.
  */
 
@@ -15,7 +15,8 @@ export type VerificationChannel = 'email' | 'phone';
 export type VerificationDraftContext =
   | 'registration'
   | 'unverified_login'
-  | 'secondary_contact';
+  | 'secondary_contact'
+  | 'password_recovery';
 
 /** Exact C09/C05 R18 sessionStorage verification draft payload. */
 export interface VerificationDraft {
@@ -204,10 +205,12 @@ export function saveFallbackVerificationDraft(
 
 /**
  * Loads and validates the R18 verification draft from `sessionStorage`, clearing it if expired or malformed.
+ * Optionally filters by expected channel and/or expected context without clearing an active draft for another flow.
  */
 export function loadVerificationDraft(
   expectedChannel?: VerificationChannel | null,
   nowMs: number = Date.now(),
+  expectedContext?: VerificationDraftContext | VerificationDraftContext[] | null,
 ): { draft: VerificationDraft | null; expired: boolean } {
   if (typeof window === 'undefined' || !window.sessionStorage) {
     return { draft: null, expired: false };
@@ -248,11 +251,31 @@ export function loadVerificationDraft(
       typeof parsed.contact_masked !== 'string' ||
       !parsed.contact_masked.trim() ||
       typeof parsed.expires_at !== 'string' ||
-      !['registration', 'unverified_login', 'secondary_contact'].includes(
-        String(parsed.context),
-      )
+      ![
+        'registration',
+        'unverified_login',
+        'secondary_contact',
+        'password_recovery',
+      ].includes(String(parsed.context))
     ) {
       clearVerificationDraft();
+      return { draft: null, expired: false };
+    }
+
+    if (expectedChannel && parsed.channel !== expectedChannel) {
+      return { draft: null, expired: false };
+    }
+
+    const expectedContexts = expectedContext
+      ? Array.isArray(expectedContext)
+        ? expectedContext
+        : [expectedContext]
+      : null;
+
+    if (
+      expectedContexts &&
+      !expectedContexts.includes(parsed.context as VerificationDraftContext)
+    ) {
       return { draft: null, expired: false };
     }
 
@@ -264,10 +287,6 @@ export function loadVerificationDraft(
     ) {
       clearVerificationDraft();
       return { draft: null, expired: true };
-    }
-
-    if (expectedChannel && parsed.channel !== expectedChannel) {
-      return { draft: null, expired: false };
     }
 
     return {

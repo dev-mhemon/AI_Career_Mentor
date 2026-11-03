@@ -3,11 +3,8 @@ import { getAppUser } from "@/lib/auth/user";
 import { LoginForm } from "@/components/auth/login-form";
 
 /**
- * Login page — Server Component enforcing business-level route guards.
- *
- * Route protection:
- *  - Authenticated → /dashboard
- *  - Unauthenticated → show login form
+ * Screen 02: Login page — Server Component enforcing route access.
+ * Authenticated users redirect to /dashboard; unauthenticated users display the login shell.
  */
 export default async function LoginPage({
   searchParams,
@@ -22,6 +19,7 @@ export default async function LoginPage({
 
   const awaitedSearchParams = await searchParams;
   const errorCode = awaitedSearchParams?.error;
+  const resetSuccess = awaitedSearchParams?.reset === "success";
   let initialError: string | undefined;
 
   if (errorCode === "oauth_failed") {
@@ -30,10 +28,14 @@ export default async function LoginPage({
     initialError = "Account synchronization failed. Please contact support.";
   }
 
+  const successMessage = resetSuccess
+    ? "Password reset successfully. Please sign in with your new password."
+    : undefined;
+
   return (
     <>
       <h1 className="mb-6 text-2xl font-bold text-foreground">Sign In</h1>
-      <LoginForm initialError={initialError} />
+      <LoginForm initialError={initialError} successMessage={successMessage} />
     </>
   );
 }

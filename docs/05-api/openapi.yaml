@@ -1,13 +1,14 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - M01-01 email/session contract increment
+  title: AI Career Mentor - Authentication, Password Recovery and Phone Contract (M02-01)
   version: 0.1.0
   description: >-
-    Draft / review pending, 2026-10-24. Derived from adopted C05 v1.5.1. SPECIFIED is not IMPLEMENTED or
-    ACCEPTED. Source inspection: 5a71a5b8196a619ae0960b212fe71e74d79e0fb6. Six planned canonical operations
-    plus existing A10/A13 and observed sync; no phone verification/recovery/link/deletion or internal HTTP
-    routes invented. See M01-01 task record, backend architecture, DTO-DB-mapping and QA-plan. OpenAPI
-    describes wire contracts; semantic rules and provider capability gaps remain linked review obligations.
+    Draft / review pending, 2026-11-03. Derived from adopted C05 v1.5.1. SPECIFIED is not IMPLEMENTED or
+    ACCEPTED. Source inspection: df4270d9d04296f5e13677a198103d58fd5db127. Canonical auth operations including
+    email registration, verification, login, refresh, logout, password recovery (EP-A08/EP-A09), phone contract
+    (EP-A03), social linking (EP-A11), add contact (EP-A12), OAuth bootstrap (EP-A10), and me (EP-A13).
+    See M02-01 task record, backend architecture, DTO-DB-mapping and QA-plan. OpenAPI describes wire contracts;
+    semantic rules and provider capability gaps remain linked review obligations.
 servers:
   - url: /api/v1
 tags:
@@ -299,6 +300,160 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
             - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/verify-phone:
+    post:
+      operationId: EP-A03
+      tags:
+        - Email and session
+      summary: Verify Bangladesh mobile OTP and establish session
+      description: >-
+        SPECIFIED; phone SMS provider gated in Phase 1 (EP-A03 returns 503 while SMS adapter disabled).
+        Submits six-digit SMS OTP challenge; on success establishes authenticated session and returns AuthSessionDTO.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-PUB
+      security:
+        - {}
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyPhoneRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-A03 success; success envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '409':
+          description: ALREADY_VERIFIED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ALREADY_VERIFIED
+        '410':
+          description: VERIFICATION_CODE_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFICATION_CODE_EXPIRED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE, VERIFICATION_CODE_INVALID, INVALID_PHONE_NUMBER
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+            - VERIFICATION_CODE_INVALID
+            - INVALID_PHONE_NUMBER
+        '429':
+          description: RATE_LIMITED, VERIFICATION_ATTEMPTS_EXCEEDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RATE_LIMITED
+            - VERIFICATION_ATTEMPTS_EXCEEDED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: PROVIDER_ERROR, SMS_PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_ERROR
+            - SMS_PROVIDER_ERROR
         '503':
           description: SERVICE_UNAVAILABLE
           headers:
@@ -807,6 +962,263 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
             - PROVIDER_TIMEOUT
+  /auth/forgot-password:
+    post:
+      operationId: EP-A08
+      tags:
+        - Email and session
+      summary: Request password reset code
+      description: >-
+        C05 EP-A08. Dispatches a password reset challenge to the user's verified registered contact.
+        Always returns 202 with an identical message whether or not the account exists (anti-enumeration).
+        Phone password recovery returns 503 SERVICE_UNAVAILABLE while SMS provider is disabled.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequestDTO'
+      responses:
+        '202':
+          description: C05 EP-A08 success; challenge dispatched or anti-enumeration uniform acknowledgment.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForgotPasswordResponseEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '422':
+          description: VALIDATION_FAILED, INVALID_PHONE_NUMBER
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_PHONE_NUMBER
+        '429':
+          description: RESEND_COOLDOWN_ACTIVE, OTP_LIMIT_EXCEEDED, RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESEND_COOLDOWN_ACTIVE
+            - OTP_LIMIT_EXCEEDED
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: EMAIL_PROVIDER_ERROR, SMS_PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - EMAIL_PROVIDER_ERROR
+            - SMS_PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
+  /auth/reset-password:
+    post:
+      operationId: EP-A09
+      tags:
+        - Email and session
+      summary: Reset password with challenge code
+      description: >-
+        C05 EP-A09. Verifies the six-digit challenge code and sets new password.
+        On success, all existing application and GoTrue sessions are revoked. The user must sign in with new credentials.
+        Phone password recovery returns 503 SERVICE_UNAVAILABLE while SMS provider is disabled.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-A09 success; password updated and existing sessions revoked.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetPasswordResponseEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '403':
+          description: ACCOUNT_SUSPENDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+        '410':
+          description: VERIFICATION_CODE_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFICATION_CODE_EXPIRED
+        '422':
+          description: VALIDATION_FAILED, VERIFICATION_CODE_INVALID, PASSWORD_POLICY_FAILED, PASSWORD_MISMATCH, INVALID_PHONE_NUMBER
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - VERIFICATION_CODE_INVALID
+            - PASSWORD_POLICY_FAILED
+            - PASSWORD_MISMATCH
+            - INVALID_PHONE_NUMBER
+        '429':
+          description: VERIFICATION_ATTEMPTS_EXCEEDED, RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFICATION_ATTEMPTS_EXCEEDED
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
   /auth/oauth/session:
     post:
       operationId: EP-A10
@@ -929,6 +1341,253 @@ paths:
           Shared HTTP formatter emits null retryAfterSeconds; normative ErrorDTO allows optional nonnegative
           integer.
         - Frontend does not consume canonical OAuth next_step end to end.
+  /auth/identities/link:
+    post:
+      operationId: EP-A11
+      tags:
+        - Email and session
+      summary: Link social identity (Google or Facebook)
+      description: >-
+        C05 EP-A11. Authenticated user links a Google or Facebook identity to their existing verified account.
+        Requires verified_contact on the account; refuses if the social identity already belongs to another account.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkIdentityRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-A11 success; social identity linked.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkIdentityResponseEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFIED_CONTACT_REQUIRED
+        '409':
+          description: IDENTITY_LINK_CONFLICT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - IDENTITY_LINK_CONFLICT
+        '422':
+          description: VALIDATION_FAILED, PROVIDER_MISMATCH, INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - PROVIDER_MISMATCH
+            - INVALID_ENUM_VALUE
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+  /auth/contact:
+    post:
+      operationId: EP-A12
+      tags:
+        - Email and session
+      summary: Add and initiate verification of a contact
+      description: >-
+        C05 EP-A12. Authenticated user adds an additional email or phone contact and initiates verification challenge.
+        Contact must not belong to another verified account. Completion uses EP-A02 or EP-A03.
+        Phone contact verification returns 503 SERVICE_UNAVAILABLE while SMS provider is disabled.
+      x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddContactRequestDTO'
+      responses:
+        '202':
+          description: C05 EP-A12 success; challenge sent to added contact.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationPendingDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '409':
+          description: CONTACT_ALREADY_REGISTERED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - CONTACT_ALREADY_REGISTERED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE, INVALID_PHONE_NUMBER
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+            - INVALID_PHONE_NUMBER
+        '429':
+          description: RESEND_COOLDOWN_ACTIVE, OTP_LIMIT_EXCEEDED, RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESEND_COOLDOWN_ACTIVE
+            - OTP_LIMIT_EXCEEDED
+            - RATE_LIMITED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '502':
+          description: EMAIL_PROVIDER_ERROR, SMS_PROVIDER_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - EMAIL_PROVIDER_ERROR
+            - SMS_PROVIDER_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: PROVIDER_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - PROVIDER_TIMEOUT
   /auth/me:
     get:
       operationId: EP-A13
@@ -1262,6 +1921,15 @@ components:
       description: >-
         C05 A02 email form of shared VerifyCodeRequestDTO. Added-contact mode supplies JWT; signup mode is
         public.
+    VerifyPhoneRequestDTO:
+      allOf:
+        - $ref: '#/components/schemas/VerifyCodeRequestDTO'
+        - type: object
+          required:
+            - phone
+      description: >-
+        C05 EP-A03 phone form of shared VerifyCodeRequestDTO. Requires normalized Bangladesh mobile number
+        and six-digit challenge code.
     ResendVerificationDTO:
       type: object
       required:
@@ -1307,6 +1975,91 @@ components:
           enum:
             - google
             - facebook
+    ForgotPasswordRequestDTO:
+      type: object
+      required:
+        - identifier
+      properties:
+        identifier:
+          type: string
+          description: Registered Bangladesh mobile number or email address; normalized using C05 A01 rules.
+    ForgotPasswordResponseDTO:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: 'If the account exists, a code was sent.'
+    ResetPasswordRequestDTO:
+      type: object
+      required:
+        - identifier
+        - code
+        - new_password
+        - confirm_new_password
+      properties:
+        identifier:
+          type: string
+          description: Registered Bangladesh mobile number or email address; normalized using C05 A01 rules.
+        code:
+          type: string
+          pattern: ^\d{6}$
+          description: Six-digit verification challenge code.
+        new_password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: New password meeting length and non-numeric complexity policy.
+        confirm_new_password:
+          type: string
+          description: Must match new_password exactly.
+    ResetPasswordResponseDTO:
+      type: object
+      required:
+        - password_reset
+      properties:
+        password_reset:
+          type: boolean
+          enum:
+            - true
+    LinkIdentityRequestDTO:
+      type: object
+      required:
+        - provider
+      properties:
+        provider:
+          type: string
+          enum:
+            - google
+            - facebook
+    LinkIdentityResponseDTO:
+      type: object
+      required:
+        - linked_providers
+      properties:
+        linked_providers:
+          type: array
+          items:
+            type: string
+          description: Authentication providers linked to the authenticated user account.
+          example:
+            - phone
+            - google
+    AddContactRequestDTO:
+      type: object
+      required:
+        - channel
+        - contact
+      properties:
+        channel:
+          type: string
+          enum:
+            - email
+            - phone
+        contact:
+          type: string
+          description: Email address or Bangladesh mobile number to link and verify.
     AuthUserDTO:
       type: object
       required:
@@ -1578,6 +2331,42 @@ components:
             - true
         data:
           $ref: '#/components/schemas/LogoutDTO'
+    ForgotPasswordResponseEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/ForgotPasswordResponseDTO'
+    ResetPasswordResponseEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/ResetPasswordResponseDTO'
+    LinkIdentityResponseEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/LinkIdentityResponseDTO'
     ErrorEnvelope:
       type: object
       required:

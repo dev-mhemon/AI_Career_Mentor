@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { LoginForm } from "@/components/auth/login-form";
+import { saveVerificationDraft } from "@/lib/auth/verification-draft";
 
 // Mock the auth actions module
 vi.mock("@/lib/auth/actions", () => ({
@@ -12,12 +13,43 @@ vi.mock("@/components/auth/oauth-buttons", () => ({
   OAuthButtons: () => <div data-testid="oauth-buttons">OAuth Buttons</div>,
 }));
 
+const mockClearVerificationDraft = vi.fn();
+vi.mock("@/lib/auth/verification-draft", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/auth/verification-draft")
+  >("@/lib/auth/verification-draft");
+  return {
+    ...actual,
+    clearVerificationDraft: () => mockClearVerificationDraft(),
+  };
+});
+
 describe("LoginForm", () => {
-  it("renders email and password fields", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    window.sessionStorage.clear();
+  });
+
+  it("renders email/phone and password fields", () => {
     render(<LoginForm />);
 
-    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/email or phone/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+  });
+
+  it("renders the forgot password link pointing to /forgot-password", () => {
+    render(<LoginForm />);
+
+    const forgotLink = screen.getByRole("link", {
+      name: /forgot password/i,
+    });
+    expect(forgotLink).toBeInTheDocument();
+    expect(forgotLink).toHaveAttribute("href", "/forgot-password");
   });
 
   it("renders the sign in button", () => {
@@ -42,14 +74,47 @@ describe("LoginForm", () => {
     expect(link).toHaveAttribute("href", "/register");
   });
 
-  it("has required attributes on email and password inputs", () => {
+  it("renders success alert and clears verification draft when successMessage is passed", () => {
+    saveVerificationDraft({
+      channel: "email",
+      identifier: "user@example.com",
+      context: "password_recovery",
+    });
+
+    render(
+      <LoginForm successMessage="Password reset successfully. Please sign in with your new password." />,
+    );
+
+    expect(
+      screen.getByText(/password reset successfully/i),
+    ).toBeInTheDocument();
+    expect(mockClearVerificationDraft).toHaveBeenCalled();
+  });
+
+  it("does not clear draft on successMessage if draft context is registration", () => {
+    saveVerificationDraft({
+      channel: "email",
+      identifier: "user@example.com",
+      context: "registration",
+    });
+
+    render(
+      <LoginForm successMessage="Password reset successfully. Please sign in with your new password." />,
+    );
+
+    expect(
+      screen.getByText(/password reset successfully/i),
+    ).toBeInTheDocument();
+    expect(mockClearVerificationDraft).not.toHaveBeenCalled();
+  });
+
+  it("has required attributes on identifier and password inputs", () => {
     render(<LoginForm />);
 
-    const emailInput = screen.getByLabelText(/email/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
-    expect(emailInput).toHaveAttribute("type", "email");
-    expect(emailInput).toBeRequired();
+    expect(identifierInput).toBeRequired();
     expect(passwordInput).toHaveAttribute("type", "password");
     expect(passwordInput).toBeRequired();
   });
