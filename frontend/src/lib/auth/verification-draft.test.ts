@@ -172,6 +172,82 @@ describe('R18 verification draft helper', () => {
       expect(result.draft).toBeNull();
       expect(result.expired).toBe(false);
     });
+
+    it('supports password_recovery context and loads without expectedChannel', () => {
+      saveVerificationDraft({
+        channel: 'email',
+        identifier: 'recovery@example.com',
+        context: 'password_recovery',
+      });
+      const result = loadVerificationDraft();
+      expect(result.draft).not.toBeNull();
+      expect(result.draft?.context).toBe('password_recovery');
+      expect(result.draft?.contact_masked).toBe('r****@example.com');
+      expect(result.expired).toBe(false);
+    });
+
+    it('filters by expectedContext and preserves other contexts without clearing', () => {
+      saveVerificationDraft({
+        channel: 'email',
+        identifier: 'registering@example.com',
+        context: 'registration',
+      });
+
+      // Calling with expectedContext 'password_recovery' must return null draft and expired false
+      const result = loadVerificationDraft(null, Date.now(), 'password_recovery');
+      expect(result.draft).toBeNull();
+      expect(result.expired).toBe(false);
+
+      // Stored registration draft must remain intact in sessionStorage
+      const raw = window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw!).context).toBe('registration');
+    });
+
+    it('filters by array of expectedContexts', () => {
+      saveVerificationDraft({
+        channel: 'email',
+        identifier: 'recovery@example.com',
+        context: 'password_recovery',
+      });
+
+      const allowedResult = loadVerificationDraft(null, Date.now(), [
+        'password_recovery',
+        'unverified_login',
+      ]);
+      expect(allowedResult.draft).not.toBeNull();
+      expect(allowedResult.draft?.context).toBe('password_recovery');
+
+      const rejectedResult = loadVerificationDraft(null, Date.now(), [
+        'registration',
+        'unverified_login',
+      ]);
+      expect(rejectedResult.draft).toBeNull();
+      expect(rejectedResult.expired).toBe(false);
+    });
+
+    it('clears expired draft from storage while not reporting expired for a mismatched context', () => {
+      const expiredRegistrationDraft = {
+        channel: 'email',
+        normalized_identifier: 'expired-reg@example.com',
+        contact_masked: 'e****@example.com',
+        expires_at: new Date(Date.now() - 10000).toISOString(),
+        context: 'registration',
+      };
+      window.sessionStorage.setItem(
+        VERIFICATION_DRAFT_STORAGE_KEY,
+        JSON.stringify(expiredRegistrationDraft),
+      );
+
+      const result = loadVerificationDraft(null, Date.now(), 'password_recovery');
+      expect(result.draft).toBeNull();
+      expect(result.expired).toBe(false);
+
+      // Expired draft must be cleared from storage, avoiding stale state
+      expect(
+        window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
+      ).toBeNull();
+    });
   });
 
   describe('updateVerificationDraftExpiry and clearVerificationDraft', () => {

@@ -44,7 +44,11 @@ function VerifyFormContent() {
   useEffect(() => {
     if (draftLoaded.current || !channelParam) return;
     draftLoaded.current = true;
-    const { draft: loaded, expired } = loadVerificationDraft(channelParam);
+    const { draft: loaded, expired } = loadVerificationDraft(
+      channelParam,
+      Date.now(),
+      ['registration', 'unverified_login', 'secondary_contact'],
+    );
     setDraft(loaded);
     setIsDraftExpired(expired);
   }, [channelParam]);
@@ -52,7 +56,14 @@ function VerifyFormContent() {
   /** Successful verification navigation & draft clearance. */
   useEffect(() => {
     if (state?.success && state?.redirectTo) {
-      clearVerificationDraft();
+      const { draft: currentDraft } = loadVerificationDraft(
+        channelParam,
+        Date.now(),
+        ['registration', 'unverified_login', 'secondary_contact'],
+      );
+      if (currentDraft) {
+        clearVerificationDraft();
+      }
       router.push(state.redirectTo);
     }
   }, [state, router]);

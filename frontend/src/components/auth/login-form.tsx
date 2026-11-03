@@ -1,52 +1,89 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import Link from "next/link";
 import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import {
+  loadVerificationDraft,
+  clearVerificationDraft,
+} from "@/lib/auth/verification-draft";
 
 /**
- * Login form — Client Component using useActionState for
- * pending state and error display.
- *
- * UI/UX Spec §5 Authentication: Email/password, Google, Facebook.
- * States: Loading (authentication progress), Error (invalid credentials).
+ * Screen 02: Login form component using useActionState for pending and error states.
+ * Supports email/phone credentials, password recovery navigation, and reset success alerts.
  */
-export function LoginForm({ initialError }: { initialError?: string }) {
+export function LoginForm({
+  initialError,
+  successMessage,
+}: {
+  initialError?: string;
+  successMessage?: string;
+}) {
   const [state, formAction, isPending] = useActionState<
     AuthActionResult,
     FormData
   >(loginAction, { error: initialError });
 
+  useEffect(() => {
+    if (successMessage) {
+      const { draft: loaded } = loadVerificationDraft(
+        null,
+        Date.now(),
+        "password_recovery",
+      );
+      if (loaded?.context === "password_recovery") {
+        clearVerificationDraft();
+      }
+    }
+  }, [successMessage]);
+
   return (
     <div className="flex flex-col gap-6">
+      {successMessage && (
+        <div
+          role="status"
+          className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-200"
+        >
+          {successMessage}
+        </div>
+      )}
+
       <form action={formAction} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="email"
             className="text-sm font-medium text-foreground"
           >
-            Email
+            Email or Phone
           </label>
           <input
             id="email"
             name="email"
-            type="email"
-            autoComplete="email"
+            type="text"
+            autoComplete="username"
             required
             disabled={isPending}
             className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder="you@example.com"
+            placeholder="you@example.com or +8801712345678"
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="password"
-            className="text-sm font-medium text-foreground"
-          >
-            Password
-          </label>
+          <div className="flex items-center justify-between">
+            <label
+              htmlFor="password"
+              className="text-sm font-medium text-foreground"
+            >
+              Password
+            </label>
+            <Link
+              href="/forgot-password"
+              className="text-xs text-foreground/60 underline underline-offset-4 hover:text-foreground"
+            >
+              পাসওয়ার্ড ভুলে গেছেন? (Forgot Password)
+            </Link>
+          </div>
           <input
             id="password"
             name="password"
