@@ -77,7 +77,7 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
           op: (db: EntityManager) => Promise<unknown>,
         ) => {
           const txDb = {
-            query: vi.fn(async () => []),
+            query: database.query,
           } as unknown as EntityManager;
           return op(txDb);
         },
@@ -260,15 +260,20 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
 
   describe('EP-A09 Reset Password (POST /api/v1/auth/reset-password)', () => {
     it('successfully resets password, revokes sessions in DB and GoTrue, and returns 200', async () => {
-      database.query.mockResolvedValueOnce([
-        {
-          id: TEST_USER_ID,
-          email: TEST_EMAIL,
-          status: 'active',
-          verified_contact: true,
-          provider_subject: TEST_USER_ID,
-        },
-      ]);
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
 
       (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         ok: true,
@@ -301,8 +306,159 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
           body: JSON.stringify({ password: TEST_NEW_PASSWORD }),
         }),
       );
+      expect(
+        database.query.mock.calls.some(([sql]) =>
+          String(sql).includes('auth.refresh_tokens'),
+        ),
+      ).toBe(true);
+      expect(
+        database.query.mock.calls.some(([sql]) =>
+          String(sql).includes('auth.sessions'),
+        ),
+      ).toBe(true);
       expect(result).toEqual({
         password_reset: true,
+      });
+    });
+
+    it('returns 504 PROVIDER_TIMEOUT when GoTrue session revocation times out after password commit', async () => {
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+
+      let txCount = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          txCount++;
+          if (txCount === 1) {
+            const txDb = { query: database.query } as unknown as EntityManager;
+            return op(txDb);
+          }
+          const timeoutErr = new Error('statement timeout');
+          (timeoutErr as { code?: string }).code = '57014';
+          throw timeoutErr;
+        },
+      );
+
+      await expect(
+        authService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 504,
+        response: expect.objectContaining({
+          code: 'PROVIDER_TIMEOUT',
+        }),
+      });
+    });
+
+    it('returns 502 PROVIDER_ERROR when GoTrue session revocation fails with a database error', async () => {
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+
+      let txCount = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          txCount++;
+          if (txCount === 1) {
+            const txDb = { query: database.query } as unknown as EntityManager;
+            return op(txDb);
+          }
+          throw new Error('Database connection failed');
+        },
+      );
+
+      await expect(
+        authService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 502,
+        response: expect.objectContaining({
+          code: 'PROVIDER_ERROR',
+        }),
+      });
+    });
+
+    it('returns 422 VERIFICATION_CODE_INVALID when known account submits wrong OTP code per C05/Q04', async () => {
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      otpStore.verifyAndConsumeOtp.mockImplementationOnce(async () => {
+        fail(422, 'VERIFICATION_CODE_INVALID', 'Verification code is invalid');
+      });
+
+      await expect(
+        authService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '654321',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: expect.objectContaining({
+          code: 'VERIFICATION_CODE_INVALID',
+        }),
       });
     });
 

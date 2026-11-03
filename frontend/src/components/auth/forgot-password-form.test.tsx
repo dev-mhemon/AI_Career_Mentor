@@ -106,4 +106,40 @@ describe("ForgotPasswordForm", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("preserves active registration draft when recovery submission fails", async () => {
+    const { saveVerificationDraft: actualSave, loadVerificationDraft: actualLoad } =
+      await vi.importActual<typeof import("@/lib/auth/verification-draft")>(
+        "@/lib/auth/verification-draft",
+      );
+
+    actualSave({
+      channel: "email",
+      identifier: "registering@example.com",
+      context: "registration",
+      expiresInSeconds: 300,
+    });
+
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({
+      error: "Service unavailable",
+    });
+
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i);
+    fireEvent.change(input, { target: { value: "other@example.com" } });
+
+    const button = screen.getByRole("button", { name: /send reset code/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/service unavailable/i)).toBeInTheDocument();
+      const restored = actualLoad(null, Date.now(), "registration");
+      expect(restored.draft).not.toBeNull();
+      expect(restored.draft?.normalized_identifier).toBe("registering@example.com");
+      expect(restored.draft?.context).toBe("registration");
+    });
+  });
 });

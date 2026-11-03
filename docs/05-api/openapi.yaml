@@ -1146,7 +1146,7 @@ paths:
           x-error-codes:
             - VERIFICATION_CODE_EXPIRED
         '422':
-          description: VALIDATION_FAILED, VERIFICATION_CODE_INVALID, PASSWORD_POLICY_FAILED, PASSWORD_MISMATCH, INVALID_PHONE_NUMBER
+          description: VALIDATION_FAILED, VERIFICATION_CODE_INVALID, PASSWORD_POLICY_FAILED, INVALID_PHONE_NUMBER
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -1158,7 +1158,6 @@ paths:
             - VALIDATION_FAILED
             - VERIFICATION_CODE_INVALID
             - PASSWORD_POLICY_FAILED
-            - PASSWORD_MISMATCH
             - INVALID_PHONE_NUMBER
         '429':
           description: VERIFICATION_ATTEMPTS_EXCEEDED, RATE_LIMITED
@@ -2013,7 +2012,7 @@ components:
           description: New password meeting length and non-numeric complexity policy.
         confirm_new_password:
           type: string
-          description: Must match new_password exactly.
+          description: 'Must match new_password exactly; mismatch emits VALIDATION_FAILED with field-detail code PASSWORD_MISMATCH.'
     ResetPasswordResponseDTO:
       type: object
       required:

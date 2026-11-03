@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
 import {
@@ -8,6 +8,7 @@ import {
   loadVerificationDraft,
   clearVerificationDraft,
   type VerificationChannel,
+  type VerificationDraft,
 } from "@/lib/auth/verification-draft";
 
 /**
@@ -21,16 +22,34 @@ export function ForgotPasswordForm() {
   >(forgotPasswordAction, {});
 
   const [channel, setChannel] = useState<VerificationChannel>("email");
+  const previousDraftRef = useRef<VerificationDraft | null>(null);
 
   useEffect(() => {
     if (state?.error) {
-      const { draft: loaded } = loadVerificationDraft(
-        null,
-        Date.now(),
-        "password_recovery",
-      );
-      if (loaded?.context === "password_recovery") {
-        clearVerificationDraft();
+      if (previousDraftRef.current) {
+        const remainingSeconds = Math.max(
+          1,
+          Math.floor(
+            (new Date(previousDraftRef.current.expires_at).getTime() - Date.now()) / 1000,
+          ),
+        );
+        saveVerificationDraft({
+          channel: previousDraftRef.current.channel,
+          identifier: previousDraftRef.current.normalized_identifier,
+          contactMasked: previousDraftRef.current.contact_masked,
+          expiresInSeconds: remainingSeconds,
+          context: previousDraftRef.current.context,
+        });
+        previousDraftRef.current = null;
+      } else {
+        const { draft: loaded } = loadVerificationDraft(
+          null,
+          Date.now(),
+          "password_recovery",
+        );
+        if (loaded?.context === "password_recovery") {
+          clearVerificationDraft();
+        }
       }
     }
   }, [state]);
@@ -70,6 +89,10 @@ export function ForgotPasswordForm() {
             form.elements.namedItem("identifier") as HTMLInputElement
           )?.value;
           if (identifier) {
+            const { draft: existing } = loadVerificationDraft(null, Date.now());
+            if (existing && existing.context !== "password_recovery") {
+              previousDraftRef.current = existing;
+            }
             saveVerificationDraft({
               channel,
               identifier,

@@ -35,6 +35,14 @@ export function ResetPasswordForm() {
     setIsDraftExpired(expired);
   }, []);
 
+  useEffect(() => {
+    if (state?.success) {
+      if (draft?.context === "password_recovery") {
+        clearVerificationDraft();
+      }
+    }
+  }, [state, draft]);
+
   return (
     <div className="flex flex-col gap-6">
       {draft?.contact_masked ? (
@@ -49,12 +57,6 @@ export function ResetPasswordForm() {
 
       <form
         action={formAction}
-        onSubmit={() => {
-          // Clean up draft upon submitting valid reset request
-          if (draft?.context === "password_recovery") {
-            clearVerificationDraft();
-          }
-        }}
         className="flex flex-col gap-4"
       >
         {draft?.normalized_identifier ? (

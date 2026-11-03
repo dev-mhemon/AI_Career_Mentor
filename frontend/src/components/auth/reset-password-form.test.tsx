@@ -86,7 +86,11 @@ describe("ResetPasswordForm", () => {
     expect(screen.getByLabelText(/email or phone/i)).toBeInTheDocument();
   });
 
-  it("clears verification draft on submission", async () => {
+  it("preserves recovery draft on reset failure so user can retry", async () => {
+    vi.mocked(resetPasswordAction).mockResolvedValueOnce({
+      error: "Verification code is invalid",
+    });
+
     saveVerificationDraft({
       channel: "email",
       identifier: "user@example.com",
@@ -95,10 +99,63 @@ describe("ResetPasswordForm", () => {
 
     render(<ResetPasswordForm />);
 
-    const form = document.querySelector("form")!;
-    fireEvent.submit(form);
+    fireEvent.change(screen.getByLabelText(/6-digit verification code/i), {
+      target: { value: "123456" },
+    });
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPassw0rd!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "NewPassw0rd!" },
+    });
 
-    expect(mockClearVerificationDraft).toHaveBeenCalled();
+    const button = screen.getByRole("button", { name: /set new password/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/verification code is invalid/i),
+      ).toBeInTheDocument();
+      expect(mockClearVerificationDraft).not.toHaveBeenCalled();
+      expect(
+        window.sessionStorage.getItem("mentor_verification_draft"),
+      ).not.toBeNull();
+    });
+  });
+
+  it("clears recovery draft when reset submission succeeds", async () => {
+    vi.mocked(resetPasswordAction).mockResolvedValueOnce({
+      success: true,
+    });
+
+    saveVerificationDraft({
+      channel: "email",
+      identifier: "user@example.com",
+      context: "password_recovery",
+    });
+
+    render(<ResetPasswordForm />);
+
+    fireEvent.change(screen.getByLabelText(/6-digit verification code/i), {
+      target: { value: "123456" },
+    });
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPassw0rd!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "NewPassw0rd!" },
+    });
+
+    const button = screen.getByRole("button", { name: /set new password/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(mockClearVerificationDraft).toHaveBeenCalled();
+    });
   });
 
   it("ignores active draft if context is not password_recovery and does not clear it on submit", () => {
