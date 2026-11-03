@@ -226,7 +226,7 @@ describe('R18 verification draft helper', () => {
       expect(rejectedResult.expired).toBe(false);
     });
 
-    it('does not report expired or clear storage when expired draft is for a different context', () => {
+    it('clears expired draft from storage while not reporting expired for a mismatched context', () => {
       const expiredRegistrationDraft = {
         channel: 'email',
         normalized_identifier: 'expired-reg@example.com',
@@ -243,10 +243,10 @@ describe('R18 verification draft helper', () => {
       expect(result.draft).toBeNull();
       expect(result.expired).toBe(false);
 
-      // Storage must not be cleared by the mismatched context check
+      // Expired draft must be cleared from storage, avoiding stale state
       expect(
         window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
-      ).not.toBeNull();
+      ).toBeNull();
     });
   });
 

@@ -16,7 +16,10 @@ vi.mock("@/lib/auth/verification-draft", async () => {
   >("@/lib/auth/verification-draft");
   return {
     ...actual,
-    clearVerificationDraft: () => mockClearVerificationDraft(),
+    clearVerificationDraft: () => {
+      mockClearVerificationDraft();
+      return actual.clearVerificationDraft();
+    },
   };
 });
 

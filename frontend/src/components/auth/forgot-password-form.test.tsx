@@ -22,7 +22,10 @@ vi.mock("@/lib/auth/verification-draft", async () => {
         ...(args as Parameters<typeof actual.saveVerificationDraft>),
       );
     },
-    clearVerificationDraft: () => mockClearVerificationDraft(),
+    clearVerificationDraft: () => {
+      mockClearVerificationDraft();
+      return actual.clearVerificationDraft();
+    },
   };
 });
 
@@ -141,5 +144,95 @@ describe("ForgotPasswordForm", () => {
       expect(restored.draft?.normalized_identifier).toBe("registering@example.com");
       expect(restored.draft?.context).toBe("registration");
     });
+  });
+
+  it("preserves existing recovery draft when a subsequent recovery request fails", async () => {
+    const { saveVerificationDraft: actualSave, loadVerificationDraft: actualLoad } =
+      await vi.importActual<typeof import("@/lib/auth/verification-draft")>(
+        "@/lib/auth/verification-draft",
+      );
+
+    actualSave({
+      channel: "email",
+      identifier: "existing-recovery@example.com",
+      context: "password_recovery",
+      expiresInSeconds: 300,
+    });
+
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({
+      error: "Rate limit exceeded. Please wait 60 seconds.",
+    });
+
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i);
+    fireEvent.change(input, { target: { value: "new-attempt@example.com" } });
+
+    const button = screen.getByRole("button", { name: /send reset code/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/rate limit exceeded/i),
+      ).toBeInTheDocument();
+      const restored = actualLoad(null, Date.now(), "password_recovery");
+      expect(restored.draft).not.toBeNull();
+      expect(restored.draft?.normalized_identifier).toBe("existing-recovery@example.com");
+      expect(restored.draft?.context).toBe("password_recovery");
+    });
+  });
+
+  it("clears storage and does not restore previously captured draft if its original expiry has passed during request", async () => {
+    const { saveVerificationDraft: actualSave, loadVerificationDraft: actualLoad } =
+      await vi.importActual<typeof import("@/lib/auth/verification-draft")>(
+        "@/lib/auth/verification-draft",
+      );
+
+    let currentTime = 1700000000000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => currentTime);
+
+    try {
+      actualSave(
+        {
+          channel: "email",
+          identifier: "almost-expired@example.com",
+          context: "password_recovery",
+          expiresInSeconds: 60,
+        },
+        currentTime,
+      );
+
+      // Verify draft is active before and at start of submission
+      const activeBeforeSubmit = actualLoad(null, currentTime, "password_recovery");
+      expect(activeBeforeSubmit.draft).not.toBeNull();
+      expect(activeBeforeSubmit.expired).toBe(false);
+
+      vi.mocked(forgotPasswordAction).mockImplementationOnce(async () => {
+        // While request is pending, advance clock past the draft's 60s expiry
+        currentTime += 75 * 1000;
+        return { error: "Submission rejected" };
+      });
+
+      render(<ForgotPasswordForm />);
+
+      const input = screen.getByLabelText(/registered email/i);
+      fireEvent.change(input, { target: { value: "retry@example.com" } });
+
+      const button = screen.getByRole("button", { name: /send reset code/i });
+      await act(async () => {
+        fireEvent.click(button);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/submission rejected/i)).toBeInTheDocument();
+        expect(mockClearVerificationDraft).toHaveBeenCalled();
+        const check = actualLoad(null, currentTime);
+        expect(check.draft).toBeNull();
+      });
+    } finally {
+      dateSpy.mockRestore();
+    }
   });
 });

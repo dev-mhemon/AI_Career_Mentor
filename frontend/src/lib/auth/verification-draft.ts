@@ -262,6 +262,16 @@ export function loadVerificationDraft(
       return { draft: null, expired: false };
     }
 
+    const expiresAtMs = Date.parse(parsed.expires_at);
+    const isExpired =
+      !Number.isFinite(expiresAtMs) ||
+      expiresAtMs <= nowMs ||
+      expiresAtMs - nowMs > MAX_VERIFICATION_DRAFT_TTL_SECONDS * 1000;
+
+    if (isExpired) {
+      clearVerificationDraft();
+    }
+
     if (expectedChannel && parsed.channel !== expectedChannel) {
       return { draft: null, expired: false };
     }
@@ -279,13 +289,7 @@ export function loadVerificationDraft(
       return { draft: null, expired: false };
     }
 
-    const expiresAtMs = Date.parse(parsed.expires_at);
-    if (
-      !Number.isFinite(expiresAtMs) ||
-      expiresAtMs <= nowMs ||
-      expiresAtMs - nowMs > MAX_VERIFICATION_DRAFT_TTL_SECONDS * 1000
-    ) {
-      clearVerificationDraft();
+    if (isExpired) {
       return { draft: null, expired: true };
     }
 

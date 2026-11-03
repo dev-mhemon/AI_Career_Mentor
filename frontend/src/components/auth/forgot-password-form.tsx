@@ -27,11 +27,17 @@ export function ForgotPasswordForm() {
   useEffect(() => {
     if (state?.error) {
       if (previousDraftRef.current) {
+        const originalExpiresAtMs = new Date(
+          previousDraftRef.current.expires_at,
+        ).getTime();
+        if (!Number.isFinite(originalExpiresAtMs) || originalExpiresAtMs <= Date.now()) {
+          clearVerificationDraft();
+          previousDraftRef.current = null;
+          return;
+        }
         const remainingSeconds = Math.max(
           1,
-          Math.floor(
-            (new Date(previousDraftRef.current.expires_at).getTime() - Date.now()) / 1000,
-          ),
+          Math.floor((originalExpiresAtMs - Date.now()) / 1000),
         );
         saveVerificationDraft({
           channel: previousDraftRef.current.channel,
@@ -90,7 +96,7 @@ export function ForgotPasswordForm() {
           )?.value;
           if (identifier) {
             const { draft: existing } = loadVerificationDraft(null, Date.now());
-            if (existing && existing.context !== "password_recovery") {
+            if (existing) {
               previousDraftRef.current = existing;
             }
             saveVerificationDraft({
