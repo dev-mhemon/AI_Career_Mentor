@@ -6,6 +6,7 @@ import type { EntityManager } from 'typeorm';
 import type { ArgumentsHost } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { AuthService } from './services/auth.service.js';
+import { AuthController } from './controllers/auth.controller.js';
 import { ApiExceptionFilter, fail } from '../common/http.js';
 import type { DatabaseService } from './services/database.service.js';
 import type { SessionApprovalService } from './services/session-approval.service.js';
@@ -73,6 +74,7 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
     sendChallenge: ReturnType<typeof vi.fn>;
   };
   let authService: AuthService;
+  let authController: AuthController;
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
@@ -147,6 +149,7 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
       otpStore as unknown as OtpSecretStore,
       emailProvider as unknown as EmailRegistrationProvider,
     );
+    authController = new AuthController(authService, {} as never);
   });
 
   afterEach(() => {
@@ -385,11 +388,9 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
       ]);
 
       const fetchMock = vi.mocked(globalThis.fetch);
-      fetchMock
-        .mockResolvedValueOnce(new Response('GoTrue down', { status: 500 }))
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ id: TEST_USER_ID }), { status: 200 }),
-        );
+      fetchMock.mockResolvedValueOnce(
+        new Response('GoTrue down', { status: 500 }),
+      );
 
       await expect(
         authService.verifyPhone({
@@ -402,6 +403,27 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
           code: 'PROVIDER_ERROR',
         }),
       });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(`/admin/users/${TEST_USER_ID}`),
+        expect.objectContaining({
+          method: 'PUT',
+          body: expect.stringContaining(
+            `phone-${TEST_USER_ID}@synthetic.mentor`,
+          ),
+        }),
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE auth.users SET email = NULL'),
+        [TEST_USER_ID, `phone-${TEST_USER_ID}@synthetic.mentor`],
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "DELETE FROM auth.identities WHERE user_id = $1 AND provider = 'email'",
+        ),
+        [TEST_USER_ID, `phone-${TEST_USER_ID}@synthetic.mentor`],
+      );
     });
   });
 
@@ -469,11 +491,14 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
         return [];
       });
 
-      const res = await authService.bootstrap(
-        { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
-        authHeader,
-        'google',
-      );
+      const mockReq = {
+        user: { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
+        headers: { authorization: authHeader },
+      };
+
+      const res = await authController.oauth(mockReq, {
+        provider: 'google',
+      });
 
       expect(res).toMatchObject({
         user: expect.objectContaining({
@@ -483,6 +508,8 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
           linked_providers: ['google'],
         }),
         profile_complete: false,
+        verified_contact_required: false,
+        next_step: 'profile_setup',
       });
     });
 
@@ -549,22 +576,14 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
         return [];
       });
 
-      const me = await authService.bootstrap(
-        { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
-        authHeader,
-        'facebook',
-      );
-
-      const responsePayload = {
-        user: me.user,
-        profile_complete: me.profile_complete,
-        verified_contact_required: !me.user.verified_contact,
-        next_step: !me.user.verified_contact
-          ? 'add_verified_contact'
-          : me.profile_complete
-            ? 'app_home'
-            : 'profile_setup',
+      const mockReq = {
+        user: { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
+        headers: { authorization: authHeader },
       };
+
+      const responsePayload = await authController.oauth(mockReq, {
+        provider: 'facebook',
+      });
 
       expect(responsePayload).toMatchObject({
         verified_contact_required: true,

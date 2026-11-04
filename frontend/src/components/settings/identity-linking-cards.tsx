@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { linkIdentityAction } from '@/lib/auth/actions';
 
 /**
@@ -68,6 +68,19 @@ const PROVIDERS: ProviderMeta[] = [
 ];
 
 /**
+ * Compares two provider string lists for content equality regardless of order.
+ * @param a - First provider list.
+ * @param b - Second provider list.
+ */
+function areProviderListsEqual(a: string[], b: string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((val, idx) => val === sortedB[idx]);
+}
+
+/**
  * Screen 22: Identity Linking Cards component.
  * Allows authenticated users to connect Google and Facebook social identities per EP-A11.
  * Enforces verified contact requirement and handles account collision rejection.
@@ -82,11 +95,15 @@ export function IdentityLinkingCards({
   const [error, setError] = useState<string | null>(initialError ?? null);
   const [success, setSuccess] = useState<string | null>(initialSuccess ?? null);
   const [pendingProvider, setPendingProvider] = useState<'google' | 'facebook' | null>(null);
-  const [linked, setLinked] = useState<string[]>(linkedProviders);
+  const [prevLinkedProviders, setPrevLinkedProviders] = useState(linkedProviders);
+  const [linkedOverride, setLinkedOverride] = useState<string[] | null>(null);
 
-  useEffect(() => {
-    setLinked(linkedProviders);
-  }, [linkedProviders]);
+  if (!areProviderListsEqual(linkedProviders, prevLinkedProviders)) {
+    setPrevLinkedProviders(linkedProviders);
+    setLinkedOverride(null);
+  }
+
+  const linked = linkedOverride ?? linkedProviders;
 
   /**
    * Initiates linking of a social provider (Google or Facebook) via server action.
@@ -113,9 +130,12 @@ export function IdentityLinkingCards({
         setError(res.error);
       } else if (res?.success) {
         if (res.linked_providers) {
-          setLinked(res.linked_providers);
+          setLinkedOverride(res.linked_providers);
         } else {
-          setLinked((prev) => (prev.includes(provider) ? prev : [...prev, provider]));
+          setLinkedOverride((prev) => {
+            const base = prev ?? linkedProviders;
+            return base.includes(provider) ? base : [...base, provider];
+          });
         }
         setSuccess(`${provider === 'google' ? 'Google' : 'Facebook'} অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।`);
       }

@@ -144,4 +144,64 @@ describe('IdentityLinkingCards Component', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Google account linked successfully.');
     expect(screen.getByRole('alert')).toHaveTextContent('Previous action failed.');
   });
+
+  it('resets linked override when linkedProviders prop updates', async () => {
+    vi.mocked(linkIdentityAction).mockResolvedValueOnce({
+      success: true,
+      linked_providers: ['email', 'google'],
+    });
+
+    const { rerender } = render(
+      <IdentityLinkingCards
+        linkedProviders={['email']}
+        verifiedContact={true}
+      />,
+    );
+
+    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    fireEvent.click(googleBtn);
+
+    expect(await screen.findByText('Google অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+
+    rerender(
+      <IdentityLinkingCards
+        linkedProviders={['email', 'facebook']}
+        verifiedContact={true}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /link google account/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /link facebook account/i })).not.toBeInTheDocument();
+  });
+
+  it('preserves linkedOverride when parent passes newly allocated array with same provider contents', async () => {
+    vi.mocked(linkIdentityAction).mockResolvedValueOnce({
+      success: true,
+      linked_providers: ['email', 'google'],
+    });
+
+    const { rerender } = render(
+      <IdentityLinkingCards
+        linkedProviders={['email']}
+        verifiedContact={true}
+      />,
+    );
+
+    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    fireEvent.click(googleBtn);
+
+    expect(await screen.findByText('Google অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+
+    rerender(
+      <IdentityLinkingCards
+        linkedProviders={['email'].slice()}
+        verifiedContact={true}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Google')).toBeInTheDocument();
+  });
 });
