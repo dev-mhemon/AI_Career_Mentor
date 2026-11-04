@@ -2,12 +2,20 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getAppSessionStateResult } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
+import { IdentityLinkingCards } from '@/components/settings/identity-linking-cards';
+import { AddContactForm } from '@/components/settings/add-contact-form';
+import { VerifiedContactPrompt } from '@/components/settings/verified-contact-prompt';
 
 /**
- * Screen 22 (`/settings`) — Account & Settings shell for active and suspended users.
- * Preserves `effective_access`, `profile_complete`, `focus_roadmap_id`, and `can_delete_account` metadata with working sign-out.
+ * Screen 22 (`/settings`) — Account & Settings page for active and suspended users.
+ * Supports identity linking (EP-A11), adding contacts (EP-A12), and verified contact prompting (PRD §11).
+ * Preserves effective_access, profile_complete, focus_roadmap_id, and can_delete_account metadata.
  */
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const result = await getAppSessionStateResult();
 
   if (result.status === 'unauthenticated') {
@@ -50,6 +58,23 @@ export default async function SettingsPage() {
   const state = result.data;
   const { user, profile_complete, effective_access, can_delete_account } = state;
   const isSuspended = user.status === 'suspended';
+
+  const awaitedParams = await searchParams;
+  const rawLinked =
+    typeof awaitedParams?.linked === 'string' ? awaitedParams.linked : undefined;
+  const linkedProvider =
+    (rawLinked === 'google' || rawLinked === 'facebook') &&
+    user.linked_providers.includes(rawLinked)
+      ? rawLinked
+      : undefined;
+  const linkError = awaitedParams?.error === 'link_failed';
+
+  const initialSuccess = linkedProvider
+    ? `${linkedProvider === 'google' ? 'Google' : 'Facebook'} অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে (Social account linked successfully).`
+    : undefined;
+  const initialError = linkError
+    ? 'সোশ্যাল অ্যাকাউন্ট যুক্ত করা সম্ভব হয়নি (Failed to link identity. Please try again).'
+    : undefined;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -104,94 +129,122 @@ export default async function SettingsPage() {
           </div>
         )}
 
-        <section
-          aria-labelledby="account-overview-heading"
-          className="mt-6 rounded-lg border border-foreground/15 bg-background p-5"
-        >
-          <h2
-            id="account-overview-heading"
-            className="text-base font-semibold text-foreground"
-          >
-            অ্যাকাউন্টের তথ্য (Account Overview)
-          </h2>
-          <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-foreground/60">Email</dt>
-              <dd className="font-medium text-foreground">
-                {user.email ?? 'Not set'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-foreground/60">Phone</dt>
-              <dd className="font-medium text-foreground">
-                {user.phone ?? 'Not set'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-foreground/60">Account Status</dt>
-              <dd className="font-medium text-foreground">{user.status}</dd>
-            </div>
-            <div>
-              <dt className="text-foreground/60">Profile Completeness</dt>
-              <dd className="font-medium text-foreground">
-                {profile_complete ? 'Complete' : 'Incomplete'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-foreground/60">Linked Providers</dt>
-              <dd className="font-medium text-foreground">
-                {user.linked_providers.length > 0
-                  ? user.linked_providers.join(', ')
-                  : 'None'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-foreground/60">Deletion Eligibility</dt>
-              <dd className="font-medium text-foreground">
-                {can_delete_account
-                  ? 'Eligible (Milestone M03)'
-                  : 'Unavailable'}
-              </dd>
-            </div>
-          </dl>
+        <div className="mt-6 flex flex-col gap-8">
+          <VerifiedContactPrompt
+            verifiedContact={user.verified_contact}
+            isSuspended={isSuspended}
+          />
 
-          {Object.keys(effective_access).length > 0 && (
-            <div className="mt-4 border-t border-foreground/10 pt-4">
-              <p className="text-xs font-medium text-foreground/60">
-                Effective Feature Access
-              </p>
-              <ul className="mt-2 flex flex-wrap gap-2 text-xs">
-                {Object.entries(effective_access).map(([key, enabled]) => (
-                  <li
-                    key={key}
-                    className="rounded border border-foreground/15 px-2 py-1 text-foreground/80"
-                  >
-                    {key}: {enabled ? 'enabled' : 'disabled'}
-                  </li>
-                ))}
-              </ul>
-            </div>
+          <IdentityLinkingCards
+            linkedProviders={user.linked_providers}
+            verifiedContact={user.verified_contact}
+            isSuspended={isSuspended}
+            initialSuccess={initialSuccess}
+            initialError={initialError}
+          />
+
+          {!isSuspended && (
+            <AddContactForm
+              isSuspended={isSuspended}
+              alreadyVerified={user.verified_contact}
+            />
           )}
 
-          <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-foreground/10 pt-4">
-            <form action={logoutAction}>
-              <button
-                type="submit"
-                className="h-11 rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-              >
-                Sign Out
-              </button>
-            </form>
-            {!isSuspended && (
-              <Link
-                href="/onboarding/profile"
-                className="inline-flex h-11 items-center justify-center rounded-lg border border-foreground/20 px-5 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-              >
-                প্রোফাইল সম্পাদনা করুন (Edit Profile)
-              </Link>
+          <section
+            aria-labelledby="account-overview-heading"
+            className="rounded-lg border border-foreground/15 bg-background p-5"
+          >
+            <h2
+              id="account-overview-heading"
+              className="text-base font-semibold text-foreground"
+            >
+              অ্যাকাউন্টের তথ্য (Account Overview)
+            </h2>
+            <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-foreground/60">Email</dt>
+                <dd className="font-medium text-foreground">
+                  {user.email ?? 'Not set'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-foreground/60">Phone</dt>
+                <dd className="font-medium text-foreground">
+                  {user.phone ?? 'Not set'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-foreground/60">Account Status</dt>
+                <dd className="font-medium text-foreground">{user.status}</dd>
+              </div>
+              <div>
+                <dt className="text-foreground/60">Profile Completeness</dt>
+                <dd className="font-medium text-foreground">
+                  {profile_complete ? 'Complete' : 'Incomplete'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-foreground/60">Linked Providers</dt>
+                <dd className="font-medium text-foreground">
+                  {user.linked_providers.length > 0
+                    ? user.linked_providers.join(', ')
+                    : 'None'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-foreground/60">Verified Primary Contact</dt>
+                <dd className="font-medium text-foreground">
+                  {user.verified_contact ? 'Verified' : 'Unverified'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-foreground/60">Deletion Eligibility</dt>
+                <dd className="font-medium text-foreground">
+                  {can_delete_account
+                    ? 'Eligible (Milestone M03)'
+                    : 'Unavailable'}
+                </dd>
+              </div>
+            </dl>
+
+            {Object.keys(effective_access).length > 0 && (
+              <div className="mt-4 border-t border-foreground/10 pt-4">
+                <p className="text-xs font-medium text-foreground/60">
+                  Effective Feature Access
+                </p>
+                <ul className="mt-2 flex flex-wrap gap-2 text-xs">
+                  {Object.entries(effective_access).map(([key, enabled]) => (
+                    <li
+                      key={key}
+                      className="rounded border border-foreground/15 px-2 py-1 text-foreground/80"
+                    >
+                      {key}: {enabled ? 'enabled' : 'disabled'}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
-          </div>
-        </section>
+
+            <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-foreground/10 pt-4">
+              <form action={logoutAction}>
+                <button
+                  type="submit"
+                  className="h-11 rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+                >
+                  Sign Out
+                </button>
+              </form>
+              {!isSuspended && (
+                <Link
+                  href="/onboarding/profile"
+                  className="inline-flex h-11 items-center justify-center rounded-lg border border-foreground/20 px-5 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+                >
+                  প্রোফাইল সম্পাদনা করুন (Edit Profile)
+                </Link>
+              )}
+            </div>
+          </section>
+        </div>
       </main>
     </div>
   );

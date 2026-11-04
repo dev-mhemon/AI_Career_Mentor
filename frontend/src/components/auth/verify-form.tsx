@@ -66,7 +66,7 @@ function VerifyFormContent() {
       }
       router.push(state.redirectTo);
     }
-  }, [state, router]);
+  }, [state, router, channelParam]);
 
   /** Cooldown timer: single-responsibility effect. */
   useEffect(() => {
