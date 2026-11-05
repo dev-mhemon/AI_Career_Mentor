@@ -690,7 +690,7 @@ describe("Auth Actions", () => {
       expect(response.headers.get("location")).toBe("http://localhost:3001/login?error=oauth_failed");
     });
 
-    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /dashboard?linked=${provider}", async () => {
+    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /settings?linked=${provider}", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -728,11 +728,11 @@ describe("Auth Actions", () => {
       );
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?linked=google",
+        "http://localhost:3001/settings?linked=google",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when approveOAuthSession throws during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when approveOAuthSession throws during flow=link", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -755,11 +755,11 @@ describe("Auth Actions", () => {
       expect(linkSocialIdentity).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({
         error: new Error("Exchange error"),
       });
@@ -772,11 +772,11 @@ describe("Auth Actions", () => {
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
       mockExchangeCodeForSession.mockRejectedValueOnce(
         new Error("Unexpected exchange failure"),
       );
@@ -789,7 +789,7 @@ describe("Auth Actions", () => {
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 

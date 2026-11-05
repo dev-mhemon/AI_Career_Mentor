@@ -1,11 +1,13 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import {
   loadVerificationDraft,
+  saveVerificationDraft,
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
 
@@ -20,10 +22,12 @@ export function LoginForm({
   initialError?: string;
   successMessage?: string;
 }) {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState<
     AuthActionResult,
     FormData
   >(loginAction, { error: initialError });
+  const submittedIdentifier = useRef("");
 
   useEffect(() => {
     if (successMessage) {
@@ -38,6 +42,40 @@ export function LoginForm({
     }
   }, [successMessage]);
 
+  useEffect(() => {
+    if (state?.redirectTo) {
+      const channel = state.redirectTo.includes("channel=phone")
+        ? "phone"
+        : "email";
+      const identifier =
+        submittedIdentifier.current ||
+        (document.getElementById("email") as HTMLInputElement | null)?.value?.trim() ||
+        "";
+      if (identifier) {
+        saveVerificationDraft({
+          channel,
+          identifier,
+          context: "unverified_login",
+        });
+      }
+      router.push(state.redirectTo);
+    }
+  }, [state, router]);
+
+  useEffect(() => {
+    if (state?.error && !state?.redirectTo) {
+      submittedIdentifier.current = "";
+      const { draft: loaded } = loadVerificationDraft(
+        null,
+        Date.now(),
+        ["unverified_login"],
+      );
+      if (loaded?.context === "unverified_login") {
+        clearVerificationDraft();
+      }
+    }
+  }, [state]);
+
   return (
     <div className="flex flex-col gap-6">
       {successMessage && (
@@ -49,7 +87,16 @@ export function LoginForm({
         </div>
       )}
 
-      <form action={formAction} className="flex flex-col gap-4">
+      <form
+        action={formAction}
+        onSubmit={(e) => {
+          const el = e.currentTarget.elements.namedItem(
+            "email",
+          ) as HTMLInputElement | null;
+          submittedIdentifier.current = el?.value?.trim() ?? "";
+        }}
+        className="flex flex-col gap-4"
+      >
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="email"

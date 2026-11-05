@@ -80,21 +80,25 @@ async function getVerificationContext(
 
 /**
  * Server action authenticating user credentials via backend EP-A05 and establishing session.
+ * Supports email and Bangladesh mobile phone identifiers with unverified contact redirection.
  */
 export async function loginAction(
   _prevState: AuthActionResult,
   formData: FormData,
 ): Promise<AuthActionResult> {
-  const email = formData.get('email') as string;
+  const rawIdentifier = (
+    (formData.get('email') as string) ||
+    (formData.get('identifier') as string)
+  )?.trim();
   const password = formData.get('password') as string;
 
-  if (!email || !password) {
+  if (!rawIdentifier || !password) {
     return { error: 'Email and password are required.' };
   }
 
   let destination = '/dashboard';
   try {
-    const session = await loginUser(email, password);
+    const session = await loginUser(rawIdentifier, password);
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.setSession({
       access_token: session.access_token,
@@ -106,11 +110,28 @@ export async function loginAction(
       session.next_step === 'profile_setup'
     )
       destination = '/onboarding/profile';
+    else if (
+      session.user.status !== 'suspended' &&
+      session.next_step === 'add_verified_contact'
+    )
+      destination = '/settings?prompt=verify_contact';
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (
+        err.statusCode === 403 &&
+        (err.code === 'ACCOUNT_NOT_VERIFIED' ||
+          err.message?.toLowerCase().includes('verify'))
+      ) {
+        const channel = rawIdentifier.includes('@') ? 'email' : 'phone';
+        await setVerificationContext({ type: channel, identifier: rawIdentifier });
+        return {
+          error: 'Please verify your contact before logging in.',
+          redirectTo: `/verify?channel=${channel}`,
+        };
+      }
       return { error: err.message };
     }
     return { error: 'An unexpected error occurred during login.' };
@@ -224,7 +245,7 @@ export async function verifyOtpAction(
       session.next_step === 'profile_setup'
         ? '/onboarding/profile'
         : session.next_step === 'add_verified_contact'
-          ? '/dashboard?next_step=add_verified_contact'
+          ? '/settings?prompt=verify_contact'
           : '/dashboard';
   } catch (err) {
     if (err instanceof NetworkError) {

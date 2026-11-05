@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { approveOAuthSession, linkSocialIdentity, ApiError, NetworkError } from "@/lib/api/client";
+import {
+  approveOAuthSession,
+  linkSocialIdentity,
+  ApiError,
+  NetworkError,
+} from "@/lib/api/client";
 
+/**
+ * Safely signs out the local Supabase session, suppressing any errors.
+ */
 async function safeSignOut(
   supabase: {
     auth: {
@@ -18,24 +26,24 @@ async function safeSignOut(
 }
 
 /**
- * Auth callback route handler.
+ * Auth callback route handler for OAuth sign-in and social identity linking.
  *
  * Flow:
- *   1. Reject missing code -> /login?error=oauth_failed
+ *   1. Reject missing code -> /settings?error=link_failed (flow=link) or /login?error=oauth_failed
  *   2. Identify flow branch:
  *      a) OAuth branch: ?provider=google | facebook
  *         - Exchange auth code for Supabase session
  *         - Validate that user.identities contains the requested provider
- *         - POST /api/v1/auth/oauth/session with { provider } to approve session
- *         - Redirect per C05 OAuth next_step
+ *         - For flow=link: approve OAuth session and link identity -> /settings?linked=<provider> (or /settings?error=link_failed)
+ *         - For standard sign-in: approve OAuth session and redirect per next_step (e.g. /settings?prompt=verify_contact)
  *      b) Legacy / transitional email confirmation branch: flow=email or no provider param
  *         - Exchange auth code so GoTrue confirms email
  *         - Clean up unapproved local session via signOut({ scope: 'local' })
  *         - Redirect to /login?verified=true for canonical password login
- *      c) Invalid provider param -> /login?error=oauth_failed without code exchange
+ *      c) Invalid provider param -> /settings?error=link_failed (flow=link) or /login?error=oauth_failed
  *
- * On any failure, cleans up the local session via signOut({ scope: 'local' })
- * and redirects to /login?error=oauth_failed (or sync_failed).
+ * On any failure during sign-in, cleans up the local session via signOut({ scope: 'local' })
+ * and redirects to /login?error=oauth_failed (or sync_failed). Flow=link failures preserve existing session.
  */
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -44,6 +52,9 @@ export async function GET(request: Request) {
   const flow = searchParams.get("flow");
 
   if (!code) {
+    if (flow === "link") {
+      return NextResponse.redirect(`${origin}/settings?error=link_failed`);
+    }
     return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
   }
 
@@ -53,6 +64,9 @@ export async function GET(request: Request) {
     queryProvider !== "google" &&
     queryProvider !== "facebook"
   ) {
+    if (flow === "link") {
+      return NextResponse.redirect(`${origin}/settings?error=link_failed`);
+    }
     return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
   }
 
@@ -71,7 +85,7 @@ export async function GET(request: Request) {
     if (exchangeError) {
       console.error("Auth code exchange failed");
       if (flow === "link") {
-        return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+        return NextResponse.redirect(`${origin}/settings?error=link_failed`);
       }
       await safeSignOut(supabase);
       return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
@@ -87,7 +101,7 @@ export async function GET(request: Request) {
 
       if (!session) {
         if (flow === "link") {
-          return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+          return NextResponse.redirect(`${origin}/settings?error=link_failed`);
         }
         await safeSignOut(supabase);
         return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
@@ -99,7 +113,7 @@ export async function GET(request: Request) {
       );
       if (!hasMatchingIdentity) {
         if (flow === "link") {
-          return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+          return NextResponse.redirect(`${origin}/settings?error=link_failed`);
         }
         await safeSignOut(supabase);
         return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
@@ -109,18 +123,25 @@ export async function GET(request: Request) {
         try {
           await approveOAuthSession(session.access_token, provider);
           await linkSocialIdentity(session.access_token, provider);
-          return NextResponse.redirect(`${origin}/dashboard?linked=${provider}`);
+          return NextResponse.redirect(
+            `${origin}/settings?linked=${provider}`,
+          );
         } catch {
-          return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+          return NextResponse.redirect(
+            `${origin}/settings?error=link_failed`,
+          );
         }
       }
 
-      const approved = await approveOAuthSession(session.access_token, provider);
+      const approved = await approveOAuthSession(
+        session.access_token,
+        provider,
+      );
       const destination =
         approved.user.status === "suspended"
           ? "/dashboard"
           : approved.next_step === "add_verified_contact"
-            ? "/dashboard?prompt=verify_contact"
+            ? "/settings?prompt=verify_contact"
             : approved.next_step === "profile_setup"
               ? "/onboarding/profile"
               : "/dashboard";
@@ -136,7 +157,7 @@ export async function GET(request: Request) {
   } catch (err) {
     console.error("Auth callback failed");
     if (flow === "link") {
-      return NextResponse.redirect(`${origin}/dashboard?error=link_failed`);
+      return NextResponse.redirect(`${origin}/settings?error=link_failed`);
     }
     await safeSignOut(supabase);
     if (
