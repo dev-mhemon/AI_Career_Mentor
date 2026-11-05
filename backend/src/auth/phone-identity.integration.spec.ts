@@ -594,6 +594,174 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
       });
     });
 
+    it('bootstraps Google OAuth session for user with complete profile returning next_step = app_home', async () => {
+      const authHeader = `Bearer ${createSyntheticJwt(
+        TEST_USER_ID,
+        TEST_SESSION_ID,
+        {
+          amr: [{ method: 'oauth', provider: 'google' }],
+        },
+      )}`;
+
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: TEST_USER_ID,
+            email: TEST_EMAIL,
+            email_confirmed_at: new Date().toISOString(),
+            identities: [
+              {
+                provider: 'google',
+                id: 'google-sub-complete',
+                identity_data: { sub: 'google-sub-complete' },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      database.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT u.id,u.email,u.phone,u.status')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              status: 'active',
+              role: 'USER',
+              verified_contact: true,
+              profile_complete: true,
+              linked_providers: ['google'],
+            },
+          ];
+        }
+        if (sql.includes('FROM public.user_profiles p')) {
+          return [
+            {
+              user_id: TEST_USER_ID,
+              current_role_title: 'Full Stack Engineer',
+              experience_level: 'mid',
+              existing_skills_none: true,
+              self_reported_skill_ids: [],
+              preferred_daily_hours: 2,
+              learning_preference: 'mixed',
+              timezone: 'Asia/Dhaka',
+              has_confirmed_goal: true,
+            },
+          ];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('FROM public.roadmaps')) {
+          return [{ id: 'roadmap-uuid-1' }];
+        }
+        return [];
+      });
+
+      const mockReq = {
+        user: { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
+        headers: { authorization: authHeader },
+      };
+
+      const res = await authController.oauth(mockReq, {
+        provider: 'google',
+      });
+
+      expect(res).toMatchObject({
+        user: expect.objectContaining({
+          id: TEST_USER_ID,
+          verified_contact: true,
+          status: 'active',
+          linked_providers: ['google'],
+        }),
+        profile_complete: true,
+        verified_contact_required: false,
+        next_step: 'app_home',
+      });
+    });
+
+    it('bootstraps OAuth session for suspended user preserving suspended status', async () => {
+      const authHeader = `Bearer ${createSyntheticJwt(
+        TEST_USER_ID,
+        TEST_SESSION_ID,
+        {
+          amr: [{ method: 'oauth', provider: 'google' }],
+        },
+      )}`;
+
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: TEST_USER_ID,
+            email: TEST_EMAIL,
+            email_confirmed_at: new Date().toISOString(),
+            identities: [
+              {
+                provider: 'google',
+                id: 'google-sub-suspended',
+                identity_data: { sub: 'google-sub-suspended' },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      database.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT u.id,u.email,u.phone,u.status')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              status: 'suspended',
+              role: 'USER',
+              verified_contact: true,
+              profile_complete: true,
+              linked_providers: ['google'],
+            },
+          ];
+        }
+        if (sql.includes('FROM public.user_profiles p')) {
+          return [
+            {
+              user_id: TEST_USER_ID,
+              current_role: 'Data Engineer',
+              experience_level: 'senior',
+              skills: ['Python', 'SQL'],
+              learning_preference: 'documentation',
+              has_confirmed_goal: true,
+            },
+          ];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: false }];
+        }
+        if (sql.includes('FROM public.roadmaps')) {
+          return [];
+        }
+        return [];
+      });
+
+      const mockReq = {
+        user: { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
+        headers: { authorization: authHeader },
+      };
+
+      const res = await authController.oauth(mockReq, {
+        provider: 'google',
+      });
+
+      expect(res).toMatchObject({
+        user: expect.objectContaining({
+          id: TEST_USER_ID,
+          status: 'suspended',
+        }),
+      });
+    });
+
     it('rejects unsupported provider with 422 PROVIDER_MISMATCH', async () => {
       const authHeader = `Bearer ${createSyntheticJwt(TEST_USER_ID, TEST_SESSION_ID)}`;
 
@@ -699,6 +867,50 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
 
       expect(res).toEqual({
         linked_providers: ['phone', 'google'],
+      });
+    });
+
+    it('links Facebook social identity for authenticated user with verified contact and returns updated linked_providers', async () => {
+      const token = createSyntheticJwt(TEST_USER_ID, TEST_SESSION_ID);
+      const authHeader = `Bearer ${token}`;
+
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: TEST_USER_ID,
+            identities: [
+              {
+                id: 'fb-sub-789',
+                provider: 'facebook',
+                identity_data: { sub: 'fb-sub-789' },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      database.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact FROM public.users')) {
+          return [{ verified_contact: true }];
+        }
+        if (sql.includes('provider_subject = $2')) {
+          return [];
+        }
+        if (sql.includes('SELECT ARRAY(')) {
+          return [{ linked_providers: ['phone', 'facebook'] }];
+        }
+        return [];
+      });
+
+      const res = await authService.linkIdentity(
+        { sub: TEST_USER_ID, sessionId: TEST_SESSION_ID },
+        authHeader,
+        { provider: 'facebook' },
+      );
+
+      expect(res).toEqual({
+        linked_providers: ['phone', 'facebook'],
       });
     });
 

@@ -80,37 +80,67 @@ async function getVerificationContext(
 
 /**
  * Server action authenticating user credentials via backend EP-A05 and establishing session.
+ * Supports email and Bangladesh mobile phone identifiers with unverified contact redirection.
  */
 export async function loginAction(
   _prevState: AuthActionResult,
   formData: FormData,
 ): Promise<AuthActionResult> {
-  const email = formData.get('email') as string;
+  const rawIdentifier = (
+    (formData.get('email') as string) ||
+    (formData.get('identifier') as string)
+  )?.trim();
   const password = formData.get('password') as string;
 
-  if (!email || !password) {
+  if (!rawIdentifier || !password) {
     return { error: 'Email and password are required.' };
   }
 
   let destination = '/dashboard';
   try {
-    const session = await loginUser(email, password);
+    const session = await loginUser(rawIdentifier, password);
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.setSession({
       access_token: session.access_token,
       refresh_token: session.refresh_token,
     });
     if (error) return { error: 'Failed to establish session.' };
-    if (
-      session.user.status !== 'suspended' &&
-      session.next_step === 'profile_setup'
-    )
+    if (session.user.status === 'suspended') {
+      destination = '/settings';
+    } else if (session.next_step === 'profile_setup') {
       destination = '/onboarding/profile';
+    } else if (session.next_step === 'add_verified_contact') {
+      destination = '/settings?prompt=verify_contact';
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (
+        err.statusCode === 403 &&
+        (err.code === 'UNVERIFIED_ACCOUNT' ||
+          err.code === 'ACCOUNT_NOT_VERIFIED' ||
+          err.message?.toLowerCase().includes('verify'))
+      ) {
+        const channel = rawIdentifier.includes('@') ? 'email' : 'phone';
+        if (channel === 'phone') {
+          return {
+            error:
+              'Phone verification is temporarily unavailable. Please sign in with email or contact support.',
+          };
+        }
+        try {
+          await resendVerification({ channel: 'email', contact: rawIdentifier });
+        } catch {
+          // Best-effort challenge dispatch: if rate-limited or existing unexpired challenge remains valid, proceed to verify
+        }
+        await setVerificationContext({ type: 'email', identifier: rawIdentifier });
+        return {
+          error: 'Please verify your contact before logging in.',
+          redirectTo: '/verify?channel=email',
+        };
+      }
       return { error: err.message };
     }
     return { error: 'An unexpected error occurred during login.' };
@@ -221,11 +251,13 @@ export async function verifyOtpAction(
     if (error) return { error: 'Failed to establish session.' };
     await clearVerificationContext();
     destination =
-      session.next_step === 'profile_setup'
-        ? '/onboarding/profile'
-        : session.next_step === 'add_verified_contact'
-          ? '/dashboard?next_step=add_verified_contact'
-          : '/dashboard';
+      session.user.status === 'suspended'
+        ? '/settings'
+        : session.next_step === 'profile_setup'
+          ? '/onboarding/profile'
+          : session.next_step === 'add_verified_contact'
+            ? '/settings?prompt=verify_contact'
+            : '/dashboard';
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -252,6 +284,12 @@ export async function resendOtpAction(
 }> {
   if (type !== 'email' && type !== 'phone') {
     return { error: 'Invalid verification channel.' };
+  }
+  if (type === 'phone') {
+    return {
+      error:
+        'SMS verification is temporarily unavailable. Please verify with email or contact support.',
+    };
   }
   const rawIdentifier =
     typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';

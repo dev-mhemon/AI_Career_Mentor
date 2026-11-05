@@ -60,10 +60,18 @@ vi.mock("@/lib/api/client", () => {
     }
   }
 
+  /**
+   * Mock API error mimicking backend ApiError structure.
+   */
   class MockApiError extends Error {
+    /**
+     * Initializes mock API error with status code, message, and error code.
+     */
     constructor(
       public readonly statusCode: number = 500,
       message = "Api error",
+      public readonly code?: string,
+      public readonly requestId?: string,
     ) {
       super(message);
       this.name = "ApiError";
@@ -146,6 +154,104 @@ describe("Auth Actions", () => {
 
       await loginAction({}, formData);
       expect(redirect).toHaveBeenCalledWith("/onboarding/profile");
+    });
+
+    it("redirects suspended user to /settings shell regardless of next_step", async () => {
+      const formData = new FormData();
+      formData.set("email", "suspended@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        access_token: "approved-access",
+        refresh_token: "approved-refresh",
+        user: { status: "suspended" },
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      await loginAction({}, formData);
+      expect(redirect).toHaveBeenCalledWith("/settings");
+    });
+
+    it("returns error for unverified phone identifier instead of unserviced SMS redirect", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "+8801712345678");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error:
+          "Phone verification is temporarily unavailable. Please sign in with email or contact support.",
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify for email identifier", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "c***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=email",
+      });
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: "email",
+        contact: "candidate@example.com",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        expect.any(String),
+        expect.objectContaining({ httpOnly: true, maxAge: 600, path: "/verify" }),
+      );
+    });
+
+    it("catches 403 ACCOUNT_NOT_VERIFIED and proceeds to /verify even if resendVerification rate limits", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "ACCOUNT_NOT_VERIFIED",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(429, "Rate limit"),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=email",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalled();
     });
   });
 
@@ -498,6 +604,15 @@ describe("Auth Actions", () => {
       const result = await resendOtpAction("sms" as unknown as "phone");
       expect(result).toEqual({ error: "Invalid verification channel." });
     });
+
+    it("returns error when phone channel is requested while SMS is unavailable", async () => {
+      const result = await resendOtpAction("phone", "+8801712345678");
+      expect(result).toEqual({
+        error:
+          "SMS verification is temporarily unavailable. Please verify with email or contact support.",
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
+    });
   });
 
   describe("signInWithOAuth", () => {
@@ -690,7 +805,7 @@ describe("Auth Actions", () => {
       expect(response.headers.get("location")).toBe("http://localhost:3001/login?error=oauth_failed");
     });
 
-    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /dashboard?linked=${provider}", async () => {
+    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /settings?linked=${provider}", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -728,11 +843,11 @@ describe("Auth Actions", () => {
       );
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?linked=google",
+        "http://localhost:3001/settings?linked=google",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when approveOAuthSession throws during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when approveOAuthSession throws during flow=link", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -755,11 +870,11 @@ describe("Auth Actions", () => {
       expect(linkSocialIdentity).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({
         error: new Error("Exchange error"),
       });
@@ -772,11 +887,11 @@ describe("Auth Actions", () => {
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
       mockExchangeCodeForSession.mockRejectedValueOnce(
         new Error("Unexpected exchange failure"),
       );
@@ -789,7 +904,7 @@ describe("Auth Actions", () => {
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
