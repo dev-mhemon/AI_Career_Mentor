@@ -123,6 +123,20 @@ describe('Auth Callback Route Handler (GET /auth/callback)', () => {
         'http://localhost:3001/settings?error=link_failed',
       );
     });
+
+    it('redirects to /settings?error=link_failed when provider is missing in link flow without code exchange or signOut', async () => {
+      const request = new Request(
+        'http://localhost:3001/auth/callback?code=mock-code&flow=link',
+      );
+      const response = await GET(request);
+
+      expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe(
+        'http://localhost:3001/settings?error=link_failed',
+      );
+    });
   });
 
   describe('OAuth Sign-In Flows (Google & Facebook)', () => {
@@ -244,7 +258,7 @@ describe('Auth Callback Route Handler (GET /auth/callback)', () => {
       );
     });
 
-    it('routes suspended OAuth user to /dashboard shell regardless of next_step', async () => {
+    it('routes suspended OAuth user to /settings shell regardless of next_step', async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -278,7 +292,7 @@ describe('Auth Callback Route Handler (GET /auth/callback)', () => {
       const response = await GET(request);
 
       expect(response.status).toBe(307);
-      expect(response.headers.get('location')).toBe('http://localhost:3001/dashboard');
+      expect(response.headers.get('location')).toBe('http://localhost:3001/settings');
     });
 
     it('performs safe sign out and redirects to /login?error=oauth_failed when exchange fails', async () => {

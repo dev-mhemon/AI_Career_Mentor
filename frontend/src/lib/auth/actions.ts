@@ -105,16 +105,13 @@ export async function loginAction(
       refresh_token: session.refresh_token,
     });
     if (error) return { error: 'Failed to establish session.' };
-    if (
-      session.user.status !== 'suspended' &&
-      session.next_step === 'profile_setup'
-    )
+    if (session.user.status === 'suspended') {
+      destination = '/settings';
+    } else if (session.next_step === 'profile_setup') {
       destination = '/onboarding/profile';
-    else if (
-      session.user.status !== 'suspended' &&
-      session.next_step === 'add_verified_contact'
-    )
+    } else if (session.next_step === 'add_verified_contact') {
       destination = '/settings?prompt=verify_contact';
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -122,7 +119,8 @@ export async function loginAction(
     if (err instanceof ApiError) {
       if (
         err.statusCode === 403 &&
-        (err.code === 'ACCOUNT_NOT_VERIFIED' ||
+        (err.code === 'UNVERIFIED_ACCOUNT' ||
+          err.code === 'ACCOUNT_NOT_VERIFIED' ||
           err.message?.toLowerCase().includes('verify'))
       ) {
         const channel = rawIdentifier.includes('@') ? 'email' : 'phone';
@@ -242,11 +240,13 @@ export async function verifyOtpAction(
     if (error) return { error: 'Failed to establish session.' };
     await clearVerificationContext();
     destination =
-      session.next_step === 'profile_setup'
-        ? '/onboarding/profile'
-        : session.next_step === 'add_verified_contact'
-          ? '/settings?prompt=verify_contact'
-          : '/dashboard';
+      session.user.status === 'suspended'
+        ? '/settings'
+        : session.next_step === 'profile_setup'
+          ? '/onboarding/profile'
+          : session.next_step === 'add_verified_contact'
+            ? '/settings?prompt=verify_contact'
+            : '/dashboard';
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };

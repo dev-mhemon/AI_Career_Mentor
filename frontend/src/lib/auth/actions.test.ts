@@ -60,10 +60,18 @@ vi.mock("@/lib/api/client", () => {
     }
   }
 
+  /**
+   * Mock API error mimicking backend ApiError structure.
+   */
   class MockApiError extends Error {
+    /**
+     * Initializes mock API error with status code, message, and error code.
+     */
     constructor(
       public readonly statusCode: number = 500,
       message = "Api error",
+      public readonly code?: string,
+      public readonly requestId?: string,
     ) {
       super(message);
       this.name = "ApiError";
@@ -146,6 +154,44 @@ describe("Auth Actions", () => {
 
       await loginAction({}, formData);
       expect(redirect).toHaveBeenCalledWith("/onboarding/profile");
+    });
+
+    it("redirects suspended user to /settings shell regardless of next_step", async () => {
+      const formData = new FormData();
+      formData.set("email", "suspended@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        access_token: "approved-access",
+        refresh_token: "approved-refresh",
+        user: { status: "suspended" },
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      await loginAction({}, formData);
+      expect(redirect).toHaveBeenCalledWith("/settings");
+    });
+
+    it("catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify for phone identifier", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "+8801712345678");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=phone",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalled();
     });
   });
 

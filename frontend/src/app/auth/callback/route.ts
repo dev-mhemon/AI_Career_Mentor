@@ -35,12 +35,12 @@ async function safeSignOut(
  *         - Exchange auth code for Supabase session
  *         - Validate that user.identities contains the requested provider
  *         - For flow=link: approve OAuth session and link identity -> /settings?linked=<provider> (or /settings?error=link_failed)
- *         - For standard sign-in: approve OAuth session and redirect per next_step (e.g. /settings?prompt=verify_contact)
+ *         - For standard sign-in: approve OAuth session and redirect per status/next_step (suspended -> /settings, add_verified_contact -> /settings?prompt=verify_contact)
  *      b) Legacy / transitional email confirmation branch: flow=email or no provider param
  *         - Exchange auth code so GoTrue confirms email
  *         - Clean up unapproved local session via signOut({ scope: 'local' })
  *         - Redirect to /login?verified=true for canonical password login
- *      c) Invalid provider param -> /settings?error=link_failed (flow=link) or /login?error=oauth_failed
+ *      c) Invalid provider param or flow=link without provider -> /settings?error=link_failed (flow=link) or /login?error=oauth_failed
  *
  * On any failure during sign-in, cleans up the local session via signOut({ scope: 'local' })
  * and redirects to /login?error=oauth_failed (or sync_failed). Flow=link failures preserve existing session.
@@ -58,11 +58,12 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
   }
 
-  // If provider is explicitly specified but unsupported, reject immediately
+  // If provider is explicitly specified but unsupported, or flow is link without provider, reject immediately
   if (
-    queryProvider &&
-    queryProvider !== "google" &&
-    queryProvider !== "facebook"
+    (queryProvider &&
+      queryProvider !== "google" &&
+      queryProvider !== "facebook") ||
+    (flow === "link" && !queryProvider)
   ) {
     if (flow === "link") {
       return NextResponse.redirect(`${origin}/settings?error=link_failed`);
@@ -139,7 +140,7 @@ export async function GET(request: Request) {
       );
       const destination =
         approved.user.status === "suspended"
-          ? "/dashboard"
+          ? "/settings"
           : approved.next_step === "add_verified_contact"
             ? "/settings?prompt=verify_contact"
             : approved.next_step === "profile_setup"
