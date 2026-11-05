@@ -173,7 +173,7 @@ describe("Auth Actions", () => {
       expect(redirect).toHaveBeenCalledWith("/settings");
     });
 
-    it("catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify for phone identifier", async () => {
+    it("returns error for unverified phone identifier instead of unserviced SMS redirect", async () => {
       const formData = new FormData();
       formData.set("identifier", "+8801712345678");
       formData.set("password", "password123");
@@ -188,8 +188,68 @@ describe("Auth Actions", () => {
 
       const result = await loginAction({}, formData);
       expect(result).toEqual({
+        error:
+          "Phone verification is temporarily unavailable. Please sign in with email or contact support.",
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify for email identifier", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "c***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
         error: "Please verify your contact before logging in.",
-        redirectTo: "/verify?channel=phone",
+        redirectTo: "/verify?channel=email",
+      });
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: "email",
+        contact: "candidate@example.com",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        expect.any(String),
+        expect.objectContaining({ httpOnly: true, maxAge: 600, path: "/verify" }),
+      );
+    });
+
+    it("catches 403 ACCOUNT_NOT_VERIFIED and proceeds to /verify even if resendVerification rate limits", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "ACCOUNT_NOT_VERIFIED",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(429, "Rate limit"),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=email",
       });
       expect(mockCookieStore.set).toHaveBeenCalled();
     });
@@ -543,6 +603,15 @@ describe("Auth Actions", () => {
     it("returns error on invalid channel", async () => {
       const result = await resendOtpAction("sms" as unknown as "phone");
       expect(result).toEqual({ error: "Invalid verification channel." });
+    });
+
+    it("returns error when phone channel is requested while SMS is unavailable", async () => {
+      const result = await resendOtpAction("phone", "+8801712345678");
+      expect(result).toEqual({
+        error:
+          "SMS verification is temporarily unavailable. Please verify with email or contact support.",
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
     });
   });
 
