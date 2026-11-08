@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { LoginForm } from "@/components/auth/login-form";
-import { saveVerificationDraft } from "@/lib/auth/verification-draft";
+import {
+  saveVerificationDraft,
+  loadVerificationDraft,
+} from "@/lib/auth/verification-draft";
+import { loginAction } from "@/lib/auth/actions";
+
+// Mock next/navigation
+const mockPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: mockPush,
+  }),
+}));
 
 // Mock the auth actions module
 vi.mock("@/lib/auth/actions", () => ({
@@ -74,6 +86,14 @@ describe("LoginForm", () => {
     expect(link).toHaveAttribute("href", "/register");
   });
 
+  it("renders initial error alert when initialError is passed", () => {
+    render(<LoginForm initialError="Authentication failed. Please try again." />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toBeInTheDocument();
+    expect(alert).toHaveTextContent("Authentication failed. Please try again.");
+  });
+
   it("renders success alert and clears verification draft when successMessage is passed", () => {
     saveVerificationDraft({
       channel: "email",
@@ -108,14 +128,49 @@ describe("LoginForm", () => {
     expect(mockClearVerificationDraft).not.toHaveBeenCalled();
   });
 
-  it("has required attributes on identifier and password inputs", () => {
+  it("has required attributes on identifier and password inputs and accepts Bangladesh phone format", () => {
     render(<LoginForm />);
 
     const identifierInput = screen.getByLabelText(/email or phone/i);
     const passwordInput = screen.getByLabelText(/^password$/i);
 
     expect(identifierInput).toBeRequired();
+    expect(identifierInput).toHaveAttribute(
+      "placeholder",
+      "you@example.com or +8801712345678",
+    );
     expect(passwordInput).toHaveAttribute("type", "password");
     expect(passwordInput).toBeRequired();
+  });
+
+  it("captures identifier in onSubmit and saves unverified_login draft even if uncontrolled inputs reset", async () => {
+    vi.mocked(loginAction).mockImplementation(async () => {
+      // Simulate React 19 uncontrolled form input reset committing before effect
+      const input = document.getElementById("email") as HTMLInputElement | null;
+      if (input) input.value = "";
+      return {
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=phone",
+      };
+    });
+
+    render(<LoginForm />);
+
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const form = identifierInput.closest("form")!;
+
+    fireEvent.change(identifierInput, { target: { value: "+8801712345678" } });
+    fireEvent.change(passwordInput, { target: { value: "secret123" } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    const { draft } = loadVerificationDraft("phone", Date.now(), ["unverified_login"]);
+    expect(draft).not.toBeNull();
+    expect(draft?.normalized_identifier).toBe("+8801712345678");
+    expect(draft?.context).toBe("unverified_login");
+    expect(mockPush).toHaveBeenCalledWith("/verify?channel=phone");
   });
 });

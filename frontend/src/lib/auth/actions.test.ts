@@ -11,7 +11,7 @@ import {
   linkIdentityAction,
   addContactAction,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError, NetworkError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -53,17 +53,34 @@ vi.mock("@/lib/supabase/server", () => ({
 
 // Mock API Client
 vi.mock("@/lib/api/client", () => {
+  /**
+   * Mock NetworkError mimicking client network failures.
+   */
   class MockNetworkError extends Error {
+    /**
+     * Initializes mock network error with message.
+     */
     constructor(message = "Network error") {
       super(message);
       this.name = "NetworkError";
     }
   }
 
+  /**
+   * Mock API error mimicking backend ApiError structure.
+   */
   class MockApiError extends Error {
+    /**
+     * Initializes mock API error with status code, message, and error code.
+     */
     constructor(
       public readonly statusCode: number = 500,
       message = "Api error",
+      public readonly code?: string,
+      public readonly requestId?: string,
+      public readonly details: unknown[] = [],
+      public readonly retryable = false,
+      public readonly retryAfterSeconds: number | null = null,
     ) {
       super(message);
       this.name = "ApiError";
@@ -101,6 +118,10 @@ describe("Auth Actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCookieStore.get.mockReturnValue({ value: verificationContext });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
   });
 
   describe("loginAction", () => {
@@ -146,6 +167,295 @@ describe("Auth Actions", () => {
 
       await loginAction({}, formData);
       expect(redirect).toHaveBeenCalledWith("/onboarding/profile");
+    });
+
+    it("redirects suspended user to /settings shell regardless of next_step", async () => {
+      const formData = new FormData();
+      formData.set("email", "suspended@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        access_token: "approved-access",
+        refresh_token: "approved-refresh",
+        user: { status: "suspended" },
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      await loginAction({}, formData);
+      expect(redirect).toHaveBeenCalledWith("/settings");
+    });
+
+    it("returns error for unverified phone identifier instead of unserviced SMS redirect", async () => {
+      const formData = new FormData();
+      formData.set("identifier", "+8801712345678");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error:
+          "Phone verification is temporarily unavailable. Please sign in with email or contact support.",
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify for email identifier", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "c***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=email",
+      });
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: "email",
+        contact: "candidate@example.com",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        expect.any(String),
+        expect.objectContaining({ httpOnly: true, maxAge: 600, path: "/verify" }),
+      );
+    });
+
+    it("redirects to /verify?channel=email&cooldown=<seconds> when resendVerification succeeds with cooldown", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Account unapproved; contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "c***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+        cooldown: 60,
+      } as unknown as Awaited<ReturnType<typeof resendVerification>>);
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Please verify your contact before logging in.",
+        redirectTo: "/verify?channel=email&cooldown=60",
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        "mentor_verification_context",
+        expect.any(String),
+        expect.objectContaining({ httpOnly: true, maxAge: 600, path: "/verify" }),
+      );
+    });
+
+    it("returns rate-limited error and does not redirect when resendVerification fails with 429 RESEND_COOLDOWN_ACTIVE or RATE_LIMITED", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(
+          429,
+          "Active cooldown in effect",
+          "RESEND_COOLDOWN_ACTIVE",
+          undefined,
+          [],
+          true,
+          45,
+        ),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Email delivery is temporarily rate-limited. Please try again later.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("catches 403 ACCOUNT_NOT_VERIFIED and returns rate-limited error when resendVerification returns 429 without active cooldown", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "ACCOUNT_NOT_VERIFIED",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(429, "Rate limit"),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error:
+          "Email delivery is temporarily rate-limited. Please try again later.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("does not redirect and returns error when resendVerification fails with NetworkError", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new NetworkError("Network connection lost"),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Unable to reach the server. Please try again later.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("does not redirect and returns error when resendVerification fails with 503 SERVICE_UNAVAILABLE even with retryAfterSeconds", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(
+          503,
+          "Email delivery is temporarily unavailable",
+          "SERVICE_UNAVAILABLE",
+          undefined,
+          [],
+          true,
+          30,
+        ),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Email delivery is temporarily unavailable",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("does not redirect and returns error when resendVerification fails with INTERNAL_ERROR", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(
+          500,
+          "Internal delivery error",
+          "INTERNAL_ERROR",
+        ),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Internal delivery error",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("surfaces string error message when resendVerification resolves with string error payload", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        success: false,
+        error: "Custom dispatch failure",
+      } as unknown as Awaited<ReturnType<typeof resendVerification>>);
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Custom dispatch failure",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("returns fallback error message when resendVerification resolves with boolean/non-string truthy error payload", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        error: true,
+      } as unknown as Awaited<ReturnType<typeof resendVerification>>);
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Unable to send verification code. Please try again.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
     });
   });
 
@@ -202,6 +512,25 @@ describe("Auth Actions", () => {
         error:
           "Email delivery is temporarily rate-limited. Please try again later.",
       });
+    });
+
+    it("returns fallback error when registerUser resolves with success false and no error property", async () => {
+      const formData = new FormData();
+      formData.set("type", "email");
+      formData.set("identifier", "test@example.com");
+      formData.set("password", "password123");
+      formData.set("confirmPassword", "password123");
+      formData.set("privacy_consent", "on");
+
+      vi.mocked(registerUser).mockResolvedValueOnce({
+        success: false,
+      } as unknown as Awaited<ReturnType<typeof registerUser>>);
+
+      const result = await registerAction({}, formData);
+      expect(result).toEqual({
+        error: "An unexpected error occurred during registration.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
     });
 
     it("keeps the verification contact out of the redirect URL", async () => {
@@ -451,6 +780,7 @@ describe("Auth Actions", () => {
         success: true,
         expiresInSeconds: 600,
         contactMasked: "t***@example.com",
+        resendAvailableAt: "2026-01-01T00:00:00Z",
       });
       expect(resendVerification).toHaveBeenCalledWith({
         channel: "email",
@@ -487,6 +817,7 @@ describe("Auth Actions", () => {
         success: true,
         expiresInSeconds: 600,
         contactMasked: "r****@example.com",
+        resendAvailableAt: "2026-01-01T00:00:00Z",
       });
       expect(resendVerification).toHaveBeenCalledWith({
         channel: "email",
@@ -497,6 +828,52 @@ describe("Auth Actions", () => {
     it("returns error on invalid channel", async () => {
       const result = await resendOtpAction("sms" as unknown as "phone");
       expect(result).toEqual({ error: "Invalid verification channel." });
+    });
+
+    it("returns error when phone channel is requested while SMS is unavailable", async () => {
+      const result = await resendOtpAction("phone", "+8801712345678");
+      expect(result).toEqual({
+        error:
+          "SMS verification is temporarily unavailable. Please verify with email or contact support.",
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
+    });
+
+    it("surfaces string error message when resendVerification resolves with string error payload", async () => {
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        success: false,
+        error: "Custom dispatch failure",
+      } as unknown as Awaited<ReturnType<typeof resendVerification>>);
+
+      const result = await resendOtpAction("email");
+      expect(result).toEqual({
+        error: "Custom dispatch failure",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("returns fallback error message when resendVerification resolves with boolean/non-string truthy error payload", async () => {
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        error: true,
+      } as unknown as Awaited<ReturnType<typeof resendVerification>>);
+
+      const result = await resendOtpAction("email");
+      expect(result).toEqual({
+        error: "Failed to send verification code. Please try again later.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("returns fallback error when resendVerification resolves with success false and no error property", async () => {
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        success: false,
+      } as unknown as Awaited<ReturnType<typeof resendVerification>>);
+
+      const result = await resendOtpAction("email");
+      expect(result).toEqual({
+        error: "Failed to send verification code. Please try again later.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
     });
   });
 
@@ -690,7 +1067,7 @@ describe("Auth Actions", () => {
       expect(response.headers.get("location")).toBe("http://localhost:3001/login?error=oauth_failed");
     });
 
-    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /dashboard?linked=${provider}", async () => {
+    it("handles flow=link by calling approveOAuthSession and linkSocialIdentity and redirecting to /settings?linked=${provider}", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -728,11 +1105,11 @@ describe("Auth Actions", () => {
       );
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?linked=google",
+        "http://localhost:3001/settings?linked=google",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when approveOAuthSession throws during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when approveOAuthSession throws during flow=link", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -755,11 +1132,11 @@ describe("Auth Actions", () => {
       expect(linkSocialIdentity).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when exchangeCodeForSession returns error during flow=link", async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({
         error: new Error("Exchange error"),
       });
@@ -772,11 +1149,11 @@ describe("Auth Actions", () => {
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 
-    it("preserves session (no signOut) and redirects to /dashboard?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
+    it("preserves session (no signOut) and redirects to /settings?error=link_failed when exchangeCodeForSession throws during flow=link", async () => {
       mockExchangeCodeForSession.mockRejectedValueOnce(
         new Error("Unexpected exchange failure"),
       );
@@ -789,7 +1166,7 @@ describe("Auth Actions", () => {
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3001/dashboard?error=link_failed",
+        "http://localhost:3001/settings?error=link_failed",
       );
     });
 

@@ -89,7 +89,7 @@ export function RegisterForm() {
             disabled={isPending}
             className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
             placeholder={
-              activeTab === "email" ? "you@example.com" : "+1234567890"
+              activeTab === "email" ? "you@example.com" : "+8801712345678"
             }
           />
         </div>

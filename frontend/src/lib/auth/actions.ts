@@ -79,38 +79,244 @@ async function getVerificationContext(
 }
 
 /**
+ * Normalizes an unknown error payload into a key-value record if valid, or extracts a string message.
+ *
+ * @param rawErr - The raw error property or caught value to inspect.
+ * @returns A record containing error fields, or undefined if not representable.
+ */
+function toErrorRecord(rawErr: unknown): Record<string, unknown> | undefined {
+  if (typeof rawErr === 'string') {
+    return { message: rawErr };
+  }
+  if (rawErr !== null && typeof rawErr === 'object') {
+    return rawErr as Record<string, unknown>;
+  }
+  return rawErr ? {} : undefined;
+}
+
+/**
+ * Classifies an error code, retry-after duration, and HTTP status code to determine
+ * whether an active cooldown or rate limit is in effect for rate-limit reporting.
+ *
+ * @param code - Error code identifier from response or exception.
+ * @param retryAfter - Retry-after duration in seconds, if present.
+ * @param statusCode - HTTP status code, if present.
+ * @returns Object with isCooldown flag and optional cooldownSeconds.
+ */
+function classifyCooldown(
+  code: unknown,
+  retryAfter: unknown,
+  statusCode?: number,
+): { isCooldown: boolean; cooldownSeconds?: number } {
+  const seconds = typeof retryAfter === 'number' && retryAfter > 0 ? retryAfter : undefined;
+  const isCooldown =
+    code === 'RATE_LIMITED' ||
+    code === 'RESEND_COOLDOWN_ACTIVE' ||
+    code === 'COOLDOWN_ACTIVE' ||
+    (seconds !== undefined &&
+      statusCode === 429 &&
+      code !== 'OTP_LIMIT_EXCEEDED' &&
+      code !== 'IP_SEND_LIMIT_EXCEEDED');
+  return { isCooldown, cooldownSeconds: seconds };
+}
+
+/**
+ * Evaluates the outcome of resendVerification (resolved result or caught error)
+ * to determine if verification flow can proceed and whether a cooldown was established.
+ * A cooldown reservation alone (e.g. 429 RESEND_COOLDOWN_ACTIVE) is not treated as a usable
+ * challenge delivery; redirection to code entry requires a confirmed challenge dispatch.
+ *
+ * @param result - The resolved value from resendVerification if it did not throw.
+ * @param error - The caught error if resendVerification threw.
+ * @returns Dispatch decision with canProceed flag, optional cooldown in seconds, and optional error message.
+ */
+function evaluateResendDispatch(
+  result: unknown,
+  error: unknown,
+): {
+  canProceed: boolean;
+  cooldownSeconds?: number;
+  resendAvailableAt?: string;
+  errorMessage?: string;
+} {
+  if (error) {
+    if (error instanceof NetworkError) {
+      return {
+        canProceed: false,
+        errorMessage: 'Unable to reach the server. Please try again later.',
+      };
+    }
+    if (error instanceof ApiError) {
+      const { isCooldown } = classifyCooldown(
+        error.code,
+        error.retryAfterSeconds,
+        error.statusCode,
+      );
+
+      const limitMsg =
+        isCooldown || error.statusCode === 429
+          ? 'Email delivery is temporarily rate-limited. Please try again later.'
+          : error.message || 'Unable to send verification code. Please try again.';
+
+      return {
+        canProceed: false,
+        errorMessage: limitMsg,
+      };
+    }
+    return {
+      canProceed: false,
+      errorMessage: 'Unable to send verification code. Please try again.',
+    };
+  }
+
+  if (result && typeof result === 'object') {
+    const raw = result as Record<string, unknown>;
+    const errObj = toErrorRecord(raw.error);
+    if (errObj) {
+      const { isCooldown } = classifyCooldown(
+        errObj.code,
+        errObj.retryAfterSeconds,
+        typeof errObj.statusCode === 'number'
+          ? errObj.statusCode
+          : typeof raw.statusCode === 'number'
+            ? (raw.statusCode as number)
+            : undefined,
+      );
+
+      const limitMsg =
+        isCooldown || errObj.statusCode === 429 || raw.statusCode === 429
+          ? 'Email delivery is temporarily rate-limited. Please try again later.'
+          : (typeof errObj.message === 'string' && errObj.message) ||
+            'Unable to send verification code. Please try again.';
+
+      return {
+        canProceed: false,
+        errorMessage: limitMsg,
+      };
+    }
+
+    if (raw.success === false) {
+      return {
+        canProceed: false,
+        errorMessage: 'Unable to send verification code. Please try again.',
+      };
+    }
+
+    let derivedFromAvailableAt: number | undefined;
+    if (typeof raw.resend_available_at === 'string') {
+      const parsedMs = Date.parse(raw.resend_available_at);
+      if (Number.isFinite(parsedMs) && parsedMs > Date.now()) {
+        derivedFromAvailableAt = Math.ceil((parsedMs - Date.now()) / 1000);
+      }
+    }
+
+    const cooldownVal =
+      typeof raw.cooldown === 'number' && raw.cooldown > 0
+        ? raw.cooldown
+        : typeof raw.retryAfterSeconds === 'number' && raw.retryAfterSeconds > 0
+          ? raw.retryAfterSeconds
+          : derivedFromAvailableAt;
+
+    const resendAvailableAt =
+      typeof raw.resend_available_at === 'string'
+        ? raw.resend_available_at
+        : typeof cooldownVal === 'number' && cooldownVal > 0
+          ? new Date(Date.now() + cooldownVal * 1000).toISOString()
+          : undefined;
+
+    return {
+      canProceed: true,
+      cooldownSeconds: cooldownVal && cooldownVal > 0 ? cooldownVal : undefined,
+      resendAvailableAt,
+    };
+  }
+
+  return { canProceed: true };
+}
+
+/**
  * Server action authenticating user credentials via backend EP-A05 and establishing session.
+ * Supports email and Bangladesh mobile phone identifiers with unverified contact redirection.
  */
 export async function loginAction(
   _prevState: AuthActionResult,
   formData: FormData,
 ): Promise<AuthActionResult> {
-  const email = formData.get('email') as string;
+  const rawIdentifier = (
+    (formData.get('email') as string) ||
+    (formData.get('identifier') as string)
+  )?.trim();
   const password = formData.get('password') as string;
 
-  if (!email || !password) {
+  if (!rawIdentifier || !password) {
     return { error: 'Email and password are required.' };
   }
 
   let destination = '/dashboard';
   try {
-    const session = await loginUser(email, password);
+    const session = await loginUser(rawIdentifier, password);
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.setSession({
       access_token: session.access_token,
       refresh_token: session.refresh_token,
     });
     if (error) return { error: 'Failed to establish session.' };
-    if (
-      session.user.status !== 'suspended' &&
-      session.next_step === 'profile_setup'
-    )
+    if (session.user.status === 'suspended') {
+      destination = '/settings';
+    } else if (session.next_step === 'profile_setup') {
       destination = '/onboarding/profile';
+    } else if (session.next_step === 'add_verified_contact') {
+      destination = '/settings?prompt=verify_contact';
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (
+        err.statusCode === 403 &&
+        (err.code === 'UNVERIFIED_ACCOUNT' ||
+          err.code === 'ACCOUNT_NOT_VERIFIED' ||
+          err.message?.toLowerCase().includes('verify'))
+      ) {
+        const channel = rawIdentifier.includes('@') ? 'email' : 'phone';
+        if (channel === 'phone') {
+          return {
+            error:
+              'Phone verification is temporarily unavailable. Please sign in with email or contact support.',
+          };
+        }
+        let resendResult: unknown;
+        let resendError: unknown;
+        try {
+          resendResult = await resendVerification({
+            channel: 'email',
+            contact: rawIdentifier,
+          });
+        } catch (resendErr) {
+          resendError = resendErr;
+        }
+
+        const dispatch = evaluateResendDispatch(resendResult, resendError);
+        if (!dispatch.canProceed) {
+          return {
+            error:
+              dispatch.errorMessage ||
+              'Unable to send verification code. Please try again.',
+          };
+        }
+
+        const verifyUrl =
+          typeof dispatch.cooldownSeconds === 'number' && dispatch.cooldownSeconds > 0
+            ? `/verify?channel=email&cooldown=${dispatch.cooldownSeconds}`
+            : '/verify?channel=email';
+
+        await setVerificationContext({ type: 'email', identifier: rawIdentifier });
+        return {
+          error: 'Please verify your contact before logging in.',
+          redirectTo: verifyUrl,
+        };
+      }
       return { error: err.message };
     }
     return { error: 'An unexpected error occurred during login.' };
@@ -149,13 +355,29 @@ export async function registerAction(
   }
 
   try {
-    await registerUser({
+    const regResult = (await registerUser({
       email: type === 'email' ? identifier : null,
       phone: type === 'phone' ? identifier : null,
       password,
       confirm_password: confirmPassword,
       privacy_consent,
-    });
+    })) as unknown;
+    if (regResult && typeof regResult === 'object') {
+      const raw = regResult as Record<string, unknown>;
+      const errObj = toErrorRecord(raw.error);
+      if (errObj) {
+        return {
+          error:
+            (typeof errObj.message === 'string' && errObj.message) ||
+            'An unexpected error occurred during registration.',
+        };
+      }
+      if (raw.success === false) {
+        return {
+          error: 'An unexpected error occurred during registration.',
+        };
+      }
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -221,11 +443,13 @@ export async function verifyOtpAction(
     if (error) return { error: 'Failed to establish session.' };
     await clearVerificationContext();
     destination =
-      session.next_step === 'profile_setup'
-        ? '/onboarding/profile'
-        : session.next_step === 'add_verified_contact'
-          ? '/dashboard?next_step=add_verified_contact'
-          : '/dashboard';
+      session.user.status === 'suspended'
+        ? '/settings'
+        : session.next_step === 'profile_setup'
+          ? '/onboarding/profile'
+          : session.next_step === 'add_verified_contact'
+            ? '/settings?prompt=verify_contact'
+            : '/dashboard';
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -249,9 +473,16 @@ export async function resendOtpAction(
   success?: boolean;
   expiresInSeconds?: number;
   contactMasked?: string;
+  resendAvailableAt?: string;
 }> {
   if (type !== 'email' && type !== 'phone') {
     return { error: 'Invalid verification channel.' };
+  }
+  if (type === 'phone') {
+    return {
+      error:
+        'SMS verification is temporarily unavailable. Please verify with email or contact support.',
+    };
   }
   const rawIdentifier =
     typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';
@@ -263,15 +494,48 @@ export async function resendOtpAction(
   if (!identifier) return { error: 'Invalid verification request.' };
 
   try {
-    const result = await resendVerification({
+    const result = (await resendVerification({
       channel: type,
       contact: identifier,
-    });
+    })) as unknown;
+    if (result && typeof result === 'object') {
+      const raw = result as Record<string, unknown>;
+      const errObj = toErrorRecord(raw.error);
+      if (errObj) {
+        return {
+          error:
+            (typeof errObj.message === 'string' && errObj.message) ||
+            'Failed to send verification code. Please try again later.',
+        };
+      }
+      if (raw.success === false) {
+        return {
+          error: 'Failed to send verification code. Please try again later.',
+        };
+      }
+    }
+    const resolved = result as {
+      expires_in_seconds?: number;
+      contact_masked?: string;
+      resend_available_at?: string;
+      resendAvailableAt?: string;
+      data?: {
+        resend_available_at?: string;
+        resendAvailableAt?: string;
+      };
+    };
     await setVerificationContext({ type, identifier });
+    const resendAvailableAt =
+      resolved?.resendAvailableAt ||
+      resolved?.resend_available_at ||
+      resolved?.data?.resendAvailableAt ||
+      resolved?.data?.resend_available_at;
+
     return {
       success: true,
-      expiresInSeconds: result.expires_in_seconds,
-      contactMasked: result.contact_masked,
+      expiresInSeconds: resolved?.expires_in_seconds,
+      contactMasked: resolved?.contact_masked,
+      ...(resendAvailableAt ? { resendAvailableAt } : {}),
     };
   } catch (err) {
     if (err instanceof NetworkError) {
