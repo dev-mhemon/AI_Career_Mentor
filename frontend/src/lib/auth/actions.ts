@@ -96,7 +96,7 @@ function toErrorRecord(rawErr: unknown): Record<string, unknown> | undefined {
 
 /**
  * Classifies an error code, retry-after duration, and HTTP status code to determine
- * whether an active cooldown is in effect.
+ * whether an active cooldown or rate limit is in effect for rate-limit reporting.
  *
  * @param code - Error code identifier from response or exception.
  * @param retryAfter - Retry-after duration in seconds, if present.
@@ -123,6 +123,8 @@ function classifyCooldown(
 /**
  * Evaluates the outcome of resendVerification (resolved result or caught error)
  * to determine if verification flow can proceed and whether a cooldown was established.
+ * A cooldown reservation alone (e.g. 429 RESEND_COOLDOWN_ACTIVE) is not treated as a usable
+ * challenge delivery; redirection to code entry requires a confirmed challenge dispatch.
  *
  * @param result - The resolved value from resendVerification if it did not throw.
  * @param error - The caught error if resendVerification threw.
@@ -131,7 +133,12 @@ function classifyCooldown(
 function evaluateResendDispatch(
   result: unknown,
   error: unknown,
-): { canProceed: boolean; cooldownSeconds?: number; errorMessage?: string } {
+): {
+  canProceed: boolean;
+  cooldownSeconds?: number;
+  resendAvailableAt?: string;
+  errorMessage?: string;
+} {
   if (error) {
     if (error instanceof NetworkError) {
       return {
@@ -140,21 +147,14 @@ function evaluateResendDispatch(
       };
     }
     if (error instanceof ApiError) {
-      const { isCooldown, cooldownSeconds } = classifyCooldown(
+      const { isCooldown } = classifyCooldown(
         error.code,
         error.retryAfterSeconds,
         error.statusCode,
       );
 
-      if (isCooldown) {
-        return {
-          canProceed: true,
-          cooldownSeconds,
-        };
-      }
-
       const limitMsg =
-        error.statusCode === 429
+        isCooldown || error.statusCode === 429
           ? 'Email delivery is temporarily rate-limited. Please try again later.'
           : error.message || 'Unable to send verification code. Please try again.';
 
@@ -173,7 +173,7 @@ function evaluateResendDispatch(
     const raw = result as Record<string, unknown>;
     const errObj = toErrorRecord(raw.error);
     if (errObj) {
-      const { isCooldown, cooldownSeconds } = classifyCooldown(
+      const { isCooldown } = classifyCooldown(
         errObj.code,
         errObj.retryAfterSeconds,
         typeof errObj.statusCode === 'number'
@@ -183,17 +183,15 @@ function evaluateResendDispatch(
             : undefined,
       );
 
-      if (isCooldown) {
-        return {
-          canProceed: true,
-          cooldownSeconds,
-        };
-      }
+      const limitMsg =
+        isCooldown || errObj.statusCode === 429 || raw.statusCode === 429
+          ? 'Email delivery is temporarily rate-limited. Please try again later.'
+          : (typeof errObj.message === 'string' && errObj.message) ||
+            'Unable to send verification code. Please try again.';
+
       return {
         canProceed: false,
-        errorMessage:
-          (typeof errObj.message === 'string' && errObj.message) ||
-          'Unable to send verification code. Please try again.',
+        errorMessage: limitMsg,
       };
     }
 
@@ -204,16 +202,32 @@ function evaluateResendDispatch(
       };
     }
 
+    let derivedFromAvailableAt: number | undefined;
+    if (typeof raw.resend_available_at === 'string') {
+      const parsedMs = Date.parse(raw.resend_available_at);
+      if (Number.isFinite(parsedMs) && parsedMs > Date.now()) {
+        derivedFromAvailableAt = Math.ceil((parsedMs - Date.now()) / 1000);
+      }
+    }
+
     const cooldownVal =
       typeof raw.cooldown === 'number' && raw.cooldown > 0
         ? raw.cooldown
         : typeof raw.retryAfterSeconds === 'number' && raw.retryAfterSeconds > 0
           ? raw.retryAfterSeconds
+          : derivedFromAvailableAt;
+
+    const resendAvailableAt =
+      typeof raw.resend_available_at === 'string'
+        ? raw.resend_available_at
+        : typeof cooldownVal === 'number' && cooldownVal > 0
+          ? new Date(Date.now() + cooldownVal * 1000).toISOString()
           : undefined;
 
     return {
       canProceed: true,
-      cooldownSeconds: cooldownVal,
+      cooldownSeconds: cooldownVal && cooldownVal > 0 ? cooldownVal : undefined,
+      resendAvailableAt,
     };
   }
 
@@ -459,6 +473,7 @@ export async function resendOtpAction(
   success?: boolean;
   expiresInSeconds?: number;
   contactMasked?: string;
+  resendAvailableAt?: string;
 }> {
   if (type !== 'email' && type !== 'phone') {
     return { error: 'Invalid verification channel.' };
@@ -499,12 +514,28 @@ export async function resendOtpAction(
         };
       }
     }
-    const resolved = result as { expires_in_seconds?: number; contact_masked?: string };
+    const resolved = result as {
+      expires_in_seconds?: number;
+      contact_masked?: string;
+      resend_available_at?: string;
+      resendAvailableAt?: string;
+      data?: {
+        resend_available_at?: string;
+        resendAvailableAt?: string;
+      };
+    };
     await setVerificationContext({ type, identifier });
+    const resendAvailableAt =
+      resolved?.resendAvailableAt ||
+      resolved?.resend_available_at ||
+      resolved?.data?.resendAvailableAt ||
+      resolved?.data?.resend_available_at;
+
     return {
       success: true,
       expiresInSeconds: resolved?.expires_in_seconds,
       contactMasked: resolved?.contact_masked,
+      ...(resendAvailableAt ? { resendAvailableAt } : {}),
     };
   } catch (err) {
     if (err instanceof NetworkError) {

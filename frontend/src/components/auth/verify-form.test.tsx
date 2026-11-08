@@ -7,6 +7,7 @@ import {
   saveVerificationDraft,
   clearVerificationDraft,
   VERIFICATION_DRAFT_STORAGE_KEY,
+  getPersistedCooldown,
 } from '@/lib/auth/verification-draft';
 
 const mockPush = vi.fn();
@@ -25,11 +26,15 @@ vi.mock('next/navigation', () => ({
 
 describe('VerifyForm', () => {
   beforeEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.clearAllMocks();
     window.sessionStorage.clear();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     window.sessionStorage.clear();
     clearVerificationDraft();
   });
@@ -131,6 +136,9 @@ describe('VerifyForm', () => {
   });
 
   it('shows success message and starts cooldown on successful resend', async () => {
+    const baseNow = 1000000;
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+
     saveVerificationDraft({
       channel: 'email',
       identifier: 'candidate@example.com',
@@ -162,6 +170,56 @@ describe('VerifyForm', () => {
       expect(resendButton).toBeDisabled();
       expect(resendButton).toHaveTextContent(/resend code in 60s/i);
     });
+
+    const persisted = getPersistedCooldown('email');
+    expect(persisted).not.toBeNull();
+    expect(persisted?.deadlineMs).toBe(baseNow + 60000);
+    expect(persisted?.originalSeconds).toBe(60);
+  });
+
+  it('starts cooldown matching resendAvailableAt timestamp and persists deadline on successful resend', async () => {
+    const baseNow = 1000000;
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'candidate@example.com',
+      contactMasked: 'c****@example.com',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+
+    const availableAtIso = new Date(baseNow + 45000).toISOString();
+    vi.mocked(resendOtpAction).mockResolvedValueOnce({
+      success: true,
+      expiresInSeconds: 600,
+      contactMasked: 'c****@example.com',
+      resendAvailableAt: availableAtIso,
+    });
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    await act(async () => {
+      fireEvent.click(resendButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(resendButton).toBeDisabled();
+      expect(resendButton).toHaveTextContent(/resend code in 45s/i);
+    });
+
+    const persisted = getPersistedCooldown('email');
+    expect(persisted).not.toBeNull();
+    expect(persisted?.deadlineMs).toBe(baseNow + 45000);
+    expect(persisted?.originalSeconds).toBe(45);
   });
 
   it('creates replacement draft on successful resend when original draft was expired', async () => {
@@ -451,5 +509,176 @@ describe('VerifyForm', () => {
     );
     expect(stored.channel).toBe('email');
     expect(stored.normalized_identifier).toBe('candidate@example.com');
+  });
+
+  it('initializes resend countdown from valid cooldown search param and keeps resend disabled', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=45'),
+    );
+    render(<VerifyForm />);
+
+    const resendButton = screen.getByRole('button', { name: /resend code in 45s/i });
+    expect(resendButton).toBeInTheDocument();
+    expect(resendButton).toBeDisabled();
+  });
+
+  it('ignores invalid cooldown search param and leaves resend button enabled', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=invalid'),
+    );
+    render(<VerifyForm />);
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    expect(resendButton).toBeInTheDocument();
+    expect(resendButton).toBeEnabled();
+  });
+
+  it('rejects trailing-character query values like cooldown=600junk and does not start countdown', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=600junk'),
+    );
+    render(<VerifyForm />);
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    expect(resendButton).toBeInTheDocument();
+    expect(resendButton).toBeEnabled();
+    expect(screen.queryByText(/resend code in/i)).not.toBeInTheDocument();
+  });
+
+  it('rejects negative, decimal, and out-of-range cooldown values', async () => {
+    for (const invalid of ['-10', '12.5', '0', '601']) {
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(`?channel=email&cooldown=${invalid}`),
+      );
+      const { unmount } = render(<VerifyForm />);
+
+      const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+      expect(resendButton).toBeInTheDocument();
+      expect(resendButton).toBeEnabled();
+      unmount();
+    }
+  });
+
+  it('computes remaining cooldown on page reload after partial elapsed time instead of restarting', async () => {
+    const baseNow = 1000000;
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+
+    // Initial mount with 45s cooldown
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=45'),
+    );
+    const firstRender = render(<VerifyForm />);
+    expect(screen.getByRole('button', { name: /resend code in 45s/i })).toBeInTheDocument();
+    firstRender.unmount();
+
+    // 20 seconds elapse, user reloads the same URL
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow + 20000);
+    render(<VerifyForm />);
+
+    // Should resume with remaining 25 seconds instead of restarting to 45s
+    const reloadedButton = screen.getByRole('button', { name: /resend code in 25s/i });
+    expect(reloadedButton).toBeInTheDocument();
+    expect(reloadedButton).toBeDisabled();
+  });
+
+  it('does not restart cooldown on page reload if cooldown has fully elapsed', async () => {
+    const baseNow = 1000000;
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+
+    // Initial mount with 45s cooldown
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=45'),
+    );
+    const firstRender = render(<VerifyForm />);
+    expect(screen.getByRole('button', { name: /resend code in 45s/i })).toBeInTheDocument();
+    firstRender.unmount();
+
+    // 50 seconds elapse (cooldown expired), user reloads the same URL
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow + 50000);
+    render(<VerifyForm />);
+
+    // Resend button should be enabled and not restart countdown
+    const reloadedButton = screen.getByRole('button', { name: /resend verification code/i });
+    expect(reloadedButton).toBeInTheDocument();
+    expect(reloadedButton).toBeEnabled();
+  });
+
+  it('derives countdown from direct expiry timestamp query param', async () => {
+    const baseNow = 1000000;
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+
+    // Provide an absolute expiry timestamp 30 seconds in the future
+    const expiryIso = new Date(baseNow + 30000).toISOString();
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams(`?channel=email&resendAvailableAt=${expiryIso}`),
+    );
+    render(<VerifyForm />);
+
+    const resendButton = screen.getByRole('button', { name: /resend code in 30s/i });
+    expect(resendButton).toBeInTheDocument();
+    expect(resendButton).toBeDisabled();
+  });
+
+  it('ticks countdown based on deadline and enables resend when time expires', async () => {
+    vi.useFakeTimers();
+    const startTime = 1000000;
+    vi.setSystemTime(startTime);
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=3'),
+    );
+
+    render(<VerifyForm />);
+
+    expect(screen.getByRole('button', { name: /resend code in 3s/i })).toBeInTheDocument();
+
+    // Advance 1 second -> 2s
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 2s/i })).toBeInTheDocument();
+
+    // Advance 1 second -> 1s
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 1s/i })).toBeInTheDocument();
+
+    // Advance 1 second -> 0s (enabled)
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    expect(resendButton).toBeInTheDocument();
+    expect(resendButton).toBeEnabled();
+  });
+
+  it('clamps far-future cooldownUntil to MAX_COOLDOWN_DURATION_SECONDS even after timer ticks advance', async () => {
+    vi.useFakeTimers();
+    const baseNow = 1000000;
+    vi.setSystemTime(baseNow);
+
+    // Provide a far-future expiry epoch ms (e.g., year 2100 = 4102444800000)
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldownUntil=4102444800000'),
+    );
+
+    render(<VerifyForm />);
+
+    // Should be clamped to 600s
+    expect(screen.getByRole('button', { name: /resend code in 600s/i })).toBeInTheDocument();
+
+    // Advance 1 second -> should tick down to 599s, NOT jump to billions of seconds
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 599s/i })).toBeInTheDocument();
+
+    // Advance another second -> 598s
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 598s/i })).toBeInTheDocument();
   });
 });

@@ -346,3 +346,104 @@ export function updateVerificationDraftExpiry(
     return null;
   }
 }
+
+/** Storage key prefix for R18 resend cooldown states in sessionStorage. */
+export const RESEND_COOLDOWN_STORAGE_PREFIX = 'mentor_resend_cooldown_';
+
+/** Maximum allowed cooldown duration in seconds (10 minutes). */
+export const MAX_COOLDOWN_DURATION_SECONDS = 600;
+
+/** Persisted cooldown state structure stored in sessionStorage. */
+export interface PersistedCooldownState {
+  deadlineMs: number;
+  originalSeconds: number;
+  createdAt: number;
+}
+
+/**
+ * Saves a resend cooldown deadline into browser sessionStorage.
+ *
+ * @param channel - Verification channel ('email' | 'phone') or null/undefined for channel-neutral.
+ * @param deadlineMs - Absolute expiry timestamp in epoch milliseconds.
+ * @param originalSeconds - Initial requested cooldown duration in seconds.
+ * @param nowMs - Current timestamp in epoch milliseconds (defaults to Date.now()).
+ */
+export function setPersistedCooldown(
+  channel: VerificationChannel | null | undefined,
+  deadlineMs: number,
+  originalSeconds: number,
+  nowMs: number = Date.now(),
+): void {
+  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  const key = `${RESEND_COOLDOWN_STORAGE_PREFIX}${channel || 'default'}`;
+  const payload: PersistedCooldownState = {
+    deadlineMs,
+    originalSeconds,
+    createdAt: nowMs,
+  };
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota or restricted environment errors
+  }
+}
+
+/**
+ * Retrieves the persisted resend cooldown state from browser sessionStorage.
+ *
+ * @param channel - Verification channel ('email' | 'phone') or null/undefined for channel-neutral.
+ * @returns Parsed PersistedCooldownState, or null if missing, invalid, or malformed.
+ */
+export function getPersistedCooldown(
+  channel: VerificationChannel | null | undefined,
+): PersistedCooldownState | null {
+  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  const key = `${RESEND_COOLDOWN_STORAGE_PREFIX}${channel || 'default'}`;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.deadlineMs !== 'number' ||
+      !Number.isSafeInteger(parsed.deadlineMs) ||
+      typeof parsed.originalSeconds !== 'number' ||
+      !Number.isSafeInteger(parsed.originalSeconds) ||
+      typeof parsed.createdAt !== 'number' ||
+      !Number.isSafeInteger(parsed.createdAt)
+    ) {
+      window.sessionStorage.removeItem(key);
+      return null;
+    }
+    return {
+      deadlineMs: parsed.deadlineMs,
+      originalSeconds: parsed.originalSeconds,
+      createdAt: parsed.createdAt,
+    };
+  } catch {
+    try {
+      window.sessionStorage.removeItem(key);
+    } catch {
+      // Ignore
+    }
+    return null;
+  }
+}
+
+/**
+ * Removes the persisted resend cooldown state from browser sessionStorage.
+ *
+ * @param channel - Verification channel ('email' | 'phone') or null/undefined for channel-neutral.
+ */
+export function clearPersistedCooldown(
+  channel: VerificationChannel | null | undefined,
+): void {
+  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  const key = `${RESEND_COOLDOWN_STORAGE_PREFIX}${channel || 'default'}`;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Ignore
+  }
+}

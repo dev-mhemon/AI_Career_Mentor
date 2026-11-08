@@ -275,7 +275,7 @@ describe("Auth Actions", () => {
       );
     });
 
-    it("redirects to /verify?channel=email&cooldown=<seconds> when resendVerification returns RATE_LIMITED with retryAfterSeconds", async () => {
+    it("returns rate-limited error and does not redirect when resendVerification fails with 429 RESEND_COOLDOWN_ACTIVE or RATE_LIMITED", async () => {
       const formData = new FormData();
       formData.set("email", "candidate@example.com");
       formData.set("password", "password123");
@@ -291,7 +291,7 @@ describe("Auth Actions", () => {
         new ApiError(
           429,
           "Active cooldown in effect",
-          "RATE_LIMITED",
+          "RESEND_COOLDOWN_ACTIVE",
           undefined,
           [],
           true,
@@ -301,14 +301,9 @@ describe("Auth Actions", () => {
 
       const result = await loginAction({}, formData);
       expect(result).toEqual({
-        error: "Please verify your contact before logging in.",
-        redirectTo: "/verify?channel=email&cooldown=45",
+        error: "Email delivery is temporarily rate-limited. Please try again later.",
       });
-      expect(mockCookieStore.set).toHaveBeenCalledWith(
-        "mentor_verification_context",
-        expect.any(String),
-        expect.objectContaining({ httpOnly: true, maxAge: 600, path: "/verify" }),
-      );
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
     });
 
     it("catches 403 ACCOUNT_NOT_VERIFIED and returns rate-limited error when resendVerification returns 429 without active cooldown", async () => {
@@ -453,7 +448,6 @@ describe("Auth Actions", () => {
         ),
       );
       vi.mocked(resendVerification).mockResolvedValueOnce({
-        success: false,
         error: true,
       } as unknown as Awaited<ReturnType<typeof resendVerification>>);
 
@@ -786,6 +780,7 @@ describe("Auth Actions", () => {
         success: true,
         expiresInSeconds: 600,
         contactMasked: "t***@example.com",
+        resendAvailableAt: "2026-01-01T00:00:00Z",
       });
       expect(resendVerification).toHaveBeenCalledWith({
         channel: "email",
@@ -822,6 +817,7 @@ describe("Auth Actions", () => {
         success: true,
         expiresInSeconds: 600,
         contactMasked: "r****@example.com",
+        resendAvailableAt: "2026-01-01T00:00:00Z",
       });
       expect(resendVerification).toHaveBeenCalledWith({
         channel: "email",
@@ -858,7 +854,6 @@ describe("Auth Actions", () => {
 
     it("returns fallback error message when resendVerification resolves with boolean/non-string truthy error payload", async () => {
       vi.mocked(resendVerification).mockResolvedValueOnce({
-        success: false,
         error: true,
       } as unknown as Awaited<ReturnType<typeof resendVerification>>);
 

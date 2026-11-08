@@ -8,8 +8,129 @@ import {
   saveFallbackVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,
+  setPersistedCooldown,
+  getPersistedCooldown,
+  clearPersistedCooldown,
+  MAX_COOLDOWN_DURATION_SECONDS,
   type VerificationDraft,
+  type VerificationChannel,
 } from '@/lib/auth/verification-draft';
+
+/**
+ * Safely parses and validates a cooldown query parameter in seconds.
+ * Strictly accepts only digit-only strings in the range [1, 600].
+ * Any non-digit characters (e.g. "600junk", "-10", "12.5") or out-of-range
+ * values return 0.
+ *
+ * @param param - Raw query parameter string from search params.
+ * @returns Validated cooldown duration in seconds, or 0 if missing or invalid.
+ */
+export function parseCooldownParam(param: string | null): number {
+  if (!param) return 0;
+  const trimmed = param.trim();
+  if (!/^\d+$/.test(trimmed)) return 0;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) &&
+    parsed > 0 &&
+    parsed <= MAX_COOLDOWN_DURATION_SECONDS
+    ? parsed
+    : 0;
+}
+
+/**
+ * Parses and validates an absolute expiry timestamp from query parameter or storage.
+ * Strictly validates digit-only epoch timestamps or valid ISO 8601 strings.
+ *
+ * @param param - Raw expiry string (epoch milliseconds or ISO 8601 date string).
+ * @returns Validated expiry timestamp in epoch milliseconds, or null if invalid.
+ */
+export function parseExpiryTimestamp(param: string | null): number | null {
+  if (!param) return null;
+  const trimmed = param.trim();
+  if (!trimmed) return null;
+  if (/^\d+$/.test(trimmed)) {
+    const epochMs = Number(trimmed);
+    return Number.isSafeInteger(epochMs) && epochMs > 0 ? epochMs : null;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+/** Result structure for computeInitialCooldown containing seconds and target deadline. */
+export interface InitialCooldownResult {
+  seconds: number;
+  deadlineMs: number | null;
+}
+
+/**
+ * Computes the initial resend cooldown state purely on mount without writing to sessionStorage.
+ * Reads existing persisted deadline (if in browser) or parses query parameters.
+ *
+ * @param channel - Active verification channel ('email' | 'phone').
+ * @param searchParams - Readonly search parameters from the active URL.
+ * @param nowMs - Current timestamp in epoch milliseconds (defaults to Date.now()).
+ * @returns Initial remaining seconds and target deadline timestamp in milliseconds.
+ */
+export function computeInitialCooldown(
+  channel: VerificationChannel | null | undefined,
+  searchParams: { get(name: string): string | null },
+  nowMs: number = Date.now(),
+): InitialCooldownResult {
+  const expiryParam =
+    searchParams.get('cooldownUntil') ||
+    searchParams.get('resendAvailableAt') ||
+    searchParams.get('resend_available_at');
+  const directExpiryMs = parseExpiryTimestamp(expiryParam);
+
+  const cooldownParam = searchParams.get('cooldown');
+  const paramSeconds = parseCooldownParam(cooldownParam);
+
+  const persisted = getPersistedCooldown(channel);
+
+  if (directExpiryMs !== null) {
+    const cappedMs = Math.min(directExpiryMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
+    const remaining = Math.max(0, Math.ceil((cappedMs - nowMs) / 1000));
+    return {
+      seconds: remaining,
+      deadlineMs: cappedMs,
+    };
+  }
+
+  if (persisted !== null) {
+    if (persisted.deadlineMs > nowMs) {
+      const cappedMs = Math.min(persisted.deadlineMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
+      const remaining = Math.max(0, Math.ceil((cappedMs - nowMs) / 1000));
+      return {
+        seconds: remaining,
+        deadlineMs: cappedMs,
+      };
+    }
+
+    if (
+      paramSeconds > 0 &&
+      persisted.originalSeconds === paramSeconds &&
+      nowMs - persisted.deadlineMs < MAX_COOLDOWN_DURATION_SECONDS * 1000
+    ) {
+      return {
+        seconds: 0,
+        deadlineMs: null,
+      };
+    }
+  }
+
+  if (paramSeconds > 0) {
+    const deadlineMs = nowMs + paramSeconds * 1000;
+    return {
+      seconds: paramSeconds,
+      deadlineMs,
+    };
+  }
+
+  return {
+    seconds: 0,
+    deadlineMs: null,
+  };
+}
 
 /**
  * Verification form content component enforcing R18 draft lifecycle and contact privacy.
@@ -35,7 +156,11 @@ function VerifyFormContent() {
   const draftLoaded = useRef(false);
 
   const [reenteredIdentifier, setReenteredIdentifier] = useState('');
-  const [cooldown, setCooldown] = useState(0);
+
+  const [cooldown, setCooldown] = useState<number>(() => {
+    return computeInitialCooldown(channelParam, searchParams, Date.now()).seconds;
+  });
+  const cooldownDeadlineRef = useRef<number | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
@@ -53,6 +178,16 @@ function VerifyFormContent() {
     setIsDraftExpired(expired);
   }, [channelParam]);
 
+  /** Sync initial cooldown deadline to sessionStorage (pure effect, zero render-phase writes). */
+  useEffect(() => {
+    const initial = computeInitialCooldown(channelParam, searchParams, Date.now());
+    if (initial.deadlineMs && initial.deadlineMs > Date.now()) {
+      cooldownDeadlineRef.current = initial.deadlineMs;
+      const remaining = Math.max(0, Math.ceil((initial.deadlineMs - Date.now()) / 1000));
+      setPersistedCooldown(channelParam, initial.deadlineMs, remaining, Date.now());
+    }
+  }, [channelParam, searchParams]);
+
   /** Successful verification navigation & draft clearance. */
   useEffect(() => {
     if (state?.success && state?.redirectTo) {
@@ -64,17 +199,61 @@ function VerifyFormContent() {
       if (currentDraft) {
         clearVerificationDraft();
       }
+      cooldownDeadlineRef.current = null;
+      clearPersistedCooldown(channelParam);
       router.push(state.redirectTo);
     }
   }, [state, router, channelParam]);
 
-  /** Cooldown timer: single-responsibility effect. */
+  /** Cooldown timer: single-responsibility effect computing remaining time from deadline on each tick. */
   useEffect(() => {
-    if (cooldown > 0) {
-      const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
-      return () => clearTimeout(timer);
+    if (cooldown <= 0) return;
+
+    if (!cooldownDeadlineRef.current) {
+      const initial = computeInitialCooldown(channelParam, searchParams, Date.now());
+      if (initial.deadlineMs && initial.deadlineMs > Date.now()) {
+        cooldownDeadlineRef.current = initial.deadlineMs;
+      } else {
+        cooldownDeadlineRef.current = Date.now() + cooldown * 1000;
+      }
     }
-  }, [cooldown]);
+
+    const timer = setTimeout(() => {
+      const deadline = cooldownDeadlineRef.current;
+      if (!deadline) {
+        setCooldown(0);
+        return;
+      }
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setCooldown(remaining);
+      if (remaining <= 0) {
+        cooldownDeadlineRef.current = null;
+        clearPersistedCooldown(channelParam);
+      }
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [cooldown, channelParam, searchParams]);
+
+  /** Consume one-time cooldown query parameter to ensure clean browser history on reload. */
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.history?.replaceState) return;
+    if (
+      searchParams.has('cooldown') ||
+      searchParams.has('cooldownUntil') ||
+      searchParams.has('resendAvailableAt')
+    ) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('cooldown');
+        url.searchParams.delete('cooldownUntil');
+        url.searchParams.delete('resendAvailableAt');
+        window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+      } catch {
+        // Ignore URL parsing errors in mocked test environments
+      }
+    }
+  }, [searchParams]);
 
   /**
    * Handles resend: calls server action, updates or creates draft on success.
@@ -96,7 +275,24 @@ function VerifyFormContent() {
         setResendError(result.error);
       } else {
         setResendSuccess('Verification code sent successfully.');
-        setCooldown(60);
+        const availableAtRaw = (result as { resendAvailableAt?: string }).resendAvailableAt;
+        const availableAtMs = availableAtRaw ? Date.parse(availableAtRaw) : NaN;
+        const hasValidAvailableAt = Number.isFinite(availableAtMs) && availableAtMs > Date.now();
+        const cappedAvailableAtMs = hasValidAvailableAt
+          ? Math.min(availableAtMs, Date.now() + MAX_COOLDOWN_DURATION_SECONDS * 1000)
+          : null;
+        const cooldownSecs =
+          cappedAvailableAtMs !== null
+            ? Math.max(0, Math.ceil((cappedAvailableAtMs - Date.now()) / 1000))
+            : 60;
+        const deadlineMs =
+          cappedAvailableAtMs !== null
+            ? cappedAvailableAtMs
+            : Date.now() + cooldownSecs * 1000;
+
+        cooldownDeadlineRef.current = deadlineMs;
+        setPersistedCooldown(channelParam, deadlineMs, cooldownSecs, Date.now());
+        setCooldown(cooldownSecs);
         if (result.expiresInSeconds) {
           const updated = identifierToSend
             ? updateVerificationDraftExpiry(

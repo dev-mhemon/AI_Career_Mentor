@@ -11,6 +11,10 @@ import {
   loadVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,
+  setPersistedCooldown,
+  getPersistedCooldown,
+  clearPersistedCooldown,
+  RESEND_COOLDOWN_STORAGE_PREFIX,
 } from './verification-draft';
 
 describe('R18 verification draft helper', () => {
@@ -364,6 +368,34 @@ describe('R18 verification draft helper', () => {
       expect(
         window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
       ).toBeNull();
+    });
+  });
+
+  describe('resend cooldown persistence', () => {
+    it('persists and retrieves cooldown deadline for email channel', () => {
+      const now = 1000000;
+      setPersistedCooldown('email', now + 45000, 45, now);
+
+      const retrieved = getPersistedCooldown('email');
+      expect(retrieved).toEqual({
+        deadlineMs: now + 45000,
+        originalSeconds: 45,
+        createdAt: now,
+      });
+    });
+
+    it('returns null and cleans up malformed stored cooldown', () => {
+      window.sessionStorage.setItem(`${RESEND_COOLDOWN_STORAGE_PREFIX}email`, 'invalid-json');
+      expect(getPersistedCooldown('email')).toBeNull();
+      expect(window.sessionStorage.getItem(`${RESEND_COOLDOWN_STORAGE_PREFIX}email`)).toBeNull();
+    });
+
+    it('clears persisted cooldown when requested', () => {
+      setPersistedCooldown('email', 1045000, 45, 1000000);
+      expect(getPersistedCooldown('email')).not.toBeNull();
+
+      clearPersistedCooldown('email');
+      expect(getPersistedCooldown('email')).toBeNull();
     });
   });
 });
