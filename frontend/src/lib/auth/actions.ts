@@ -132,8 +132,22 @@ export async function loginAction(
         }
         try {
           await resendVerification({ channel: 'email', contact: rawIdentifier });
-        } catch {
-          // Best-effort challenge dispatch: if rate-limited or existing unexpired challenge remains valid, proceed to verify
+        } catch (resendErr) {
+          if (resendErr instanceof NetworkError) {
+            return { error: 'Unable to reach the server. Please try again later.' };
+          }
+          if (resendErr instanceof ApiError) {
+            if (resendErr.statusCode === 429) {
+              return {
+                error:
+                  'Email delivery is temporarily rate-limited. Please try again later.',
+              };
+            }
+            return { error: resendErr.message };
+          }
+          return {
+            error: 'Failed to send verification code. Please try again later.',
+          };
         }
         await setVerificationContext({ type: 'email', identifier: rawIdentifier });
         return {

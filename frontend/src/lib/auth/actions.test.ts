@@ -11,7 +11,7 @@ import {
   linkIdentityAction,
   addContactAction,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError, NetworkError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -53,7 +53,13 @@ vi.mock("@/lib/supabase/server", () => ({
 
 // Mock API Client
 vi.mock("@/lib/api/client", () => {
+  /**
+   * Mock NetworkError mimicking client network failures.
+   */
   class MockNetworkError extends Error {
+    /**
+     * Initializes mock network error with message.
+     */
     constructor(message = "Network error") {
       super(message);
       this.name = "NetworkError";
@@ -109,6 +115,10 @@ describe("Auth Actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCookieStore.get.mockReturnValue({ value: verificationContext });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
   });
 
   describe("loginAction", () => {
@@ -230,7 +240,7 @@ describe("Auth Actions", () => {
       );
     });
 
-    it("catches 403 ACCOUNT_NOT_VERIFIED and proceeds to /verify even if resendVerification rate limits", async () => {
+    it("catches 403 ACCOUNT_NOT_VERIFIED and returns rate-limited error when resendVerification returns 429", async () => {
       const formData = new FormData();
       formData.set("email", "candidate@example.com");
       formData.set("password", "password123");
@@ -248,10 +258,56 @@ describe("Auth Actions", () => {
 
       const result = await loginAction({}, formData);
       expect(result).toEqual({
-        error: "Please verify your contact before logging in.",
-        redirectTo: "/verify?channel=email",
+        error:
+          "Email delivery is temporarily rate-limited. Please try again later.",
       });
-      expect(mockCookieStore.set).toHaveBeenCalled();
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("returns error on unverified email login when resendVerification fails with NetworkError", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new NetworkError("Network connection lost"),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Unable to reach the server. Please try again later.",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("returns error on unverified email login when resendVerification fails with service ApiError", async () => {
+      const formData = new FormData();
+      formData.set("email", "candidate@example.com");
+      formData.set("password", "password123");
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          "Contact confirmation required",
+          "UNVERIFIED_ACCOUNT",
+        ),
+      );
+      vi.mocked(resendVerification).mockRejectedValueOnce(
+        new ApiError(503, "Email delivery is temporarily unavailable"),
+      );
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: "Email delivery is temporarily unavailable",
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
     });
   });
 
