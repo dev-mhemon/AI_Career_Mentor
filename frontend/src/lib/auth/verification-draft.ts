@@ -122,12 +122,26 @@ export function buildVerificationPath(channel: VerificationChannel): string {
 }
 
 /**
+ * Safely accesses browser `sessionStorage`, returning null in SSR environments
+ * or when browser security policies block storage access (throwing SecurityError).
+ */
+export function getSafeSessionStorage(): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Removes the R18 verification draft from browser `sessionStorage`.
  */
 export function clearVerificationDraft(): void {
-  if (typeof window === 'undefined' || !window.sessionStorage) return;
+  const storage = getSafeSessionStorage();
+  if (!storage) return;
   try {
-    window.sessionStorage.removeItem(VERIFICATION_DRAFT_STORAGE_KEY);
+    storage.removeItem(VERIFICATION_DRAFT_STORAGE_KEY);
   } catch {
     // Ignore storage access errors in restricted environments
   }
@@ -141,7 +155,8 @@ export function saveVerificationDraft(
   input: SaveVerificationDraftInput,
   nowMs: number = Date.now(),
 ): VerificationDraft | null {
-  if (typeof window === 'undefined' || !window.sessionStorage) return null;
+  const storage = getSafeSessionStorage();
+  if (!storage) return null;
   if (input.channel !== 'email' && input.channel !== 'phone') return null;
 
   if (input.onlyIfMissingOrExpired) {
@@ -178,7 +193,7 @@ export function saveVerificationDraft(
   };
 
   try {
-    window.sessionStorage.setItem(
+    storage.setItem(
       VERIFICATION_DRAFT_STORAGE_KEY,
       JSON.stringify(draft),
     );
@@ -212,13 +227,14 @@ export function loadVerificationDraft(
   nowMs: number = Date.now(),
   expectedContext?: VerificationDraftContext | VerificationDraftContext[] | null,
 ): { draft: VerificationDraft | null; expired: boolean } {
-  if (typeof window === 'undefined' || !window.sessionStorage) {
+  const storage = getSafeSessionStorage();
+  if (!storage) {
     return { draft: null, expired: false };
   }
 
   let raw: string | null = null;
   try {
-    raw = window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY);
+    raw = storage.getItem(VERIFICATION_DRAFT_STORAGE_KEY);
   } catch {
     return { draft: null, expired: false };
   }
@@ -336,8 +352,11 @@ export function updateVerificationDraftExpiry(
     expires_at: computeDraftExpiresAt(expiresInSeconds, nowMs),
   };
 
+  const storage = getSafeSessionStorage();
+  if (!storage) return null;
+
   try {
-    window.sessionStorage.setItem(
+    storage.setItem(
       VERIFICATION_DRAFT_STORAGE_KEY,
       JSON.stringify(updated),
     );
@@ -361,28 +380,76 @@ export interface PersistedCooldownState {
 }
 
 /**
+ * Builds the scoped storage key for a resend cooldown.
+ * When identifier is present, normalizes and scopes by channel and identifier.
+ *
+ * @param channel - Verification channel ('email' | 'phone') or null/undefined for default.
+ * @param identifier - Optional contact identifier (email or phone).
+ */
+export function getCooldownStorageKey(
+  channel?: VerificationChannel | null,
+  identifier?: string | null,
+): string {
+  const channelKey = channel || 'default';
+  const rawId = typeof identifier === 'string' ? identifier.trim() : '';
+  if (!rawId) {
+    return `${RESEND_COOLDOWN_STORAGE_PREFIX}${channelKey}`;
+  }
+  const normalized =
+    channel === 'email' || channel === 'phone'
+      ? normalizeVerificationIdentifier(channel, rawId)
+      : rawId.toLowerCase();
+  return `${RESEND_COOLDOWN_STORAGE_PREFIX}${channelKey}_${normalized || rawId.toLowerCase()}`;
+}
+
+/**
+ * Resolves the contact identifier from explicit parameter or active verification draft in storage.
+ */
+function resolveCooldownIdentifier(
+  channel?: VerificationChannel | null,
+  identifier?: string | null,
+): string | null {
+  if (identifier && typeof identifier === 'string' && identifier.trim()) {
+    return identifier.trim();
+  }
+  try {
+    const { draft } = loadVerificationDraft(channel);
+    if (draft?.normalized_identifier) {
+      return draft.normalized_identifier;
+    }
+  } catch {
+    // Ignore draft loading errors
+  }
+  return null;
+}
+
+/**
  * Saves a resend cooldown deadline into browser sessionStorage.
  *
  * @param channel - Verification channel ('email' | 'phone') or null/undefined for channel-neutral.
  * @param deadlineMs - Absolute expiry timestamp in epoch milliseconds.
  * @param originalSeconds - Initial requested cooldown duration in seconds.
  * @param nowMs - Current timestamp in epoch milliseconds (defaults to Date.now()).
+ * @param identifier - Optional contact identifier to scope cooldown per contact.
  */
 export function setPersistedCooldown(
   channel: VerificationChannel | null | undefined,
   deadlineMs: number,
   originalSeconds: number,
   nowMs: number = Date.now(),
+  identifier?: string | null,
 ): void {
-  if (typeof window === 'undefined' || !window.sessionStorage) return;
-  const key = `${RESEND_COOLDOWN_STORAGE_PREFIX}${channel || 'default'}`;
+  const storage = getSafeSessionStorage();
+  if (!storage) return;
+  const effectiveId = resolveCooldownIdentifier(channel, identifier);
+  const key = getCooldownStorageKey(channel, effectiveId);
   const payload: PersistedCooldownState = {
     deadlineMs,
     originalSeconds,
     createdAt: nowMs,
   };
   try {
-    window.sessionStorage.setItem(key, JSON.stringify(payload));
+    storage.setItem(key, JSON.stringify(payload));
   } catch {
     // Ignore storage quota or restricted environment errors
   }
@@ -392,15 +459,19 @@ export function setPersistedCooldown(
  * Retrieves the persisted resend cooldown state from browser sessionStorage.
  *
  * @param channel - Verification channel ('email' | 'phone') or null/undefined for channel-neutral.
+ * @param identifier - Optional contact identifier to scope cooldown per contact.
  * @returns Parsed PersistedCooldownState, or null if missing, invalid, or malformed.
  */
 export function getPersistedCooldown(
   channel: VerificationChannel | null | undefined,
+  identifier?: string | null,
 ): PersistedCooldownState | null {
-  if (typeof window === 'undefined' || !window.sessionStorage) return null;
-  const key = `${RESEND_COOLDOWN_STORAGE_PREFIX}${channel || 'default'}`;
+  const storage = getSafeSessionStorage();
+  if (!storage) return null;
+  const effectiveId = resolveCooldownIdentifier(channel, identifier);
+  const key = getCooldownStorageKey(channel, effectiveId);
   try {
-    const raw = window.sessionStorage.getItem(key);
+    const raw = storage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (
@@ -413,7 +484,11 @@ export function getPersistedCooldown(
       typeof parsed.createdAt !== 'number' ||
       !Number.isSafeInteger(parsed.createdAt)
     ) {
-      window.sessionStorage.removeItem(key);
+      try {
+        storage.removeItem(key);
+      } catch {
+        // Ignore
+      }
       return null;
     }
     return {
@@ -423,7 +498,7 @@ export function getPersistedCooldown(
     };
   } catch {
     try {
-      window.sessionStorage.removeItem(key);
+      storage.removeItem(key);
     } catch {
       // Ignore
     }
@@ -433,16 +508,25 @@ export function getPersistedCooldown(
 
 /**
  * Removes the persisted resend cooldown state from browser sessionStorage.
+ * If identifier is provided, strictly removes only the contact-scoped key.
  *
  * @param channel - Verification channel ('email' | 'phone') or null/undefined for channel-neutral.
+ * @param identifier - Optional contact identifier to clear scoped cooldown.
  */
 export function clearPersistedCooldown(
   channel: VerificationChannel | null | undefined,
+  identifier?: string | null,
 ): void {
-  if (typeof window === 'undefined' || !window.sessionStorage) return;
-  const key = `${RESEND_COOLDOWN_STORAGE_PREFIX}${channel || 'default'}`;
+  const storage = getSafeSessionStorage();
+  if (!storage) return;
+  const effectiveId = resolveCooldownIdentifier(channel, identifier);
+  const key = getCooldownStorageKey(channel, effectiveId);
+  const fallbackKey = getCooldownStorageKey(channel, null);
   try {
-    window.sessionStorage.removeItem(key);
+    storage.removeItem(key);
+    if (!identifier && key !== fallbackKey) {
+      storage.removeItem(fallbackKey);
+    }
   } catch {
     // Ignore
   }

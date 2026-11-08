@@ -30,11 +30,8 @@ export function parseCooldownParam(param: string | null): number {
   const trimmed = param.trim();
   if (!/^\d+$/.test(trimmed)) return 0;
   const parsed = Number(trimmed);
-  return Number.isSafeInteger(parsed) &&
-    parsed > 0 &&
-    parsed <= MAX_COOLDOWN_DURATION_SECONDS
-    ? parsed
-    : 0;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return 0;
+  return Math.min(parsed, MAX_COOLDOWN_DURATION_SECONDS);
 }
 
 /**
@@ -87,8 +84,16 @@ export function computeInitialCooldown(
 
   const persisted = getPersistedCooldown(channel);
 
-  if (directExpiryMs !== null) {
-    const cappedMs = Math.min(directExpiryMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
+  // Do not let an expired URL deadline (directExpiryMs <= nowMs) override a newer valid persisted.deadlineMs > nowMs
+  const effectiveExpiryMs =
+    directExpiryMs !== null && directExpiryMs > nowMs
+      ? persisted !== null && persisted.deadlineMs > nowMs
+        ? Math.max(directExpiryMs, persisted.deadlineMs)
+        : directExpiryMs
+      : null;
+
+  if (effectiveExpiryMs !== null) {
+    const cappedMs = Math.min(effectiveExpiryMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
     const remaining = Math.max(0, Math.ceil((cappedMs - nowMs) / 1000));
     return {
       seconds: remaining,
@@ -157,9 +162,9 @@ function VerifyFormContent() {
 
   const [reenteredIdentifier, setReenteredIdentifier] = useState('');
 
-  const [cooldown, setCooldown] = useState<number>(() => {
-    return computeInitialCooldown(channelParam, searchParams, Date.now()).seconds;
-  });
+  // SSR-deterministic initial state (0/false); restored asynchronously on client mount
+  const [cooldown, setCooldown] = useState<number>(0);
+  const [isCooldownHydrated, setIsCooldownHydrated] = useState<boolean>(false);
   const cooldownDeadlineRef = useRef<number | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
@@ -178,14 +183,27 @@ function VerifyFormContent() {
     setIsDraftExpired(expired);
   }, [channelParam]);
 
-  /** Sync initial cooldown deadline to sessionStorage (pure effect, zero render-phase writes). */
+  /** Restore cooldown from query params or sessionStorage after mount (SSR-safe). */
   useEffect(() => {
+    let cancelled = false;
     const initial = computeInitialCooldown(channelParam, searchParams, Date.now());
     if (initial.deadlineMs && initial.deadlineMs > Date.now()) {
       cooldownDeadlineRef.current = initial.deadlineMs;
       const remaining = Math.max(0, Math.ceil((initial.deadlineMs - Date.now()) / 1000));
       setPersistedCooldown(channelParam, initial.deadlineMs, remaining, Date.now());
     }
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (initial.seconds > 0) {
+        setCooldown(initial.seconds);
+      }
+      setIsCooldownHydrated(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [channelParam, searchParams]);
 
   /** Successful verification navigation & draft clearance. */
@@ -241,13 +259,15 @@ function VerifyFormContent() {
     if (
       searchParams.has('cooldown') ||
       searchParams.has('cooldownUntil') ||
-      searchParams.has('resendAvailableAt')
+      searchParams.has('resendAvailableAt') ||
+      searchParams.has('resend_available_at')
     ) {
       try {
         const url = new URL(window.location.href);
         url.searchParams.delete('cooldown');
         url.searchParams.delete('cooldownUntil');
         url.searchParams.delete('resendAvailableAt');
+        url.searchParams.delete('resend_available_at');
         window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
       } catch {
         // Ignore URL parsing errors in mocked test environments
@@ -421,7 +441,7 @@ function VerifyFormContent() {
       <div className="flex flex-col items-center gap-2">
         <button
           type="button"
-          disabled={cooldown > 0 || isResending}
+          disabled={!isCooldownHydrated || cooldown > 0 || isResending}
           onClick={() => handleResend()}
           className="text-sm font-medium text-foreground underline underline-offset-4 hover:text-foreground/80 disabled:opacity-50"
         >

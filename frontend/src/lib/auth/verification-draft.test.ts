@@ -14,6 +14,8 @@ import {
   setPersistedCooldown,
   getPersistedCooldown,
   clearPersistedCooldown,
+  getSafeSessionStorage,
+  getCooldownStorageKey,
   RESEND_COOLDOWN_STORAGE_PREFIX,
 } from './verification-draft';
 
@@ -396,6 +398,98 @@ describe('R18 verification draft helper', () => {
 
       clearPersistedCooldown('email');
       expect(getPersistedCooldown('email')).toBeNull();
+    });
+
+    it('scopes cooldowns independently per contact identifier', () => {
+      const now = 1000000;
+      setPersistedCooldown('email', now + 45000, 45, now, 'first@example.com');
+      setPersistedCooldown('email', now + 30000, 30, now, 'second@example.com');
+
+      const first = getPersistedCooldown('email', 'first@example.com');
+      const second = getPersistedCooldown('email', 'second@example.com');
+
+      expect(first?.deadlineMs).toBe(now + 45000);
+      expect(first?.originalSeconds).toBe(45);
+      expect(second?.deadlineMs).toBe(now + 30000);
+      expect(second?.originalSeconds).toBe(30);
+
+      // Clearing first does not clear second
+      clearPersistedCooldown('email', 'first@example.com');
+      expect(getPersistedCooldown('email', 'first@example.com')).toBeNull();
+      expect(getPersistedCooldown('email', 'second@example.com')).not.toBeNull();
+    });
+
+    it('does not apply channel-only cooldown to a different contact identifier', () => {
+      const now = 1000000;
+      // Legacy or channel-only cooldown stored under channel key without identifier
+      window.sessionStorage.setItem(
+        `${RESEND_COOLDOWN_STORAGE_PREFIX}email`,
+        JSON.stringify({
+          deadlineMs: now + 45000,
+          originalSeconds: 45,
+          createdAt: now,
+        }),
+      );
+
+      // Explicit identifier query must NOT fall back to channel-only key
+      expect(getPersistedCooldown('email', 'different@example.com')).toBeNull();
+
+      // Draft with a different identifier must NOT fall back to channel-only key
+      saveVerificationDraft({
+        channel: 'email',
+        identifier: 'different@example.com',
+      });
+      expect(getPersistedCooldown('email')).toBeNull();
+
+      // Explicit clear with identifier must not remove the channel-only key
+      clearPersistedCooldown('email', 'different@example.com');
+      expect(
+        window.sessionStorage.getItem(`${RESEND_COOLDOWN_STORAGE_PREFIX}email`),
+      ).not.toBeNull();
+
+      // When no identifier and no draft exist, channel-only key is returned
+      clearVerificationDraft();
+      expect(getPersistedCooldown('email')).toEqual({
+        deadlineMs: now + 45000,
+        originalSeconds: 45,
+        createdAt: now,
+      });
+    });
+
+    it('builds scoped storage keys correctly via getCooldownStorageKey', () => {
+      expect(getCooldownStorageKey('email', 'User@Example.com')).toBe(
+        `${RESEND_COOLDOWN_STORAGE_PREFIX}email_user@example.com`,
+      );
+      expect(getCooldownStorageKey('phone', '01712345678')).toBe(
+        `${RESEND_COOLDOWN_STORAGE_PREFIX}phone_+8801712345678`,
+      );
+      expect(getCooldownStorageKey('email')).toBe(`${RESEND_COOLDOWN_STORAGE_PREFIX}email`);
+      expect(getCooldownStorageKey(null)).toBe(`${RESEND_COOLDOWN_STORAGE_PREFIX}default`);
+    });
+
+    it('safely handles window.sessionStorage throwing SecurityError without throwing', () => {
+      const originalStorage = window.sessionStorage;
+      try {
+        Object.defineProperty(window, 'sessionStorage', {
+          configurable: true,
+          get: () => {
+            throw new DOMException('The operation is insecure.', 'SecurityError');
+          },
+        });
+
+        expect(getSafeSessionStorage()).toBeNull();
+        expect(getPersistedCooldown('email')).toBeNull();
+        expect(() => setPersistedCooldown('email', 1045000, 45, 1000000)).not.toThrow();
+        expect(() => clearPersistedCooldown('email')).not.toThrow();
+        expect(loadVerificationDraft('email')).toEqual({ draft: null, expired: false });
+        expect(saveVerificationDraft({ channel: 'email', identifier: 'u@example.com' })).toBeNull();
+        expect(() => clearVerificationDraft()).not.toThrow();
+      } finally {
+        Object.defineProperty(window, 'sessionStorage', {
+          configurable: true,
+          value: originalStorage,
+        });
+      }
     });
   });
 });

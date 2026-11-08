@@ -39,9 +39,10 @@ describe('VerifyForm', () => {
     clearVerificationDraft();
   });
 
-  it('renders invalid link message when params are missing', () => {
+  it('renders invalid link message when params are missing', async () => {
     vi.mocked(useSearchParams).mockReturnValue(new URLSearchParams());
     render(<VerifyForm />);
+    await act(async () => {});
     expect(screen.getByText(/invalid verification link/i)).toBeInTheDocument();
   });
 
@@ -517,7 +518,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = screen.getByRole('button', { name: /resend code in 45s/i });
+    const resendButton = await screen.findByRole('button', { name: /resend code in 45s/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeDisabled();
   });
@@ -528,7 +529,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = await screen.findByRole('button', { name: /resend verification code/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeEnabled();
   });
@@ -539,24 +540,35 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = await screen.findByRole('button', { name: /resend verification code/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeEnabled();
     expect(screen.queryByText(/resend code in/i)).not.toBeInTheDocument();
   });
 
-  it('rejects negative, decimal, and out-of-range cooldown values', async () => {
-    for (const invalid of ['-10', '12.5', '0', '601']) {
+  it('rejects negative, decimal, and zero cooldown values', async () => {
+    for (const invalid of ['-10', '12.5', '0']) {
       vi.mocked(useSearchParams).mockReturnValue(
         new URLSearchParams(`?channel=email&cooldown=${invalid}`),
       );
       const { unmount } = render(<VerifyForm />);
 
-      const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+      const resendButton = await screen.findByRole('button', { name: /resend verification code/i });
       expect(resendButton).toBeInTheDocument();
       expect(resendButton).toBeEnabled();
       unmount();
     }
+  });
+
+  it('caps cooldown values exceeding MAX_COOLDOWN_DURATION_SECONDS to 600s', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=601'),
+    );
+    render(<VerifyForm />);
+
+    const resendButton = await screen.findByRole('button', { name: /resend code in 600s/i });
+    expect(resendButton).toBeInTheDocument();
+    expect(resendButton).toBeDisabled();
   });
 
   it('computes remaining cooldown on page reload after partial elapsed time instead of restarting', async () => {
@@ -568,7 +580,7 @@ describe('VerifyForm', () => {
       new URLSearchParams('?channel=email&cooldown=45'),
     );
     const firstRender = render(<VerifyForm />);
-    expect(screen.getByRole('button', { name: /resend code in 45s/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /resend code in 45s/i })).toBeInTheDocument();
     firstRender.unmount();
 
     // 20 seconds elapse, user reloads the same URL
@@ -576,28 +588,51 @@ describe('VerifyForm', () => {
     render(<VerifyForm />);
 
     // Should resume with remaining 25 seconds instead of restarting to 45s
-    const reloadedButton = screen.getByRole('button', { name: /resend code in 25s/i });
+    const reloadedButton = await screen.findByRole('button', { name: /resend code in 25s/i });
     expect(reloadedButton).toBeInTheDocument();
     expect(reloadedButton).toBeDisabled();
   });
 
-  it('does not restart cooldown on page reload if cooldown has fully elapsed', async () => {
+  it('does not restart cooldown on page reload if cooldown has fully elapsed and cleans expired url params', async () => {
+    vi.useFakeTimers();
     const baseNow = 1000000;
-    vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+    vi.setSystemTime(baseNow);
 
-    // Initial mount with 45s cooldown
+    // Initial mount with 60s cooldown and mock URL in history
+    window.history.replaceState(null, '', '/verify?channel=email&cooldown=60');
     vi.mocked(useSearchParams).mockReturnValue(
-      new URLSearchParams('?channel=email&cooldown=45'),
+      new URLSearchParams(window.location.search),
     );
+
     const firstRender = render(<VerifyForm />);
-    expect(screen.getByRole('button', { name: /resend code in 45s/i })).toBeInTheDocument();
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 60s/i })).toBeInTheDocument();
+
+    // Fast-forward 60s so cooldown expires and timer cleanup effect runs
+    for (let i = 0; i < 60; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+    }
+
+    // Verify button transitioned to enabled and URL was cleaned
+    const enabledButton = screen.getByRole('button', { name: /resend verification code/i });
+    expect(enabledButton).toBeEnabled();
+    expect(window.location.search).not.toContain('cooldown=');
+
     firstRender.unmount();
 
-    // 50 seconds elapse (cooldown expired), user reloads the same URL
-    vi.spyOn(Date, 'now').mockReturnValue(baseNow + 50000);
+    // User reloads the page with the updated window.location.search
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams(window.location.search),
+    );
     render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
 
-    // Resend button should be enabled and not restart countdown
     const reloadedButton = screen.getByRole('button', { name: /resend verification code/i });
     expect(reloadedButton).toBeInTheDocument();
     expect(reloadedButton).toBeEnabled();
@@ -614,7 +649,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = screen.getByRole('button', { name: /resend code in 30s/i });
+    const resendButton = await screen.findByRole('button', { name: /resend code in 30s/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeDisabled();
   });
@@ -629,6 +664,9 @@ describe('VerifyForm', () => {
     );
 
     render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
 
     expect(screen.getByRole('button', { name: /resend code in 3s/i })).toBeInTheDocument();
 
@@ -665,6 +703,9 @@ describe('VerifyForm', () => {
     );
 
     render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
 
     // Should be clamped to 600s
     expect(screen.getByRole('button', { name: /resend code in 600s/i })).toBeInTheDocument();
