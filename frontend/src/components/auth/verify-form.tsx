@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
 import {
   loadVerificationDraft,
+  getRawVerificationDraft,
   saveFallbackVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,
@@ -53,10 +54,11 @@ export function parseExpiryTimestamp(param: string | null): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-/** Result structure for computeInitialCooldown containing seconds and target deadline. */
+/** Result structure for computeInitialCooldown containing seconds, target deadline, and original duration. */
 export interface InitialCooldownResult {
   seconds: number;
   deadlineMs: number | null;
+  originalSeconds: number;
 }
 
 /**
@@ -66,7 +68,7 @@ export interface InitialCooldownResult {
  * @param channel - Active verification channel ('email' | 'phone').
  * @param searchParams - Readonly search parameters from the active URL.
  * @param nowMs - Current timestamp in epoch milliseconds (defaults to Date.now()).
- * @returns Initial remaining seconds and target deadline timestamp in milliseconds.
+ * @returns Initial remaining seconds, target deadline timestamp, and original duration in seconds.
  */
 export function computeInitialCooldown(
   channel: VerificationChannel | null | undefined,
@@ -95,9 +97,16 @@ export function computeInitialCooldown(
   if (effectiveExpiryMs !== null) {
     const cappedMs = Math.min(effectiveExpiryMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
     const remaining = Math.max(0, Math.ceil((cappedMs - nowMs) / 1000));
+    const originalSecs =
+      persisted !== null && persisted.originalSeconds > 0
+        ? persisted.originalSeconds
+        : paramSeconds > 0
+          ? paramSeconds
+          : remaining;
     return {
       seconds: remaining,
       deadlineMs: cappedMs,
+      originalSeconds: originalSecs,
     };
   }
 
@@ -108,6 +117,7 @@ export function computeInitialCooldown(
       return {
         seconds: remaining,
         deadlineMs: cappedMs,
+        originalSeconds: persisted.originalSeconds,
       };
     }
 
@@ -119,6 +129,7 @@ export function computeInitialCooldown(
       return {
         seconds: 0,
         deadlineMs: null,
+        originalSeconds: persisted.originalSeconds,
       };
     }
   }
@@ -128,12 +139,14 @@ export function computeInitialCooldown(
     return {
       seconds: paramSeconds,
       deadlineMs,
+      originalSeconds: paramSeconds,
     };
   }
 
   return {
     seconds: 0,
     deadlineMs: null,
+    originalSeconds: 0,
   };
 }
 
@@ -189,8 +202,17 @@ function VerifyFormContent() {
     const initial = computeInitialCooldown(channelParam, searchParams, Date.now());
     if (initial.deadlineMs && initial.deadlineMs > Date.now()) {
       cooldownDeadlineRef.current = initial.deadlineMs;
-      const remaining = Math.max(0, Math.ceil((initial.deadlineMs - Date.now()) / 1000));
-      setPersistedCooldown(channelParam, initial.deadlineMs, remaining, Date.now());
+      const contactIdentifier =
+        draft?.normalized_identifier ||
+        getRawVerificationDraft()?.normalized_identifier ||
+        reenteredIdentifier;
+      setPersistedCooldown(
+        channelParam,
+        initial.deadlineMs,
+        initial.originalSeconds,
+        Date.now(),
+        contactIdentifier,
+      );
     }
 
     queueMicrotask(() => {
@@ -204,7 +226,7 @@ function VerifyFormContent() {
     return () => {
       cancelled = true;
     };
-  }, [channelParam, searchParams]);
+  }, [channelParam, searchParams, draft, reenteredIdentifier]);
 
   /** Successful verification navigation & draft clearance. */
   useEffect(() => {
@@ -214,14 +236,19 @@ function VerifyFormContent() {
         Date.now(),
         ['registration', 'unverified_login', 'secondary_contact'],
       );
-      if (currentDraft) {
+      const contactIdentifier =
+        currentDraft?.normalized_identifier ||
+        getRawVerificationDraft()?.normalized_identifier ||
+        reenteredIdentifier;
+
+      cooldownDeadlineRef.current = null;
+      clearPersistedCooldown(channelParam, contactIdentifier);
+      if (currentDraft || getRawVerificationDraft()) {
         clearVerificationDraft();
       }
-      cooldownDeadlineRef.current = null;
-      clearPersistedCooldown(channelParam);
       router.push(state.redirectTo);
     }
-  }, [state, router, channelParam]);
+  }, [state, router, channelParam, reenteredIdentifier]);
 
   /** Cooldown timer: single-responsibility effect computing remaining time from deadline on each tick. */
   useEffect(() => {
@@ -246,12 +273,16 @@ function VerifyFormContent() {
       setCooldown(remaining);
       if (remaining <= 0) {
         cooldownDeadlineRef.current = null;
-        clearPersistedCooldown(channelParam);
+        const contactIdentifier =
+          draft?.normalized_identifier ||
+          getRawVerificationDraft()?.normalized_identifier ||
+          reenteredIdentifier;
+        clearPersistedCooldown(channelParam, contactIdentifier);
       }
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [cooldown, channelParam, searchParams]);
+  }, [cooldown, channelParam, searchParams, draft, reenteredIdentifier]);
 
   /** Consume one-time cooldown query parameter to ensure clean browser history on reload. */
   useEffect(() => {

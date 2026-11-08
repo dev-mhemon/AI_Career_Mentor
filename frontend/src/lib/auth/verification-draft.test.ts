@@ -15,6 +15,7 @@ import {
   getPersistedCooldown,
   clearPersistedCooldown,
   getSafeSessionStorage,
+  getRawVerificationDraft,
   getCooldownStorageKey,
   RESEND_COOLDOWN_STORAGE_PREFIX,
 } from './verification-draft';
@@ -454,6 +455,29 @@ describe('R18 verification draft helper', () => {
         originalSeconds: 45,
         createdAt: now,
       });
+    });
+
+    it('resolves and cleans up contact-scoped cooldown key even after draft has expired', () => {
+      const now = 1000000;
+      saveVerificationDraft(
+        {
+          channel: 'email',
+          identifier: 'expired-scoped@example.com',
+          expiresInSeconds: 10,
+        },
+        now - 20000, // saved 20s ago with 10s TTL => expired
+      );
+
+      // Raw draft exists in sessionStorage with expired timestamp
+      expect(getRawVerificationDraft()?.normalized_identifier).toBe('expired-scoped@example.com');
+
+      // Set a contact-scoped cooldown
+      setPersistedCooldown('email', now + 30000, 30, now, 'expired-scoped@example.com');
+      expect(getPersistedCooldown('email', 'expired-scoped@example.com')).not.toBeNull();
+
+      // Clear persisted cooldown without explicit identifier -> resolves from raw stored draft despite TTL expiry
+      clearPersistedCooldown('email');
+      expect(getPersistedCooldown('email', 'expired-scoped@example.com')).toBeNull();
     });
 
     it('builds scoped storage keys correctly via getCooldownStorageKey', () => {

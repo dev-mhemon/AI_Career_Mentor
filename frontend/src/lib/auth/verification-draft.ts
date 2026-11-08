@@ -135,6 +135,33 @@ export function getSafeSessionStorage(): Storage | null {
 }
 
 /**
+ * Reads the raw stored verification draft from sessionStorage without expiry checking.
+ *
+ * @returns Parsed VerificationDraft or null if absent, unreadable, or malformed.
+ */
+export function getRawVerificationDraft(): VerificationDraft | null {
+  const storage = getSafeSessionStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(VERIFICATION_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      (parsed.channel !== 'email' && parsed.channel !== 'phone') ||
+      typeof parsed.normalized_identifier !== 'string' ||
+      !parsed.normalized_identifier.trim()
+    ) {
+      return null;
+    }
+    return parsed as unknown as VerificationDraft;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Removes the R18 verification draft from browser `sessionStorage`.
  */
 export function clearVerificationDraft(): void {
@@ -403,7 +430,9 @@ export function getCooldownStorageKey(
 }
 
 /**
- * Resolves the contact identifier from explicit parameter or active verification draft in storage.
+ * Resolves the contact identifier from explicit parameter or stored verification draft.
+ * Checks raw stored draft so cooldown cleanup can resolve the contact-scoped entry
+ * even if the draft has expired.
  */
 function resolveCooldownIdentifier(
   channel?: VerificationChannel | null,
@@ -413,6 +442,10 @@ function resolveCooldownIdentifier(
     return identifier.trim();
   }
   try {
+    const rawStored = getRawVerificationDraft();
+    if (rawStored?.normalized_identifier && (!channel || rawStored.channel === channel)) {
+      return rawStored.normalized_identifier;
+    }
     const { draft } = loadVerificationDraft(channel);
     if (draft?.normalized_identifier) {
       return draft.normalized_identifier;

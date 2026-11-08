@@ -8,6 +8,7 @@ import {
   clearVerificationDraft,
   VERIFICATION_DRAFT_STORAGE_KEY,
   getPersistedCooldown,
+  setPersistedCooldown,
 } from '@/lib/auth/verification-draft';
 
 const mockPush = vi.fn();
@@ -397,6 +398,8 @@ describe('VerifyForm', () => {
       channel: 'email',
       identifier: 'candidate@example.com',
     });
+    setPersistedCooldown('email', Date.now() + 60000, 60, Date.now(), 'candidate@example.com');
+    expect(getPersistedCooldown('email', 'candidate@example.com')).not.toBeNull();
 
     vi.mocked(useSearchParams).mockReturnValue(
       new URLSearchParams('?channel=email'),
@@ -424,6 +427,7 @@ describe('VerifyForm', () => {
       expect(
         window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
       ).toBeNull();
+      expect(getPersistedCooldown('email', 'candidate@example.com')).toBeNull();
       expect(mockPush).toHaveBeenCalledWith('/onboarding/profile');
     });
   });
@@ -636,6 +640,50 @@ describe('VerifyForm', () => {
     const reloadedButton = screen.getByRole('button', { name: /resend verification code/i });
     expect(reloadedButton).toBeInTheDocument();
     expect(reloadedButton).toBeEnabled();
+  });
+
+  it('preserves original cooldown duration across reload mount hydration so revisiting original cooldown URL after expiry is recognized as expired', async () => {
+    vi.useFakeTimers();
+    const baseNow = 1000000;
+    vi.setSystemTime(baseNow);
+
+    // 1. Initial mount with cooldown=60
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=60'),
+    );
+    const firstRender = render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 60s/i })).toBeInTheDocument();
+    firstRender.unmount();
+
+    // 2. 20s elapse: user opens the URL again while cooldown is still running (40s left)
+    vi.setSystemTime(baseNow + 20000);
+    const midRender = render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 40s/i })).toBeInTheDocument();
+
+    // Persisted originalSeconds must remain 60, not overwritten with remaining (40)
+    const persistedMid = getPersistedCooldown('email');
+    expect(persistedMid?.originalSeconds).toBe(60);
+    midRender.unmount();
+
+    // 3. User closes page; total 70s elapse (cooldown is now fully expired)
+    vi.setSystemTime(baseNow + 70000);
+
+    // User revisits the original URL (?channel=email&cooldown=60)
+    render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+
+    // Since originalSeconds was preserved as 60, it recognizes cooldown=60 as expired and keeps button enabled
+    const expiredButton = screen.getByRole('button', { name: /resend verification code/i });
+    expect(expiredButton).toBeInTheDocument();
+    expect(expiredButton).toBeEnabled();
   });
 
   it('derives countdown from direct expiry timestamp query param', async () => {
