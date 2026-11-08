@@ -79,6 +79,148 @@ async function getVerificationContext(
 }
 
 /**
+ * Normalizes an unknown error payload into a key-value record if valid, or extracts a string message.
+ *
+ * @param rawErr - The raw error property or caught value to inspect.
+ * @returns A record containing error fields, or undefined if not representable.
+ */
+function toErrorRecord(rawErr: unknown): Record<string, unknown> | undefined {
+  if (typeof rawErr === 'string') {
+    return { message: rawErr };
+  }
+  if (rawErr !== null && typeof rawErr === 'object') {
+    return rawErr as Record<string, unknown>;
+  }
+  return rawErr ? {} : undefined;
+}
+
+/**
+ * Classifies an error code, retry-after duration, and HTTP status code to determine
+ * whether an active cooldown is in effect.
+ *
+ * @param code - Error code identifier from response or exception.
+ * @param retryAfter - Retry-after duration in seconds, if present.
+ * @param statusCode - HTTP status code, if present.
+ * @returns Object with isCooldown flag and optional cooldownSeconds.
+ */
+function classifyCooldown(
+  code: unknown,
+  retryAfter: unknown,
+  statusCode?: number,
+): { isCooldown: boolean; cooldownSeconds?: number } {
+  const seconds = typeof retryAfter === 'number' && retryAfter > 0 ? retryAfter : undefined;
+  const isCooldown =
+    code === 'RATE_LIMITED' ||
+    code === 'RESEND_COOLDOWN_ACTIVE' ||
+    code === 'COOLDOWN_ACTIVE' ||
+    (seconds !== undefined &&
+      statusCode === 429 &&
+      code !== 'OTP_LIMIT_EXCEEDED' &&
+      code !== 'IP_SEND_LIMIT_EXCEEDED');
+  return { isCooldown, cooldownSeconds: seconds };
+}
+
+/**
+ * Evaluates the outcome of resendVerification (resolved result or caught error)
+ * to determine if verification flow can proceed and whether a cooldown was established.
+ *
+ * @param result - The resolved value from resendVerification if it did not throw.
+ * @param error - The caught error if resendVerification threw.
+ * @returns Dispatch decision with canProceed flag, optional cooldown in seconds, and optional error message.
+ */
+function evaluateResendDispatch(
+  result: unknown,
+  error: unknown,
+): { canProceed: boolean; cooldownSeconds?: number; errorMessage?: string } {
+  if (error) {
+    if (error instanceof NetworkError) {
+      return {
+        canProceed: false,
+        errorMessage: 'Unable to reach the server. Please try again later.',
+      };
+    }
+    if (error instanceof ApiError) {
+      const { isCooldown, cooldownSeconds } = classifyCooldown(
+        error.code,
+        error.retryAfterSeconds,
+        error.statusCode,
+      );
+
+      if (isCooldown) {
+        return {
+          canProceed: true,
+          cooldownSeconds,
+        };
+      }
+
+      const limitMsg =
+        error.statusCode === 429
+          ? 'Email delivery is temporarily rate-limited. Please try again later.'
+          : error.message || 'Unable to send verification code. Please try again.';
+
+      return {
+        canProceed: false,
+        errorMessage: limitMsg,
+      };
+    }
+    return {
+      canProceed: false,
+      errorMessage: 'Unable to send verification code. Please try again.',
+    };
+  }
+
+  if (result && typeof result === 'object') {
+    const raw = result as Record<string, unknown>;
+    const errObj = toErrorRecord(raw.error);
+    if (errObj) {
+      const { isCooldown, cooldownSeconds } = classifyCooldown(
+        errObj.code,
+        errObj.retryAfterSeconds,
+        typeof errObj.statusCode === 'number'
+          ? errObj.statusCode
+          : typeof raw.statusCode === 'number'
+            ? (raw.statusCode as number)
+            : undefined,
+      );
+
+      if (isCooldown) {
+        return {
+          canProceed: true,
+          cooldownSeconds,
+        };
+      }
+      return {
+        canProceed: false,
+        errorMessage:
+          (typeof errObj.message === 'string' && errObj.message) ||
+          'Unable to send verification code. Please try again.',
+      };
+    }
+
+    if (raw.success === false) {
+      return {
+        canProceed: false,
+        errorMessage: 'Unable to send verification code. Please try again.',
+      };
+    }
+
+    const cooldownVal =
+      typeof raw.cooldown === 'number' && raw.cooldown > 0
+        ? raw.cooldown
+        : typeof raw.retryAfterSeconds === 'number' && raw.retryAfterSeconds > 0
+          ? raw.retryAfterSeconds
+          : undefined;
+
+    return {
+      canProceed: true,
+      cooldownSeconds: cooldownVal,
+    };
+  }
+
+  return { canProceed: true };
+}
+
+/**
  * Server action authenticating user credentials via backend EP-A05 and establishing session.
  * Supports email and Bangladesh mobile phone identifiers with unverified contact redirection.
  */
@@ -130,29 +272,35 @@ export async function loginAction(
               'Phone verification is temporarily unavailable. Please sign in with email or contact support.',
           };
         }
+        let resendResult: unknown;
+        let resendError: unknown;
         try {
-          await resendVerification({ channel: 'email', contact: rawIdentifier });
+          resendResult = await resendVerification({
+            channel: 'email',
+            contact: rawIdentifier,
+          });
         } catch (resendErr) {
-          if (resendErr instanceof NetworkError) {
-            return { error: 'Unable to reach the server. Please try again later.' };
-          }
-          if (resendErr instanceof ApiError) {
-            if (resendErr.statusCode === 429) {
-              return {
-                error:
-                  'Email delivery is temporarily rate-limited. Please try again later.',
-              };
-            }
-            return { error: resendErr.message };
-          }
+          resendError = resendErr;
+        }
+
+        const dispatch = evaluateResendDispatch(resendResult, resendError);
+        if (!dispatch.canProceed) {
           return {
-            error: 'Failed to send verification code. Please try again later.',
+            error:
+              dispatch.errorMessage ||
+              'Unable to send verification code. Please try again.',
           };
         }
+
+        const verifyUrl =
+          typeof dispatch.cooldownSeconds === 'number' && dispatch.cooldownSeconds > 0
+            ? `/verify?channel=email&cooldown=${dispatch.cooldownSeconds}`
+            : '/verify?channel=email';
+
         await setVerificationContext({ type: 'email', identifier: rawIdentifier });
         return {
           error: 'Please verify your contact before logging in.',
-          redirectTo: '/verify?channel=email',
+          redirectTo: verifyUrl,
         };
       }
       return { error: err.message };
@@ -193,13 +341,29 @@ export async function registerAction(
   }
 
   try {
-    await registerUser({
+    const regResult = (await registerUser({
       email: type === 'email' ? identifier : null,
       phone: type === 'phone' ? identifier : null,
       password,
       confirm_password: confirmPassword,
       privacy_consent,
-    });
+    })) as unknown;
+    if (regResult && typeof regResult === 'object') {
+      const raw = regResult as Record<string, unknown>;
+      const errObj = toErrorRecord(raw.error);
+      if (errObj) {
+        return {
+          error:
+            (typeof errObj.message === 'string' && errObj.message) ||
+            'An unexpected error occurred during registration.',
+        };
+      }
+      if (raw.success === false) {
+        return {
+          error: 'An unexpected error occurred during registration.',
+        };
+      }
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -315,15 +479,32 @@ export async function resendOtpAction(
   if (!identifier) return { error: 'Invalid verification request.' };
 
   try {
-    const result = await resendVerification({
+    const result = (await resendVerification({
       channel: type,
       contact: identifier,
-    });
+    })) as unknown;
+    if (result && typeof result === 'object') {
+      const raw = result as Record<string, unknown>;
+      const errObj = toErrorRecord(raw.error);
+      if (errObj) {
+        return {
+          error:
+            (typeof errObj.message === 'string' && errObj.message) ||
+            'Failed to send verification code. Please try again later.',
+        };
+      }
+      if (raw.success === false) {
+        return {
+          error: 'Failed to send verification code. Please try again later.',
+        };
+      }
+    }
+    const resolved = result as { expires_in_seconds?: number; contact_masked?: string };
     await setVerificationContext({ type, identifier });
     return {
       success: true,
-      expiresInSeconds: result.expires_in_seconds,
-      contactMasked: result.contact_masked,
+      expiresInSeconds: resolved?.expires_in_seconds,
+      contactMasked: resolved?.contact_masked,
     };
   } catch (err) {
     if (err instanceof NetworkError) {
