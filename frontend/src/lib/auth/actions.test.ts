@@ -10,8 +10,9 @@ import {
   resetPasswordAction,
   linkIdentityAction,
   addContactAction,
+  withSingleSessionRefresh,
 } from "@/lib/auth/actions";
-import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError, NetworkError } from "@/lib/api/client";
+import { loginUser, approveOAuthSession, registerUser, resendVerification, verifyEmail, verifyPhone, logoutUser, refreshSession, forgotPassword, resetPassword, linkSocialIdentity, addContact, ApiError, NetworkError, UnauthorizedError } from "@/lib/api/client";
 import { GET as authCallbackGet } from "@/app/auth/callback/route";
 
 import { redirect } from "next/navigation";
@@ -87,6 +88,19 @@ vi.mock("@/lib/api/client", () => {
     }
   }
 
+  /**
+   * Mock UnauthorizedError mimicking HTTP 401 error subclass.
+   */
+  class MockUnauthorizedError extends MockApiError {
+    /**
+     * Initializes mock 401 unauthorized error.
+     */
+    constructor(message = "Unauthorized", code?: string, requestId?: string) {
+      super(401, message, code, requestId);
+      this.name = "UnauthorizedError";
+    }
+  }
+
   return {
     loginUser: vi.fn(),
     syncUser: vi.fn(),
@@ -97,12 +111,14 @@ vi.mock("@/lib/api/client", () => {
     verifyEmail: vi.fn(),
     verifyPhone: vi.fn(),
     logoutUser: vi.fn(),
+    refreshSession: vi.fn(),
     forgotPassword: vi.fn(),
     resetPassword: vi.fn(),
     linkSocialIdentity: vi.fn(),
     addContact: vi.fn(),
     NetworkError: MockNetworkError,
     ApiError: MockApiError,
+    UnauthorizedError: MockUnauthorizedError,
   };
 });
 
@@ -875,6 +891,84 @@ describe("Auth Actions", () => {
       });
       expect(mockCookieStore.set).not.toHaveBeenCalled();
     });
+
+    it("drops existingContext.context and does not carry over secondary_contact when existingContext.identifier differs from reentered identifier", async () => {
+      const secondaryContext = Buffer.from(
+        JSON.stringify({
+          type: "email",
+          identifier: "old@example.com",
+          context: "secondary_contact",
+        }),
+      ).toString("base64url");
+      mockCookieStore.get.mockReturnValueOnce({ value: secondaryContext });
+
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "n***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
+
+      const result = await resendOtpAction("email", "new@example.com");
+
+      expect(result).toEqual({
+        success: true,
+        expiresInSeconds: 600,
+        contactMasked: "n***@example.com",
+        resendAvailableAt: "2026-01-01T00:00:00Z",
+      });
+
+      const lastSetCall =
+        mockCookieStore.set.mock.calls[mockCookieStore.set.mock.calls.length - 1];
+      const encodedPayload = lastSetCall[1];
+      const decoded = JSON.parse(
+        Buffer.from(encodedPayload, "base64url").toString("utf8"),
+      );
+      expect(decoded).toEqual({
+        type: "email",
+        identifier: "new@example.com",
+      });
+      expect(decoded.context).toBeUndefined();
+    });
+
+    it("preserves existingContext.context case-insensitively when reentered identifier matches existingContext.identifier", async () => {
+      const secondaryContext = Buffer.from(
+        JSON.stringify({
+          type: "email",
+          identifier: "test@example.com",
+          context: "secondary_contact",
+        }),
+      ).toString("base64url");
+      mockCookieStore.get.mockReturnValueOnce({ value: secondaryContext });
+
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: "email",
+        contact_masked: "t***@example.com",
+        expires_in_seconds: 600,
+        resend_available_at: "2026-01-01T00:00:00Z",
+      });
+
+      const result = await resendOtpAction("email", "  TEST@EXAMPLE.COM  ");
+
+      expect(result).toEqual({
+        success: true,
+        expiresInSeconds: 600,
+        contactMasked: "t***@example.com",
+        resendAvailableAt: "2026-01-01T00:00:00Z",
+      });
+
+      const lastSetCall =
+        mockCookieStore.set.mock.calls[mockCookieStore.set.mock.calls.length - 1];
+      const encodedPayload = lastSetCall[1];
+      const decoded = JSON.parse(
+        Buffer.from(encodedPayload, "base64url").toString("utf8"),
+      );
+      expect(decoded).toEqual({
+        type: "email",
+        identifier: "TEST@EXAMPLE.COM",
+        context: "secondary_contact",
+      });
+    });
   });
 
   describe("signInWithOAuth", () => {
@@ -1409,6 +1503,611 @@ describe("Auth Actions", () => {
       const result = await addContactAction({}, formData);
       expect(result).toEqual({ error: "Email is required." });
       expect(addContact).not.toHaveBeenCalled();
+    });
+
+    it("gracefully handles 409 ALREADY_VERIFIED returned by addContact", async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: "active-token" } },
+      });
+      vi.mocked(addContact).mockRejectedValueOnce(
+        new ApiError(
+          409,
+          "Account already has a verified contact",
+          "ALREADY_VERIFIED",
+        ),
+      );
+
+      const formData = new FormData();
+      formData.set("channel", "email");
+      formData.set("contact", "candidate@example.com");
+
+      const result = await addContactAction({}, formData);
+      expect(result).toEqual({
+        error: "Account already has a verified contact",
+        redirectTo: "/settings?verified=contact",
+      });
+      expect(redirect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("verifyOtpAction secondary_contact context & validation (M02-04)", () => {
+    it("redirects to /settings?verified=contact when context is secondary_contact", async () => {
+      vi.mocked(verifyEmail).mockResolvedValueOnce({
+        access_token: "secondary-access-token",
+        refresh_token: "secondary-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "test-user-id",
+          email: "secondary@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email", "facebook"],
+          verified_contact: true,
+        },
+        profile_complete: false,
+        next_step: "profile_setup",
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const formData = new FormData();
+      formData.set("channel", "email");
+      formData.set("identifier", "secondary@example.com");
+      formData.set("token", "123456");
+      formData.set("context", "secondary_contact");
+
+      const result = await verifyOtpAction({}, formData);
+      expect(result).toEqual({
+        success: true,
+        redirectTo: "/settings?verified=contact",
+      });
+    });
+
+    it("rejects invalid non-enum verification context value", async () => {
+      const formData = new FormData();
+      formData.set("channel", "email");
+      formData.set("identifier", "secondary@example.com");
+      formData.set("token", "123456");
+      formData.set("context", "malicious_context");
+
+      const result = await verifyOtpAction({}, formData);
+      expect(result).toEqual({ error: "Invalid verification request." });
+      expect(verifyEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("withSingleSessionRefresh (EP-A07 Single-Refresh-Per-401 Retry Helper)", () => {
+    it("refreshes session once on 401 UnauthorizedError, persists rotated tokens, and retries operation once", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+      mockSetSession.mockResolvedValueOnce({ error: null });
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"))
+        .mockResolvedValueOnce({ linked_providers: ["email", "google"] });
+
+      const session = {
+        access_token: "expired-access-token",
+        refresh_token: "valid-refresh-token",
+      };
+
+      const result = await withSingleSessionRefresh(
+        mockSupabase,
+        session,
+        operation,
+      );
+
+      expect(result).toEqual({ linked_providers: ["email", "google"] });
+      expect(session.access_token).toBe("rotated-access-token");
+      expect(session.refresh_token).toBe("rotated-refresh-token");
+      expect(operation).toHaveBeenCalledTimes(2);
+      expect(operation).toHaveBeenNthCalledWith(1, "expired-access-token");
+      expect(operation).toHaveBeenNthCalledWith(2, "rotated-access-token");
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(refreshSession).toHaveBeenCalledWith("valid-refresh-token");
+      expect(mockSetSession).toHaveBeenCalledWith({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+      });
+      expect(mockSignOut).not.toHaveBeenCalled();
+    });
+
+    it("calls safeSignOut and redirects to /login when refreshSession fails on 401", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+      vi.mocked(refreshSession).mockRejectedValueOnce(
+        new UnauthorizedError("Refresh token revoked", "REFRESH_TOKEN_INVALID"),
+      );
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        {
+          access_token: "expired-access-token",
+          refresh_token: "revoked-refresh-token",
+        },
+        operation,
+      );
+
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: "local" });
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("calls safeSignOut and redirects to /login with zero infinite loops when retried call still throws 401", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+      mockSetSession.mockResolvedValueOnce({ error: null });
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("First 401"))
+        .mockRejectedValueOnce(new UnauthorizedError("Second 401"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        {
+          access_token: "expired-access-token",
+          refresh_token: "valid-refresh-token",
+        },
+        operation,
+      );
+
+      expect(operation).toHaveBeenCalledTimes(2);
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: "local" });
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("calls safeSignOut exactly once and redirects to /login when setSession returns an error and refresh_token has not rotated", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+      mockSetSession.mockResolvedValueOnce({
+        error: new Error("Failed to write session cookie"),
+      });
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const session = {
+        access_token: "expired-access-token",
+        refresh_token: "initial-refresh-token",
+      };
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        session,
+        operation,
+      );
+
+      expect(mockSignOut).toHaveBeenCalledTimes(1);
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: "local" });
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("does not call safeSignOut when setSession returns an error if session.refresh_token was already rotated concurrently", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: vi.fn(),
+          signOut: mockSignOut,
+        },
+      };
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const session = {
+        access_token: "expired-access-token",
+        refresh_token: "initial-refresh-token",
+      };
+
+      // Simulate concurrent rotation updating session.refresh_token before setSession finishes
+      mockSupabase.auth.setSession.mockImplementationOnce(async () => {
+        session.refresh_token = "concurrently-rotated-refresh-token";
+        return { error: new Error("Stale session write rejected") };
+      });
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        session,
+        operation,
+      );
+
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("does not call safeSignOut when setSession throws if session.refresh_token was already rotated concurrently", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: vi.fn(),
+          signOut: mockSignOut,
+        },
+      };
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const session = {
+        access_token: "expired-access-token",
+        refresh_token: "initial-refresh-token",
+      };
+
+      mockSupabase.auth.setSession.mockImplementationOnce(async () => {
+        session.refresh_token = "concurrently-rotated-refresh-token";
+        throw new Error("setSession network failure");
+      });
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        session,
+        operation,
+      );
+
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("coalesces concurrent withSingleSessionRefresh calls sharing the same refresh_token to invoke refreshSession only once", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+      mockSetSession.mockResolvedValue({ error: null });
+
+      let resolveRefresh: (val: unknown) => void = () => {};
+      const refreshPromise = new Promise((resolve) => {
+        resolveRefresh = resolve;
+      });
+
+      vi.mocked(refreshSession).mockReturnValueOnce(
+        refreshPromise as unknown as ReturnType<typeof refreshSession>,
+      );
+
+      const op1 = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Call 1 expired"))
+        .mockResolvedValueOnce({ op: 1 });
+      const op2 = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Call 2 expired"))
+        .mockResolvedValueOnce({ op: 2 });
+
+      const session1 = {
+        access_token: "expired-token-1",
+        refresh_token: "shared-refresh-token",
+      };
+      const session2 = {
+        access_token: "expired-token-2",
+        refresh_token: "shared-refresh-token",
+      };
+
+      const call1Promise = withSingleSessionRefresh(mockSupabase, session1, op1);
+      const call2Promise = withSingleSessionRefresh(mockSupabase, session2, op2);
+
+      // Let both calls reach the pending refresh before it settles.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+
+      resolveRefresh({
+        access_token: "rotated-access-token",
+        refresh_token: "rotated-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const [res1, res2] = await Promise.all([call1Promise, call2Promise]);
+
+      expect(res1).toEqual({ op: 1 });
+      expect(res2).toEqual({ op: 2 });
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(refreshSession).toHaveBeenCalledWith("shared-refresh-token");
+      expect(session1.access_token).toBe("rotated-access-token");
+      expect(session2.access_token).toBe("rotated-access-token");
+      expect(mockSetSession).toHaveBeenCalledTimes(2);
+      expect(mockSignOut).not.toHaveBeenCalled();
+
+      // Subsequent call after settled refresh triggers a fresh refreshSession call (verifying map cleanup)
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "subsequent-access-token",
+        refresh_token: "subsequent-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const op3 = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Call 3 expired"))
+        .mockResolvedValueOnce({ op: 3 });
+      const session3 = {
+        access_token: "expired-token-3",
+        refresh_token: "shared-refresh-token",
+      };
+
+      const res3 = await withSingleSessionRefresh(mockSupabase, session3, op3);
+      expect(res3).toEqual({ op: 3 });
+      expect(refreshSession).toHaveBeenCalledTimes(2);
+      expect(mockSetSession).toHaveBeenCalledTimes(3);
+    });
+
+    it("redirects both concurrent callers to /login when shared refresh rejects and cleans up map entry for subsequent retry", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+
+      let rejectRefresh: (err: unknown) => void = () => {};
+      const refreshPromise = new Promise((_, reject) => {
+        rejectRefresh = reject;
+      });
+
+      vi.mocked(refreshSession).mockReturnValueOnce(
+        refreshPromise as unknown as ReturnType<typeof refreshSession>,
+      );
+
+      const op1 = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Call 1 expired"));
+      const op2 = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Call 2 expired"));
+
+      const session1 = {
+        access_token: "expired-token-1",
+        refresh_token: "failing-refresh-token",
+      };
+      const session2 = {
+        access_token: "expired-token-2",
+        refresh_token: "failing-refresh-token",
+      };
+
+      const call1Promise = withSingleSessionRefresh(mockSupabase, session1, op1);
+      const call2Promise = withSingleSessionRefresh(mockSupabase, session2, op2);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+
+      rejectRefresh(
+        new UnauthorizedError("Token revoked", "REFRESH_TOKEN_INVALID"),
+      );
+
+      await Promise.all([call1Promise, call2Promise]);
+
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(redirect).toHaveBeenCalledWith("/login");
+      expect(mockSignOut).toHaveBeenCalled();
+
+      // Subsequent call after rejection triggers a fresh refreshSession call (verifying cleanup)
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: "recovered-access-token",
+        refresh_token: "recovered-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        user: {
+          id: "user-1",
+          email: "user@example.com",
+          phone: null,
+          role: "USER",
+          status: "active",
+          linked_providers: ["email"],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: "app_home",
+      });
+
+      const op3 = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Call 3 expired"))
+        .mockResolvedValueOnce({ op: 3 });
+      const session3 = {
+        access_token: "expired-token-3",
+        refresh_token: "failing-refresh-token",
+      };
+
+      const res3 = await withSingleSessionRefresh(mockSupabase, session3, op3);
+      expect(res3).toEqual({ op: 3 });
+      expect(refreshSession).toHaveBeenCalledTimes(2);
+    });
+
+    it("skips safeSignOut on refresh rejection when session.refresh_token was already rotated concurrently", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+
+      const session = {
+        access_token: "expired-access-token",
+        refresh_token: "initial-refresh-token",
+      };
+
+      vi.mocked(refreshSession).mockImplementationOnce(async () => {
+        session.refresh_token = "rotated-by-concurrent-call";
+        throw new Error("Refresh network failure");
+      });
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        session,
+        operation,
+      );
+
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith("/login");
+    });
+
+    it("skips safeSignOut on missing/invalid token response when session.refresh_token was already rotated concurrently", async () => {
+      const mockSupabase = {
+        auth: {
+          setSession: mockSetSession,
+          signOut: mockSignOut,
+        },
+      };
+
+      const session = {
+        access_token: "expired-access-token",
+        refresh_token: "initial-refresh-token",
+      };
+
+      vi.mocked(refreshSession).mockImplementationOnce(async () => {
+        session.refresh_token = "rotated-by-concurrent-call";
+        return {} as unknown as Awaited<ReturnType<typeof refreshSession>>;
+      });
+
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new UnauthorizedError("Access token expired"));
+
+      await withSingleSessionRefresh(
+        mockSupabase,
+        session,
+        operation,
+      );
+
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith("/login");
     });
   });
 });

@@ -10,32 +10,247 @@ import {
   verifyEmail,
   verifyPhone,
   logoutUser,
+   refreshSession,
   forgotPassword,
   resetPassword,
   linkSocialIdentity,
   addContact,
   NetworkError,
   ApiError,
+  UnauthorizedError,
 } from '@/lib/api/client';
+import type { VerificationDraftContext } from '@/lib/auth/verification-draft';
 
 /**
  * Server Actions for authentication flows.
  */
 
+/**
+ * Standard result shape returned by authentication server actions.
+ */
 export interface AuthActionResult {
   error?: string;
   success?: boolean;
   redirectTo?: string;
 }
 
+/**
+ * Minimal Supabase client interface required by `withSingleSessionRefresh`.
+ */
+export interface RefreshableSupabaseClient {
+  auth: {
+    setSession?: (tokens: {
+      access_token: string;
+      refresh_token: string;
+    }) => Promise<{ error?: unknown } | void>;
+    signOut?: (options?: {
+      scope?: 'local' | 'global' | 'others';
+    }) => Promise<unknown>;
+  };
+}
+
+/**
+ * Minimal session token pair required by `withSingleSessionRefresh`.
+ */
+export interface RefreshableSession {
+  access_token: string;
+  refresh_token?: string | null;
+}
+
 const VERIFICATION_CONTEXT_COOKIE = 'mentor_verification_context';
 const RECOVERY_CONTEXT_COOKIE = 'mentor_recovery_context';
 
+const ALLOWED_VERIFICATION_CONTEXTS: readonly VerificationDraftContext[] = [
+  'registration',
+  'unverified_login',
+  'secondary_contact',
+  'password_recovery',
+];
+
+/**
+ * Validates whether a raw string is a permitted verification context value.
+ */
+function isValidVerificationContext(
+  value: string,
+): value is VerificationDraftContext {
+  return (ALLOWED_VERIFICATION_CONTEXTS as readonly string[]).includes(value);
+}
+
+/**
+ * Normalizes an identifier string for case-insensitive verification context matching.
+ *
+ * @param value - The identifier string to normalize.
+ * @returns The trimmed and lowercased identifier.
+ */
+function normalizeIdentifierForMatch(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Checks whether a caught error is a Next.js navigation redirect signal.
+ */
+function isNextRedirectError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.message === 'NEXT_REDIRECT') return true;
+  if (
+    'digest' in err &&
+    typeof (err as { digest?: unknown }).digest === 'string' &&
+    (err as { digest: string }).digest.startsWith('NEXT_REDIRECT')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Determines whether an error represents an HTTP 401 unauthorized response from the backend API.
+ */
+function isUnauthorizedApiError(err: unknown): boolean {
+  return (
+    err instanceof UnauthorizedError ||
+    (err instanceof ApiError && err.statusCode === 401)
+  );
+}
+
+/**
+ * Safely signs out the local Supabase session without throwing on storage or network failures.
+ */
+async function safeSignOut(supabase: RefreshableSupabaseClient): Promise<void> {
+  try {
+    await supabase.auth.signOut?.({ scope: 'local' });
+  } catch {
+    // Ignore sign-out errors during cleanup
+  }
+}
+
+/** In-flight token refresh promise map keyed by refresh token to prevent concurrent refresh stampedes. */
+const inFlightTokenRefreshes = new Map<
+  string,
+  Promise<{ access_token: string; refresh_token: string }>
+>();
+
+/**
+ * Coalesces concurrent refreshSession calls for the same refresh token.
+ */
+function coalesceRefreshSession(
+  refreshToken: string,
+): Promise<{ access_token: string; refresh_token: string }> {
+  let inFlight = inFlightTokenRefreshes.get(refreshToken);
+  if (!inFlight) {
+    const created: Promise<{ access_token: string; refresh_token: string }> =
+      refreshSession(refreshToken).finally(() => {
+        if (inFlightTokenRefreshes.get(refreshToken) === created) {
+          inFlightTokenRefreshes.delete(refreshToken);
+        }
+      });
+    inFlight = created;
+    inFlightTokenRefreshes.set(refreshToken, inFlight);
+  }
+  return inFlight;
+}
+
+/**
+ * Wraps an authenticated backend API call with at-most-one token refresh via EP-A07 (`POST /auth/refresh`)
+ * when the initial call fails with HTTP 401 (`UnauthorizedError`).
+ *
+ * - Executes `operation(session.access_token)`.
+ * - On HTTP 401: attempts a single token refresh using `refreshSession(session.refresh_token)`,
+ *   coalesces in-flight refresh requests keyed by refresh token to prevent race conditions,
+ *   persists rotated tokens via `supabase.auth.setSession`, mutates `session.access_token` and
+ *   `session.refresh_token` in place so sequential calls sharing the same session reference reuse rotated tokens,
+ *   and retries `operation` once with the new access token.
+ * - If `refresh_token` is missing, `refreshSession` fails, `setSession` fails, or the retried call
+ *   still throws HTTP 401, calls `safeSignOut(supabase)` and redirects to `/login` with zero infinite retry loops.
+ */
+export async function withSingleSessionRefresh<T>(
+  supabase: RefreshableSupabaseClient,
+  session: RefreshableSession,
+  operation: (accessToken: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation(session.access_token);
+  } catch (firstErr) {
+    if (!isUnauthorizedApiError(firstErr)) {
+      throw firstErr;
+    }
+
+    const refreshToken =
+      typeof session.refresh_token === 'string'
+        ? session.refresh_token.trim()
+        : '';
+    if (!refreshToken) {
+      await safeSignOut(supabase);
+      return redirect('/login') as never;
+    }
+
+    const signOutIfNotRotated = async () => {
+      if (session.refresh_token === refreshToken) {
+        await safeSignOut(supabase);
+      }
+    };
+
+    let refreshed: { access_token: string; refresh_token: string };
+    try {
+      refreshed = await coalesceRefreshSession(refreshToken);
+    } catch {
+      await signOutIfNotRotated();
+      return redirect('/login') as never;
+    }
+
+    if (!refreshed?.access_token || !refreshed?.refresh_token) {
+      await signOutIfNotRotated();
+      return redirect('/login') as never;
+    }
+
+    if (supabase.auth.setSession) {
+      let setSessionFailed = false;
+      try {
+        const setResult = await supabase.auth.setSession({
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token,
+        });
+        setSessionFailed = !!(
+          setResult &&
+          typeof setResult === 'object' &&
+          'error' in setResult &&
+          setResult.error
+        );
+      } catch {
+        setSessionFailed = true;
+      }
+      if (setSessionFailed) {
+        await signOutIfNotRotated();
+        return redirect('/login') as never;
+      }
+    }
+
+    session.access_token = refreshed.access_token;
+    session.refresh_token = refreshed.refresh_token;
+
+    try {
+      return await operation(refreshed.access_token);
+    } catch (retryErr) {
+      if (isUnauthorizedApiError(retryErr)) {
+        await safeSignOut(supabase);
+        return redirect('/login') as never;
+      }
+      throw retryErr;
+    }
+  }
+}
+
+/**
+ * Shape of the encrypted/base64url verification context cookie.
+ */
 interface VerificationContext {
   type: 'email' | 'phone';
   identifier: string;
+  context?: VerificationDraftContext;
 }
 
+/**
+ * Persists the short-lived httpOnly verification context cookie scoped to `/verify`.
+ */
 async function setVerificationContext(context: VerificationContext) {
   const store = await cookies();
   store.set(
@@ -51,6 +266,9 @@ async function setVerificationContext(context: VerificationContext) {
   );
 }
 
+/**
+ * Clears the `/verify` httpOnly verification context cookie after successful verification.
+ */
 async function clearVerificationContext() {
   const store = await cookies();
   store.set(VERIFICATION_CONTEXT_COOKIE, '', {
@@ -61,6 +279,9 @@ async function clearVerificationContext() {
   });
 }
 
+/**
+ * Reads and validates the `/verify` httpOnly verification context cookie for the given channel.
+ */
 async function getVerificationContext(
   type: 'email' | 'phone',
 ): Promise<VerificationContext | null> {
@@ -70,9 +291,18 @@ async function getVerificationContext(
     const value = JSON.parse(
       Buffer.from(encoded, 'base64url').toString('utf8'),
     ) as Partial<VerificationContext>;
-    return value.type === type && typeof value.identifier === 'string'
-      ? { type, identifier: value.identifier }
-      : null;
+    if (value.type !== type || typeof value.identifier !== 'string') {
+      return null;
+    }
+    const validContext =
+      typeof value.context === 'string' && isValidVerificationContext(value.context)
+        ? value.context
+        : undefined;
+    return {
+      type,
+      identifier: value.identifier,
+      ...(validContext ? { context: validContext } : {}),
+    };
   } catch {
     return null;
   }
@@ -417,9 +647,29 @@ export async function verifyOtpAction(
   }
 
   let identifier = (formData.get('identifier') as string)?.trim();
-  if (!identifier) {
-    const context = await getVerificationContext(type);
-    if (context) identifier = context.identifier;
+  const rawContext = formData.get('context');
+  let verifiedContext: VerificationDraftContext | undefined;
+  if (rawContext !== null && rawContext !== undefined) {
+    if (typeof rawContext !== 'string') {
+      return { error: 'Invalid verification request.' };
+    }
+    const trimmedContext = rawContext.trim();
+    if (trimmedContext !== '') {
+      if (!isValidVerificationContext(trimmedContext)) {
+        return { error: 'Invalid verification request.' };
+      }
+      verifiedContext = trimmedContext;
+    }
+  }
+
+  if (!identifier || !verifiedContext) {
+    const cookieContext = await getVerificationContext(type);
+    if (cookieContext) {
+      if (!identifier) identifier = cookieContext.identifier;
+      if (!verifiedContext && cookieContext.context) {
+        verifiedContext = cookieContext.context;
+      }
+    }
   }
   if (!identifier) return { error: 'Invalid verification request.' };
 
@@ -442,14 +692,17 @@ export async function verifyOtpAction(
     });
     if (error) return { error: 'Failed to establish session.' };
     await clearVerificationContext();
-    destination =
-      session.user.status === 'suspended'
-        ? '/settings'
-        : session.next_step === 'profile_setup'
-          ? '/onboarding/profile'
-          : session.next_step === 'add_verified_contact'
-            ? '/settings?prompt=verify_contact'
-            : '/dashboard';
+    if (session.user.status === 'suspended') {
+      destination = '/settings';
+    } else if (verifiedContext === 'secondary_contact') {
+      destination = '/settings?verified=contact';
+    } else if (session.next_step === 'profile_setup') {
+      destination = '/onboarding/profile';
+    } else if (session.next_step === 'add_verified_contact') {
+      destination = '/settings?prompt=verify_contact';
+    } else {
+      destination = '/dashboard';
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -487,9 +740,9 @@ export async function resendOtpAction(
   const rawIdentifier =
     typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';
   let identifier = rawIdentifier;
-  if (!identifier) {
-    const context = await getVerificationContext(type);
-    if (context) identifier = context.identifier;
+  const existingContext = await getVerificationContext(type);
+  if (!identifier && existingContext) {
+    identifier = existingContext.identifier;
   }
   if (!identifier) return { error: 'Invalid verification request.' };
 
@@ -524,7 +777,17 @@ export async function resendOtpAction(
         resendAvailableAt?: string;
       };
     };
-    await setVerificationContext({ type, identifier });
+    const normalizedIdentifier = identifier.trim();
+    const matchesExisting =
+      !!existingContext &&
+      normalizeIdentifierForMatch(existingContext.identifier) ===
+        normalizeIdentifierForMatch(normalizedIdentifier);
+    const preservedContext = matchesExisting ? existingContext.context : undefined;
+    await setVerificationContext({
+      type,
+      identifier: normalizedIdentifier,
+      ...(preservedContext ? { context: preservedContext } : {}),
+    });
     const resendAvailableAt =
       resolved?.resendAvailableAt ||
       resolved?.resend_available_at ||
@@ -711,6 +974,7 @@ export async function resetPasswordAction(
 
 /**
  * Server action for EP-A11 (`POST /api/v1/auth/identities/link`) to link Google or Facebook to the current verified account.
+ * Uses `withSingleSessionRefresh` to attempt at most one token refresh on HTTP 401.
  */
 export async function linkIdentityAction(
   provider: 'google' | 'facebook',
@@ -728,7 +992,17 @@ export async function linkIdentityAction(
       (i) => i.provider === provider,
     );
     if (alreadyLinked) {
-      const result = await linkSocialIdentity(session.access_token, provider);
+      const result = await withSingleSessionRefresh(
+        supabase,
+        session,
+        (accessToken) => linkSocialIdentity(accessToken, provider),
+      );
+      if (!result) {
+        return {
+          error: 'Authentication session expired. Please sign in again.',
+          redirectTo: '/login',
+        };
+      }
       return { success: true, linked_providers: result.linked_providers };
     }
 
@@ -750,7 +1024,7 @@ export async function linkIdentityAction(
 
     return { error: 'Failed to initiate identity linking. Missing redirect URL.' };
   } catch (err) {
-    if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
+    if (isNextRedirectError(err)) {
       throw err;
     }
     if (err instanceof NetworkError) {
@@ -770,6 +1044,7 @@ export async function linkIdentityAction(
 
 /**
  * Server action for EP-A12 (`POST /api/v1/auth/contact`) to add and verify an email or phone contact.
+ * Uses `withSingleSessionRefresh` to attempt at most one token refresh on HTTP 401 and gracefully handles `ALREADY_VERIFIED`.
  */
 export async function addContactAction(
   _prevState: AuthActionResult,
@@ -794,13 +1069,39 @@ export async function addContactAction(
       return { error: 'Authentication session is required to add a contact.' };
     }
 
-    await addContact(session.access_token, { channel, contact });
-    await setVerificationContext({ type: channel, identifier: contact });
+    const pendingResult = await withSingleSessionRefresh(
+      supabase,
+      session,
+      (accessToken) => addContact(accessToken, { channel, contact }),
+    );
+    if (!pendingResult) {
+      return {
+        error: 'Authentication session expired. Please sign in again.',
+        redirectTo: '/login',
+      };
+    }
+
+    await setVerificationContext({
+      type: channel,
+      identifier: contact,
+      context: 'secondary_contact',
+    });
   } catch (err) {
+    if (isNextRedirectError(err)) {
+      throw err;
+    }
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (err.code === 'ALREADY_VERIFIED') {
+        return {
+          error:
+            err.message ||
+            'আপনার অ্যাকাউন্টের যোগাযোগের তথ্য ইতিমধ্যে যাচাই করা হয়েছে (Account already has a verified contact).',
+          redirectTo: '/settings?verified=contact',
+        };
+      }
       return { error: err.message };
     }
     return { error: 'An unexpected error occurred while adding contact.' };

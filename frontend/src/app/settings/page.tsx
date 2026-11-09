@@ -2,13 +2,16 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getAppSessionStateResult } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
+import { loadProfileForSetup } from '@/lib/profile/actions';
 import { IdentityLinkingCards } from '@/components/settings/identity-linking-cards';
 import { AddContactForm } from '@/components/settings/add-contact-form';
 import { VerifiedContactPrompt } from '@/components/settings/verified-contact-prompt';
+import { LearningSettingsForm } from '@/components/settings/learning-settings-form';
 
 /**
  * Screen 22 (`/settings`) — Account & Settings page for active and suspended users.
- * Supports identity linking (EP-A11), adding contacts (EP-A12), and verified contact prompting (PRD §11).
+ * Supports identity linking (EP-A11), adding contacts (EP-A12), verified contact prompting (PRD §11),
+ * and learning settings management (EP-P04).
  * Preserves effective_access, profile_complete, focus_roadmap_id, and can_delete_account metadata.
  */
 export default async function SettingsPage({
@@ -57,7 +60,17 @@ export default async function SettingsPage({
 
   const state = result.data;
   const { user, profile_complete, effective_access, can_delete_account } = state;
-  const isSuspended = user.status === 'suspended';
+  const isUserSuspended = user.status === 'suspended';
+
+  const profileSnapshot = !isUserSuspended
+    ? await loadProfileForSetup()
+    : { profile: null };
+
+  if (!isUserSuspended && profileSnapshot.unauthorized) {
+    redirect('/login');
+  }
+
+  const isSuspended = isUserSuspended || Boolean(profileSnapshot.suspended);
 
   const awaitedParams = await searchParams;
   const rawLinked =
@@ -68,6 +81,7 @@ export default async function SettingsPage({
       ? rawLinked
       : undefined;
   const linkError = awaitedParams?.error === 'link_failed';
+  const contactVerified = awaitedParams?.verified === 'contact';
 
   const initialSuccess = linkedProvider
     ? `${linkedProvider === 'google' ? 'Google' : 'Facebook'} অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে (Social account linked successfully).`
@@ -129,6 +143,15 @@ export default async function SettingsPage({
           </div>
         )}
 
+        {contactVerified && Boolean(user.verified_contact) && (
+          <div
+            role="status"
+            className="mt-6 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:text-emerald-200"
+          >
+            আপনার যোগাযোগের তথ্য সফলভাবে যাচাই করা হয়েছে (Your contact method has been verified successfully).
+          </div>
+        )}
+
         <div className="mt-6 flex flex-col gap-8">
           <VerifiedContactPrompt
             verifiedContact={user.verified_contact}
@@ -149,6 +172,12 @@ export default async function SettingsPage({
               alreadyVerified={user.verified_contact}
             />
           )}
+
+          <LearningSettingsForm
+            initialProfile={profileSnapshot.profile}
+            loadError={profileSnapshot.loadError}
+            isSuspended={isSuspended}
+          />
 
           <section
             aria-labelledby="account-overview-heading"

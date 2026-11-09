@@ -182,6 +182,9 @@ export class EmailRegistrationProvider {
     this.transport = transport;
   }
 
+  /**
+   * Resolves the configured Supabase service role key from environment variables.
+   */
   private getServiceRoleKey(): string | undefined {
     return (
       this.config?.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
@@ -189,6 +192,9 @@ export class EmailRegistrationProvider {
     );
   }
 
+  /**
+   * Asserts that HMAC secret, service role key, Redis URL, OTP store, and email transport are configured.
+   */
   ready(): void {
     const hmacSecret = this.config?.get<string>('AUTH_OTP_HMAC_SECRET');
     const serviceRoleKey = this.getServiceRoleKey();
@@ -204,6 +210,10 @@ export class EmailRegistrationProvider {
     }
   }
 
+  /**
+   * Looks up an existing or pending email identity in `auth.users` or `public.user_auth_providers`
+   * (supporting both direct email signups and unverified OAuth users who added a secondary email via EP-A12).
+   */
   async findByEmail(
     email: string,
     _signal?: AbortSignal,
@@ -213,10 +223,22 @@ export class EmailRegistrationProvider {
     const normalized = email.toLowerCase().trim();
     if (!this.database) return null;
     const rows = await this.database.query(
-      `SELECT u.id, u.email, u.email_confirmed_at, pu.verified_contact
+      `SELECT u.id,
+              COALESCE(p.contact_value, u.email) AS email,
+              u.email_confirmed_at,
+              pu.verified_contact,
+              p.verified_at AS provider_verified_at
          FROM auth.users u
          LEFT JOIN public.users pu ON pu.id = u.id
-        WHERE lower(u.email) = $1
+         LEFT JOIN public.user_auth_providers p
+           ON p.user_id = u.id AND p.provider = 'email'
+        WHERE lower(u.email) = $1 OR lower(p.contact_value) = $1
+        ORDER BY
+          COALESCE(lower(p.contact_value) = $1, false) DESC,
+          COALESCE(COALESCE(lower(p.contact_value), lower(u.email)) = $1, false) DESC,
+          COALESCE(pu.verified_contact = true OR p.verified_at IS NOT NULL, false) DESC,
+          COALESCE(pu.id IS NOT NULL, false) DESC,
+          u.created_at DESC
         LIMIT 1`,
       [normalized],
     );
@@ -227,11 +249,15 @@ export class EmailRegistrationProvider {
     return {
       id: row.id,
       subject: row.id,
-      email: row.email,
-      verified: Boolean(row.verified_contact),
+      email:
+        typeof row.email === 'string' ? row.email.toLowerCase() : normalized,
+      verified: Boolean(row.verified_contact || row.provider_verified_at),
     };
   }
 
+  /**
+   * Creates an unconfirmed GoTrue user via the Supabase Admin API (`email_confirm: false`).
+   */
   async createPending(
     email: string,
     password: string,
@@ -289,6 +315,9 @@ export class EmailRegistrationProvider {
     };
   }
 
+  /**
+   * Generates, persists in S1 Redis, and dispatches a 6-digit email verification OTP challenge.
+   */
   async sendChallenge(
     identity: PendingEmailIdentity,
     signal?: AbortSignal,
@@ -307,6 +336,9 @@ export class EmailRegistrationProvider {
     return { expiresInSeconds };
   }
 
+  /**
+   * Generates, persists in S1 Redis (`reset_password` purpose), and dispatches a 6-digit recovery OTP challenge.
+   */
   async sendPasswordResetChallenge(
     email: string,
     userId: string,
@@ -328,6 +360,9 @@ export class EmailRegistrationProvider {
     return { expiresInSeconds };
   }
 
+  /**
+   * Fails closed with HTTP 503 `SERVICE_UNAVAILABLE` when email verification prerequisites are unconfigured.
+   */
   private unavailable(): never {
     return fail(
       503,

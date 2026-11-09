@@ -5,6 +5,15 @@ import { addContactAction } from '@/lib/auth/actions';
 
 const mockClearVerificationDraft = vi.fn();
 const mockSaveVerificationDraft = vi.fn();
+const mockPush = vi.fn();
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
+    replace: vi.fn(),
+    refresh: vi.fn(),
+  }),
+}));
 
 vi.mock('@/lib/auth/actions', () => ({
   addContactAction: vi.fn(),
@@ -51,8 +60,19 @@ describe('AddContactForm Component', () => {
     expect(screen.queryByRole('button', { name: /যাচাইকরণ কোড পাঠান/i })).not.toBeInTheDocument();
   });
 
-  it('pre-saves R18 verification draft with context secondary_contact on form submit', () => {
+  it('renders verified contact status card and hides submission form when alreadyVerified is true', () => {
     render(<AddContactForm alreadyVerified={true} />);
+
+    expect(
+      screen.getByText(/যোগাযোগের মাধ্যম যাচাইকৃত \(Verified Contact Method\)/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /যাচাইকরণ কোড পাঠান/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('pre-saves R18 verification draft with context secondary_contact on form submit', () => {
+    render(<AddContactForm alreadyVerified={false} />);
 
     const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
     fireEvent.change(input, { target: { value: 'secondary@example.com' } });
@@ -112,5 +132,54 @@ describe('AddContactForm Component', () => {
       const alert = screen.getByRole('alert');
       expect(alert).toHaveTextContent('Phone contact verification is temporarily unavailable.');
     });
+  });
+
+  it('clears verification draft and pushes redirectTo when addContactAction returns redirectTo', async () => {
+    vi.mocked(addContactAction).mockResolvedValueOnce({
+      error: 'Account already has a verified contact.',
+      redirectTo: '/settings?verified=contact',
+    });
+
+    render(<AddContactForm alreadyVerified={false} />);
+
+    const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    fireEvent.change(input, { target: { value: 'verified@example.com' } });
+
+    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(mockClearVerificationDraft).toHaveBeenCalled();
+      expect(mockPush).toHaveBeenCalledWith('/settings?verified=contact');
+    });
+  });
+
+  it('preserves verification draft and pushes redirectTo when action returns verification redirect', async () => {
+    vi.mocked(addContactAction).mockResolvedValueOnce({
+      redirectTo: '/verify?channel=email',
+    });
+
+    const { rerender } = render(<AddContactForm alreadyVerified={false} />);
+
+    const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    fireEvent.change(input, { target: { value: 'test@example.com' } });
+
+    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/verify?channel=email');
+      expect(mockClearVerificationDraft).not.toHaveBeenCalled();
+    });
+
+    // Re-render component without action state transition does not re-push or clear draft
+    rerender(<AddContactForm alreadyVerified={false} />);
+
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockClearVerificationDraft).not.toHaveBeenCalled();
   });
 });
