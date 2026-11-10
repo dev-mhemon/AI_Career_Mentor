@@ -487,6 +487,12 @@ export async function loginAction(
       refresh_token: session.refresh_token,
     });
     if (error) return { error: 'Failed to establish session.' };
+    try {
+      const cookieStore = await cookies();
+      cookieStore.delete('account_deleted');
+    } catch {
+      // Best effort cookie cleanup on successful authentication
+    }
     if (session.user.status === 'suspended') {
       destination = '/settings';
     } else if (session.next_step === 'profile_setup') {
@@ -1176,7 +1182,7 @@ export async function requestAccountDeletionAction(
         const cookieStore = await cookies();
         cookieStore.set('account_deleted', 'true', {
           path: '/',
-          maxAge: 60,
+          maxAge: 15,
           sameSite: 'lax',
           httpOnly: true,
         });

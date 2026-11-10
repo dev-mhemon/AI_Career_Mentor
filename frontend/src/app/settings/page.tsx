@@ -29,11 +29,6 @@ export default async function SettingsPage({
       const cookieStore = await cookies();
       if (cookieStore?.get('account_deleted')?.value === 'true') {
         isDeleted = true;
-        try {
-          cookieStore.delete('account_deleted');
-        } catch {
-          // Best effort delete
-        }
       }
     } catch {
       // In case cookies() cannot be read or is not mocked in tests

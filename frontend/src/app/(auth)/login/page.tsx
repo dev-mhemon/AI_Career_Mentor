@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 import { getAppUser } from "@/lib/auth/user";
 import { LoginForm } from "@/components/auth/login-form";
 
@@ -23,15 +22,6 @@ export default async function LoginPage({
   const resetSuccess = awaitedSearchParams?.reset === "success";
   const isDeleted = awaitedSearchParams?.deleted === "true";
   let initialError: string | undefined;
-
-  if (isDeleted) {
-    try {
-      const cookieStore = await cookies();
-      cookieStore.delete("account_deleted");
-    } catch {
-      // Best effort delete cookie on render
-    }
-  }
 
   if (errorCode === "oauth_failed") {
     initialError = "Authentication failed. Please try again.";
