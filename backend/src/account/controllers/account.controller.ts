@@ -55,6 +55,7 @@ export class AccountController {
     @Body() dto: AccountDeletionRequestInput,
   ): Promise<AccountDeletionStatusDto> {
     const rawIdempotencyKey = req?.headers?.['idempotency-key'];
+    let idempotencyKey: string | undefined;
     if (rawIdempotencyKey !== undefined) {
       if (
         typeof rawIdempotencyKey !== 'string' ||
@@ -73,6 +74,7 @@ export class AccountController {
           ],
         );
       }
+      idempotencyKey = rawIdempotencyKey.trim();
     }
 
     const userId =
@@ -82,7 +84,11 @@ export class AccountController {
     if (!userId) {
       fail(401, 'AUTH_REQUIRED', 'Application account required');
     }
-    return this.accountDeletionService.requestDeletion(userId, dto);
+    return this.accountDeletionService.requestDeletion(
+      userId,
+      dto,
+      idempotencyKey,
+    );
   }
 
   /**
