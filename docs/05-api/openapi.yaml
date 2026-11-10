@@ -1,17 +1,17 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Password Recovery, Phone and Account Deletion Contract (M03-01)
+  title: AI Career Mentor - Authentication, Password Recovery, Phone, Account Deletion & Atomic Cascade Contract (M03-02)
   version: 0.1.0
   description: >-
-    Synchronized through M03-01, 2026-11-10. Derived from adopted C05 v1.5.1. Source baseline:
-    f2ebf848d5b3cea0ed0bc134c493636cc0818167. Canonical auth operations including email registration (EP-A01),
+    Synchronized through M03-02, 2026-11-10. Derived from adopted C05 v1.5.1. Source baseline:
+    ed6bf9f2296fe7c34873f893298df8f5ed3236f0. Canonical auth operations including email registration (EP-A01),
     email and phone verification (EP-A02/EP-A03), verification resend (EP-A04), login (EP-A05), logout (EP-A06),
     token refresh (EP-A07), password recovery (EP-A08/EP-A09), OAuth bootstrap (EP-A10), social linking (EP-A11),
-    add contact (EP-A12), me (EP-A13), and account deletion wire contract / DeletionReceipt authority / status
-    query (EP-X01/EP-X02) are implemented (with phone SMS delivery failing closed with 503 SERVICE_UNAVAILABLE
-    while the SMS provider adapter is disabled, and live credential re-authentication verification, atomic
-    cascade deletion, and session revocation on EP-X01 deferred to M03-02). See M03-01 task record, backend
-    architecture, DTO-DB-mapping and QA-plan.
+    add contact (EP-A12), me (EP-A13), and account deletion re-authentication, atomic cascade execution, session
+    revocation, and DeletionReceipt authority / tombstone status query (EP-X01/EP-X02) are implemented (with phone
+    SMS delivery failing closed with 503 SERVICE_UNAVAILABLE while the SMS provider adapter is disabled, and encrypted
+    provider_cleanup outbox retries and 90d/30d retention purge runners belonging to M03-03). See M03-02 task record,
+    backend architecture, DTO-DB-mapping and QA-plan.
 servers:
   - url: /api/v1
 tags:
@@ -1806,18 +1806,22 @@ paths:
         - Account
       summary: Request account deletion
       description: >-
-        C05 EP-X01 (POST /api/v1/account/deletion-requests). Schedules in-app account deletion with explicit
-        literal 'DELETE' confirmation under AZ-SUSP (suspended users permitted alongside active users, requiring
-        verified_contact = true and an approved session in private.approved_auth_sessions). M03-01 scope vs
-        M03-02 boundary: M03-01 enforces confirmation === 'DELETE' (returned as 400 CONFIRMATION_MISMATCH in
-        the current M03-01 implementation, while the adopted canonical contract specifies 422), AZ-SUSP access,
-        persistence of a 'scheduled' row in public.account_deletion_requests (provider_deletion_requested = false,
-        provider_cleanup = '[]'::jsonb, provider_cleanup_expires_at = requested_at + interval '30 days'),
-        translation of PostgreSQL unique constraint violation 23505 (uq_account_deletion_one_active) to 409
-        DELETION_ALREADY_REQUESTED, and minting of a 24-hour HMAC-SHA256 DeletionReceipt (R06). Live password /
-        OAuth re-authentication token verification (401 REAUTH_REQUIRED), atomic GoTrue/PostgreSQL cascade deletion
-        (private.complete_deletion_on_user_delete), immediate session revocation, and idempotency key reuse
-        enforcement (409 IDEMPOTENCY_KEY_REUSED) are deferred to M03-02+.
+        C05 EP-X01 (POST /api/v1/account/deletion-requests). Schedules and executes in-app account deletion with
+        explicit literal 'DELETE' confirmation under AZ-SUSP (suspended users permitted alongside active users,
+        requiring verified_contact = true and an approved session in private.approved_auth_sessions). M03-02 enforces
+        live credential re-authentication (password against GoTrue / auth provider or OAuth reauth_token, failing with
+        401 REAUTH_REQUIRED), confirmation === 'DELETE' (422 CONFIRMATION_MISMATCH per canonical contract), caller-scoped
+        (userId + Idempotency-Key) process-local in-memory idempotency store with 24h TTL eviction, capacity bounding (reserveSlot
+        on write), and concurrent in-flight deduplication (same key + same body returns cached 202 response; same key + different body
+        returns 409 IDEMPOTENCY_KEY_REUSED). Note that because a completed deletion immediately revokes private.approved_auth_sessions
+        and deletes public.users, post-completion HTTP replays to EP-X01 using the revoked Bearer JWT cannot succeed over HTTP (they
+        are rejected with 401 at DeletionReceiptGuard before reaching the controller; EP-X02 with DeletionReceipt is the post-deletion
+        status recovery path); the in-memory idempotency store and in-flight lock serve concurrent/in-flight deduplication and direct
+        service-level callers during M03-02. Deletion executes inside an atomic database transaction executing local cascade deletion
+        (DELETE FROM public.users triggering private.complete_deletion_on_user_delete to atomically transition public.account_deletion_requests
+        to status = 'completed', completed_at = clock_timestamp(), and user_id = NULL per R05/R06), fail-closed session revocation in
+        private.approved_auth_sessions and GoTrue auth.refresh_tokens / auth.sessions, and minting of a 24-hour HMAC-SHA256
+        DeletionReceipt (R06). Encrypted provider_cleanup outbox worker retries (R35) and 90d/30d retention purge runners belong to M03-03.
       x-source: API-Specification.md sections 13, 14.2, 15.2, 16; accepted R05/R06/R14/R35
       x-implementation-status: implemented
       x-authorization-profile: AZ-SUSP
@@ -1836,7 +1840,7 @@ paths:
       responses:
         '202':
           description: >-
-            C05 EP-X01 success; account deletion request scheduled and signed DeletionReceipt issued (R06).
+            C05 EP-X01 success; account deletion request scheduled, atomic cascade executed, and signed DeletionReceipt issued (R05/R06).
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -1845,9 +1849,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccountDeletionStatusDTOEnvelope'
         '400':
-          description: >-
-            INVALID_FORMAT. (Current M03-01 implementation note: returns 400 for CONFIRMATION_MISMATCH,
-            while the adopted canonical contract specifies 422 for semantic confirmation failure).
+          description: INVALID_FORMAT.
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -1856,12 +1858,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
-            - CONFIRMATION_MISMATCH
             - INVALID_FORMAT
         '401':
           description: >-
             AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED, REAUTH_REQUIRED.
-            (REAUTH_REQUIRED is deferred to M03-02+ live credential verification).
+            (REAUTH_REQUIRED enforced on missing, invalid, or mismatched password or reauth_token).
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -1889,7 +1890,7 @@ paths:
         '409':
           description: >-
             DELETION_ALREADY_REQUESTED, IDEMPOTENCY_KEY_REUSED.
-            (IDEMPOTENCY_KEY_REUSED is deferred to M03-02+ idempotency key enforcement).
+            (IDEMPOTENCY_KEY_REUSED enforced when same Idempotency-Key is reused with different request payload).
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -1902,8 +1903,8 @@ paths:
             - IDEMPOTENCY_KEY_REUSED
         '422':
           description: >-
-            CONFIRMATION_MISMATCH, VALIDATION_FAILED. (Adopted canonical contract response for semantic validation
-            failures; current M03-01 implementation returns 400 for CONFIRMATION_MISMATCH).
+            CONFIRMATION_MISMATCH, VALIDATION_FAILED. (Canonical contract response for confirmation !== 'DELETE'
+            or semantic validation failures).
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -2082,9 +2083,15 @@ components:
       in: header
       required: false
       description: >-
-        H-IDEM idempotency key header (UUID, 24h TTL per C05 §13.1 / R14) for EP-X01. M03-01 enforces
-        active-request uniqueness via PostgreSQL uq_account_deletion_one_active (409 DELETION_ALREADY_REQUESTED);
-        full Redis 24h H-IDEM replay cache integration is tracked under R14/M04.
+        H-IDEM idempotency key header (UUID, 24h TTL per C05 §13.1 / R14) for EP-X01. M03-02 implements a process-local,
+        caller-scoped (userId + Idempotency-Key) in-memory idempotency store with TTL eviction and capacity capping (single-instance
+        scope, does not survive process restarts). Same key + same body returns cached 202 response; same key + different body
+        returns 409 IDEMPOTENCY_KEY_REUSED. Because a completed deletion immediately revokes private.approved_auth_sessions and
+        deletes public.users, post-completion HTTP replays to EP-X01 using the revoked Bearer JWT cannot succeed over HTTP (they are
+        rejected with 401 at DeletionReceiptGuard before reaching the controller; EP-X02 with DeletionReceipt is the post-deletion
+        status recovery path); the in-memory idempotency store and in-flight lock serve concurrent/in-flight deduplication and
+        direct service-level callers during M03-02. Active-request uniqueness is additionally enforced via PostgreSQL
+        uq_account_deletion_one_active (409 DELETION_ALREADY_REQUESTED).
       schema:
         type: string
         format: uuid
@@ -2675,15 +2682,15 @@ components:
           minLength: 1
           maxLength: 128
           description: >-
-            Account password for password-authenticated accounts (accepted by the M03-01 wire contract; live
-            credential re-authentication verification is enforced in M03-02).
+            Account password for password-authenticated accounts (live credential re-authentication verification
+            is enforced in M03-02).
         reauth_token:
           type: string
           minLength: 1
           maxLength: 2048
           description: >-
-            Short-lived re-authentication token for OAuth-only accounts (accepted by the M03-01 wire contract;
-            live OAuth re-authentication verification is enforced in M03-02).
+            Short-lived re-authentication token for OAuth-only accounts (live OAuth re-authentication verification
+            is enforced in M03-02).
       not:
         required:
           - password

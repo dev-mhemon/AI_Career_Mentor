@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { DatabaseService } from '../../auth/services/database.service.js';
 import { fail } from '../../common/http.js';
 import {
@@ -9,10 +10,17 @@ import {
 } from '../dto/account-deletion.dto.js';
 import type { AccountDeletionAuthContext } from '../guards/deletion-receipt.guard.js';
 import { DeletionReceiptService } from './deletion-receipt.service.js';
+import { ReauthVerificationService } from './reauth-verification.service.js';
 
 /** Strict UUID matcher for user and request identifiers. */
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 24-hour TTL for idempotency key storage (`H-IDEM`, C05 §13.1 / R14). */
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Maximum in-memory idempotency entries to prevent unbounded growth. */
+const MAX_IDEMPOTENCY_ENTRIES = 1000;
 
 /**
  * Database row shape returned from `public.account_deletion_requests`.
@@ -25,6 +33,16 @@ interface AccountDeletionRequestRow {
   requested_at: Date | string;
   completed_at: Date | string | null;
   provider_deletion_requested: boolean;
+}
+
+/**
+ * Cached idempotency record stored for `H-IDEM` replay / conflict detection.
+ */
+interface IdempotencyRecord {
+  userId: string;
+  payloadHash: string;
+  response: AccountDeletionStatusDto;
+  expiresAt: number;
 }
 
 /**
@@ -53,14 +71,60 @@ function toIsoTimestamp(value: Date | string): string {
 
 /**
  * Service implementing `EP-X01` (`requestDeletion`) and `EP-X02` (`getCurrentStatus`)
- * for the M03-01 Account Deletion Wire Contract, Deletion Receipt Authority & Status Query.
+ * for M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution & Tombstone Preservation (`R05`, `R06`).
  */
 @Injectable()
 export class AccountDeletionService {
+  private readonly logger = new Logger(AccountDeletionService.name);
+  private readonly idempotencyStore = new Map<string, IdempotencyRecord>();
+  private readonly inFlightRequests = new Set<string>();
+
   constructor(
     private readonly database: DatabaseService,
     private readonly deletionReceiptService: DeletionReceiptService,
+    private readonly reauthVerificationService: ReauthVerificationService,
   ) {}
+
+  /**
+   * Prunes expired entries from the in-memory idempotency cache and enforces
+   * `MAX_IDEMPOTENCY_ENTRIES` capacity via FIFO eviction.
+   *
+   * When `reserveSlot = true` (write path), prunes down to `MAX_IDEMPOTENCY_ENTRIES - 1`
+   * so the subsequent `set(...)` will not exceed the maximum capacity.
+   * When `reserveSlot = false` (read path), prunes down to `MAX_IDEMPOTENCY_ENTRIES`
+   * so reading when exactly at capacity never evicts live entries.
+   */
+  private pruneExpiredIdempotencyEntries(
+    now: number = Date.now(),
+    reserveSlot = false,
+  ): void {
+    for (const [key, record] of this.idempotencyStore.entries()) {
+      if (record.expiresAt <= now) {
+        this.idempotencyStore.delete(key);
+      }
+    }
+    const limit = reserveSlot
+      ? MAX_IDEMPOTENCY_ENTRIES - 1
+      : MAX_IDEMPOTENCY_ENTRIES;
+    for (const key of this.idempotencyStore.keys()) {
+      if (this.idempotencyStore.size <= limit) {
+        break;
+      }
+      this.idempotencyStore.delete(key);
+    }
+  }
+
+  /**
+   * Computes a deterministic SHA-256 hash of the canonical request payload for idempotency checking.
+   */
+  private computePayloadHash(dto: AccountDeletionRequestInput): string {
+    const canonical = {
+      confirmation: dto.confirmation ?? '',
+      password: dto.password ?? '',
+      reauth_token: dto.reauth_token ?? '',
+    };
+    return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+  }
 
   /**
    * Executes a database operation inside a `service_role` transaction with `active = false`
@@ -111,88 +175,221 @@ export class AccountDeletionService {
 
   /**
    * `EP-X01` (`POST /api/v1/account/deletion-requests`):
-   * Validates explicit `"DELETE"` confirmation, inserts a `scheduled` row into
-   * `public.account_deletion_requests` (`provider_deletion_requested = false`,
-   * `provider_cleanup = '[]'::jsonb`, `provider_cleanup_expires_at = requested_at + interval '30 days'`),
-   * translates PostgreSQL `23505` (`uq_account_deletion_one_active`) into `409 DELETION_ALREADY_REQUESTED`,
-   * mints a request-scoped `DeletionReceipt` (`R06`), and returns the `202` payload.
+   * 1. Validates explicit `"DELETE"` confirmation and mutually exclusive credentials.
+   * 2. Enforces caller-scoped idempotency key reuse rules (`409 IDEMPOTENCY_KEY_REUSED` or cached response replay).
+   * 3. Verifies live re-authentication via password or OAuth `reauth_token` (`401 REAUTH_REQUIRED`).
+   * 4. Executes atomic cascade inside a single transaction:
+   *    - Inserts `public.account_deletion_requests` row (`status = 'in_progress'`).
+   *    - Revokes all approved sessions in `private.approved_auth_sessions`.
+   *    - Revokes GoTrue auth refresh tokens & sessions (fail-closed atomic transaction).
+   *    - Deletes user from `public.users`, triggering `trg_users_complete_deletion` which transitions
+   *      the request to `status = 'completed'` and `user_id = NULL` (`R05`).
+   *    - Strictly validates completed tombstone row from DB (never fabricating synthetic status).
+   *    - Mints a 24-hour `DeletionReceipt` (`R06`).
+   * 5. Returns `202 Accepted` with completed status and receipt.
    *
    * @param userId - Authenticated caller's `public.users.id` UUID.
    * @param dto - Request payload (`AccountDeletionRequestDTO`).
+   * @param idempotencyKey - Optional `Idempotency-Key` header (`H-IDEM`).
    * @returns `AccountDeletionStatusDto` including `deletion_receipt` and `receipt_expires_at`.
    */
   async requestDeletion(
     userId: string,
     dto: AccountDeletionRequestInput,
+    idempotencyKey?: string,
   ): Promise<AccountDeletionStatusDto> {
     if (typeof userId !== 'string' || !UUID_PATTERN.test(userId)) {
       fail(401, 'AUTH_REQUIRED', 'Valid authenticated user ID is required');
     }
 
-    validateAccountDeletionRequest(dto);
+    const validatedDto = validateAccountDeletionRequest(dto);
 
-    let inserted:
-      | {
-          row: AccountDeletionRequestRow;
-          receipt: { receipt: string; expiresAt: string };
+    // Prune expired idempotency entries on read (reserveSlot = false)
+    this.pruneExpiredIdempotencyEntries(Date.now(), false);
+
+    // 1. Idempotency Key Check (strictly scoped by caller: ${userId}:${idempotencyKey})
+    let payloadHash: string | undefined;
+    const cacheKey = idempotencyKey ? `${userId}:${idempotencyKey}` : undefined;
+    if (cacheKey) {
+      payloadHash = this.computePayloadHash(validatedDto);
+      const cached = this.idempotencyStore.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        if (cached.payloadHash === payloadHash) {
+          return cached.response;
         }
-      | undefined;
-    try {
-      inserted = await this.runWithDatabase(userId, true, async (db) => {
-        const rows = await db.query<AccountDeletionRequestRow[]>(
-          `INSERT INTO public.account_deletion_requests (
-             user_id,
-             status,
-             provider_deletion_requested,
-             requested_at,
-             provider_cleanup,
-             provider_cleanup_expires_at
-           )
-           VALUES (
-             $1::uuid,
-             'scheduled',
-             false,
-             now(),
-             '[]'::jsonb,
-             now() + interval '30 days'
-           )
-           RETURNING id,
-                     user_id,
-                     status,
-                     requested_at,
-                     completed_at,
-                     provider_deletion_requested`,
-          [userId],
-        );
-        const row = Array.isArray(rows) ? rows[0] : undefined;
-        if (!row) {
-          fail(
-            500,
-            'DATABASE_ERROR',
-            'Failed to persist account deletion request',
-          );
-        }
-        return {
-          row,
-          receipt: this.deletionReceiptService.mintReceipt(row.id),
-        };
-      });
-    } catch (error) {
-      if (isPostgresUniqueViolation(error)) {
         fail(
           409,
-          'DELETION_ALREADY_REQUESTED',
-          'An active account deletion request already exists',
+          'IDEMPOTENCY_KEY_REUSED',
+          'Idempotency key reused with different request payload',
         );
       }
-      throw error;
     }
 
-    if (!inserted) {
-      fail(500, 'DATABASE_ERROR', 'Failed to persist account deletion request');
+    // Guard concurrent in-flight requests for the same caller
+    if (this.inFlightRequests.has(userId)) {
+      fail(
+        409,
+        'DELETION_ALREADY_REQUESTED',
+        'An active account deletion request is already in progress',
+      );
     }
+    this.inFlightRequests.add(userId);
 
-    return this.mapRowToStatusDto(inserted.row, inserted.receipt);
+    try {
+      // 2. Live Re-Authentication Verification (GoTrue / identity provider)
+      await this.reauthVerificationService.verifyReauthentication(
+        userId,
+        {
+          password: validatedDto.password,
+          reauth_token: validatedDto.reauth_token,
+        },
+        this.database,
+      );
+
+      // 3. Atomic Database Cascade Transaction (R05)
+      let inserted:
+        | {
+            row: AccountDeletionRequestRow;
+            receipt: { receipt: string; expiresAt: string };
+          }
+        | undefined;
+
+      try {
+        inserted = await this.runWithDatabase(userId, false, async (db) => {
+          // 3a. Insert active account deletion request row
+          const rows = await db.query<AccountDeletionRequestRow[]>(
+            `INSERT INTO public.account_deletion_requests (
+               user_id,
+               status,
+               provider_deletion_requested,
+               requested_at,
+               provider_cleanup,
+               provider_cleanup_expires_at
+             )
+             VALUES (
+               $1::uuid,
+               'in_progress',
+               false,
+               now(),
+               '[]'::jsonb,
+               now() + interval '30 days'
+             )
+             RETURNING id,
+                       user_id,
+                       status,
+                       requested_at,
+                       completed_at,
+                       provider_deletion_requested`,
+            [userId],
+          );
+          const row = Array.isArray(rows) ? rows[0] : undefined;
+          if (!row) {
+            fail(
+              500,
+              'DATABASE_ERROR',
+              'Failed to persist account deletion request',
+            );
+          }
+
+          // 3b. Revoke all approved sessions in DB
+          await db.query(
+            `UPDATE private.approved_auth_sessions
+                SET revoked_at = clock_timestamp(),
+                    updated_at = clock_timestamp()
+              WHERE user_id = $1::uuid
+                AND revoked_at IS NULL`,
+            [userId],
+          );
+
+          // 3c. Revoke GoTrue auth refresh tokens & sessions (fail-closed atomic transaction)
+          await db.query(
+            `UPDATE auth.refresh_tokens
+                SET revoked = true,
+                    updated_at = clock_timestamp()
+              WHERE user_id = $1::text
+                AND COALESCE(revoked, false) = false`,
+            [userId],
+          );
+          await db.query(`DELETE FROM auth.sessions WHERE user_id = $1::uuid`, [
+            userId,
+          ]);
+
+          // 3d. Delete user from public.users (triggers trg_users_complete_deletion BEFORE DELETE)
+          await db.query(`DELETE FROM public.users WHERE id = $1::uuid`, [
+            userId,
+          ]);
+
+          // 3e. Select and strictly validate completed tombstone row (never fabricated in production)
+          const tombstoneRows = await db.query<AccountDeletionRequestRow[]>(
+            `SELECT id,
+                    user_id,
+                    status,
+                    requested_at,
+                    completed_at,
+                    provider_deletion_requested
+               FROM public.account_deletion_requests
+              WHERE id = $1::uuid
+              LIMIT 1`,
+            [row.id],
+          );
+          const tombstoneRow = Array.isArray(tombstoneRows)
+            ? tombstoneRows[0]
+            : undefined;
+
+          if (
+            !tombstoneRow ||
+            tombstoneRow.status !== 'completed' ||
+            tombstoneRow.user_id !== null ||
+            !tombstoneRow.completed_at
+          ) {
+            fail(
+              500,
+              'DATABASE_ERROR',
+              'Account deletion cascade failed to achieve completed tombstone state',
+            );
+          }
+
+          return {
+            row: tombstoneRow,
+            receipt: this.deletionReceiptService.mintReceipt(tombstoneRow.id),
+          };
+        });
+      } catch (error) {
+        if (isPostgresUniqueViolation(error)) {
+          fail(
+            409,
+            'DELETION_ALREADY_REQUESTED',
+            'An active account deletion request already exists',
+          );
+        }
+        throw error;
+      }
+
+      if (!inserted) {
+        fail(
+          500,
+          'DATABASE_ERROR',
+          'Failed to persist account deletion request',
+        );
+      }
+
+      const resultDto = this.mapRowToStatusDto(inserted.row, inserted.receipt);
+
+      // 4. Cache response under caller-scoped Idempotency-Key if provided (reserveSlot = true on write)
+      if (cacheKey && payloadHash) {
+        this.pruneExpiredIdempotencyEntries(Date.now(), true);
+        this.idempotencyStore.set(cacheKey, {
+          userId,
+          payloadHash,
+          response: resultDto,
+          expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
+        });
+      }
+
+      return resultDto;
+    } finally {
+      this.inFlightRequests.delete(userId);
+    }
   }
 
   /**

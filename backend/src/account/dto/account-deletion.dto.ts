@@ -42,7 +42,7 @@ export class AccountDeletionRequestDto {
 
 /**
  * Type alias for `AccountDeletionRequestDto` used on controller signatures so service-layer
- * contract status codes (`400 CONFIRMATION_MISMATCH`) are preserved consistently.
+ * contract status codes (`422 CONFIRMATION_MISMATCH`) are preserved consistently.
  */
 export type AccountDeletionRequestInput = Pick<
   AccountDeletionRequestDto,
@@ -80,8 +80,9 @@ export class AccountDeletionStatusDto {
 
 /**
  * Validates raw input for `EP-X01` (`AccountDeletionRequestDTO`) and returns a normalized DTO.
- * Throws `400 CONFIRMATION_MISMATCH` if `confirmation !== 'DELETE'` or `400 INVALID_FORMAT`
- * if optional fields are malformed or mutually exclusive fields are both supplied.
+ * Throws `422 CONFIRMATION_MISMATCH` if `confirmation !== 'DELETE'`, `401 REAUTH_REQUIRED` if
+ * neither `password` nor `reauth_token` is supplied, or `400 INVALID_FORMAT` if fields are malformed
+ * or mutually exclusive fields are both supplied (`M03-02`).
  *
  * @param input - Raw request body provided by the caller.
  * @returns Validated `AccountDeletionRequestDto` object.
@@ -108,7 +109,7 @@ export function validateAccountDeletionRequest(
 
   if (record.confirmation !== 'DELETE') {
     fail(
-      400,
+      422,
       'CONFIRMATION_MISMATCH',
       'Confirmation must equal literal DELETE',
       [
@@ -126,6 +127,22 @@ export function validateAccountDeletionRequest(
       400,
       'INVALID_FORMAT',
       'Provide either password or reauth_token, not both',
+    );
+  }
+
+  if (record.password === undefined && record.reauth_token === undefined) {
+    fail(
+      401,
+      'REAUTH_REQUIRED',
+      'Re-authentication credentials (password or reauth_token) are required',
+      [
+        {
+          field: 'password',
+          code: 'REAUTH_REQUIRED',
+          message:
+            'Password (for password accounts) or reauth_token (for OAuth accounts) is required',
+        },
+      ],
     );
   }
 
