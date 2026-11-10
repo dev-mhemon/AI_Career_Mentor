@@ -519,6 +519,9 @@ export class AuthService {
     };
   }
 
+  /**
+   * EP-A02: Verifies an email OTP challenge (registration or EP-A12 secondary contact), updates the application account, and mints an approved session.
+   */
   async verifyEmail(body: unknown, _request?: Request) {
     void _request;
     const input = normalizeVerifyEmailRequest(body);

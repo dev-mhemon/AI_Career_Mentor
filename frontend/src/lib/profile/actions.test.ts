@@ -2,24 +2,35 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   loadProfileForSetup,
   saveProfileSetupAction,
+  updateLearningSettingsAction,
 } from '@/lib/profile/actions';
 import {
   getProfile,
   updateProfile,
   updateLearningSettings,
+  refreshSession,
   ApiError,
   NetworkError,
   type FieldError,
 } from '@/lib/api/client';
 
 const mockGetSession = vi.fn();
+const mockSetSession = vi.fn();
+const mockSignOut = vi.fn().mockResolvedValue({ error: null });
+const mockCreateSupabaseServerClient = vi.fn().mockImplementation(() => ({
+  auth: {
+    getSession: mockGetSession,
+    setSession: mockSetSession,
+    signOut: mockSignOut,
+  },
+}));
+
+vi.mock('next/navigation', () => ({
+  redirect: vi.fn(),
+}));
 
 vi.mock('@/lib/supabase/server', () => ({
-  createSupabaseServerClient: () => ({
-    auth: {
-      getSession: mockGetSession,
-    },
-  }),
+  createSupabaseServerClient: (...args: unknown[]) => mockCreateSupabaseServerClient(...args),
 }));
 
 vi.mock('@/lib/api/client', () => {
@@ -45,12 +56,21 @@ vi.mock('@/lib/api/client', () => {
     }
   }
 
+  class MockUnauthorizedError extends MockApiError {
+    constructor(message = 'Unauthorized', code?: string, requestId?: string) {
+      super(401, message, code, requestId);
+      this.name = 'UnauthorizedError';
+    }
+  }
+
   return {
     getProfile: vi.fn(),
     updateProfile: vi.fn(),
     updateLearningSettings: vi.fn(),
+    refreshSession: vi.fn(),
     ApiError: MockApiError,
     NetworkError: MockNetworkError,
+    UnauthorizedError: MockUnauthorizedError,
   };
 });
 
@@ -79,6 +99,16 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
   });
 
   describe('loadProfileForSetup', () => {
+    it('initializes supabase client with readOnly: true during SSR', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: 'valid-token' } },
+      });
+      vi.mocked(getProfile).mockResolvedValueOnce(MOCK_PROFILE);
+
+      await loadProfileForSetup();
+      expect(mockCreateSupabaseServerClient).toHaveBeenCalledWith({ readOnly: true });
+    });
+
     it('returns unauthorized when session is missing', async () => {
       mockGetSession.mockResolvedValueOnce({ data: { session: null } });
 
@@ -110,13 +140,23 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result).toEqual({ profile: MOCK_PROFILE, userId: 'user-xyz' });
     });
 
-    it('returns unauthorized on 401 ApiError', async () => {
+    it('returns unauthorized on 401 ApiError without calling refreshSession', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'expired-token',
+            refresh_token: 'valid-refresh-token',
+          },
+        },
+      });
       vi.mocked(getProfile).mockRejectedValueOnce(
         new ApiError(401, 'Unauthorized', 'TOKEN_EXPIRED'),
       );
 
       const result = await loadProfileForSetup();
       expect(result).toEqual({ profile: null, unauthorized: true });
+      expect(refreshSession).not.toHaveBeenCalled();
+      expect(mockSetSession).not.toHaveBeenCalled();
     });
 
     it('returns suspended on 403 ACCOUNT_SUSPENDED', async () => {
@@ -412,6 +452,162 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(networkFailed.retryable).toBe(true);
       expect(networkFailed.values?.current_role).toBe('QA Engineer');
       expect(networkFailed.values?.education).toBe('Diploma');
+    });
+
+    it('propagates rotated tokens across sequential calls when the first call triggers a 401 refresh', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'expired-token',
+            refresh_token: 'valid-refresh-token',
+          },
+        },
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: 'new-token',
+        refresh_token: 'new-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: {
+          id: 'user-1',
+          email: 'user@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          linked_providers: ['email'],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: 'app_home',
+      });
+
+      vi.mocked(updateLearningSettings)
+        .mockRejectedValueOnce(new ApiError(401, 'Expired token', 'TOKEN_EXPIRED'))
+        .mockResolvedValueOnce({
+          ...MOCK_PROFILE,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: 2,
+        });
+
+      vi.mocked(updateProfile).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        current_role: 'Engineer',
+      });
+
+      const formData = new FormData();
+      formData.set('current_role', 'Engineer');
+      formData.set('experience_level', 'junior');
+      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('preferred_daily_hours', '2');
+
+      const result = await saveProfileSetupAction({}, formData);
+
+      expect(result.success).toBe(true);
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(refreshSession).toHaveBeenCalledWith('valid-refresh-token');
+      expect(updateLearningSettings).toHaveBeenNthCalledWith(1, 'expired-token', {
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: 2,
+      });
+      expect(updateLearningSettings).toHaveBeenNthCalledWith(2, 'new-token', {
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: 2,
+      });
+      expect(updateProfile).toHaveBeenCalledTimes(1);
+      expect(updateProfile).toHaveBeenCalledWith(
+        'new-token',
+        expect.objectContaining({
+          current_role: 'Engineer',
+        }),
+      );
+    });
+  });
+
+  describe('updateLearningSettingsAction (M02-04 Screen 22 EP-P04)', () => {
+    it('validates IANA timezone and preferred_daily_hours (0.5..12.0 in 0.5 increments) and rejects invalid inputs', async () => {
+      const invalidTzForm = new FormData();
+      invalidTzForm.set('timezone', 'Not/A_Real_Zone');
+      invalidTzForm.set('preferred_daily_hours', '1.3');
+
+      const invalidResult = await updateLearningSettingsAction({}, invalidTzForm);
+      expect(invalidResult.code).toBe('VALIDATION_FAILED');
+      expect(invalidResult.fieldErrors?.timezone).toContain('valid IANA timezone');
+      expect(invalidResult.fieldErrors?.preferred_daily_hours).toContain(
+        'between 0.5 and 12 in 0.5-hour increments',
+      );
+      expect(updateLearningSettings).not.toHaveBeenCalled();
+
+      const outOfRangeForm = new FormData();
+      outOfRangeForm.set('timezone', 'Asia/Dhaka');
+      outOfRangeForm.set('preferred_daily_hours', '12.5');
+
+      const outOfRangeResult = await updateLearningSettingsAction(
+        {},
+        outOfRangeForm,
+      );
+      expect(outOfRangeResult.code).toBe('VALIDATION_FAILED');
+      expect(outOfRangeResult.fieldErrors?.preferred_daily_hours).toBeDefined();
+    });
+
+    it('updates learning settings via EP-P04 and retries once after refreshing session on 401', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'expired-token',
+            refresh_token: 'valid-refresh-token',
+          },
+        },
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+      vi.mocked(refreshSession).mockResolvedValueOnce({
+        access_token: 'new-token',
+        refresh_token: 'new-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: {
+          id: 'user-1',
+          email: 'user@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          linked_providers: ['email'],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: 'app_home',
+      });
+      vi.mocked(updateLearningSettings)
+        .mockRejectedValueOnce(new ApiError(401, 'Expired token', 'TOKEN_EXPIRED'))
+        .mockResolvedValueOnce({
+          ...MOCK_PROFILE,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: 3.5,
+        });
+
+      const formData = new FormData();
+      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('preferred_daily_hours', '3.5');
+
+      const result = await updateLearningSettingsAction({}, formData);
+      expect(result.success).toBe(true);
+      expect(refreshSession).toHaveBeenCalledWith('valid-refresh-token');
+      expect(updateLearningSettings).toHaveBeenCalledTimes(2);
+      expect(updateLearningSettings).toHaveBeenNthCalledWith(2, 'new-token', {
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: 3.5,
+      });
+    });
+
+    it('safely handles non-string or File payloads without throwing TypeError', async () => {
+      const badForm = new FormData();
+      badForm.set('timezone', new File([''], 'test.png'));
+      badForm.set('preferred_daily_hours', new File([''], 'test.png'));
+
+      const res = await updateLearningSettingsAction({}, badForm);
+      expect(res.code).toBe('VALIDATION_FAILED');
+      expect(res.fieldErrors?.timezone).toBeDefined();
+      expect(res.fieldErrors?.preferred_daily_hours).toBeDefined();
     });
   });
 });

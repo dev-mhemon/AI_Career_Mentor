@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState, useState, useEffect } from 'react';
+import { useActionState, useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { addContactAction, type AuthActionResult } from '@/lib/auth/actions';
 import {
   saveVerificationDraft,
@@ -33,11 +34,26 @@ export function AddContactForm({
 
   const [activeTab, setActiveTab] = useState<'email' | 'phone'>('email');
 
+  const router = useRouter();
+  const handledStateRef = useRef<AuthActionResult | null>(null);
+
   useEffect(() => {
-    if (state?.error) {
+    if (handledStateRef.current === state) {
+      return;
+    }
+    handledStateRef.current = state;
+
+    if (state?.error && !state?.redirectTo) {
       clearVerificationDraft();
     }
-  }, [state]);
+    if (state?.redirectTo) {
+      const isVerificationRedirect = state.redirectTo.startsWith('/verify');
+      if (!isVerificationRedirect) {
+        clearVerificationDraft();
+      }
+      router.push(state.redirectTo);
+    }
+  }, [state, router]);
 
   if (isSuspended) {
     return (
@@ -47,6 +63,25 @@ export function AddContactForm({
         </h3>
         <p className="mt-2 text-sm text-foreground/60">
           স্থগিত অ্যাকাউন্ট থেকে নতুন যোগাযোগ মাধ্যম যোগ করা সম্ভব নয়।
+        </p>
+      </section>
+    );
+  }
+
+  if (alreadyVerified) {
+    return (
+      <section
+        aria-labelledby="add-contact-heading"
+        className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-5"
+      >
+        <h3
+          id="add-contact-heading"
+          className="text-base font-semibold text-emerald-950 dark:text-emerald-100"
+        >
+          যোগাযোগের মাধ্যম যাচাইকৃত (Verified Contact Method)
+        </h3>
+        <p className="mt-1 text-sm text-emerald-900/90 dark:text-emerald-200/90">
+          আপনার অ্যাকাউন্টের প্রাথমিক যোগাযোগের মাধ্যম ইতিমধ্যে যাচাই করা হয়েছে (Your account already has a verified primary contact method).
         </p>
       </section>
     );

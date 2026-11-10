@@ -1,12 +1,14 @@
 'use server';
 
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { withSingleSessionRefresh } from '@/lib/auth/actions';
 import {
   getProfile,
   updateProfile,
   updateLearningSettings,
   ApiError,
   NetworkError,
+  UnauthorizedError,
   type ExperienceLevel,
   type ProfileResponse,
   type UpdateProfileBody,
@@ -26,6 +28,11 @@ export type ProfileSetupFieldKey =
   | 'preferred_daily_hours';
 
 /**
+ * Supported form field keys for Screen 22 (`/settings`) Learning Settings (`EP-P04`).
+ */
+export type LearningSettingsFieldKey = 'timezone' | 'preferred_daily_hours';
+
+/**
  * Preserved form input values for Screen 07 (`/onboarding/profile`).
  */
 export interface ProfileSetupFormValues {
@@ -33,6 +40,14 @@ export interface ProfileSetupFormValues {
   education: string;
   experience_level: string;
   existing_skills_none: boolean;
+  timezone: string;
+  preferred_daily_hours: string;
+}
+
+/**
+ * Preserved form input values for Screen 22 (`/settings`) Learning Settings (`EP-P04`).
+ */
+export interface LearningSettingsFormValues {
   timezone: string;
   preferred_daily_hours: string;
 }
@@ -50,6 +65,23 @@ export interface ProfileSetupActionState {
   fieldErrors?: Partial<Record<ProfileSetupFieldKey, string>>;
   profile?: ProfileResponse | null;
   values?: ProfileSetupFormValues;
+  redirectTo?: string;
+}
+
+/**
+ * State returned by `updateLearningSettingsAction` for Screen 22 (`/settings`).
+ */
+export interface LearningSettingsActionState {
+  success?: boolean;
+  message?: string;
+  error?: string;
+  code?: string;
+  retryable?: boolean;
+  retryAfterSeconds?: number | null;
+  fieldErrors?: Partial<Record<LearningSettingsFieldKey, string>>;
+  profile?: ProfileResponse | null;
+  values?: LearningSettingsFormValues;
+  redirectTo?: string;
 }
 
 const VALID_EXPERIENCE_LEVELS: readonly ExperienceLevel[] = [
@@ -67,7 +99,49 @@ function isValidExperienceLevel(value: string): value is ExperienceLevel {
 }
 
 /**
+ * Validates whether a string is a non-empty recognized IANA time zone identifier.
+ */
+function isValidIanaTimezone(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: trimmed });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks whether an error is a Next.js navigation redirect exception.
+ */
+function isNextRedirectError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.message === 'NEXT_REDIRECT') return true;
+  if (
+    'digest' in err &&
+    typeof (err as { digest?: unknown }).digest === 'string' &&
+    (err as { digest: string }).digest.startsWith('NEXT_REDIRECT')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Checks whether an error represents an HTTP 401 unauthorized response.
+ */
+function isUnauthorizedError(err: unknown): boolean {
+  return (
+    err instanceof UnauthorizedError ||
+    (err instanceof ApiError && err.statusCode === 401)
+  );
+}
+
+/**
  * Loads the current user's profile via EP-P01 (`GET /api/v1/profile`) without throwing on backend failure.
+ * Read-only Server Component loader: on HTTP 401, returns `{ profile: null, unauthorized: true }`
+ * without attempting token refresh or cookie mutation during read-only SSR rendering.
  */
 export async function loadProfileForSetup(): Promise<{
   profile: ProfileResponse | null;
@@ -77,7 +151,7 @@ export async function loadProfileForSetup(): Promise<{
   suspended?: boolean;
 }> {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient({ readOnly: true });
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -87,6 +161,7 @@ export async function loadProfileForSetup(): Promise<{
     }
 
     const profile = await getProfile(session.access_token);
+
     const result: {
       profile: ProfileResponse | null;
       userId?: string;
@@ -99,27 +174,27 @@ export async function loadProfileForSetup(): Promise<{
     }
     return result;
   } catch (err) {
+    if (isUnauthorizedError(err)) {
+      return { profile: null, unauthorized: true };
+    }
     if (err instanceof ApiError) {
-      if (err.statusCode === 401) {
-        return { profile: null, unauthorized: true };
-      }
       if (err.statusCode === 403 && err.code === 'ACCOUNT_SUSPENDED') {
         return { profile: null, suspended: true };
       }
       return {
         profile: null,
-        loadError: err.message || 'Unable to load saved profile details.',
+        loadError: err.message || 'Unable to load saved profile details. Please retry before saving.',
       };
     }
     if (err instanceof NetworkError) {
       return {
         profile: null,
-        loadError: 'Unable to reach the server. You can still enter your details below.',
+        loadError: 'Unable to reach the server to load learning settings. Please retry before saving.',
       };
     }
     return {
       profile: null,
-      loadError: 'Unable to load saved profile details.',
+      loadError: 'Unable to load saved profile details. Please retry before saving.',
     };
   }
 }
@@ -233,9 +308,10 @@ export async function saveProfileSetupAction(
     }
 
     if (Object.keys(learningBody).length > 0) {
-      committedProfile = await updateLearningSettings(
-        session.access_token,
-        learningBody,
+      committedProfile = await withSingleSessionRefresh(
+        supabase,
+        session,
+        (accessToken) => updateLearningSettings(accessToken, learningBody),
       );
     }
 
@@ -255,9 +331,10 @@ export async function saveProfileSetupAction(
       profileBody.existing_skills_none = false;
     }
 
-    const updatedProfile = await updateProfile(
-      session.access_token,
-      profileBody,
+    const updatedProfile = await withSingleSessionRefresh(
+      supabase,
+      session,
+      (accessToken) => updateProfile(accessToken, profileBody),
     );
     committedProfile = updatedProfile;
 
@@ -279,6 +356,9 @@ export async function saveProfileSetupAction(
       },
     };
   } catch (err) {
+    if (isNextRedirectError(err)) {
+      throw err;
+    }
     if (err instanceof NetworkError) {
       return {
         error: 'Unable to reach the server. Please try again.',
@@ -314,6 +394,157 @@ export async function saveProfileSetupAction(
       retryable: true,
       values,
       ...(committedProfile !== undefined ? { profile: committedProfile } : {}),
+    };
+  }
+}
+
+/**
+ * Server action for Screen 22 (`/settings`) that validates and updates learning settings via EP-P04 (`PATCH /api/v1/profile/learning-settings`).
+ * Wraps the backend request with `withSingleSessionRefresh` to attempt at most one token refresh on HTTP 401.
+ */
+export async function updateLearningSettingsAction(
+  _prevState: LearningSettingsActionState,
+  formData: FormData,
+): Promise<LearningSettingsActionState> {
+  const timezoneEntry = formData.get('timezone');
+  const hoursEntry = formData.get('preferred_daily_hours');
+
+  const timezoneRaw = typeof timezoneEntry === 'string' ? timezoneEntry : '';
+  const hoursRaw = typeof hoursEntry === 'string' ? hoursEntry : '';
+
+  const timezone = timezoneRaw.trim();
+  const preferred_daily_hours = hoursRaw.trim();
+
+  const values: LearningSettingsFormValues = {
+    timezone,
+    preferred_daily_hours,
+  };
+
+  const fieldErrors: Partial<Record<LearningSettingsFieldKey, string>> = {};
+
+  if (!timezone) {
+    fieldErrors.timezone = 'Timezone is required.';
+  } else if (!isValidIanaTimezone(timezone)) {
+    fieldErrors.timezone =
+      'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).';
+  }
+
+  let parsedHours = NaN;
+  if (!preferred_daily_hours) {
+    fieldErrors.preferred_daily_hours =
+      'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.';
+  } else {
+    const num = Number(preferred_daily_hours);
+    if (
+      !Number.isFinite(num) ||
+      num < 0.5 ||
+      num > 12 ||
+      !Number.isInteger(num * 2)
+    ) {
+      fieldErrors.preferred_daily_hours =
+        'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.';
+    } else {
+      parsedHours = num;
+    }
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    const firstMessage =
+      Object.values(fieldErrors)[0] ?? 'Please fix the highlighted fields.';
+    return {
+      error: firstMessage,
+      code: 'VALIDATION_FAILED',
+      fieldErrors,
+      values,
+    };
+  }
+
+  try {
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      return {
+        error: 'Authentication session is required. Please sign in again.',
+        code: 'AUTH_REQUIRED',
+        values,
+      };
+    }
+
+    const updatedProfile = await withSingleSessionRefresh(
+      supabase,
+      session,
+      (accessToken) =>
+        updateLearningSettings(accessToken, {
+          timezone,
+          preferred_daily_hours: parsedHours,
+        }),
+    );
+
+    if (!updatedProfile) {
+      return {
+        error: 'Authentication session expired. Please sign in again.',
+        code: 'AUTH_REQUIRED',
+        redirectTo: '/login',
+        values,
+      };
+    }
+
+    return {
+      success: true,
+      message:
+        'শেখার সেটিংস সংরক্ষিত হয়েছে (Learning settings saved successfully).',
+      profile: updatedProfile,
+      values: {
+        timezone: updatedProfile.timezone ?? timezone,
+        preferred_daily_hours:
+          updatedProfile.preferred_daily_hours !== null &&
+          updatedProfile.preferred_daily_hours !== undefined
+            ? String(updatedProfile.preferred_daily_hours)
+            : String(parsedHours),
+      },
+    };
+  } catch (err) {
+    if (isNextRedirectError(err)) {
+      throw err;
+    }
+    if (err instanceof NetworkError) {
+      return {
+        error: 'Unable to reach the server. Please try again.',
+        retryable: true,
+        values,
+      };
+    }
+    if (err instanceof ApiError) {
+      const apiFieldErrors: Partial<Record<LearningSettingsFieldKey, string>> = {};
+      if (err.code === 'INVALID_TIMEZONE') {
+        apiFieldErrors.timezone = err.message;
+      }
+      for (const detail of err.details) {
+        const rootField = detail.field.split('.')[0] as LearningSettingsFieldKey;
+        if (
+          (rootField === 'timezone' || rootField === 'preferred_daily_hours') &&
+          !apiFieldErrors[rootField]
+        ) {
+          apiFieldErrors[rootField] = detail.message;
+        }
+      }
+      return {
+        error: err.message,
+        code: err.code,
+        retryable: err.retryable,
+        retryAfterSeconds: err.retryAfterSeconds,
+        fieldErrors:
+          Object.keys(apiFieldErrors).length > 0 ? apiFieldErrors : undefined,
+        values,
+      };
+    }
+    return {
+      error: 'An unexpected error occurred while saving your learning settings.',
+      retryable: true,
+      values,
     };
   }
 }

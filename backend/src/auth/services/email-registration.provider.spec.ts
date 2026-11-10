@@ -140,6 +140,88 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         verified: true,
       });
     });
+
+    it('returns verified = true when provider_verified_at is set even if public.users.verified_contact is false', async () => {
+      database.query.mockResolvedValue([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          verified_contact: false,
+          provider_verified_at: '2026-01-01T00:00:00Z',
+        },
+      ]);
+
+      const result = await provider.findByEmail(email);
+      expect(result).toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: true,
+      });
+    });
+
+    it('locates pending secondary email from public.user_auth_providers for an unverified OAuth user (EP-A12 -> EP-A04)', async () => {
+      database.query.mockResolvedValue([
+        {
+          id: userId,
+          email: 'Secondary@Example.invalid',
+          email_confirmed_at: null,
+          verified_contact: false,
+        },
+      ]);
+
+      const result = await provider.findByEmail('Secondary@Example.invalid');
+      expect(database.query).toHaveBeenCalledWith(expect.any(String), [
+        'secondary@example.invalid',
+      ]);
+      const executedSql = database.query.mock.calls[0][0] as string;
+      const normalizedSql = executedSql.replace(/\s+/g, ' ');
+      expect(normalizedSql).toContain('LEFT JOIN public.user_auth_providers p');
+      expect(normalizedSql).toContain(
+        'WHERE lower(u.email) = $1 OR lower(p.contact_value) = $1',
+      );
+      expect(normalizedSql).toContain('ORDER BY');
+      expect(normalizedSql).toContain(
+        'COALESCE(lower(p.contact_value) = $1, false) DESC',
+      );
+      expect(normalizedSql).toContain(
+        'COALESCE(COALESCE(lower(p.contact_value), lower(u.email)) = $1, false) DESC',
+      );
+      expect(normalizedSql).toContain(
+        'COALESCE(pu.verified_contact = true OR p.verified_at IS NOT NULL, false) DESC',
+      );
+      expect(normalizedSql).toContain(
+        'COALESCE(pu.id IS NOT NULL, false) DESC',
+      );
+      expect(normalizedSql).toContain('u.created_at DESC');
+      expect(result).toEqual({
+        id: userId,
+        subject: userId,
+        email: 'secondary@example.invalid',
+        verified: false,
+      });
+    });
+
+    it('returns the coalesced provider contact_value when u.email matched lookup but p.contact_value is different', async () => {
+      database.query.mockResolvedValue([
+        {
+          id: userId,
+          email: 'staged-different@example.invalid',
+          email_confirmed_at: null,
+          verified_contact: false,
+          provider_verified_at: null,
+        },
+      ]);
+
+      const result = await provider.findByEmail('old-original@example.invalid');
+      expect(result).toEqual({
+        id: userId,
+        subject: userId,
+        email: 'staged-different@example.invalid',
+        verified: false,
+      });
+    });
   });
 
   describe('createPending', () => {

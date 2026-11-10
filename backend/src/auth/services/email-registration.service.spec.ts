@@ -485,6 +485,28 @@ describe('A01/A04 email service with synthetic provider', () => {
     },
   );
 
+  it('returns generic success metadata without overwriting staged contact or sending challenge when identity email mismatches requested email', async () => {
+    const { service, provider, database } = harness();
+    provider.findByEmail.mockResolvedValue({
+      ...identity,
+      email: 'newer-staged@example.invalid',
+    });
+
+    const result = await service.resend(
+      { channel: 'email', contact: email },
+      peer,
+    );
+
+    expect(result).toMatchObject({
+      verification_channel: 'email',
+      contact_masked: expect.any(String),
+      expires_in_seconds: 600,
+      resend_available_at: expect.any(String),
+    });
+    expect(database.transaction).not.toHaveBeenCalled();
+    expect(provider.sendChallenge).not.toHaveBeenCalled();
+  });
+
   it('maps resend provider failure to retryable 502 without exposing details', async () => {
     const { service, provider } = harness();
     provider.findByEmail.mockResolvedValue(identity);

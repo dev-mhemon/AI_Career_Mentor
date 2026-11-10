@@ -770,4 +770,45 @@ describe('VerifyForm', () => {
     });
     expect(screen.getByRole('button', { name: /resend code in 598s/i })).toBeInTheDocument();
   });
+
+  it('forwards draft.context via hidden input to verifyOtpAction on OTP submit (M02-04 secondary_contact)', async () => {
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'secondary@example.com',
+      contactMasked: 's****@example.com',
+      context: 'secondary_contact',
+    });
+
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    vi.mocked(verifyOtpAction).mockResolvedValueOnce({
+      success: true,
+      redirectTo: '/settings?verified=contact',
+    });
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    const tokenInput = screen.getByPlaceholderText(/verification code/i);
+    fireEvent.change(tokenInput, { target: { value: '123456' } });
+
+    const submitBtn = screen.getByRole('button', { name: /verify code/i });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    await waitFor(() => {
+      expect(verifyOtpAction).toHaveBeenCalled();
+    });
+
+    const submittedFormData = vi.mocked(verifyOtpAction).mock.calls[0]?.[1];
+    expect(submittedFormData).toBeInstanceOf(FormData);
+    expect(submittedFormData?.get('context')).toBe('secondary_contact');
+    expect(submittedFormData?.get('identifier')).toBe('secondary@example.com');
+    expect(submittedFormData?.get('token')).toBe('123456');
+  });
 });

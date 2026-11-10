@@ -1,14 +1,15 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Password Recovery and Phone Contract (M02-01)
+  title: AI Career Mentor - Authentication, Password Recovery and Phone Contract (M02-04)
   version: 0.1.0
   description: >-
-    Draft / review pending, 2026-11-03. Derived from adopted C05 v1.5.1. SPECIFIED is not IMPLEMENTED or
-    ACCEPTED. Source inspection: df4270d9d04296f5e13677a198103d58fd5db127. Canonical auth operations including
-    email registration, verification, login, refresh, logout, password recovery (EP-A08/EP-A09), phone contract
-    (EP-A03), social linking (EP-A11), add contact (EP-A12), OAuth bootstrap (EP-A10), and me (EP-A13).
-    See M02-01 task record, backend architecture, DTO-DB-mapping and QA-plan. OpenAPI describes wire contracts;
-    semantic rules and provider capability gaps remain linked review obligations.
+    Synchronized through M02-04, 2026-11-08. Derived from adopted C05 v1.5.1. Source baseline:
+    e1de2b0f429747406ace3aa7a560f53c183b0387. Canonical auth operations including email registration (EP-A01),
+    email and phone verification (EP-A02/EP-A03), verification resend (EP-A04), login (EP-A05), logout (EP-A06),
+    token refresh (EP-A07), password recovery (EP-A08/EP-A09), OAuth bootstrap (EP-A10), social linking (EP-A11),
+    add contact (EP-A12), and me (EP-A13) are implemented across backend and frontend (with phone SMS delivery
+    failing closed with 503 SERVICE_UNAVAILABLE while the SMS provider adapter is disabled). See M02-04 task
+    record, backend architecture, DTO-DB-mapping and QA-plan.
 servers:
   - url: /api/v1
 tags:
@@ -46,12 +47,12 @@ paths:
         - Email and session
       summary: Register by email or Bangladesh phone
       description: >-
-        SPECIFIED, backend absent. M01 delivers only email behavior in later tasks; shared phone contract
-        remains required for M02. No session until required verification. Create users/provider rows
-        unverified; trusted pre-session mapping is unresolved (DTO-DB-mapping.md). R31 counters precede
-        provider sends.
+        C05 EP-A01. Implemented for email registration with Option 2B GoTrue Admin pending identity creation,
+        atomic unverified public.users/public.user_auth_providers persistence, and S1 Redis HMAC-SHA256 OTP
+        challenge dispatch. Phone registration shares the contract and fails closed with retryable 503
+        SERVICE_UNAVAILABLE while the SMS provider adapter is disabled. No session is issued until verification.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
       security: []
       parameters:
@@ -176,11 +177,12 @@ paths:
         - Email and session
       summary: Verify email code and establish session
       description: >-
-        SPECIFIED, backend absent. Public signup mode; optional JWT for email added via A12 (M02, not
-        completed here). Six-digit code, one-time consume; empty profile/preferences mapped atomically.
-        Profile completeness does not gate general access.
+        C05 EP-A02. Implemented for both public signup verification (EP-A01) and secondary email contact
+        verification initiated via EP-A12 (M02-04). Consumes a six-digit S1 Redis OTP challenge once, confirms
+        the GoTrue user, atomically marks public.users/public.user_auth_providers verified, ensures empty
+        profile/preferences rows exist, and mints an approved session.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
       security:
         - {}
@@ -483,11 +485,12 @@ paths:
         - Email and session
       summary: Resend email or phone verification
       description: >-
-        SPECIFIED, backend absent. Same response for known/unknown contact; masked display, expiry and resend
-        metadata. Full channel enum preserved; email-only work is partial operation delivery. R31 Redis outage
-        fails send closed with retryable 503.
+        C05 EP-A04. Implemented for both unverified signup email identities and unverified OAuth users who
+        added a secondary email contact via EP-A12 (M02-04). Returns uniform anti-enumeration metadata for
+        known and unknown contacts; phone channel fails closed with retryable 503 SERVICE_UNAVAILABLE while
+        SMS provider is disabled.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
       security: []
       parameters:
@@ -600,11 +603,11 @@ paths:
         - Email and session
       summary: Password login by email or Bangladesh phone
       description: >-
-        SPECIFIED, backend absent. Unknown user and wrong password share INVALID_CREDENTIALS. Suspended users
-        may authenticate into account settings; profile completion does not gate basic access. ACCOUNT_LOCKED
-        carries error.retryAfterSeconds. Email implementation alone does not complete shared phone login.
+        C05 EP-A05. Implemented for email and normalized Bangladesh mobile phone identifiers. Unknown user and
+        wrong password share INVALID_CREDENTIALS; unverified accounts return 403 UNVERIFIED_ACCOUNT; suspended
+        users authenticate into /settings; R31 lockout returns 423 ACCOUNT_LOCKED with retryAfterSeconds.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
       security: []
       parameters:
@@ -746,11 +749,14 @@ paths:
         - Email and session
       summary: Revoke current session
       description: >-
-        SPECIFIED, backend absent. No request body. Current-session revocation, idempotent with valid JWT;
-        missing/invalid/expired token remains 401. No application table writes. Provider refresh revocation
-        does not immediately invalidate access JWT cryptographically.
+        C05 EP-A06. Implemented. Revokes the current session in private.approved_auth_sessions and performs best-effort
+        upstream GoTrue local-scope logout; contract requires idempotent logout with a valid JWT while missing/invalid/expired
+        tokens return 401. Current implementation gap: while AuthService.logout is idempotent at the service layer,
+        an HTTP client retry with a valid JWT after session revocation as well as a first-time logout from an unverified
+        account (e.g. unverified OAuth) currently receives 403 UNVERIFIED_ACCOUNT from AccessGuard because AuthController.logout
+        does not exempt unverified contacts (tracked as open under Q09).
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-authorization-profile: AZ-SUSP
       security:
         - SupabaseBearer: []
@@ -780,6 +786,18 @@ paths:
             - AUTH_REQUIRED
             - INVALID_TOKEN
             - TOKEN_EXPIRED
+        '403':
+          description: >-
+            UNVERIFIED_ACCOUNT. Current implementation gap: while the contract requires idempotent 200, an HTTP client retry with a valid JWT after session revocation as well as a first-time logout from an unverified account (e.g. unverified OAuth) currently receives 403 UNVERIFIED_ACCOUNT from AccessGuard because AuthController.logout does not exempt unverified contacts (tracked as an open contract gap under Q09).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - UNVERIFIED_ACCOUNT
         '429':
           description: RATE_LIMITED
           headers:
@@ -844,11 +862,14 @@ paths:
         - Email and session
       summary: Rotate refresh token
       description: >-
-        SPECIFIED, backend absent. Rotated provider token pair, no silent meaningful-activity update; do not
-        bootstrap/recreate account. Configured provider reuse grace must be respected; not every immediate
-        token replay is invalid.
+        C05 EP-A07. Implemented on backend and consumed by frontend single-refresh-per-401 helper
+        (withSingleSessionRefresh in Server Actions; read-only getAppSessionStateResult does not perform token refresh).
+        Rotates the provider token pair and verifies session approval in private.approved_auth_sessions without silent
+        meaningful-activity updates or account re-bootstrapping. Current implementation gap: while the contract requires
+        suspended accounts to refresh into the settings shell, SessionApprovalService.isSessionApproved currently gates
+        on active account status, returning 401 REFRESH_TOKEN_INVALID for suspended users (tracked as open under Q07/Q08).
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
       security: []
       parameters:
@@ -881,7 +902,9 @@ paths:
           x-error-codes:
             - INVALID_FORMAT
         '401':
-          description: REFRESH_TOKEN_INVALID, SESSION_EXPIRED
+          description: >-
+            REFRESH_TOKEN_INVALID, SESSION_EXPIRED. Note: suspended accounts currently receive 401 REFRESH_TOKEN_INVALID
+            because SessionApprovalService.isSessionApproved gates on active status (tracked as open under Q07/Q08).
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -1225,11 +1248,11 @@ paths:
         - Email and session
       summary: Bootstrap Google or Facebook application state
       description: >-
-        Provider sign-in completed externally; supply Supabase access JWT. Provider must match JWT and live
-        linked identity. Backend retains all three next_step values; frontend callback is transitional
-        sync/me-to-dashboard. No session tokens returned by this operation.
+        C05 EP-A10. Implemented across backend and frontend /auth/callback. Provider sign-in completed
+        externally; supply Supabase access JWT. Provider must match JWT and live linked identity. Returns all
+        three canonical next_step values (add_verified_contact, profile_setup, app_home) consumed end to end.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: implemented-backend
+      x-implementation-status: implemented
       x-authorization-profile: AZ-SUSP
       security:
         - SupabaseBearer: []
@@ -1339,7 +1362,6 @@ paths:
         - >-
           Shared HTTP formatter emits null retryAfterSeconds; normative ErrorDTO allows optional nonnegative
           integer.
-        - Frontend does not consume canonical OAuth next_step end to end.
   /auth/identities/link:
     post:
       operationId: EP-A11
@@ -1594,11 +1616,11 @@ paths:
         - Email and session
       summary: Current user and effective access
       description: >-
-        Valid JWT including suspended users. Full identity/access/completeness/focus state. Suspended flags
-        all false and can_delete_account true; frontend getMe currently returns only user, losing metadata. No
-        activity update.
+        C05 EP-A13. Implemented across backend and frontend getAppSessionStateResult. Valid JWT including
+        suspended users. Returns full identity, effective_access, profile_complete, focus_roadmap_id, and
+        can_delete_account metadata without updating last_active_at.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
-      x-implementation-status: implemented-backend
+      x-implementation-status: implemented
       x-authorization-profile: AZ-SUSP
       security:
         - SupabaseBearer: []

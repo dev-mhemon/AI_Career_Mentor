@@ -15,6 +15,9 @@ import {
   type PendingEmailIdentity,
 } from './email-registration.provider.js';
 
+/**
+ * Wire response payload returned by EP-A01 (`POST /auth/register`) and EP-A04 (`POST /auth/resend-verification`).
+ */
 export interface RegistrationPendingDTO {
   verification_channel: 'email';
   contact_masked: string;
@@ -22,15 +25,27 @@ export interface RegistrationPendingDTO {
   resend_available_at: string;
 }
 
+/**
+ * Internal deadline error raised when an email provider call exceeds the 10-second timeout budget.
+ */
 class EmailProviderDeadlineError extends Error {}
 
+/**
+ * Masks an email address so only the first character and domain remain visible.
+ */
 function mask(email: string): string {
   const at = email.lastIndexOf('@');
   return `${email[0]}****${email.slice(at)}`;
 }
 
+/**
+ * Coordinates email registration (EP-A01) and verification resend (EP-A04) with atomic pending-row persistence.
+ */
 @Injectable()
 export class EmailRegistrationService {
+  /**
+   * Initializes the email registration service with provider, abuse-control, database, and config dependencies.
+   */
   constructor(
     private readonly provider: EmailRegistrationProvider,
     private readonly abuse: AuthAbuseControl,
@@ -38,6 +53,9 @@ export class EmailRegistrationService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Builds the public pending-verification metadata DTO with masked email and resend cooldown timestamp.
+   */
   private pending(email: string, cooldown: number): RegistrationPendingDTO {
     return {
       verification_channel: 'email',
@@ -47,6 +65,9 @@ export class EmailRegistrationService {
     };
   }
 
+  /**
+   * Translates upstream email provider failures and timeouts into contract HTTP 502 or 504 errors.
+   */
   private providerError(error?: unknown): never {
     if (
       error instanceof EmailProviderDeadlineError ||
@@ -64,6 +85,9 @@ export class EmailRegistrationService {
     );
   }
 
+  /**
+   * Enforces the email-only channel boundary for EP-A01 and EP-A04 while phone registration is gated.
+   */
   private emailOnly(channel: 'email' | 'phone'): void {
     if (channel === 'phone')
       fail(
@@ -76,6 +100,9 @@ export class EmailRegistrationService {
       );
   }
 
+  /**
+   * Executes a provider operation under a strict 10-second abort deadline.
+   */
   private async providerCall<T>(
     action: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
@@ -201,6 +228,11 @@ export class EmailRegistrationService {
     return metadata;
   }
 
+  /**
+   * Persists or reconciles the unverified `public.users` and `public.user_auth_providers` rows
+   * for a pending email identity without violating `uq_user_auth_providers_one_primary` when
+   * an unverified OAuth user already owns a primary provider row (EP-A12 → EP-A04).
+   */
   private async persistPending(identity: PendingEmailIdentity): Promise<void> {
     try {
       await this.database.transaction(
@@ -246,8 +278,23 @@ export class EmailRegistrationService {
           await db.query(
             `INSERT INTO public.user_auth_providers
              (user_id,provider,provider_subject,contact_value,verified_at,is_primary)
-           VALUES($1,'email',$2,$3,NULL,true)
-           ON CONFLICT(user_id,provider) DO NOTHING`,
+           VALUES(
+             $1,
+             'email',
+             $2,
+             $3,
+             NULL,
+             NOT EXISTS(SELECT 1 FROM public.user_auth_providers WHERE user_id=$1 AND is_primary=true)
+           )
+           ON CONFLICT(user_id,provider) DO UPDATE
+             SET contact_value = EXCLUDED.contact_value,
+                 updated_at = now()
+           WHERE public.user_auth_providers.verified_at IS NULL
+             AND public.user_auth_providers.provider_subject = EXCLUDED.provider_subject
+              AND (
+                public.user_auth_providers.contact_value IS NULL
+                OR lower(public.user_auth_providers.contact_value) = lower(EXCLUDED.contact_value)
+              )`,
             [identity.id, identity.subject, identity.email],
           );
           const [mapping] = await db.query(
@@ -258,7 +305,9 @@ export class EmailRegistrationService {
           if (
             !mapping ||
             mapping.provider_subject !== identity.subject ||
-            mapping.contact_value !== identity.email ||
+            typeof mapping.contact_value !== 'string' ||
+            mapping.contact_value.toLowerCase() !==
+              identity.email.toLowerCase() ||
             mapping.verified_at
           )
             fail(

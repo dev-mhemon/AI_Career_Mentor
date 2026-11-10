@@ -404,6 +404,9 @@ function VerifyFormContent() {
       >
         <input type="hidden" name="channel" value={channelParam} />
         <input type="hidden" name="type" value={channelParam} />
+        {draft?.context && (
+          <input type="hidden" name="context" value={draft.context} />
+        )}
 
         {draft ? (
           <input
