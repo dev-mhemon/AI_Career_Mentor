@@ -1,17 +1,17 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Password Recovery, Phone, Account Deletion & Atomic Cascade Contract (M03-02)
+  title: AI Career Mentor - Authentication, Password Recovery, Phone, Account Deletion, Retention Purge & Outbox Contract (M03-03)
   version: 0.1.0
   description: >-
-    Synchronized through M03-02, 2026-11-10. Derived from adopted C05 v1.5.1. Source baseline:
+    Synchronized through M03-03, 2026-11-10. Derived from adopted C05 v1.5.1. Source baseline:
     ed6bf9f2296fe7c34873f893298df8f5ed3236f0. Canonical auth operations including email registration (EP-A01),
     email and phone verification (EP-A02/EP-A03), verification resend (EP-A04), login (EP-A05), logout (EP-A06),
     token refresh (EP-A07), password recovery (EP-A08/EP-A09), OAuth bootstrap (EP-A10), social linking (EP-A11),
-    add contact (EP-A12), me (EP-A13), and account deletion re-authentication, atomic cascade execution, session
-    revocation, and DeletionReceipt authority / tombstone status query (EP-X01/EP-X02) are implemented (with phone
-    SMS delivery failing closed with 503 SERVICE_UNAVAILABLE while the SMS provider adapter is disabled, and encrypted
-    provider_cleanup outbox retries and 90d/30d retention purge runners belonging to M03-03). See M03-02 task record,
-    backend architecture, DTO-DB-mapping and QA-plan.
+    add contact (EP-A12), me (EP-A13), account deletion re-authentication, atomic cascade execution, session
+    revocation, DeletionReceipt authority / tombstone status query (EP-X01/EP-X02), encrypted provider_cleanup outbox
+    retries (R35), privacy & retention physical purge worker (R08, R09), and Screen 22 Danger Zone deletion UI are
+    implemented (with phone SMS delivery failing closed with 503 SERVICE_UNAVAILABLE while the SMS provider adapter
+    is disabled). See M03-03 task record, backend architecture, DTO-DB-mapping and QA-plan.
 servers:
   - url: /api/v1
 tags:

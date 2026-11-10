@@ -10,11 +10,13 @@ import {
   verifyEmail,
   verifyPhone,
   logoutUser,
-   refreshSession,
+  refreshSession,
   forgotPassword,
   resetPassword,
   linkSocialIdentity,
   addContact,
+  requestAccountDeletion,
+  getAccountDeletionStatus,
   NetworkError,
   ApiError,
   UnauthorizedError,
@@ -43,9 +45,7 @@ export interface RefreshableSupabaseClient {
       access_token: string;
       refresh_token: string;
     }) => Promise<{ error?: unknown } | void>;
-    signOut?: (options?: {
-      scope?: 'local' | 'global' | 'others';
-    }) => Promise<unknown>;
+    signOut?: (options?: { scope?: 'local' | 'global' | 'others' }) => Promise<unknown>;
   };
 }
 
@@ -70,9 +70,7 @@ const ALLOWED_VERIFICATION_CONTEXTS: readonly VerificationDraftContext[] = [
 /**
  * Validates whether a raw string is a permitted verification context value.
  */
-function isValidVerificationContext(
-  value: string,
-): value is VerificationDraftContext {
+function isValidVerificationContext(value: string): value is VerificationDraftContext {
   return (ALLOWED_VERIFICATION_CONTEXTS as readonly string[]).includes(value);
 }
 
@@ -106,10 +104,10 @@ function isNextRedirectError(err: unknown): boolean {
  * Determines whether an error represents an HTTP 401 unauthorized response from the backend API.
  */
 function isUnauthorizedApiError(err: unknown): boolean {
-  return (
-    err instanceof UnauthorizedError ||
-    (err instanceof ApiError && err.statusCode === 401)
-  );
+  if (err instanceof ApiError && err.code === 'REAUTH_REQUIRED') {
+    return false;
+  }
+  return err instanceof UnauthorizedError || (err instanceof ApiError && err.statusCode === 401);
 }
 
 /**
@@ -137,12 +135,13 @@ function coalesceRefreshSession(
 ): Promise<{ access_token: string; refresh_token: string }> {
   let inFlight = inFlightTokenRefreshes.get(refreshToken);
   if (!inFlight) {
-    const created: Promise<{ access_token: string; refresh_token: string }> =
-      refreshSession(refreshToken).finally(() => {
-        if (inFlightTokenRefreshes.get(refreshToken) === created) {
-          inFlightTokenRefreshes.delete(refreshToken);
-        }
-      });
+    const created: Promise<{ access_token: string; refresh_token: string }> = refreshSession(
+      refreshToken,
+    ).finally(() => {
+      if (inFlightTokenRefreshes.get(refreshToken) === created) {
+        inFlightTokenRefreshes.delete(refreshToken);
+      }
+    });
     inFlight = created;
     inFlightTokenRefreshes.set(refreshToken, inFlight);
   }
@@ -175,9 +174,7 @@ export async function withSingleSessionRefresh<T>(
     }
 
     const refreshToken =
-      typeof session.refresh_token === 'string'
-        ? session.refresh_token.trim()
-        : '';
+      typeof session.refresh_token === 'string' ? session.refresh_token.trim() : '';
     if (!refreshToken) {
       await safeSignOut(supabase);
       return redirect('/login') as never;
@@ -473,8 +470,7 @@ export async function loginAction(
   formData: FormData,
 ): Promise<AuthActionResult> {
   const rawIdentifier = (
-    (formData.get('email') as string) ||
-    (formData.get('identifier') as string)
+    (formData.get('email') as string) || (formData.get('identifier') as string)
   )?.trim();
   const password = formData.get('password') as string;
 
@@ -530,9 +526,7 @@ export async function loginAction(
         const dispatch = evaluateResendDispatch(resendResult, resendError);
         if (!dispatch.canProceed) {
           return {
-            error:
-              dispatch.errorMessage ||
-              'Unable to send verification code. Please try again.',
+            error: dispatch.errorMessage || 'Unable to send verification code. Please try again.',
           };
         }
 
@@ -635,8 +629,7 @@ export async function verifyOtpAction(
   formData: FormData,
 ): Promise<AuthActionResult> {
   const type = ((formData.get('channel') || formData.get('type')) as string)?.trim() as
-    | 'email'
-    | 'phone';
+    'email' | 'phone';
   const token = (formData.get('token') as string)?.trim();
 
   if (!type || !token) {
@@ -737,8 +730,7 @@ export async function resendOtpAction(
         'SMS verification is temporarily unavailable. Please verify with email or contact support.',
     };
   }
-  const rawIdentifier =
-    typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';
+  const rawIdentifier = typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';
   let identifier = rawIdentifier;
   const existingContext = await getVerificationContext(type);
   if (!identifier && existingContext) {
@@ -847,9 +839,7 @@ export async function signInWithOAuth(
     }
     return {
       error:
-        err instanceof Error
-          ? err.message
-          : 'An unexpected error occurred during OAuth login.',
+        err instanceof Error ? err.message : 'An unexpected error occurred during OAuth login.',
     };
   }
 }
@@ -988,14 +978,10 @@ export async function linkIdentityAction(
       return { error: 'Authentication session is required to link an identity.' };
     }
 
-    const alreadyLinked = session.user?.identities?.some(
-      (i) => i.provider === provider,
-    );
+    const alreadyLinked = session.user?.identities?.some((i) => i.provider === provider);
     if (alreadyLinked) {
-      const result = await withSingleSessionRefresh(
-        supabase,
-        session,
-        (accessToken) => linkSocialIdentity(accessToken, provider),
+      const result = await withSingleSessionRefresh(supabase, session, (accessToken) =>
+        linkSocialIdentity(accessToken, provider),
       );
       if (!result) {
         return {
@@ -1035,9 +1021,7 @@ export async function linkIdentityAction(
     }
     return {
       error:
-        err instanceof Error
-          ? err.message
-          : 'An unexpected error occurred while linking identity.',
+        err instanceof Error ? err.message : 'An unexpected error occurred while linking identity.',
     };
   }
 }
@@ -1069,10 +1053,8 @@ export async function addContactAction(
       return { error: 'Authentication session is required to add a contact.' };
     }
 
-    const pendingResult = await withSingleSessionRefresh(
-      supabase,
-      session,
-      (accessToken) => addContact(accessToken, { channel, contact }),
+    const pendingResult = await withSingleSessionRefresh(supabase, session, (accessToken) =>
+      addContact(accessToken, { channel, contact }),
     );
     if (!pendingResult) {
       return {
@@ -1108,4 +1090,165 @@ export async function addContactAction(
   }
 
   redirect(`/verify?channel=${channel}`);
+}
+
+// ─── Account Deletion Server Actions (Screen 22 / EP-X01 / EP-X02) ───────────
+
+export interface AccountDeletionActionResult {
+  error?: string;
+  success?: boolean;
+  status?: 'scheduled' | 'in_progress' | 'completed';
+  deletionReceipt?: string;
+  receiptExpiresAt?: string;
+  requestId?: string;
+}
+
+export interface AccountDeletionStatusResult {
+  error?: string;
+  status?: 'scheduled' | 'in_progress' | 'completed';
+  completedAt?: string | null;
+  providerDeletionRequested?: boolean;
+}
+
+/**
+ * Server Action requesting account deletion via `POST /api/v1/account/deletion-requests` (EP-X01).
+ * Requires confirmation === "DELETE" and live re-authentication credentials.
+ * If status === 'completed', clears local Supabase session.
+ */
+export async function requestAccountDeletionAction(
+  _prevState: AccountDeletionActionResult,
+  formData: FormData,
+): Promise<AccountDeletionActionResult> {
+  const confirmation = formData.get('confirmation');
+  const password = formData.get('password');
+  const reauthToken = formData.get('reauth_token');
+
+  if (confirmation !== 'DELETE') {
+    return {
+      error: 'কনফার্মেশন নিশ্চিত করতে অবশ্যই DELETE লিখুন (Confirmation must be DELETE).',
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    return {
+      error:
+        'আপনার সেশনটি মেয়াদোত্তীর্ণ হয়েছে। অনুগ্রহ করে পুনরায় সাইন ইন করুন (Session expired).',
+    };
+  }
+
+  const effectivePassword =
+    typeof password === 'string' && password.trim() ? password.trim() : undefined;
+
+  const effectiveReauthToken = effectivePassword
+    ? undefined
+    : typeof reauthToken === 'string' && reauthToken.trim()
+      ? reauthToken.trim()
+      : session.access_token;
+
+  try {
+    const response = await withSingleSessionRefresh(supabase, session, (accessToken) =>
+      requestAccountDeletion(accessToken, {
+        confirmation: 'DELETE',
+        password: effectivePassword,
+        reauth_token: effectiveReauthToken,
+      }),
+    );
+
+    if (!response) {
+      return {
+        error:
+          'আপনার সেশনটি মেয়াদোত্তীর্ণ হয়েছে। অনুগ্রহ করে পুনরায় সাইন ইন করুন (Session expired).',
+      };
+    }
+
+    if (response.status === 'completed') {
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        // Best effort local sign out
+      }
+    }
+
+    return {
+      success: true,
+      status: response.status,
+      deletionReceipt: response.deletion_receipt,
+      receiptExpiresAt: response.receipt_expires_at,
+      requestId: response.id,
+    };
+  } catch (err) {
+    if (isNextRedirectError(err)) {
+      throw err;
+    }
+    if (err instanceof NetworkError) {
+      return {
+        error: 'সার্ভারে সংযোগ করা সম্ভব হচ্ছে না। অনুগ্রহ করে আবার চেষ্টা করুন (Network error).',
+      };
+    }
+    if (err instanceof ApiError) {
+      if (err.code === 'CONFIRMATION_MISMATCH') {
+        return {
+          error: 'কনফার্মেশন অবশ্যই DELETE হতে হবে (Confirmation must equal DELETE).',
+        };
+      }
+      if (err.code === 'REAUTH_REQUIRED') {
+        return {
+          error:
+            'সঠিক পাসওয়ার্ড বা রি-অথেনটিকেশন টোকেন প্রয়োজন (Invalid password or re-authentication required).',
+        };
+      }
+      if (err.code === 'DELETION_ALREADY_REQUESTED') {
+        return {
+          error:
+            'এই অ্যাকাউন্টের জন্য ইতিমধ্যে একটি ডিলিট প্রক্রিয়া চলমান রয়েছে (Deletion request already in progress).',
+        };
+      }
+      return { error: err.message };
+    }
+    return {
+      error: 'অ্যাকাউন্ট মোছার সময় একটি অপ্রত্যাশিত সমস্যা হয়েছে (An unexpected error occurred).',
+    };
+  }
+}
+
+/**
+ * Server Action polling account deletion status using a DeletionReceipt via EP-X02.
+ */
+export async function pollAccountDeletionStatusAction(
+  receipt: string,
+): Promise<AccountDeletionStatusResult> {
+  if (!receipt || typeof receipt !== 'string' || !receipt.trim()) {
+    return { error: 'Valid deletion receipt token is required.' };
+  }
+
+  try {
+    const statusRes = await getAccountDeletionStatus(receipt.trim(), true);
+    if (statusRes.status === 'completed') {
+      const supabase = await createSupabaseServerClient();
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        // Best effort local sign out
+      }
+    }
+
+    return {
+      status: statusRes.status,
+      completedAt: statusRes.completed_at,
+      providerDeletionRequested: statusRes.provider_deletion_requested,
+    };
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      return { error: 'Network error while checking deletion status.' };
+    }
+    if (err instanceof ApiError) {
+      return { error: err.message };
+    }
+    return { error: 'Unable to verify account deletion status.' };
+  }
 }
