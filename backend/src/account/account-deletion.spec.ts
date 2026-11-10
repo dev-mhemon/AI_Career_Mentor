@@ -22,6 +22,8 @@ import {
 } from './guards/deletion-receipt.guard.js';
 import { AccountDeletionService } from './services/account-deletion.service.js';
 import { DeletionReceiptService } from './services/deletion-receipt.service.js';
+import { PrivacyRetentionService } from './services/privacy-retention.service.js';
+import { ProviderCleanupService } from './services/provider-cleanup.service.js';
 import { ReauthVerificationService } from './services/reauth-verification.service.js';
 
 const TEST_USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -77,6 +79,8 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
   let configService: ConfigService;
   let receiptService: DeletionReceiptService;
   let reauthService: ReauthVerificationService;
+  let providerCleanupService: ProviderCleanupService;
+  let privacyRetentionService: PrivacyRetentionService;
   let deletionService: AccountDeletionService;
   let controller: AccountController;
   let reflector: Reflector;
@@ -122,10 +126,20 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
 
     receiptService = new DeletionReceiptService(configService);
     reauthService = new ReauthVerificationService(configService, database);
+    providerCleanupService = new ProviderCleanupService(
+      configService,
+      database,
+    );
+    privacyRetentionService = new PrivacyRetentionService(
+      configService,
+      database,
+    );
     deletionService = new AccountDeletionService(
       database,
       receiptService,
       reauthService,
+      providerCleanupService,
+      privacyRetentionService,
     );
     controller = new AccountController(deletionService);
     reflector = new Reflector();
@@ -498,6 +512,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ]) // insert request
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([]) // revoke approved sessions
         .mockResolvedValueOnce([]) // revoke gotrue refresh tokens
         .mockResolvedValueOnce([]) // delete gotrue sessions
@@ -567,6 +582,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -639,6 +655,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -681,6 +698,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -836,6 +854,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ]) // 1. insert request
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([]) // 2. revoke approved_auth_sessions
         .mockResolvedValueOnce([]) // 3. revoke gotrue refresh tokens
         .mockResolvedValueOnce([]) // 4. delete gotrue sessions
@@ -915,6 +934,151 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
       expect(tombstoneCall?.params).toEqual([TEST_REQUEST_ID]);
     });
 
+    it('populates provider_cleanup with AEAD-encrypted entries when user has linked auth providers (R35)', async () => {
+      mockQuery
+        .mockResolvedValueOnce([{ email: 'user@example.com', phone: null }]) // reauth check
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: TEST_USER_ID,
+            status: 'in_progress',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: null,
+            provider_deletion_requested: false,
+          },
+        ]) // 1. insert request
+        .mockResolvedValueOnce([
+          { provider: 'google', provider_subject: 'google-sub-123' },
+          { provider: 'facebook', provider_subject: 'fb-sub-456' },
+        ]) // 2. user_auth_providers (R35)
+        .mockResolvedValueOnce([]) // 3. update account_deletion_requests with provider_cleanup
+        .mockResolvedValueOnce([]) // 4. revoke approved_auth_sessions
+        .mockResolvedValueOnce([]) // 5. revoke gotrue refresh tokens
+        .mockResolvedValueOnce([]) // 6. delete gotrue sessions
+        .mockResolvedValueOnce([]) // 7. delete public.users
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: null,
+            status: 'completed',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: new Date('2026-11-10T08:05:00.000Z'),
+            provider_deletion_requested: false,
+          },
+        ]); // 8. select completed tombstone
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: TEST_USER_ID } }),
+      });
+
+      const result = await deletionService.requestDeletion(TEST_USER_ID, {
+        confirmation: 'DELETE',
+        password: 'S3cure!Password',
+      });
+
+      expect(result.status).toBe('completed');
+
+      // Verify provider_cleanup update was called with encrypted outbox entries
+      const sqlCalls = mockQuery.mock.calls.map(([sql, params]) => ({
+        sql: String(sql),
+        params,
+      }));
+
+      const outboxUpdate = sqlCalls.find(
+        (c) =>
+          c.sql.includes('UPDATE public.account_deletion_requests') &&
+          c.sql.includes('SET provider_cleanup = $2::jsonb'),
+      );
+      expect(outboxUpdate).toBeDefined();
+      expect(outboxUpdate?.params?.[0]).toBe(TEST_REQUEST_ID);
+      const savedEntries = JSON.parse(outboxUpdate?.params?.[1] as string);
+      expect(savedEntries).toHaveLength(3);
+      expect(savedEntries[0].provider_key).toBe('supabase');
+      expect(savedEntries[0].encrypted_object_ref).toMatch(/^v1:/);
+      expect(savedEntries[1].provider_key).toBe('google');
+      expect(savedEntries[2].provider_key).toBe('facebook');
+    });
+
+    it('fails closed and rolls back transaction when provider cleanup outbox encryption fails', async () => {
+      mockQuery
+        .mockResolvedValueOnce([{ email: 'user@example.com', phone: null }]) // reauth check
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            status: 'in_progress',
+            requested_at: new Date(),
+            completed_at: null,
+            user_id: TEST_USER_ID,
+            provider_deletion_requested: false,
+          },
+        ]) // insert request
+        .mockResolvedValueOnce([
+          { provider: 'google', provider_subject: 'google-sub-123' },
+        ]); // user_auth_providers (R35)
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: TEST_USER_ID } }),
+      });
+
+      vi.spyOn(
+        providerCleanupService,
+        'buildOutboxEntries',
+      ).mockImplementationOnce(() => {
+        throw new Error('Encryption key missing');
+      });
+
+      await expect(
+        deletionService.requestDeletion(TEST_USER_ID, {
+          confirmation: 'DELETE',
+          password: 'S3cure!Password',
+        }),
+      ).rejects.toThrow('Encryption key missing');
+
+      // Verify that public.users was NOT deleted because transaction aborted
+      const sqlCalls = mockQuery.mock.calls.map(([sql]) => String(sql));
+      const userDeleteCall = sqlCalls.find((s) =>
+        s.includes('DELETE FROM public.users'),
+      );
+      expect(userDeleteCall).toBeUndefined();
+    });
+
+    it('delegates provider outbox processing and retention purge to child services', async () => {
+      const outboxSpy = vi
+        .spyOn(providerCleanupService, 'processOutboxBatch')
+        .mockResolvedValueOnce({
+          processedRequests: 2,
+          entriesAttempted: 3,
+          entriesSucceeded: 3,
+          entriesFailed: 0,
+          entriesExpired: 0,
+        });
+
+      const purgeSpy = vi
+        .spyOn(privacyRetentionService, 'purgeExpiredData')
+        .mockResolvedValueOnce({
+          rawAnswersPurged: 10,
+          messagesDeleted: 5,
+          aiRequestsDeleted: 20,
+          aiContextRecordsDeleted: 2,
+          outboxExpiredCount: 1,
+          oldestRetainedTimestamp: null,
+          purgeLagMs: 0,
+          durationMs: 12,
+        });
+
+      const outboxRes = await deletionService.processProviderCleanupOutbox(10);
+      expect(outboxRes.entriesSucceeded).toBe(3);
+      expect(outboxSpy).toHaveBeenCalledWith({ batchSize: 10 });
+
+      const purgeRes = await deletionService.executePrivacyRetentionPurge();
+      expect(purgeRes.rawAnswersPurged).toBe(10);
+      expect(purgeSpy).toHaveBeenCalled();
+    });
+
     it('rolls back transaction completely when public.users cascade deletion fails (R05)', async () => {
       mockQuery
         .mockResolvedValueOnce([{ email: 'user@example.com', phone: null }]) // reauth check
@@ -928,6 +1092,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ]) // insert request
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([]) // revoke approved sessions
         .mockResolvedValueOnce([]) // revoke refresh tokens
         .mockResolvedValueOnce([]) // delete auth sessions
@@ -996,6 +1161,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1046,6 +1212,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1120,6 +1287,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1162,6 +1330,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1213,6 +1382,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
             provider_deletion_requested: false,
           },
         ])
+        .mockResolvedValueOnce([]) // user_auth_providers (R35)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1499,12 +1669,18 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         const resolvedController = moduleRef.get(AccountController);
         const resolvedDeletionService = moduleRef.get(AccountDeletionService);
         const resolvedReauthService = moduleRef.get(ReauthVerificationService);
+        const resolvedProviderCleanup = moduleRef.get(ProviderCleanupService);
+        const resolvedPrivacyRetention = moduleRef.get(PrivacyRetentionService);
         const resolvedSupabaseGuard = moduleRef.get(SupabaseAuthGuard);
 
         expect(resolvedGuard).toBeInstanceOf(DeletionReceiptGuard);
         expect(resolvedController).toBeInstanceOf(AccountController);
         expect(resolvedDeletionService).toBeInstanceOf(AccountDeletionService);
         expect(resolvedReauthService).toBeInstanceOf(ReauthVerificationService);
+        expect(resolvedProviderCleanup).toBeInstanceOf(ProviderCleanupService);
+        expect(resolvedPrivacyRetention).toBeInstanceOf(
+          PrivacyRetentionService,
+        );
         expect(resolvedSupabaseGuard).toBeInstanceOf(SupabaseAuthGuard);
         expect(
           (resolvedGuard as unknown as { supabaseAuthGuard: SupabaseAuthGuard })

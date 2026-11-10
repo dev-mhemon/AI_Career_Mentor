@@ -7,6 +7,7 @@ import { IdentityLinkingCards } from '@/components/settings/identity-linking-car
 import { AddContactForm } from '@/components/settings/add-contact-form';
 import { VerifiedContactPrompt } from '@/components/settings/verified-contact-prompt';
 import { LearningSettingsForm } from '@/components/settings/learning-settings-form';
+import { AccountDeletionCard } from '@/components/settings/account-deletion-card';
 
 /**
  * Screen 22 (`/settings`) — Account & Settings page for active and suspended users.
@@ -138,7 +139,7 @@ export default async function SettingsPage({
               আপনার অ্যাকাউন্ট স্থগিত আছে (Your account is suspended)
             </h2>
             <p className="mt-1">
-              সাধারণ ফিচারগুলো বর্তমানে নিষ্ক্রিয় রয়েছে, তবে আপনি আপনার অ্যাকাউন্টের তথ্য দেখতে এবং সাইন আউট করতে পারবেন। অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে (Milestone M03-এ বাস্তবায়িত হবে)।
+              সাধারণ ফিচারগুলো বর্তমানে নিষ্ক্রিয় রয়েছে, তবে আপনি আপনার অ্যাকাউন্টের তথ্য দেখতে এবং সাইন আউট করতে পারবেন। অ্যাকাউন্ট মুছে ফেলার অধিকার সক্রিয় আছে (Account deletion is active)।
             </p>
           </div>
         )}
@@ -229,9 +230,7 @@ export default async function SettingsPage({
               <div>
                 <dt className="text-foreground/60">Deletion Eligibility</dt>
                 <dd className="font-medium text-foreground">
-                  {can_delete_account
-                    ? 'Eligible (Milestone M03)'
-                    : 'Unavailable'}
+                  {can_delete_account ? 'Eligible' : 'Unavailable'}
                 </dd>
               </div>
             </dl>
@@ -273,6 +272,17 @@ export default async function SettingsPage({
               )}
             </div>
           </section>
+
+          <AccountDeletionCard
+            canDeleteAccount={can_delete_account}
+            isSuspended={isSuspended}
+            hasPasswordAuth={
+              Array.isArray(user.linked_providers) &&
+              (user.linked_providers.includes('email') ||
+                user.linked_providers.includes('phone'))
+            }
+            linkedProviders={user.linked_providers}
+          />
         </div>
       </main>
     </div>

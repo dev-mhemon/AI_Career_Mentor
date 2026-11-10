@@ -504,3 +504,73 @@ export function updateLearningSettings(
     body: JSON.stringify(body),
   });
 }
+
+// ─── Account Deletion API Types & Functions (C05 §14.2 / §15.2 EP-X01 / EP-X02) ───
+
+export type DeletionRequestStatus = 'scheduled' | 'in_progress' | 'completed';
+
+export interface AccountDeletionStatusResponse {
+  id: string;
+  status: DeletionRequestStatus;
+  requested_at: string;
+  completed_at: string | null;
+  provider_deletion_requested: boolean;
+  deletion_receipt?: string;
+  receipt_expires_at?: string;
+}
+
+export interface AccountDeletionInput {
+  confirmation: 'DELETE';
+  password?: string;
+  reauth_token?: string;
+}
+
+/**
+ * POST /account/deletion-requests (EP-X01)
+ * Initiates account deletion for the authenticated caller with literal 'DELETE' confirmation
+ * and live re-authentication credentials.
+ */
+export function requestAccountDeletion(
+  accessToken: string,
+  body: AccountDeletionInput,
+  idempotencyKey?: string,
+): Promise<AccountDeletionStatusResponse> {
+  const headers: Record<string, string> = {};
+  if (idempotencyKey) {
+    headers['Idempotency-Key'] = idempotencyKey;
+  }
+  return apiFetch<AccountDeletionStatusResponse>(
+    '/account/deletion-requests',
+    accessToken,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/**
+ * GET /account/deletion-requests/current (EP-X02)
+ * Queries account deletion status. Accepts either an active account Bearer JWT or a DeletionReceipt token.
+ */
+export function getAccountDeletionStatus(
+  tokenOrReceipt: string,
+  isReceipt = false,
+): Promise<AccountDeletionStatusResponse> {
+  if (isReceipt) {
+    return apiFetch<AccountDeletionStatusResponse>(
+      '/account/deletion-requests/current',
+      null,
+      {
+        headers: {
+          Authorization: `DeletionReceipt ${tokenOrReceipt}`,
+        },
+      },
+    );
+  }
+  return apiFetch<AccountDeletionStatusResponse>(
+    '/account/deletion-requests/current',
+    tokenOrReceipt,
+  );
+}

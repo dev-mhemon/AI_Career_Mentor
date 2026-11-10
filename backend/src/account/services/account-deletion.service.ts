@@ -10,6 +10,14 @@ import {
 } from '../dto/account-deletion.dto.js';
 import type { AccountDeletionAuthContext } from '../guards/deletion-receipt.guard.js';
 import { DeletionReceiptService } from './deletion-receipt.service.js';
+import {
+  OutboxBatchResult,
+  ProviderCleanupService,
+} from './provider-cleanup.service.js';
+import {
+  PrivacyRetentionService,
+  PurgeExecutionResult,
+} from './privacy-retention.service.js';
 import { ReauthVerificationService } from './reauth-verification.service.js';
 
 /** Strict UUID matcher for user and request identifiers. */
@@ -83,6 +91,8 @@ export class AccountDeletionService {
     private readonly database: DatabaseService,
     private readonly deletionReceiptService: DeletionReceiptService,
     private readonly reauthVerificationService: ReauthVerificationService,
+    private readonly providerCleanupService?: ProviderCleanupService,
+    private readonly privacyRetentionService?: PrivacyRetentionService,
   ) {}
 
   /**
@@ -291,7 +301,47 @@ export class AccountDeletionService {
             );
           }
 
-          // 3b. Revoke all approved sessions in DB
+          // 3b. Query user_auth_providers and populate bounded provider cleanup outbox (R35)
+          if (this.providerCleanupService) {
+            try {
+              const providerRows = await db.query<
+                Array<{ provider: string; provider_subject: string }>
+              >(
+                `SELECT provider, provider_subject
+                   FROM public.user_auth_providers
+                  WHERE user_id = $1::uuid`,
+                [userId],
+              );
+              if (Array.isArray(providerRows) && providerRows.length > 0) {
+                const outboxEntries =
+                  this.providerCleanupService.buildOutboxEntries(
+                    row.id,
+                    userId,
+                    providerRows.map((p) => ({
+                      provider: p.provider,
+                      providerSubject: p.provider_subject,
+                    })),
+                  );
+                if (outboxEntries.length > 0) {
+                  await db.query(
+                    `UPDATE public.account_deletion_requests
+                        SET provider_cleanup = $2::jsonb,
+                            provider_cleanup_expires_at = now() + interval '30 days'
+                      WHERE id = $1::uuid`,
+                    [row.id, JSON.stringify(outboxEntries)],
+                  );
+                }
+              }
+            } catch (outboxError) {
+              this.logger.error(
+                `Failed to build or persist provider cleanup outbox for user ${userId}`,
+                outboxError,
+              );
+              throw outboxError;
+            }
+          }
+
+          // 3c. Revoke all approved sessions in DB
           await db.query(
             `UPDATE private.approved_auth_sessions
                 SET revoked_at = clock_timestamp(),
@@ -301,7 +351,7 @@ export class AccountDeletionService {
             [userId],
           );
 
-          // 3c. Revoke GoTrue auth refresh tokens & sessions (fail-closed atomic transaction)
+          // 3d. Revoke GoTrue auth refresh tokens & sessions (fail-closed atomic transaction)
           await db.query(
             `UPDATE auth.refresh_tokens
                 SET revoked = true,
@@ -482,5 +532,51 @@ export class AccountDeletionService {
     }
 
     return this.mapRowToStatusDto(row);
+  }
+
+  /**
+   * Processes a bounded batch of pending provider cleanup outbox entries (`R35`).
+   *
+   * @param batchSize - Maximum number of deletion requests to process.
+   * @returns Outbox batch processing metrics (`OutboxBatchResult`).
+   */
+  async processProviderCleanupOutbox(
+    batchSize?: number,
+  ): Promise<OutboxBatchResult> {
+    if (!this.providerCleanupService) {
+      return {
+        processedRequests: 0,
+        entriesAttempted: 0,
+        entriesSucceeded: 0,
+        entriesFailed: 0,
+        entriesExpired: 0,
+      };
+    }
+    return this.providerCleanupService.processOutboxBatch({ batchSize });
+  }
+
+  /**
+   * Executes the privacy and data retention physical purge runner (`R08`, `R09`, PRD §52).
+   *
+   * @param options - Execution options including reference time and batch size.
+   * @returns Structured `PurgeExecutionResult`.
+   */
+  async executePrivacyRetentionPurge(options?: {
+    now?: Date;
+    batchSize?: number;
+  }): Promise<PurgeExecutionResult> {
+    if (!this.privacyRetentionService) {
+      return {
+        rawAnswersPurged: 0,
+        messagesDeleted: 0,
+        aiRequestsDeleted: 0,
+        aiContextRecordsDeleted: 0,
+        outboxExpiredCount: 0,
+        oldestRetainedTimestamp: null,
+        purgeLagMs: 0,
+        durationMs: 0,
+      };
+    }
+    return this.privacyRetentionService.purgeExpiredData(options);
   }
 }

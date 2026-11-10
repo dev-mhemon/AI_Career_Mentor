@@ -5,12 +5,15 @@ import { AccountController } from './controllers/account.controller.js';
 import { DeletionReceiptGuard } from './guards/deletion-receipt.guard.js';
 import { AccountDeletionService } from './services/account-deletion.service.js';
 import { DeletionReceiptService } from './services/deletion-receipt.service.js';
+import { PrivacyRetentionService } from './services/privacy-retention.service.js';
+import { ProviderCleanupService } from './services/provider-cleanup.service.js';
 import { ReauthVerificationService } from './services/reauth-verification.service.js';
 
 /**
  * NestJS module encapsulating the Account Deletion wire contract (`EP-X01` / `EP-X02`),
  * `DeletionReceipt` HMAC-SHA256 authority (`R06`), `ReauthVerificationService` (`EP-X01`),
- * atomic cascade deletion, and `AZ-SUSP` / receipt access guard (`M03-02`).
+ * atomic cascade deletion, bounded `ProviderCleanupService` outbox (`R35`), and
+ * `PrivacyRetentionService` physical purge worker (`R08`, `R09`, PRD §52).
  */
 @Module({
   controllers: [AccountController],
@@ -19,6 +22,8 @@ import { ReauthVerificationService } from './services/reauth-verification.servic
     SupabaseAuthGuard,
     DeletionReceiptService,
     ReauthVerificationService,
+    ProviderCleanupService,
+    PrivacyRetentionService,
     AccountDeletionService,
     DeletionReceiptGuard,
   ],
@@ -26,6 +31,8 @@ import { ReauthVerificationService } from './services/reauth-verification.servic
     AccountDeletionService,
     DeletionReceiptService,
     ReauthVerificationService,
+    ProviderCleanupService,
+    PrivacyRetentionService,
     DeletionReceiptGuard,
     SupabaseAuthGuard,
   ],

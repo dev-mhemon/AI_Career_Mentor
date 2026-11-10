@@ -13,6 +13,8 @@ vi.mock('@/lib/auth/actions', () => ({
   logoutAction: vi.fn(),
   linkIdentityAction: vi.fn(),
   addContactAction: vi.fn(),
+  requestAccountDeletionAction: vi.fn(),
+  pollAccountDeletionStatusAction: vi.fn(),
 }));
 
 vi.mock('@/lib/profile/actions', () => ({
@@ -287,5 +289,23 @@ describe('SettingsPage Server Component', () => {
     expect(screen.queryByLabelText(/টাইমজোন \(IANA Timezone\)/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/দৈনিক অধ্যয়নের সময়/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /যাচাইকরণ কোড পাঠান/i })).not.toBeInTheDocument();
+  });
+
+  it('renders Danger Zone AccountDeletionCard for both active and suspended users (AZ-SUSP)', async () => {
+    vi.mocked(getAppSessionStateResult).mockResolvedValueOnce(
+      createMockSessionState({
+        can_delete_account: true,
+      }),
+    );
+
+    const page = await SettingsPage({});
+    render(page);
+
+    expect(
+      screen.getByRole('heading', { name: /অ্যাকাউন্ট মুছে ফেলা/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }),
+    ).toBeInTheDocument();
   });
 });

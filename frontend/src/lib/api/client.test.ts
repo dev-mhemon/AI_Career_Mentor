@@ -16,6 +16,8 @@ import {
   getProfile,
   updateProfile,
   updateLearningSettings,
+  requestAccountDeletion,
+  getAccountDeletionStatus,
   ApiError,
   UnauthorizedError,
   NetworkError,
@@ -610,6 +612,75 @@ describe('EP-P01 getProfile, EP-P02 updateProfile, and EP-P04 updateLearningSett
         body: JSON.stringify({
           timezone: 'Asia/Dhaka',
           preferred_daily_hours: 2,
+        }),
+      }),
+    );
+  });
+
+  it('calls POST /account/deletion-requests (EP-X01) with Bearer token, confirmation, and optional Idempotency-Key', async () => {
+    const mockDeletionResponse = {
+      id: 'del-uuid-1',
+      status: 'completed' as const,
+      requested_at: '2026-11-10T12:00:00.000Z',
+      completed_at: '2026-11-10T12:01:00.000Z',
+      provider_deletion_requested: false,
+      deletion_receipt: 'mock-receipt-token',
+      receipt_expires_at: '2026-11-11T12:00:00.000Z',
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({ success: true, data: mockDeletionResponse }),
+    });
+
+    const result = await requestAccountDeletion(
+      MOCK_TOKEN,
+      { confirmation: 'DELETE', password: 'ValidPass123!' },
+      'idem-key-1',
+    );
+
+    expect(result).toEqual(mockDeletionResponse);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/account/deletion-requests',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Idempotency-Key': 'idem-key-1',
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          confirmation: 'DELETE',
+          password: 'ValidPass123!',
+        }),
+      }),
+    );
+  });
+
+  it('calls GET /account/deletion-requests/current (EP-X02) with DeletionReceipt header', async () => {
+    const mockStatusResponse = {
+      id: 'del-uuid-1',
+      status: 'completed' as const,
+      requested_at: '2026-11-10T12:00:00.000Z',
+      completed_at: '2026-11-10T12:01:00.000Z',
+      provider_deletion_requested: false,
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: mockStatusResponse }),
+    });
+
+    const result = await getAccountDeletionStatus('receipt-token-123', true);
+    expect(result).toEqual(mockStatusResponse);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/account/deletion-requests/current',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'DeletionReceipt receipt-token-123',
+          'Content-Type': 'application/json',
         }),
       }),
     );
