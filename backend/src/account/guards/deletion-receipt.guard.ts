@@ -197,14 +197,14 @@ export class DeletionReceiptGuard implements CanActivate, OnModuleInit {
         `SELECT u.id,
                 u.status,
                 u.verified_contact,
+                private.has_approved_session(u.id, $2::uuid) AS session_approved,
                 EXISTS (
                   SELECT 1
                     FROM private.approved_auth_sessions a
                    WHERE a.user_id = u.id
                      AND a.session_id = $2::uuid
                      AND a.revoked_at IS NULL
-                     AND a.expires_at > now()
-                ) AS session_approved
+                ) AS unrevoked_session_approved
            FROM public.users u
           WHERE u.id = $1::uuid`,
         [sub, sessionId],
@@ -220,8 +220,8 @@ export class DeletionReceiptGuard implements CanActivate, OnModuleInit {
       }
 
       const isSessionApproved = Boolean(
-        userRow.session_approved ??
-        userRow.unrevoked_session_approved ??
+        userRow.session_approved ||
+        userRow.unrevoked_session_approved ||
         userRow.approved,
       );
       if (!isSessionApproved) {

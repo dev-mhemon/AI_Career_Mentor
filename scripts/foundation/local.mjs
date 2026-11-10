@@ -130,6 +130,17 @@ if (command === "start") {
     DB_USER: decodeURIComponent(db.username),
     DB_PASSWORD: decodeURIComponent(db.password),
     DB_NAME: db.pathname.slice(1),
+    SUPABASE_SERVICE_ROLE_KEY: status.SERVICE_ROLE_KEY,
+    AUTH_REDIS_URL:
+      process.env.AUTH_REDIS_URL || "redis://127.0.0.1:56379",
+    AUTH_OTP_HMAC_SECRET:
+      process.env.AUTH_OTP_HMAC_SECRET || "01234567890123456789012345678901",
+    MAILPIT_URL:
+      process.env.MAILPIT_URL || status.MAILPIT_URL || status.INBUCKET_URL || "http://127.0.0.1:56324",
+    PROVIDER_CLEANUP_ENCRYPTION_KEY:
+      process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY || "01234567890123456789012345678901",
+    DELETION_RECEIPT_SECRET:
+      process.env.DELETION_RECEIPT_SECRET || "01234567890123456789012345678901",
   };
   const frontend = {
     NEXT_PUBLIC_SUPABASE_URL: status.API_URL,

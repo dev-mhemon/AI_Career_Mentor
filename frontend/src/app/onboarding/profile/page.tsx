@@ -14,6 +14,7 @@ export default async function OnboardingProfilePage() {
 
   if (!user) {
     redirect('/login');
+    return null;
   }
 
   if (user.status === 'suspended') {
@@ -23,16 +24,24 @@ export default async function OnboardingProfilePage() {
           আপনার অ্যাকাউন্ট স্থগিত আছে
         </h1>
         <p className="mb-6 text-sm text-foreground/70">
-          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। এই foundation-এ deletion screen এখনো বাস্তবায়িত হয়নি।
+          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। আপনি সেটিংস পেজে (Danger Zone) গিয়ে অ্যাকাউন্ট স্থায়ীভাবে মুছে ফেলতে পারেন।
         </p>
-        <form action={logoutAction}>
-          <button
-            type="submit"
-            className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/settings"
+            className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           >
-            Sign Out
-          </button>
-        </form>
+            অ্যাকাউন্ট ও সেটিংস (Settings)
+          </Link>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+            >
+              Sign Out
+            </button>
+          </form>
+        </div>
       </main>
     );
   }
@@ -51,16 +60,24 @@ export default async function OnboardingProfilePage() {
           আপনার অ্যাকাউন্ট স্থগিত আছে
         </h1>
         <p className="mb-6 text-sm text-foreground/70">
-          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। এই foundation-এ deletion screen এখনো বাস্তবায়িত হয়নি।
+          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। আপনি সেটিংস পেজে (Danger Zone) গিয়ে অ্যাকাউন্ট স্থায়ীভাবে মুছে ফেলতে পারেন।
         </p>
-        <form action={logoutAction}>
-          <button
-            type="submit"
-            className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/settings"
+            className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           >
-            Sign Out
-          </button>
-        </form>
+            অ্যাকাউন্ট ও সেটিংস (Settings)
+          </Link>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+            >
+              Sign Out
+            </button>
+          </form>
+        </div>
       </main>
     );
   }

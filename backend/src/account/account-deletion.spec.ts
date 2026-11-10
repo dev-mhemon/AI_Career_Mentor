@@ -932,6 +932,15 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
       );
       expect(tombstoneCall).toBeDefined();
       expect(tombstoneCall?.params).toEqual([TEST_REQUEST_ID]);
+
+      // Verifies transaction invoked with useServiceRole = false (database owner privileges for auth.* cascade)
+      expect(mockTransaction).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.any(Function),
+        false,
+        false,
+        false,
+      );
     });
 
     it('populates provider_cleanup with AEAD-encrypted entries when user has linked auth providers (R35)', async () => {
@@ -1508,6 +1517,10 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         TEST_USER_ID,
         TEST_SESSION_ID,
       ]);
+      const guardQueryCall = mockQuery.mock.calls.find(([sql]) =>
+        String(sql).includes('approved_auth_sessions'),
+      );
+      expect(guardQueryCall?.[0]).not.toContain('expires_at');
     });
 
     it('rejects unapproved or revoked JWT sessions with 401 AUTH_REQUIRED on EP-X01 and EP-X02', async () => {

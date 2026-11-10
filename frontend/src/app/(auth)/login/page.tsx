@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getAppUser } from "@/lib/auth/user";
 import { LoginForm } from "@/components/auth/login-form";
 
@@ -20,7 +21,17 @@ export default async function LoginPage({
   const awaitedSearchParams = await searchParams;
   const errorCode = awaitedSearchParams?.error;
   const resetSuccess = awaitedSearchParams?.reset === "success";
+  const isDeleted = awaitedSearchParams?.deleted === "true";
   let initialError: string | undefined;
+
+  if (isDeleted) {
+    try {
+      const cookieStore = await cookies();
+      cookieStore.delete("account_deleted");
+    } catch {
+      // Best effort delete cookie on render
+    }
+  }
 
   if (errorCode === "oauth_failed") {
     initialError = "Authentication failed. Please try again.";
@@ -28,7 +39,9 @@ export default async function LoginPage({
     initialError = "Account synchronization failed. Please contact support.";
   }
 
-  const successMessage = resetSuccess
+  const successMessage = isDeleted
+    ? "Your account has been permanently deleted."
+    : resetSuccess
     ? "Password reset successfully. Please sign in with your new password."
     : undefined;
 

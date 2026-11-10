@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { getAppSessionStateResult } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
@@ -23,6 +24,23 @@ export default async function SettingsPage({
   const result = await getAppSessionStateResult();
 
   if (result.status === 'unauthenticated') {
+    let isDeleted = false;
+    try {
+      const cookieStore = await cookies();
+      if (cookieStore?.get('account_deleted')?.value === 'true') {
+        isDeleted = true;
+        try {
+          cookieStore.delete('account_deleted');
+        } catch {
+          // Best effort delete
+        }
+      }
+    } catch {
+      // In case cookies() cannot be read or is not mocked in tests
+    }
+    if (isDeleted) {
+      redirect('/login?deleted=true');
+    }
     redirect('/login');
   }
 

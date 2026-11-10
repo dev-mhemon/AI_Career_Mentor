@@ -1172,6 +1172,17 @@ export async function requestAccountDeletionAction(
       } catch {
         // Best effort local sign out
       }
+      try {
+        const cookieStore = await cookies();
+        cookieStore.set('account_deleted', 'true', {
+          path: '/',
+          maxAge: 60,
+          sameSite: 'lax',
+          httpOnly: true,
+        });
+      } catch {
+        // Best effort cookie set
+      }
     }
 
     return {
