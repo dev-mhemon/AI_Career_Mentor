@@ -1,25 +1,31 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Password Recovery and Phone Contract (M02-04)
+  title: AI Career Mentor - Authentication, Password Recovery, Phone and Account Deletion Contract (M03-01)
   version: 0.1.0
   description: >-
-    Synchronized through M02-04, 2026-11-08. Derived from adopted C05 v1.5.1. Source baseline:
-    e1de2b0f429747406ace3aa7a560f53c183b0387. Canonical auth operations including email registration (EP-A01),
+    Synchronized through M03-01, 2026-11-10. Derived from adopted C05 v1.5.1. Source baseline:
+    f2ebf848d5b3cea0ed0bc134c493636cc0818167. Canonical auth operations including email registration (EP-A01),
     email and phone verification (EP-A02/EP-A03), verification resend (EP-A04), login (EP-A05), logout (EP-A06),
     token refresh (EP-A07), password recovery (EP-A08/EP-A09), OAuth bootstrap (EP-A10), social linking (EP-A11),
-    add contact (EP-A12), and me (EP-A13) are implemented across backend and frontend (with phone SMS delivery
-    failing closed with 503 SERVICE_UNAVAILABLE while the SMS provider adapter is disabled). See M02-04 task
-    record, backend architecture, DTO-DB-mapping and QA-plan.
+    add contact (EP-A12), me (EP-A13), and account deletion wire contract / DeletionReceipt authority / status
+    query (EP-X01/EP-X02) are implemented (with phone SMS delivery failing closed with 503 SERVICE_UNAVAILABLE
+    while the SMS provider adapter is disabled, and live credential re-authentication verification, atomic
+    cascade deletion, and session revocation on EP-X01 deferred to M03-02). See M03-01 task record, backend
+    architecture, DTO-DB-mapping and QA-plan.
 servers:
   - url: /api/v1
 tags:
   - name: Email and session
     description: C05 14.1 subset; shared DTOs preserve later phone/OAuth requirements.
-x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1 and accepted R18/R24/R31
+  - name: Account
+    description: C05 14.2 Account API (EP-X01, EP-X02); account deletion request scheduling, DeletionReceipt authority, and status lookup.
+x-source: API-Specification.md sections 13, 14.1, 14.2, 15.1-2, 16, 17.1 and accepted R05/R06/R14/R18/R24/R31/R35
 x-contract-notes:
   - >-
-    H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT. Content-Type application/json for bodies;
-    optional X-Request-Id UUID. Every response has X-Request-Id; every 429 includes Retry-After.
+    H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
+    on idempotent mutation routes such as EP-X01; EP-X02 accepts either Bearer JWT or 'Authorization:
+    DeletionReceipt <token>' (C05 R06). Content-Type application/json for bodies; optional X-Request-Id UUID.
+    Every response has X-Request-Id; every 429 includes Retry-After.
   - >-
     R31: auth:v1 HMAC contact/IP components; six digits/600s provider challenge, five failures/one consume;
     resend60s,3/contact/15min,10/IP/15min; login5/identifier+IP/15min with15min lockout. Redis send/verify
@@ -29,8 +35,8 @@ x-contract-notes:
     section16 meanings; no raw provider diagnostics. Error code/status lists follow scoped endpoint plus
     common policy.
   - >-
-    No request Idempotency-Key, challenge_id, identifier URL parameter, new status or email-only next_step
-    variant is introduced.
+    Auth operations (EP-A01–EP-A13) do not use Idempotency-Key, challenge_id, or identifier URL parameters;
+    EP-X01 documents H-IDEM (Idempotency-Key header).
   - x-* annotations are documentation metadata, not wire fields or implementation enums.
   - >-
     Registration exactly-one/non-null choice uses overlapping oneOf branches so both actual strings fail. RFC
@@ -1793,6 +1799,252 @@ paths:
         - >-
           No canonical email policy/Redis control supplied by sync; do not promote it to register/login/verify
           contract.
+  /account/deletion-requests:
+    post:
+      operationId: EP-X01
+      tags:
+        - Account
+      summary: Request account deletion
+      description: >-
+        C05 EP-X01 (POST /api/v1/account/deletion-requests). Schedules in-app account deletion with explicit
+        literal 'DELETE' confirmation under AZ-SUSP (suspended users permitted alongside active users, requiring
+        verified_contact = true and an approved session in private.approved_auth_sessions). M03-01 scope vs
+        M03-02 boundary: M03-01 enforces confirmation === 'DELETE' (returned as 400 CONFIRMATION_MISMATCH in
+        the current M03-01 implementation, while the adopted canonical contract specifies 422), AZ-SUSP access,
+        persistence of a 'scheduled' row in public.account_deletion_requests (provider_deletion_requested = false,
+        provider_cleanup = '[]'::jsonb, provider_cleanup_expires_at = requested_at + interval '30 days'),
+        translation of PostgreSQL unique constraint violation 23505 (uq_account_deletion_one_active) to 409
+        DELETION_ALREADY_REQUESTED, and minting of a 24-hour HMAC-SHA256 DeletionReceipt (R06). Live password /
+        OAuth re-authentication token verification (401 REAUTH_REQUIRED), atomic GoTrue/PostgreSQL cascade deletion
+        (private.complete_deletion_on_user_delete), immediate session revocation, and idempotency key reuse
+        enforcement (409 IDEMPOTENCY_KEY_REUSED) are deferred to M03-02+.
+      x-source: API-Specification.md sections 13, 14.2, 15.2, 16; accepted R05/R06/R14/R35
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-SUSP
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountDeletionRequestDTO'
+      responses:
+        '202':
+          description: >-
+            C05 EP-X01 success; account deletion request scheduled and signed DeletionReceipt issued (R06).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDeletionStatusDTOEnvelope'
+        '400':
+          description: >-
+            INVALID_FORMAT. (Current M03-01 implementation note: returns 400 for CONFIRMATION_MISMATCH,
+            while the adopted canonical contract specifies 422 for semantic confirmation failure).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - CONFIRMATION_MISMATCH
+            - INVALID_FORMAT
+        '401':
+          description: >-
+            AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED, REAUTH_REQUIRED.
+            (REAUTH_REQUIRED is deferred to M03-02+ live credential verification).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+            - REAUTH_REQUIRED
+        '403':
+          description: VERIFIED_CONTACT_REQUIRED, PERMISSION_DENIED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFIED_CONTACT_REQUIRED
+            - PERMISSION_DENIED
+        '409':
+          description: >-
+            DELETION_ALREADY_REQUESTED, IDEMPOTENCY_KEY_REUSED.
+            (IDEMPOTENCY_KEY_REUSED is deferred to M03-02+ idempotency key enforcement).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - DELETION_ALREADY_REQUESTED
+            - IDEMPOTENCY_KEY_REUSED
+        '422':
+          description: >-
+            CONFIRMATION_MISMATCH, VALIDATION_FAILED. (Adopted canonical contract response for semantic validation
+            failures; current M03-01 implementation returns 400 for CONFIRMATION_MISMATCH).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - CONFIRMATION_MISMATCH
+            - VALIDATION_FAILED
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
+  /account/deletion-requests/current:
+    get:
+      operationId: EP-X02
+      tags:
+        - Account
+      summary: Get current account deletion status
+      description: >-
+        C05 EP-X02 (GET /api/v1/account/deletion-requests/current). Queries the caller's account deletion
+        request progress. Accepts dual authentication per C05 R06: EITHER standard 'Authorization: Bearer <jwt>'
+        (permitting active and suspended accounts via AZ-SUSP with verified_contact = true and an approved
+        session in private.approved_auth_sessions, returning the latest request for user_id) OR 'Authorization:
+        DeletionReceipt <token>' (scoped strictly to claims.request_id with aud = 'account-deletion-status' and
+        typ = 'deletion_receipt', bypassing user/session lookup so completed null-owner tombstones with
+        user_id = NULL and status = 'completed' remain queryable after local cascade deletion). Returns 404
+        DELETION_REQUEST_NOT_FOUND when no matching deletion request row exists; 401/404/network failure means
+        unconfirmed, never completed.
+      x-source: API-Specification.md sections 13, 14.2, 15.2, 16; accepted R05/R06/R35
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-SUSP
+      security:
+        - SupabaseBearer: []
+        - DeletionReceipt: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      responses:
+        '200':
+          description: >-
+            C05 EP-X02 success; returns current deletion request status (scheduled, in_progress, or completed,
+            including completed null-owner tombstones when queried with a valid DeletionReceipt).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDeletionStatusDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: VERIFIED_CONTACT_REQUIRED, PERMISSION_DENIED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VERIFIED_CONTACT_REQUIRED
+            - PERMISSION_DENIED
+        '404':
+          description: DELETION_REQUEST_NOT_FOUND, RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - DELETION_REQUEST_NOT_FOUND
+            - RESOURCE_NOT_FOUND
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
 components:
   securitySchemes:
     SupabaseBearer:
@@ -1800,6 +2052,14 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Supabase-issued JWT; ES256/issuer/audience/expiry/UUID validation in current backend.
+    DeletionReceipt:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >-
+        Request-scoped HMAC-SHA256 DeletionReceipt token passed as 'Authorization: DeletionReceipt <token>'
+        on EP-X02 (C05 R06). Never passed in a URL. Bypasses only account-token/session lookup for EP-X02
+        and looks up strictly the bound request_id (including completed null-owner tombstones).
   parameters:
     RequestId:
       name: X-Request-Id
@@ -1817,6 +2077,17 @@ components:
         enum:
           - bn
           - en
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        H-IDEM idempotency key header (UUID, 24h TTL per C05 §13.1 / R14) for EP-X01. M03-01 enforces
+        active-request uniqueness via PostgreSQL uq_account_deletion_one_active (409 DELETION_ALREADY_REQUESTED);
+        full Redis 24h H-IDEM replay cache integration is tracked under R14/M04.
+      schema:
+        type: string
+        format: uuid
   headers:
     RequestId:
       description: Included on every response. Matches error.requestId when an error is present.
@@ -2388,6 +2659,88 @@ components:
             - true
         data:
           $ref: '#/components/schemas/LinkIdentityResponseDTO'
+    AccountDeletionRequestDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - confirmation
+      properties:
+        confirmation:
+          type: string
+          enum:
+            - DELETE
+          description: Exact literal 'DELETE' required to confirm account deletion.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Account password for password-authenticated accounts (accepted by the M03-01 wire contract; live
+            credential re-authentication verification is enforced in M03-02).
+        reauth_token:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: >-
+            Short-lived re-authentication token for OAuth-only accounts (accepted by the M03-01 wire contract;
+            live OAuth re-authentication verification is enforced in M03-02).
+      not:
+        required:
+          - password
+          - reauth_token
+    AccountDeletionStatusDTO:
+      type: object
+      required:
+        - id
+        - status
+        - requested_at
+        - completed_at
+        - provider_deletion_requested
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier of the public.account_deletion_requests row.
+        status:
+          type: string
+          enum:
+            - scheduled
+            - in_progress
+            - completed
+          description: Deletion workflow state; 'completed' indicates local user cascade deletion committed (R05).
+        requested_at:
+          type: string
+          format: date-time
+          description: ISO-8601 timestamp when the deletion request was created.
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO-8601 timestamp when local deletion completed, or null while scheduled/in_progress.
+        provider_deletion_requested:
+          type: boolean
+          description: True only when all applicable external provider deletion requests were accepted (R35).
+        deletion_receipt:
+          type: string
+          description: >-
+            HMAC-SHA256 signed request-scoped receipt (claims: typ='deletion_receipt', request_id,
+            aud='account-deletion-status', iat, exp; C05 R06). Returned on EP-X01 202 responses.
+        receipt_expires_at:
+          type: string
+          format: date-time
+          description: ISO-8601 expiration timestamp for deletion_receipt (24h from issue per R06).
+    AccountDeletionStatusDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/AccountDeletionStatusDTO'
     ErrorEnvelope:
       type: object
       required:

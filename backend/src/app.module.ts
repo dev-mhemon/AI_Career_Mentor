@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
+import { AccountModule } from './account/account.module.js';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { AuthModule } from './auth/auth.module.js';
       throttlers: [{ ttl: 60000, limit: 10 }],
     }),
     AuthModule,
+    AccountModule,
   ],
   controllers: [AppController],
   providers: [AppService],
