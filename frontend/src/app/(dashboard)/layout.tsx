@@ -64,8 +64,7 @@ export default async function DashboardLayout({
           আপনার অ্যাকাউন্ট স্থগিত আছে
         </h1>
         <p className="mb-6 text-sm text-foreground/70">
-          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। এই foundation-এ deletion screen এখনো বাস্তবায়িত
-          হয়নি।
+          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। আপনি সেটিংস পেজে (Danger Zone) গিয়ে অ্যাকাউন্ট স্থায়ীভাবে মুছে ফেলতে পারেন।
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Link

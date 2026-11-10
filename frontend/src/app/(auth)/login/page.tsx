@@ -20,6 +20,7 @@ export default async function LoginPage({
   const awaitedSearchParams = await searchParams;
   const errorCode = awaitedSearchParams?.error;
   const resetSuccess = awaitedSearchParams?.reset === "success";
+  const isDeleted = awaitedSearchParams?.deleted === "true";
   let initialError: string | undefined;
 
   if (errorCode === "oauth_failed") {
@@ -28,7 +29,9 @@ export default async function LoginPage({
     initialError = "Account synchronization failed. Please contact support.";
   }
 
-  const successMessage = resetSuccess
+  const successMessage = isDeleted
+    ? "Your account has been permanently deleted."
+    : resetSuccess
     ? "Password reset successfully. Please sign in with your new password."
     : undefined;
 

@@ -137,9 +137,12 @@ export class AccountDeletionService {
   }
 
   /**
-   * Executes a database operation inside a `service_role` transaction with `active = false`
-   * (preserving `AZ-SUSP` access for suspended accounts), or falls back to `database.query`
-   * when `transaction` is omitted in lightweight unit test mocks.
+   * Executes a database operation inside a transaction with `active = false`
+   * (preserving `AZ-SUSP` access for suspended accounts) and `useServiceRole = false`
+   * (retaining the database owner connection role without switching to `service_role`,
+   * as GoTrue session/token cascade deletion on `auth.refresh_tokens` and `auth.sessions`
+   * requires database owner privileges not granted to the unprivileged `service_role` role),
+   * or falls back to `database.query` when `transaction` is omitted in lightweight unit test mocks.
    */
   private async runWithDatabase<T>(
     userId: string | null,
@@ -152,6 +155,9 @@ export class AccountDeletionService {
         (db) => fn(db),
         false,
         foreground,
+        // useServiceRole = false: auth.refresh_tokens & auth.sessions cascade
+        // requires the database owner/superuser role; service_role has no grant on auth.*
+        false,
       );
     }
     return fn(this.database);
