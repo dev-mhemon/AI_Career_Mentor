@@ -148,14 +148,19 @@ vi.mock('@/lib/api/client', () => {
 vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }));
+const mockHeaderStore = {
+  get: vi.fn<(_name: string) => string | null>(() => null),
+};
 vi.mock('next/headers', () => ({
   cookies: vi.fn(async () => mockCookieStore),
+  headers: vi.fn(async () => mockHeaderStore),
 }));
 
 describe('Auth Actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCookieStore.get.mockReturnValue({ value: verificationContext });
+    mockHeaderStore.get.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -1008,6 +1013,68 @@ describe('Auth Actions', () => {
       expect(result).toEqual({
         error: 'Failed to initiate OAuth login. Missing redirect URL.',
       });
+    });
+
+    it('uses active trusted request origin (e.g. http://localhost:3001 or 3201) over stale NEXT_PUBLIC_SITE_URL (http://localhost:3000)', async () => {
+      const prevSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+      process.env.NEXT_PUBLIC_SITE_URL = 'http://localhost:3000';
+      mockHeaderStore.get.mockImplementation((name: string) =>
+        name === 'origin' ? 'http://localhost:3001' : null,
+      );
+      mockSignInWithOAuth.mockResolvedValueOnce({
+        data: { url: 'https://accounts.google.com/o/oauth2/auth' },
+        error: null,
+      });
+      vi.mocked(redirect).mockImplementationOnce(() => {
+        throw new Error('NEXT_REDIRECT');
+      });
+
+      try {
+        await expect(signInWithOAuth('google')).rejects.toThrow('NEXT_REDIRECT');
+        expect(mockSignInWithOAuth).toHaveBeenCalledWith({
+          provider: 'google',
+          options: {
+            redirectTo: 'http://localhost:3001/auth/callback?provider=google',
+          },
+        });
+      } finally {
+        if (prevSiteUrl === undefined) {
+          delete process.env.NEXT_PUBLIC_SITE_URL;
+        } else {
+          process.env.NEXT_PUBLIC_SITE_URL = prevSiteUrl;
+        }
+      }
+    });
+
+    it('rejects untrusted request origin and falls back to NEXT_PUBLIC_SITE_URL / http://localhost:3001', async () => {
+      const prevSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+      process.env.NEXT_PUBLIC_SITE_URL = 'http://127.0.0.1:3201';
+      mockHeaderStore.get.mockImplementation((name: string) =>
+        name === 'origin' ? 'https://evil.example.com' : null,
+      );
+      mockSignInWithOAuth.mockResolvedValueOnce({
+        data: { url: 'https://www.facebook.com/v18.0/dialog/oauth' },
+        error: null,
+      });
+      vi.mocked(redirect).mockImplementationOnce(() => {
+        throw new Error('NEXT_REDIRECT');
+      });
+
+      try {
+        await expect(signInWithOAuth('facebook')).rejects.toThrow('NEXT_REDIRECT');
+        expect(mockSignInWithOAuth).toHaveBeenCalledWith({
+          provider: 'facebook',
+          options: {
+            redirectTo: 'http://127.0.0.1:3201/auth/callback?provider=facebook',
+          },
+        });
+      } finally {
+        if (prevSiteUrl === undefined) {
+          delete process.env.NEXT_PUBLIC_SITE_URL;
+        } else {
+          process.env.NEXT_PUBLIC_SITE_URL = prevSiteUrl;
+        }
+      }
     });
   });
 

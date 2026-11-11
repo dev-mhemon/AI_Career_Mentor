@@ -15,8 +15,12 @@ import { EmailRegistrationProvider } from './email-registration.provider.js';
 import { EmailRegistrationService } from './email-registration.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 import { TextBeeSmsProvider } from './textbee-sms.provider.js';
-// @ts-expect-error - script utility import outside tsconfig rootDir
-import { buildBackendLaunchEnv } from '../../../../scripts/foundation/local.mjs';
+import {
+  buildBackendLaunchEnv,
+  resolveOAuthProviders,
+  injectOAuthIntoConfigToml,
+  // @ts-expect-error - script utility import outside tsconfig rootDir
+} from '../../../../scripts/foundation/local.mjs';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -3392,6 +3396,211 @@ describe('AuthService session approval boundary', () => {
       expect(launchEnv.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
       expect(launchEnv.MAILPIT_URL).toBe('http://127.0.0.1:56324');
       expect(launchEnv.MENTOR_LOCAL_DIR).toBe('/test/local');
+    });
+
+    it('validates local.mjs resolveOAuthProviders and injectOAuthIntoConfigToml for Google and Facebook', () => {
+      const rawToml = [
+        '[auth.external.google]',
+        'enabled = false',
+        'client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"',
+        'secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"',
+        'redirect_uri = "http://127.0.0.1:56321/auth/v1/callback"',
+        '',
+        '[auth.external.facebook]',
+        'enabled = false',
+        'client_id = "env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID)"',
+        'secret = "env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET)"',
+        'redirect_uri = "http://127.0.0.1:56321/auth/v1/callback"',
+      ].join('\n');
+
+      const emptyOAuth = resolveOAuthProviders('', {});
+      expect(emptyOAuth.google.enabled).toBe(false);
+      expect(emptyOAuth.facebook.enabled).toBe(false);
+      expect(injectOAuthIntoConfigToml(rawToml, emptyOAuth)).toContain(
+        '[auth.external.google]\nenabled = false',
+      );
+
+      const configuredOAuth = resolveOAuthProviders(
+        'GOOGLE_CLIENT_ID=g-id\nGOOGLE_CLIENT_SECRET=g-secret\nFACEBOOK_CLIENT_ID=fb-id\nFACEBOOK_CLIENT_SECRET=fb-secret',
+        {},
+      );
+      expect(configuredOAuth.google.enabled).toBe(true);
+      expect(configuredOAuth.facebook.enabled).toBe(true);
+      expect(configuredOAuth.envVars).toEqual({
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: 'g-id',
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: 'g-secret',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: 'fb-id',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: 'fb-secret',
+      });
+
+      const enabledToml = injectOAuthIntoConfigToml(rawToml, configuredOAuth);
+      expect(enabledToml).toContain('[auth.external.google]\nenabled = true');
+      expect(enabledToml).toContain('[auth.external.facebook]\nenabled = true');
+    });
+
+    it('ensures procEnv short aliases override backendEnv Supabase-prefixed keys without mixing partial pairs', () => {
+      const dotEnvWithPrefixedKeys = [
+        'SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=dotenv-google-id',
+        'SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=dotenv-google-secret',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID=dotenv-fb-id',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET=dotenv-fb-secret',
+      ].join('\n');
+
+      const procEnvWithShortAliases = {
+        GOOGLE_CLIENT_ID: 'proc-google-id',
+        GOOGLE_CLIENT_SECRET: 'proc-google-secret',
+        FACEBOOK_CLIENT_ID: 'proc-fb-id',
+        FACEBOOK_CLIENT_SECRET: 'proc-fb-secret',
+      };
+
+      const resolved = resolveOAuthProviders(
+        dotEnvWithPrefixedKeys,
+        procEnvWithShortAliases,
+      );
+
+      expect(resolved.google).toEqual({
+        enabled: true,
+        clientId: 'proc-google-id',
+        secret: 'proc-google-secret',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: true,
+        clientId: 'proc-fb-id',
+        secret: 'proc-fb-secret',
+      });
+      expect(resolved.envVars).toEqual({
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: 'proc-google-id',
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: 'proc-google-secret',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: 'proc-fb-id',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: 'proc-fb-secret',
+      });
+
+      const launchEnv = buildBackendLaunchEnv(
+        {},
+        dotEnvWithPrefixedKeys,
+        procEnvWithShortAliases,
+        '/test/local',
+      );
+      expect(launchEnv.GOOGLE_CLIENT_ID).toBe('proc-google-id');
+      expect(launchEnv.GOOGLE_CLIENT_SECRET).toBe('proc-google-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID).toBe(
+        'proc-google-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET).toBe(
+        'proc-google-secret',
+      );
+      expect(launchEnv.FACEBOOK_CLIENT_ID).toBe('proc-fb-id');
+      expect(launchEnv.FACEBOOK_CLIENT_SECRET).toBe('proc-fb-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID).toBe(
+        'proc-fb-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET).toBe(
+        'proc-fb-secret',
+      );
+    });
+
+    it('rejects partial process-level OAuth override (only ID or only secret) and preserves complete pair from backendEnv', () => {
+      const dotEnvWithCompletePairs = [
+        'GOOGLE_CLIENT_ID=dotenv-google-id',
+        'GOOGLE_CLIENT_SECRET=dotenv-google-secret',
+        'FACEBOOK_CLIENT_ID=dotenv-fb-id',
+        'FACEBOOK_CLIENT_SECRET=dotenv-fb-secret',
+      ].join('\n');
+
+      const procEnvWithPartialOverrides = {
+        GOOGLE_CLIENT_ID: 'rogue-partial-google-id',
+        FACEBOOK_CLIENT_SECRET: 'rogue-partial-fb-secret',
+      };
+
+      const resolved = resolveOAuthProviders(
+        dotEnvWithCompletePairs,
+        procEnvWithPartialOverrides,
+      );
+
+      expect(resolved.google).toEqual({
+        enabled: true,
+        clientId: 'dotenv-google-id',
+        secret: 'dotenv-google-secret',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: true,
+        clientId: 'dotenv-fb-id',
+        secret: 'dotenv-fb-secret',
+      });
+
+      const launchEnv = buildBackendLaunchEnv(
+        {},
+        dotEnvWithCompletePairs,
+        procEnvWithPartialOverrides,
+        '/test/local',
+      );
+      expect(launchEnv.GOOGLE_CLIENT_ID).toBe('dotenv-google-id');
+      expect(launchEnv.GOOGLE_CLIENT_SECRET).toBe('dotenv-google-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID).toBe(
+        'dotenv-google-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET).toBe(
+        'dotenv-google-secret',
+      );
+      expect(launchEnv.FACEBOOK_CLIENT_ID).toBe('dotenv-fb-id');
+      expect(launchEnv.FACEBOOK_CLIENT_SECRET).toBe('dotenv-fb-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID).toBe(
+        'dotenv-fb-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET).toBe(
+        'dotenv-fb-secret',
+      );
+
+      // Also verify that if neither backendEnv nor procEnv has a complete pair, partial procEnv keys are stripped
+      const launchEnvOnlyPartial = buildBackendLaunchEnv(
+        {},
+        '',
+        procEnvWithPartialOverrides,
+        '/test/local',
+      );
+      expect(launchEnvOnlyPartial.GOOGLE_CLIENT_ID).toBeUndefined();
+      expect(launchEnvOnlyPartial.FACEBOOK_CLIENT_SECRET).toBeUndefined();
+    });
+
+    it('prevents same-source cross-family alias mixing when a stale Supabase-prefixed key coexists with a complete conventional pair (or vice versa)', () => {
+      const dotEnvWithStalePrefixAndCompleteShort = [
+        'SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=stale-prefixed-google-id',
+        'GOOGLE_CLIENT_ID=fresh-short-google-id',
+        'GOOGLE_CLIENT_SECRET=fresh-short-google-secret',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID=complete-prefixed-fb-id',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET=complete-prefixed-fb-secret',
+        'FACEBOOK_CLIENT_ID=stale-short-fb-id',
+      ].join('\n');
+
+      const resolved = resolveOAuthProviders(
+        dotEnvWithStalePrefixAndCompleteShort,
+        {},
+      );
+
+      expect(resolved.google).toEqual({
+        enabled: true,
+        clientId: 'fresh-short-google-id',
+        secret: 'fresh-short-google-secret',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: true,
+        clientId: 'complete-prefixed-fb-id',
+        secret: 'complete-prefixed-fb-secret',
+      });
+
+      // Also verify that mismatched cross-family halves alone (prefixed ID + short secret) do not form a valid pair
+      const mismatchedCrossFamilyOnly = resolveOAuthProviders(
+        [
+          'SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=only-prefixed-id',
+          'GOOGLE_CLIENT_SECRET=only-short-secret',
+        ].join('\n'),
+        {},
+      );
+      expect(mismatchedCrossFamilyOnly.google).toEqual({
+        enabled: false,
+        clientId: '',
+        secret: '',
+      });
     });
   });
 });

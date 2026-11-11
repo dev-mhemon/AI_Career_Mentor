@@ -58,6 +58,107 @@ export const parseEnvFile = (filePath) => {
   return parseEnvContent(readFileSync(filePath, "utf8"));
 };
 
+export function pickCredential(keys, procEnv = {}, backendEnv = {}, baseConfig = {}) {
+  const candidateKeys = Array.isArray(keys) ? keys : [keys];
+  for (const source of [procEnv, backendEnv, baseConfig]) {
+    if (!source || typeof source !== "object") continue;
+    for (const k of candidateKeys) {
+      const v = source[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return "";
+}
+
+export function pickCredentialPair(
+  idKeys,
+  secretKeys,
+  procEnv = {},
+  backendEnv = {},
+  baseConfig = {},
+) {
+  const candidateIdKeys = Array.isArray(idKeys) ? idKeys : [idKeys];
+  const candidateSecretKeys = Array.isArray(secretKeys) ? secretKeys : [secretKeys];
+  const pairCount = Math.min(candidateIdKeys.length, candidateSecretKeys.length);
+  const readSingle = (source, key) => {
+    if (!source || typeof source !== "object") return "";
+    const v = source[key];
+    return typeof v === "string" && v.trim() ? v.trim() : "";
+  };
+
+  for (const source of [procEnv, backendEnv, baseConfig]) {
+    if (!source || typeof source !== "object") continue;
+    for (let i = 0; i < pairCount; i++) {
+      const clientId = readSingle(source, candidateIdKeys[i]);
+      const secret = readSingle(source, candidateSecretKeys[i]);
+      if (clientId && secret) {
+        return { clientId, secret };
+      }
+    }
+  }
+  return { clientId: "", secret: "" };
+}
+
+export function resolveOAuthProviders(
+  dotEnvSource = "",
+  procEnv = process.env,
+  baseConfig = {},
+) {
+  const backendEnv =
+    typeof dotEnvSource === "string"
+      ? parseEnvContent(dotEnvSource)
+      : (dotEnvSource || {});
+
+  const { clientId: googleClientId, secret: googleSecret } = pickCredentialPair(
+    ["SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_ID"],
+    ["SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET", "GOOGLE_CLIENT_SECRET"],
+    procEnv,
+    backendEnv,
+    baseConfig,
+  );
+  const { clientId: facebookClientId, secret: facebookSecret } = pickCredentialPair(
+    ["SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID", "FACEBOOK_CLIENT_ID"],
+    ["SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET", "FACEBOOK_CLIENT_SECRET"],
+    procEnv,
+    backendEnv,
+    baseConfig,
+  );
+
+  return {
+    google: {
+      enabled: Boolean(googleClientId && googleSecret),
+      clientId: googleClientId,
+      secret: googleSecret,
+    },
+    facebook: {
+      enabled: Boolean(facebookClientId && facebookSecret),
+      clientId: facebookClientId,
+      secret: facebookSecret,
+    },
+    envVars: {
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: googleClientId,
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: googleSecret,
+      SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: facebookClientId,
+      SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: facebookSecret,
+    },
+  };
+}
+
+export function injectOAuthIntoConfigToml(configText, oauth) {
+  let updated = configText;
+  for (const provider of ["google", "facebook"]) {
+    const isEnabled = Boolean(oauth?.[provider]?.enabled);
+    const sectionRegex = new RegExp(
+      `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^enabled\\s*=\\s*)(?:true|false)`,
+      "m",
+    );
+    if (sectionRegex.test(updated)) {
+      updated = updated.replace(sectionRegex, `$1${isEnabled}`);
+    }
+  }
+  return updated;
+}
+
 export function buildBackendLaunchEnv(
   baseConfig = {},
   dotEnvSource = "",
@@ -76,21 +177,43 @@ export function buildBackendLaunchEnv(
       "TEXTBEE_BASE_URL",
       "TEXTBEE_TIMEOUT_MS",
     ]
-      .map((k) => [k, procEnv[k] || backendEnv[k] || ""])
+      .map((k) => [k, pickCredential([k], procEnv, backendEnv, baseConfig)])
       .filter(([, v]) => Boolean(v)),
   );
 
-  return {
+  const oauth = resolveOAuthProviders(backendEnv, procEnv, baseConfig);
+  const oauthOverlay = {
+    GOOGLE_CLIENT_ID: oauth.google.clientId,
+    GOOGLE_CLIENT_SECRET: oauth.google.secret,
+    SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: oauth.google.clientId,
+    SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: oauth.google.secret,
+    FACEBOOK_CLIENT_ID: oauth.facebook.clientId,
+    FACEBOOK_CLIENT_SECRET: oauth.facebook.secret,
+    SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: oauth.facebook.clientId,
+    SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: oauth.facebook.secret,
+  };
+
+  const merged = {
     ...procEnv,
     ...backendEnv,
     ...baseConfig,
     ...textBeeOverlay,
+    ...oauthOverlay,
     ...(localDir ? { MENTOR_LOCAL_DIR: localDir } : {}),
   };
+
+  for (const [k, v] of Object.entries(oauthOverlay)) {
+    if (!v) delete merged[k];
+  }
+
+  return merged;
 }
 const cli = process.env.SUPABASE_BIN || "supabase";
+const startupBackendEnv = parseEnvFile(path.join(root, "backend/.env"));
+const oauthConfig = resolveOAuthProviders(startupBackendEnv, process.env);
 const env = {
   ...process.env,
+  ...oauthConfig.envVars,
   SUPABASE_HOME: process.env.SUPABASE_HOME || path.join(local, "cli-state"),
   SUPABASE_INTERNAL_IMAGE_REGISTRY:
     process.env.SUPABASE_INTERNAL_IMAGE_REGISTRY || "docker.io",
@@ -157,6 +280,13 @@ if (command === "start") {
     path.join(root, "supabase/config.toml"),
     path.join(local, "supabase/config.toml"),
   );
+  writeFileSync(
+    path.join(local, "supabase/config.toml"),
+    injectOAuthIntoConfigToml(
+      readFileSync(path.join(local, "supabase/config.toml"), "utf8"),
+      oauthConfig,
+    ),
+  );
   for (const folder of ["migrations", "tests", "rollbacks"])
     cpSync(
       path.join(root, "supabase", folder),
@@ -221,10 +351,13 @@ if (command === "start") {
       process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY || backendEnv.PROVIDER_CLEANUP_ENCRYPTION_KEY || "01234567890123456789012345678901",
     DELETION_RECEIPT_SECRET:
       process.env.DELETION_RECEIPT_SECRET || backendEnv.DELETION_RECEIPT_SECRET || "01234567890123456789012345678901",
-    TEXTBEE_API_KEY: process.env.TEXTBEE_API_KEY || backendEnv.TEXTBEE_API_KEY || "",
-    TEXTBEE_DEVICE_ID: process.env.TEXTBEE_DEVICE_ID || backendEnv.TEXTBEE_DEVICE_ID || "",
-    TEXTBEE_BASE_URL: process.env.TEXTBEE_BASE_URL || backendEnv.TEXTBEE_BASE_URL || "https://api.textbee.dev/api/v1",
-    TEXTBEE_TIMEOUT_MS: process.env.TEXTBEE_TIMEOUT_MS || backendEnv.TEXTBEE_TIMEOUT_MS || "10000",
+    TEXTBEE_API_KEY: pickCredential(["TEXTBEE_API_KEY"], process.env, backendEnv),
+    TEXTBEE_DEVICE_ID: pickCredential(["TEXTBEE_DEVICE_ID"], process.env, backendEnv),
+    TEXTBEE_BASE_URL:
+      pickCredential(["TEXTBEE_BASE_URL"], process.env, backendEnv) ||
+      "https://api.textbee.dev/api/v1",
+    TEXTBEE_TIMEOUT_MS:
+      pickCredential(["TEXTBEE_TIMEOUT_MS"], process.env, backendEnv) || "10000",
   };
   const frontend = {
     NEXT_PUBLIC_SUPABASE_URL: status.API_URL,
