@@ -1162,7 +1162,8 @@ export class AuthService {
         phone,
         code,
         async () => {
-          // Recheck and lock the pending provider mapping before calling GoTrue
+          // Recheck and lock the pending provider mapping before calling GoTrue,
+          // keeping the recheck, GoTrue confirmation, and application updates under one serialization boundary.
           await this.database.transaction(
             userId,
             async (db) => {
@@ -1185,20 +1186,14 @@ export class AuthService {
                   'Contact already verified or replaced',
                 );
               }
-            },
-            false,
-          );
 
-          providerConfirmAttempted = true;
-          const isSecondary = user.is_primary === false;
-          await this.confirmGoTruePhoneUser(
-            userId,
-            isSecondary ? phone : undefined,
-          );
+              providerConfirmAttempted = true;
+              const isSecondary = user.is_primary === false;
+              await this.confirmGoTruePhoneUser(
+                userId,
+                isSecondary ? phone : undefined,
+              );
 
-          await this.database.transaction(
-            userId,
-            async (db) => {
               const usersRes = await db.query(
                 `UPDATE public.users
                     SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()

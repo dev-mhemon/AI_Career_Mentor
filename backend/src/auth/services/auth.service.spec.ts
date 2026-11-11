@@ -1,5 +1,4 @@
 import 'reflect-metadata';
-import { parseEnv } from 'node:util';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { EntityManager } from 'typeorm';
@@ -16,6 +15,8 @@ import { EmailRegistrationProvider } from './email-registration.provider.js';
 import { EmailRegistrationService } from './email-registration.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 import { TextBeeSmsProvider } from './textbee-sms.provider.js';
+// @ts-expect-error - script utility import outside tsconfig rootDir
+import { buildBackendLaunchEnv } from '../../../../scripts/foundation/local.mjs';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -3350,20 +3351,14 @@ describe('AuthService session approval boundary', () => {
       fetchSpy.mockRestore();
     });
 
-    it('validates local.mjs quoted dotenv parsing and TextBee credentials overlay logic', () => {
+    it('validates local.mjs buildBackendLaunchEnv dotenv parsing and TextBee credentials overlay logic', () => {
       const sampleEnv = `
         TEXTBEE_API_KEY="secret-api-key"
         TEXTBEE_DEVICE_ID='device-123'
         TEXTBEE_BASE_URL=https://custom.api.textbee.dev # inline comment
         UNQUOTED_VAL=regular-value
       `;
-      const parsed = parseEnv(sampleEnv);
-      expect(parsed.TEXTBEE_API_KEY).toBe('secret-api-key');
-      expect(parsed.TEXTBEE_DEVICE_ID).toBe('device-123');
-      expect(parsed.TEXTBEE_BASE_URL).toBe('https://custom.api.textbee.dev');
-      expect(parsed.UNQUOTED_VAL).toBe('regular-value');
-
-      const config = {
+      const baseConfig = {
         DB_HOST: '127.0.0.1',
         DB_PORT: '5432',
         SUPABASE_URL: 'http://127.0.0.1:54321',
@@ -3374,27 +3369,29 @@ describe('AuthService session approval boundary', () => {
         TEXTBEE_BASE_URL: 'https://api.textbee.dev/api/v1',
         TEXTBEE_TIMEOUT_MS: '10000',
       };
+      const procEnv = {
+        TEXTBEE_DEVICE_ID: 'proc-device-override',
+      };
 
-      const backendEnv = parsed;
-      const overlayKeys = [
-        'TEXTBEE_API_KEY',
-        'TEXTBEE_DEVICE_ID',
-        'TEXTBEE_BASE_URL',
-        'TEXTBEE_TIMEOUT_MS',
-      ];
-      const textBeeOverlay = Object.fromEntries(
-        overlayKeys
-          .map((k) => [k, backendEnv[k] || ''])
-          .filter(([, v]) => Boolean(v)),
+      const launchEnv = buildBackendLaunchEnv(
+        baseConfig,
+        sampleEnv,
+        procEnv,
+        '/test/local',
       );
 
-      const merged = { ...config, ...textBeeOverlay };
-      expect(merged.TEXTBEE_API_KEY).toBe('secret-api-key');
-      expect(merged.TEXTBEE_DEVICE_ID).toBe('device-123');
-      expect(merged.TEXTBEE_BASE_URL).toBe('https://custom.api.textbee.dev');
-      expect(merged.DB_HOST).toBe('127.0.0.1');
-      expect(merged.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
-      expect(merged.MAILPIT_URL).toBe('http://127.0.0.1:56324');
+      // Verify dotenv parsing stripped quotes and comments
+      expect(launchEnv.UNQUOTED_VAL).toBe('regular-value');
+      // Verify process.env overrides dotenv and base config for TextBee keys
+      expect(launchEnv.TEXTBEE_DEVICE_ID).toBe('proc-device-override');
+      expect(launchEnv.TEXTBEE_API_KEY).toBe('secret-api-key');
+      expect(launchEnv.TEXTBEE_BASE_URL).toBe('https://custom.api.textbee.dev');
+      expect(launchEnv.TEXTBEE_TIMEOUT_MS).toBe('10000');
+      // Verify local connection settings are preserved from baseConfig
+      expect(launchEnv.DB_HOST).toBe('127.0.0.1');
+      expect(launchEnv.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
+      expect(launchEnv.MAILPIT_URL).toBe('http://127.0.0.1:56324');
+      expect(launchEnv.MENTOR_LOCAL_DIR).toBe('/test/local');
     });
   });
 });

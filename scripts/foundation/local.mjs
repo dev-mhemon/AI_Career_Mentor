@@ -19,9 +19,8 @@ const root = path.resolve(
 const local = path.resolve(
   process.env.MENTOR_LOCAL_DIR || path.join(root, ".local/foundation"),
 );
-const parseEnvFile = (filePath) => {
-  if (!existsSync(filePath)) return {};
-  const content = readFileSync(filePath, "utf8");
+export const parseEnvContent = (content) => {
+  if (!content || typeof content !== "string") return {};
   if (typeof parseEnv === "function") {
     return parseEnv(content);
   }
@@ -53,6 +52,42 @@ const parseEnvFile = (filePath) => {
   }
   return parsed;
 };
+
+export const parseEnvFile = (filePath) => {
+  if (!existsSync(filePath)) return {};
+  return parseEnvContent(readFileSync(filePath, "utf8"));
+};
+
+export function buildBackendLaunchEnv(
+  baseConfig = {},
+  dotEnvSource = "",
+  procEnv = process.env,
+  localDir = local,
+) {
+  const backendEnv =
+    typeof dotEnvSource === "string"
+      ? parseEnvContent(dotEnvSource)
+      : (dotEnvSource || {});
+
+  const textBeeOverlay = Object.fromEntries(
+    [
+      "TEXTBEE_API_KEY",
+      "TEXTBEE_DEVICE_ID",
+      "TEXTBEE_BASE_URL",
+      "TEXTBEE_TIMEOUT_MS",
+    ]
+      .map((k) => [k, procEnv[k] || backendEnv[k] || ""])
+      .filter(([, v]) => Boolean(v)),
+  );
+
+  return {
+    ...procEnv,
+    ...backendEnv,
+    ...baseConfig,
+    ...textBeeOverlay,
+    ...(localDir ? { MENTOR_LOCAL_DIR: localDir } : {}),
+  };
+}
 const cli = process.env.SUPABASE_BIN || "supabase";
 const env = {
   ...process.env,
@@ -78,7 +113,14 @@ const run = (args, privateLog) => {
     );
   return r.stdout;
 };
-mkdirSync(local, { recursive: true, mode: 0o700 });
+
+const isMain =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]).toLowerCase() ===
+    fileURLToPath(import.meta.url).toLowerCase();
+
+if (isMain) {
+  mkdirSync(local, { recursive: true, mode: 0o700 });
 chmodSync(local, 0o700);
 if (local === root || local.includes("reviewed-baseline"))
   throw Error("Use a dedicated disposable directory");
@@ -246,28 +288,18 @@ else {
   const backendEnv = !isFrontend
     ? parseEnvFile(path.join(root, "backend/.env"))
     : {};
-  const textBeeOverlay = !isFrontend
-    ? Object.fromEntries(
-        [
-          "TEXTBEE_API_KEY",
-          "TEXTBEE_DEVICE_ID",
-          "TEXTBEE_BASE_URL",
-          "TEXTBEE_TIMEOUT_MS",
-        ]
-          .map((k) => [k, process.env[k] || backendEnv[k] || ""])
-          .filter(([, v]) => Boolean(v)),
-      )
-    : {};
+  const launchEnv = !isFrontend
+    ? buildBackendLaunchEnv(config, backendEnv, process.env, local)
+    : {
+        ...process.env,
+        ...config,
+        MENTOR_LOCAL_DIR: local,
+      };
   const r = spawnSync("npm", commands[command], {
     cwd: path.join(root, isFrontend ? "frontend" : "backend"),
-    env: {
-      ...process.env,
-      ...backendEnv,
-      ...config,
-      ...textBeeOverlay,
-      MENTOR_LOCAL_DIR: local,
-    },
+    env: launchEnv,
     stdio: "inherit",
   });
   process.exit(r.status ?? 1);
+}
 }
