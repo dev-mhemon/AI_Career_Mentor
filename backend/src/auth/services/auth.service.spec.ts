@@ -14,6 +14,7 @@ import { AuthService } from './auth.service.js';
 import { EmailRegistrationProvider } from './email-registration.provider.js';
 import { EmailRegistrationService } from './email-registration.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
+import { TextBeeSmsProvider } from './textbee-sms.provider.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -2863,6 +2864,253 @@ describe('AuthService session approval boundary', () => {
       });
 
       expect(result.expires_in_seconds).toBe(1);
+    });
+  });
+
+  describe('Phone Auth Lifecycle & verifyOtp (EP-A02, EP-A03, EP-A12, EP-A08)', () => {
+    it('verifyOtp delegates to verifyPhone when channel is phone', async () => {
+      const service = new AuthService(
+        {} as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+      const spy = vi.spyOn(service, 'verifyPhone').mockResolvedValueOnce({
+        access_token: 'phone_token',
+      } as any);
+
+      const result = await service.verifyOtp({
+        channel: 'phone',
+        phone: '+8801712345678',
+        code: '123456',
+      });
+
+      expect(spy).toHaveBeenCalledWith(
+        { phone: '+8801712345678', code: '123456' },
+        undefined,
+      );
+      expect(result).toEqual({ access_token: 'phone_token' });
+    });
+
+    it('verifyOtp delegates to verifyEmail when channel is email', async () => {
+      const service = new AuthService(
+        {} as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+      const spy = vi.spyOn(service, 'verifyEmail').mockResolvedValueOnce({
+        access_token: 'email_token',
+      } as any);
+
+      const result = await service.verifyOtp({
+        channel: 'email',
+        email: 'person@example.com',
+        code: '654321',
+      });
+
+      expect(spy).toHaveBeenCalledWith(
+        { email: 'person@example.com', code: '654321' },
+        undefined,
+      );
+      expect(result).toEqual({ access_token: 'email_token' });
+    });
+
+    it('addContact dispatches SMS challenge via smsProvider for phone channel', async () => {
+      const testIdentity = {
+        sub: '11111111-1111-4111-8111-111111111111',
+        sessionId: '11111111-1111-4111-8111-111111111112',
+      };
+      const smsProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+        }),
+      } as unknown as TextBeeSmsProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      vi.spyOn(service as any, 'authUser').mockResolvedValueOnce({
+        id: testIdentity.sub,
+      });
+
+      const result = await service.addContact(testIdentity, 'Bearer token', {
+        channel: 'phone',
+        contact: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendChallenge).toHaveBeenCalledWith({
+        id: testIdentity.sub,
+        phone: '+8801712345678',
+      });
+      expect(result.verification_channel).toBe('phone');
+      expect(result.contact_masked).toBe('+8801****5678');
+      expect(result.expires_in_seconds).toBe(600);
+    });
+
+    it('forgotPassword dispatches password reset challenge via smsProvider for phone channel', async () => {
+      const smsProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+        }),
+      } as unknown as TextBeeSmsProvider;
+
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            phone: '+8801712345678',
+            status: 'active',
+            verified_contact: true,
+            provider_subject: '11111111-1111-4111-8111-111111111111',
+            verified_at: new Date().toISOString(),
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      const result = await service.forgotPassword({
+        identifier: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
+        '+8801712345678',
+        '11111111-1111-4111-8111-111111111111',
+      );
+      expect(result).toEqual({
+        message: 'If the account exists, a code was sent.',
+      });
+    });
+
+    it('forgotPassword returns uniform message for unknown phone contact without dispatching challenge', async () => {
+      const smsProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi.fn(),
+      } as unknown as TextBeeSmsProvider;
+
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([]),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      const result = await service.forgotPassword({
+        identifier: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendPasswordResetChallenge).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        message: 'If the account exists, a code was sent.',
+      });
+    });
+
+    it('forgotPassword returns uniform message even if phone challenge background dispatch rejects', async () => {
+      const smsProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('SMS Gateway failure')),
+      } as unknown as TextBeeSmsProvider;
+
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            phone: '+8801712345678',
+            status: 'active',
+            verified_contact: true,
+            provider_subject: '11111111-1111-4111-8111-111111111111',
+            verified_at: new Date().toISOString(),
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      const result = await service.forgotPassword({
+        identifier: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
+        '+8801712345678',
+        '11111111-1111-4111-8111-111111111111',
+      );
+      expect(result).toEqual({
+        message: 'If the account exists, a code was sent.',
+      });
     });
   });
 });

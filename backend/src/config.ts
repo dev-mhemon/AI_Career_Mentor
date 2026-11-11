@@ -104,6 +104,7 @@ export function validateConfiguration(raw: Record<string, unknown>) {
     'AUTH_EMAIL_TRANSPORT_URL',
     'EMAIL_TRANSPORT_URL',
     'MAILPIT_URL',
+    'TEXTBEE_BASE_URL',
   ] as const;
   for (const emailKey of emailWebhookKeys) {
     if (
@@ -112,6 +113,16 @@ export function validateConfiguration(raw: Record<string, unknown>) {
       raw[emailKey] !== ''
     ) {
       validateEmailWebhookUrl(raw[emailKey], emailKey);
+    }
+  }
+  if (
+    raw.TEXTBEE_TIMEOUT_MS !== undefined &&
+    raw.TEXTBEE_TIMEOUT_MS !== null &&
+    raw.TEXTBEE_TIMEOUT_MS !== ''
+  ) {
+    const timeout = Number(raw.TEXTBEE_TIMEOUT_MS);
+    if (!Number.isInteger(timeout) || timeout <= 0) {
+      throw new Error('Invalid TEXTBEE_TIMEOUT_MS');
     }
   }
   if (raw.RESEND_API_KEY) {

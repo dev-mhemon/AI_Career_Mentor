@@ -143,6 +143,9 @@ if (command === "start") {
       process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY || "01234567890123456789012345678901",
     DELETION_RECEIPT_SECRET:
       process.env.DELETION_RECEIPT_SECRET || "01234567890123456789012345678901",
+    TEXTBEE_API_KEY: process.env.TEXTBEE_API_KEY || "",
+    TEXTBEE_DEVICE_ID: process.env.TEXTBEE_DEVICE_ID || "",
+    TEXTBEE_BASE_URL: process.env.TEXTBEE_BASE_URL || "https://api.textbee.dev/api/v1",
   };
   const frontend = {
     NEXT_PUBLIC_SUPABASE_URL: status.API_URL,

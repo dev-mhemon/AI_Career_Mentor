@@ -3,6 +3,10 @@ import type { Request } from 'express';
 import { EmailRegistrationService } from './email-registration.service.js';
 import { EmailRegistrationProvider } from './email-registration.provider.js';
 import type { PendingEmailIdentity } from './email-registration.provider.js';
+import type {
+  TextBeeSmsProvider,
+  PendingPhoneIdentity,
+} from './textbee-sms.provider.js';
 import type { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import type { DatabaseService } from './database.service.js';
 import type { ConfigService } from '@nestjs/config';
@@ -30,11 +34,32 @@ const peer = {
   app: { get: () => () => false },
 } as unknown as Request;
 
+const phone = '+8801712345678';
+const phoneIdentity: PendingPhoneIdentity = {
+  id: '00000000-0000-4000-8000-000000000002',
+  subject: 'synthetic-phone-subject',
+  phone,
+  verified: false,
+};
+const phoneBody = {
+  email: null,
+  phone: ' 01712345678 ',
+  password: 'Synthetic!Pass123',
+  confirm_password: 'Synthetic!Pass123',
+  privacy_consent: true,
+};
+
 function harness() {
   const provider = {
     ready: vi.fn(),
     findByEmail: vi.fn().mockResolvedValue(null),
     createPending: vi.fn().mockResolvedValue(identity),
+    sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
+  };
+  const smsProvider = {
+    ready: vi.fn(),
+    findByPhone: vi.fn().mockResolvedValue(null),
+    createPending: vi.fn().mockResolvedValue(phoneIdentity),
     sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
   };
   const abuse = {
@@ -43,7 +68,16 @@ function harness() {
   const queries = vi.fn(async (sql: string): Promise<any[]> => {
     if (sql.startsWith('SELECT verified_contact'))
       return [{ verified_contact: false, email: null, phone: null }];
-    if (sql.startsWith('SELECT provider_subject'))
+    if (sql.startsWith('SELECT provider_subject')) {
+      if (sql.includes("provider='phone'")) {
+        return [
+          {
+            provider_subject: phoneIdentity.subject,
+            contact_value: phone,
+            verified_at: null,
+          },
+        ];
+      }
       return [
         {
           provider_subject: identity.subject,
@@ -51,6 +85,7 @@ function harness() {
           verified_at: null,
         },
       ];
+    }
     return [];
   });
   const database = {
@@ -66,8 +101,9 @@ function harness() {
     abuse as unknown as AuthAbuseControl,
     database as unknown as DatabaseService,
     { get: () => undefined } as unknown as ConfigService,
+    smsProvider as unknown as TextBeeSmsProvider,
   );
-  return { provider, abuse, queries, database, service };
+  return { provider, smsProvider, abuse, queries, database, service };
 }
 
 async function rejection(
@@ -613,5 +649,191 @@ describe('A01/A04 email service with synthetic provider', () => {
     );
     expect(abuse.reserveSend).not.toHaveBeenCalled();
     expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  describe('Phone registration and OTP resend via TextBee provider', () => {
+    it('successfully registers phone contact, persists pending row, and dispatches SMS challenge', async () => {
+      const { service, smsProvider, abuse } = harness();
+      const result = await service.register(phoneBody, peer);
+      expect(result).toMatchObject({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+      });
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(abuse.reserveSend).toHaveBeenCalledWith(
+        { channel: 'phone', identifier: phone },
+        '192.0.2.4',
+      );
+      expect(smsProvider.findByPhone).toHaveBeenCalledWith(
+        phone,
+        expect.any(Object),
+      );
+      expect(smsProvider.createPending).toHaveBeenCalledWith(
+        phone,
+        phoneBody.password,
+        expect.any(Object),
+      );
+      expect(smsProvider.sendChallenge).toHaveBeenCalledWith(
+        phoneIdentity,
+        expect.any(Object),
+      );
+    });
+
+    it('rejects phone registration with 409 when phone contact is already registered', async () => {
+      const { service, smsProvider } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce({
+        id: 'existing-id',
+        subject: 'existing-id',
+        phone,
+        verified: true,
+      });
+      await rejection(
+        () => service.register(phoneBody, peer),
+        409,
+        'CONTACT_ALREADY_REGISTERED',
+      );
+    });
+
+    it('successfully resends OTP challenge for unverified phone contact', async () => {
+      const { service, smsProvider, abuse } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce(phoneIdentity);
+      const result = await service.resend(
+        { channel: 'phone', contact: phone },
+        peer,
+      );
+      expect(result).toMatchObject({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+      });
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(abuse.reserveSend).toHaveBeenCalledWith(
+        { channel: 'phone', identifier: phone },
+        '192.0.2.4',
+      );
+      expect(smsProvider.sendChallenge).toHaveBeenCalledWith(
+        phoneIdentity,
+        expect.any(Object),
+      );
+    });
+
+    it('returns anti-enumeration uniform metadata on resend for unknown phone contact', async () => {
+      const { service, smsProvider } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce(null);
+      const result = await service.resend(
+        { channel: 'phone', contact: phone },
+        peer,
+      );
+      expect(result).toMatchObject({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+      });
+      expect(smsProvider.sendChallenge).not.toHaveBeenCalled();
+    });
+
+    it('translates smsProvider delivery failure to 502 retryable error on phone resend', async () => {
+      const { service, smsProvider } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce(phoneIdentity);
+      smsProvider.sendChallenge.mockRejectedValueOnce(
+        new Error('SMS Gateway failure'),
+      );
+      await rejection(
+        () => service.resend({ channel: 'phone', contact: phone }, peer),
+        502,
+        'SMS_PROVIDER_ERROR',
+      );
+    });
+
+    it('normalizes digits-only phone identity from provider during phone registration', async () => {
+      const { service, smsProvider } = harness();
+      smsProvider.createPending.mockResolvedValueOnce({
+        id: phoneIdentity.id,
+        subject: phoneIdentity.subject,
+        phone: '8801712345678', // digits-only from GoTrue
+        verified: false,
+      });
+      const result = await service.register(phoneBody, peer);
+      expect(result).toMatchObject({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+      });
+    });
+
+    it('reconciles existing pending mapping with digits-only phone to canonical E.164 without 409 conflict', async () => {
+      const { service, smsProvider, database } = harness();
+      let capturedUpsertSql = '';
+      database.transaction.mockImplementationOnce(
+        async (
+          _id: string | null,
+          operation: (db: any) => Promise<unknown>,
+        ) => {
+          return operation({
+            query: async (sql: string) => {
+              if (sql.startsWith('SELECT pg_advisory_xact_lock')) return [];
+              if (sql.startsWith('SELECT id FROM public.users')) return [];
+              if (
+                sql.startsWith('SELECT user_id FROM public.user_auth_providers')
+              )
+                return [];
+              if (sql.startsWith('INSERT INTO public.users')) return [];
+              if (sql.startsWith('SELECT verified_contact'))
+                return [{ verified_contact: false, email: null, phone: null }];
+              if (sql.startsWith('INSERT INTO public.user_auth_providers')) {
+                capturedUpsertSql = sql;
+                return [];
+              }
+              if (sql.startsWith('SELECT provider_subject')) {
+                return [
+                  {
+                    provider_subject: phoneIdentity.subject,
+                    contact_value: '8801712345678', // digits-only prior to or during reconciliation
+                    verified_at: null,
+                  },
+                ];
+              }
+              return [];
+            },
+          });
+        },
+      );
+
+      const result = await service.register(phoneBody, peer);
+      expect(result).toMatchObject({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+      });
+      expect(capturedUpsertSql).toContain(
+        "public.user_auth_providers.contact_value = ltrim(EXCLUDED.contact_value, '+')",
+      );
+      expect(smsProvider.sendChallenge).toHaveBeenCalledWith(
+        phoneIdentity,
+        expect.any(Object),
+      );
+    });
+
+    it('fails closed with 503 when smsProvider is missing for phone registration', async () => {
+      const { abuse, database, provider } = harness();
+      const service = new EmailRegistrationService(
+        provider as unknown as EmailRegistrationProvider,
+        abuse as unknown as AuthAbuseControl,
+        database as unknown as DatabaseService,
+        { get: () => undefined } as unknown as ConfigService,
+        undefined, // smsProvider omitted
+      );
+      await rejection(
+        () => service.register(phoneBody, peer),
+        503,
+        'SERVICE_UNAVAILABLE',
+      );
+      await rejection(
+        () => service.resend({ channel: 'phone', contact: phone }, peer),
+        503,
+        'SERVICE_UNAVAILABLE',
+      );
+    });
   });
 });

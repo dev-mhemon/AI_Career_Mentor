@@ -224,7 +224,7 @@ describe('Auth Actions', () => {
       expect(redirect).toHaveBeenCalledWith('/settings');
     });
 
-    it('returns error for unverified phone identifier instead of unserviced SMS redirect', async () => {
+    it('catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify?channel=phone for phone identifier', async () => {
       const formData = new FormData();
       formData.set('identifier', '+8801712345678');
       formData.set('password', 'password123');
@@ -236,14 +236,27 @@ describe('Auth Actions', () => {
           'UNVERIFIED_ACCOUNT',
         ),
       );
+      (resendVerification as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+        resend_available_at: new Date(Date.now() + 60000).toISOString(),
+      });
 
       const result = await loginAction({}, formData);
       expect(result).toEqual({
-        error:
-          'Phone verification is temporarily unavailable. Please sign in with email or contact support.',
+        error: 'Please verify your contact before logging in.',
+        redirectTo: '/verify?channel=phone&cooldown=60',
       });
-      expect(resendVerification).not.toHaveBeenCalled();
-      expect(mockCookieStore.set).not.toHaveBeenCalled();
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: 'phone',
+        contact: '+8801712345678',
+      });
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_verification_context',
+        expect.any(String),
+        expect.objectContaining({ path: '/verify', maxAge: 600 }),
+      );
     });
 
     it('catches 403 UNVERIFIED_ACCOUNT and returns error with redirectTo /verify for email identifier', async () => {
@@ -825,13 +838,24 @@ describe('Auth Actions', () => {
       expect(result).toEqual({ error: 'Invalid verification channel.' });
     });
 
-    it('returns error when phone channel is requested while SMS is unavailable', async () => {
-      const result = await resendOtpAction('phone', '+8801712345678');
-      expect(result).toEqual({
-        error:
-          'SMS verification is temporarily unavailable. Please verify with email or contact support.',
+    it('successfully resends OTP when phone channel is requested with TextBee SMS support', async () => {
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5678',
+        expires_in_seconds: 600,
+        resend_available_at: new Date(Date.now() + 60000).toISOString(),
       });
-      expect(resendVerification).not.toHaveBeenCalled();
+
+      const result = await resendOtpAction('phone', '+8801712345678');
+      expect(resendVerification).toHaveBeenCalledWith({
+        channel: 'phone',
+        contact: '+8801712345678',
+      });
+      expect(result).toMatchObject({
+        success: true,
+        contactMasked: '+8801****5678',
+        expiresInSeconds: 600,
+      });
     });
 
     it('surfaces string error message when resendVerification resolves with string error payload', async () => {

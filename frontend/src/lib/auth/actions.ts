@@ -512,17 +512,11 @@ export async function loginAction(
           err.message?.toLowerCase().includes('verify'))
       ) {
         const channel = rawIdentifier.includes('@') ? 'email' : 'phone';
-        if (channel === 'phone') {
-          return {
-            error:
-              'Phone verification is temporarily unavailable. Please sign in with email or contact support.',
-          };
-        }
         let resendResult: unknown;
         let resendError: unknown;
         try {
           resendResult = await resendVerification({
-            channel: 'email',
+            channel,
             contact: rawIdentifier,
           });
         } catch (resendErr) {
@@ -538,10 +532,10 @@ export async function loginAction(
 
         const verifyUrl =
           typeof dispatch.cooldownSeconds === 'number' && dispatch.cooldownSeconds > 0
-            ? `/verify?channel=email&cooldown=${dispatch.cooldownSeconds}`
-            : '/verify?channel=email';
+            ? `/verify?channel=${channel}&cooldown=${dispatch.cooldownSeconds}`
+            : `/verify?channel=${channel}`;
 
-        await setVerificationContext({ type: 'email', identifier: rawIdentifier });
+        await setVerificationContext({ type: channel, identifier: rawIdentifier });
         return {
           error: 'Please verify your contact before logging in.',
           redirectTo: verifyUrl,
@@ -729,12 +723,6 @@ export async function resendOtpAction(
 }> {
   if (type !== 'email' && type !== 'phone') {
     return { error: 'Invalid verification channel.' };
-  }
-  if (type === 'phone') {
-    return {
-      error:
-        'SMS verification is temporarily unavailable. Please verify with email or contact support.',
-    };
   }
   const rawIdentifier = typeof reenteredIdentifier === 'string' ? reenteredIdentifier.trim() : '';
   let identifier = rawIdentifier;

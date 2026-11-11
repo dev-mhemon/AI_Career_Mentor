@@ -22,6 +22,7 @@ vi.mock("@/components/auth/oauth-buttons", () => ({
 describe("RegisterForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(registerAction).mockResolvedValue({});
   });
 
   it("renders email, password, and confirm password fields", () => {
@@ -98,6 +99,38 @@ describe("RegisterForm", () => {
     await waitFor(() => {
       expect(mockClearVerificationDraft).toHaveBeenCalled();
       expect(screen.getByText(/registration failed/i)).toBeInTheDocument();
+    });
+  });
+
+  it("switches to phone tab and saves phone verification draft on submit", async () => {
+    render(<RegisterForm />);
+
+    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    fireEvent.click(phoneTab);
+
+    expect(screen.getByLabelText(/^phone number$/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("+8801712345678")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^phone number$/i), {
+      target: { value: "+8801712345678" },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm password/i), {
+      target: { value: "password123" },
+    });
+    fireEvent.click(screen.getByLabelText(/agree to the privacy policy/i));
+
+    const form = screen.getByRole("button", { name: /create account/i }).closest("form");
+    await act(async () => {
+      fireEvent.submit(form!);
+    });
+
+    expect(mockSaveVerificationDraft).toHaveBeenCalledWith({
+      channel: "phone",
+      identifier: "+8801712345678",
+      context: "registration",
     });
   });
 });

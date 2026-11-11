@@ -151,7 +151,7 @@ export function RegisterForm() {
           </label>
         </div>
 
-        {state.error && (
+        {state?.error && (
           <p role="alert" className="text-sm text-red-600">
             {state.error}
           </p>
