@@ -21,6 +21,7 @@ import type { Request } from 'express';
 import { SessionApprovalService } from './session-approval.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 import { EmailRegistrationProvider } from './email-registration.provider.js';
+import { TextBeeSmsProvider, maskPhone } from './textbee-sms.provider.js';
 export interface JwtIdentity {
   sub: string;
   sessionId: string;
@@ -65,6 +66,7 @@ export class AuthService {
     private readonly approvals: SessionApprovalService,
     @Optional() private readonly otpStore?: OtpSecretStore,
     @Optional() private readonly emailProvider?: EmailRegistrationProvider,
+    @Optional() private readonly smsProvider?: TextBeeSmsProvider,
   ) {}
 
   private async authUser(authorization: string): Promise<AuthUser> {
@@ -520,6 +522,32 @@ export class AuthService {
   }
 
   /**
+   * EP-A02: Unified verification endpoint for either email or phone OTP challenge.
+   */
+  async verifyOtp(body: unknown, request?: Request) {
+    if (!body || typeof body !== 'object') {
+      fail(422, 'VALIDATION_FAILED', 'Invalid request', [
+        {
+          field: 'body',
+          code: 'VALIDATION_FAILED',
+          message: 'Expected an object',
+        },
+      ]);
+    }
+    const b = body as Record<string, unknown>;
+    const channel =
+      b.channel === 'phone' || (typeof b.phone === 'string' && !b.email)
+        ? 'phone'
+        : 'email';
+    if (channel === 'phone') {
+      const phone = (b.phone || b.identifier) as string;
+      return this.verifyPhone({ phone, code: b.code }, request);
+    }
+    const email = (b.email || b.identifier) as string;
+    return this.verifyEmail({ email, code: b.code }, request);
+  }
+
+  /**
    * EP-A02: Verifies an email OTP challenge (registration or EP-A12 secondary contact), updates the application account, and mints an approved session.
    */
   async verifyEmail(body: unknown, _request?: Request) {
@@ -826,15 +854,33 @@ export class AuthService {
       fail(401, 'AUTH_REQUIRED', 'A valid Auth session is required');
     }
     const input = normalizeAddContactRequest(body);
-    if (input.channel !== 'email') {
-      fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        'Phone contact verification is temporarily unavailable',
-        [],
-        true,
-        5,
-      );
+    const channel = input.channel;
+    const identifier = input.identifier;
+
+    if (channel === 'phone') {
+      if (!this.smsProvider) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Phone contact verification is temporarily unavailable',
+          [],
+          true,
+          5,
+        );
+      }
+      this.smsProvider.ready();
+    } else {
+      if (!this.emailProvider) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Email verification is temporarily unavailable',
+          [],
+          true,
+          5,
+        );
+      }
+      this.emailProvider.ready();
     }
 
     const user = await this.authUser(authorization);
@@ -842,22 +888,20 @@ export class AuthService {
       fail(401, 'INVALID_TOKEN', 'Identity mismatch');
     }
 
-    if (!this.abuse.isReady() || !this.otpStore || !this.emailProvider) {
+    if (!this.abuse.isReady() || !this.otpStore) {
       fail(
         503,
         'SERVICE_UNAVAILABLE',
-        'Email verification is temporarily unavailable',
+        'Verification is temporarily unavailable',
         [],
         true,
         5,
       );
     }
-    this.emailProvider.ready();
 
-    const email = input.identifier;
     const ip = request ? trustedClientIp(request) : '127.0.0.1';
     const { retryAfterSeconds } = await this.abuse.reserveSend(
-      { channel: 'email', identifier: email },
+      { channel, identifier },
       ip,
     );
 
@@ -867,7 +911,7 @@ export class AuthService {
         async (db) => {
           await db.query(
             'SELECT pg_advisory_xact_lock(hashtextextended($1, 1))',
-            [`auth:pending-email:${email}`],
+            [`auth:pending-${channel}:${identifier}`],
           );
 
           const [self] = await db.query(
@@ -883,18 +927,28 @@ export class AuthService {
           }
 
           const [otherUser] = await db.query(
-            'SELECT id FROM public.users WHERE lower(email::text) = $1 AND id <> $2 LIMIT 1 FOR UPDATE',
-            [email, identity.sub],
+            channel === 'phone'
+              ? "SELECT id FROM public.users WHERE (phone = $1 OR phone = ltrim($1, '+')) AND id <> $2 LIMIT 1 FOR UPDATE"
+              : 'SELECT id FROM public.users WHERE lower(email::text) = $1 AND id <> $2 LIMIT 1 FOR UPDATE',
+            [identifier, identity.sub],
           );
           const [otherProvider] = await db.query(
-            `SELECT user_id
-               FROM public.user_auth_providers
-              WHERE provider = 'email'
-                AND lower(contact_value) = $1
-                AND user_id <> $2
-              LIMIT 1
-              FOR UPDATE`,
-            [email, identity.sub],
+            channel === 'phone'
+              ? `SELECT user_id
+                   FROM public.user_auth_providers
+                  WHERE provider = 'phone'
+                    AND (contact_value = $1 OR contact_value = ltrim($1, '+'))
+                    AND user_id <> $2
+                  LIMIT 1
+                  FOR UPDATE`
+              : `SELECT user_id
+                   FROM public.user_auth_providers
+                  WHERE provider = 'email'
+                    AND lower(contact_value) = $1
+                    AND user_id <> $2
+                  LIMIT 1
+                  FOR UPDATE`,
+            [identifier, identity.sub],
           );
           if (otherUser || otherProvider) {
             fail(
@@ -907,9 +961,9 @@ export class AuthService {
           const [selfProvider] = await db.query(
             `SELECT contact_value, verified_at
                FROM public.user_auth_providers
-              WHERE user_id = $1 AND provider = 'email'
+              WHERE user_id = $1 AND provider = $2::public.auth_provider
               FOR UPDATE`,
-            [identity.sub],
+            [identity.sub, channel],
           );
           if (selfProvider?.verified_at) {
             fail(
@@ -920,22 +974,38 @@ export class AuthService {
           }
 
           await db.query(
-            `INSERT INTO public.user_auth_providers
-               (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
-             VALUES (
-               $1,
-               'email',
-               $2,
-               $3,
-               NULL,
-               NOT EXISTS (SELECT 1 FROM public.user_auth_providers WHERE user_id = $1 AND is_primary = true)
-             )
-             ON CONFLICT (user_id, provider) DO UPDATE
-               SET provider_subject = EXCLUDED.provider_subject,
-                   contact_value = EXCLUDED.contact_value,
-                   verified_at = NULL,
-                   updated_at = now()`,
-            [identity.sub, identity.sub, email],
+            channel === 'phone'
+              ? `INSERT INTO public.user_auth_providers
+                   (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+                 VALUES (
+                   $1,
+                   'phone',
+                   $2,
+                   $3,
+                   NULL,
+                   NOT EXISTS (SELECT 1 FROM public.user_auth_providers WHERE user_id = $1 AND is_primary = true)
+                 )
+                 ON CONFLICT (user_id, provider) DO UPDATE
+                   SET provider_subject = EXCLUDED.provider_subject,
+                       contact_value = EXCLUDED.contact_value,
+                       verified_at = NULL,
+                       updated_at = now()`
+              : `INSERT INTO public.user_auth_providers
+                   (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+                 VALUES (
+                   $1,
+                   'email',
+                   $2,
+                   $3,
+                   NULL,
+                   NOT EXISTS (SELECT 1 FROM public.user_auth_providers WHERE user_id = $1 AND is_primary = true)
+                 )
+                 ON CONFLICT (user_id, provider) DO UPDATE
+                   SET provider_subject = EXCLUDED.provider_subject,
+                       contact_value = EXCLUDED.contact_value,
+                       verified_at = NULL,
+                       updated_at = now()`,
+            [identity.sub, identity.sub, identifier],
           );
         },
         true,
@@ -953,20 +1023,26 @@ export class AuthService {
 
     let expiresInSeconds = 600;
     try {
-      const delivery = await this.emailProvider.sendChallenge({
-        id: identity.sub,
-        subject: identity.sub,
-        email,
-        verified: false,
-      });
+      const delivery =
+        channel === 'phone'
+          ? await this.smsProvider!.sendChallenge({
+              id: identity.sub,
+              phone: identifier,
+            })
+          : await this.emailProvider!.sendChallenge({
+              id: identity.sub,
+              subject: identity.sub,
+              email: identifier,
+              verified: false,
+            });
       if (
         typeof delivery?.expiresInSeconds !== 'number' ||
         delivery.expiresInSeconds <= 0
       ) {
         fail(
           502,
-          'EMAIL_PROVIDER_ERROR',
-          'Email delivery could not be confirmed',
+          channel === 'phone' ? 'SMS_PROVIDER_ERROR' : 'EMAIL_PROVIDER_ERROR',
+          `${channel === 'phone' ? 'SMS' : 'Email'} delivery could not be confirmed`,
           [],
           true,
         );
@@ -996,20 +1072,29 @@ export class AuthService {
         (error.name === 'AbortError' ||
           /timeout|timed out/i.test(error.message))
       ) {
-        fail(504, 'PROVIDER_TIMEOUT', 'Email provider timed out', [], true);
+        fail(
+          504,
+          'PROVIDER_TIMEOUT',
+          `${channel === 'phone' ? 'SMS' : 'Email'} provider timed out`,
+          [],
+          true,
+        );
       }
       fail(
         502,
-        'EMAIL_PROVIDER_ERROR',
-        'Email delivery could not be confirmed',
+        channel === 'phone' ? 'SMS_PROVIDER_ERROR' : 'EMAIL_PROVIDER_ERROR',
+        `${channel === 'phone' ? 'SMS' : 'Email'} delivery could not be confirmed`,
         [],
         true,
       );
     }
 
     return {
-      verification_channel: 'email' as const,
-      contact_masked: this.maskEmailContact(email),
+      verification_channel: channel,
+      contact_masked:
+        channel === 'phone'
+          ? maskPhone(identifier)
+          : this.maskEmailContact(identifier),
       expires_in_seconds: expiresInSeconds,
       resend_available_at: new Date(
         Date.now() + retryAfterSeconds * 1000,
@@ -1020,18 +1105,30 @@ export class AuthService {
   /**
    * EP-A03: Verifies Bangladesh mobile OTP challenge, updates application account, and mints approved session.
    */
-  async verifyPhone(body: unknown, _request?: Request) {
+  async verifyPhone(
+    body: unknown,
+    _request?: Request,
+  ): Promise<{
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: 'Bearer';
+    user?: any;
+    profile_complete?: boolean;
+    next_step?: 'app_home' | 'profile_setup';
+    verified?: boolean;
+  }> {
     void _request;
     const input = normalizeVerifyPhoneRequest(body);
     const phone = input.phone;
     const code = input.code;
 
     const [user] = await this.database.query(
-      `SELECT u.id, u.phone, u.verified_contact, p.provider_subject, p.verified_at
+      `SELECT u.id, u.phone, u.verified_contact, p.provider_subject, p.verified_at, p.is_primary
          FROM public.users u
          JOIN public.user_auth_providers p
            ON p.user_id = u.id AND p.provider = 'phone'
-        WHERE p.contact_value = $1 OR COALESCE(u.phone, '') = $1
+        WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
         LIMIT 1`,
       [phone],
     );
@@ -1065,12 +1162,38 @@ export class AuthService {
         phone,
         code,
         async () => {
-          providerConfirmAttempted = true;
-          await this.confirmGoTruePhoneUser(userId);
-
+          // Recheck and lock the pending provider mapping before calling GoTrue,
+          // keeping the recheck, GoTrue confirmation, and application updates under one serialization boundary.
           await this.database.transaction(
             userId,
             async (db) => {
+              const [pendingRow] = await db.query(
+                `SELECT u.id, p.contact_value, p.provider_subject, p.verified_at
+                   FROM public.users u
+                   JOIN public.user_auth_providers p
+                     ON p.user_id = u.id AND p.provider = 'phone'
+                  WHERE u.id = $1
+                    AND (p.contact_value IN ($2, ltrim($2, '+')) OR p.provider_subject IN ($2, ltrim($2, '+')))
+                    AND p.verified_at IS NULL
+                  LIMIT 1
+                  FOR UPDATE`,
+                [userId, phone],
+              );
+              if (!pendingRow) {
+                fail(
+                  409,
+                  'ALREADY_VERIFIED',
+                  'Contact already verified or replaced',
+                );
+              }
+
+              providerConfirmAttempted = true;
+              const isSecondary = user.is_primary === false;
+              await this.confirmGoTruePhoneUser(
+                userId,
+                isSecondary ? phone : undefined,
+              );
+
               const usersRes = await db.query(
                 `UPDATE public.users
                     SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
@@ -1084,9 +1207,12 @@ export class AuthService {
 
               const providersRes = await db.query(
                 `UPDATE public.user_auth_providers
-                    SET verified_at = now(), updated_at = now()
-                  WHERE user_id = $1 AND provider = 'phone' AND verified_at IS NULL`,
-                [userId],
+                    SET verified_at = clock_timestamp(), updated_at = now()
+                  WHERE user_id = $1
+                    AND provider = 'phone'
+                    AND (contact_value IN ($2, ltrim($2, '+')) OR provider_subject IN ($2, ltrim($2, '+')))
+                    AND verified_at IS NULL`,
+                [userId, phone],
               );
               const providersAffected =
                 Array.isArray(providersRes) &&
@@ -1115,7 +1241,7 @@ export class AuthService {
       );
     } catch (error) {
       if (!committed) {
-        if (providerConfirmAttempted) {
+        if (providerConfirmAttempted && user.is_primary !== false) {
           const synthEmail = `phone-${userId}@synthetic.mentor`;
           try {
             await this.cleanupSyntheticPhoneEmail(userId, synthEmail);
@@ -1134,6 +1260,11 @@ export class AuthService {
         `OTP consumption failed after phone verification commit for user ${userId}`,
         error instanceof Error ? error.stack : String(error),
       );
+    }
+
+    // EP-A12 secondary phone verification confirms contact without minting new session
+    if (user.is_primary === false) {
+      return { verified: true };
     }
 
     try {
@@ -1222,9 +1353,12 @@ export class AuthService {
   }
 
   /**
-   * Confirms phone number on GoTrue user record and attaches ephemeral synthetic email for session minting.
+   * Confirms phone number on GoTrue user record and assigns the verified phone number.
    */
-  private async confirmGoTruePhoneUser(userId: string): Promise<void> {
+  private async confirmGoTruePhoneUser(
+    userId: string,
+    phone?: string,
+  ): Promise<void> {
     const supabaseUrl = this.config
       .getOrThrow<string>('SUPABASE_URL')
       .replace(/\/$/, '');
@@ -1233,6 +1367,14 @@ export class AuthService {
       this.config.get<string>('SERVICE_ROLE_KEY');
 
     const synthEmail = `phone-${userId}@synthetic.mentor`;
+    const payload = phone
+      ? { phone, phone_confirm: true }
+      : {
+          phone_confirm: true,
+          email: synthEmail,
+          email_confirm: true,
+        };
+
     let response: Response;
     try {
       response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
@@ -1242,11 +1384,7 @@ export class AuthService {
           Authorization: `Bearer ${serviceRoleKey || ''}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          phone_confirm: true,
-          email: synthEmail,
-          email_confirm: true,
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       });
     } catch (error) {
@@ -1320,7 +1458,25 @@ export class AuthService {
     const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
 
     const synthEmail = `phone-${userId}@synthetic.mentor`;
-    const targetEmail = channel === 'phone' ? synthEmail : contact;
+    let targetEmail = contact;
+    let hasRealEmail = false;
+
+    if (channel === 'phone') {
+      const [authUser] = await this.database.query(
+        'SELECT email FROM auth.users WHERE id = $1 LIMIT 1',
+        [userId],
+      );
+      if (
+        authUser?.email &&
+        !authUser.email.endsWith('@synthetic.mentor') &&
+        !authUser.email.endsWith('@phone.invalid')
+      ) {
+        hasRealEmail = true;
+        targetEmail = authUser.email;
+      } else {
+        targetEmail = synthEmail;
+      }
+    }
 
     try {
       let linkRes: Response;
@@ -1360,6 +1516,11 @@ export class AuthService {
         fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
       }
 
+      const verificationType =
+        linkData?.verification_type ||
+        linkData?.properties?.verification_type ||
+        'magiclink';
+
       let verifyRes: Response;
       try {
         verifyRes = await fetch(`${supabaseUrl}/auth/v1/verify`, {
@@ -1370,7 +1531,7 @@ export class AuthService {
           },
           body: JSON.stringify({
             token_hash: tokenHash,
-            type: 'magiclink',
+            type: verificationType,
           }),
           signal: AbortSignal.timeout(10000),
         });
@@ -1412,7 +1573,7 @@ export class AuthService {
       const result = await this.database.transaction(
         userId,
         async (db) => {
-          if (channel === 'phone') {
+          if (channel === 'phone' && !hasRealEmail) {
             await this.cleanupSyntheticPhoneEmail(userId, synthEmail, db);
           }
           await this.approvals.approve(
@@ -1424,6 +1585,8 @@ export class AuthService {
           return this.meInTransaction(db, userId);
         },
         false,
+        false,
+        channel !== 'phone',
       );
 
       return {
@@ -1438,7 +1601,7 @@ export class AuthService {
           : ('profile_setup' as const),
       };
     } catch (mintError) {
-      if (channel === 'phone') {
+      if (channel === 'phone' && !hasRealEmail) {
         try {
           await this.cleanupSyntheticPhoneEmail(userId, synthEmail);
         } catch (cleanupErr) {
@@ -1569,18 +1732,9 @@ export class AuthService {
 
   async forgotPassword(body: unknown, request?: Request) {
     const input = normalizeForgotPasswordRequest(body);
-    if (input.channel !== 'email') {
-      fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        'Phone password recovery is temporarily unavailable',
-        [],
-        true,
-        5,
-      );
-    }
+    const channel = input.channel;
 
-    if (!this.abuse.isReady() || !this.otpStore || !this.emailProvider) {
+    if (!this.abuse.isReady() || !this.otpStore) {
       fail(
         503,
         'SERVICE_UNAVAILABLE',
@@ -1591,18 +1745,49 @@ export class AuthService {
       );
     }
 
-    this.emailProvider.ready();
+    if (channel === 'phone') {
+      if (!this.smsProvider) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Phone password recovery is temporarily unavailable',
+          [],
+          true,
+          5,
+        );
+      }
+      this.smsProvider.ready();
+    } else {
+      if (!this.emailProvider) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Password recovery is temporarily unavailable',
+          [],
+          true,
+          5,
+        );
+      }
+      this.emailProvider.ready();
+    }
 
     const ip = request ? trustedClientIp(request) : '127.0.0.1';
     await this.abuse.reserveSend(input, ip);
 
     const rows = await this.database.query(
-      `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject, p.verified_at
-         FROM public.users u
-         JOIN public.user_auth_providers p
-           ON p.user_id = u.id AND p.provider = 'email'
-        WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
-        LIMIT 1`,
+      channel === 'phone'
+        ? `SELECT u.id, u.phone, u.status, u.verified_contact, p.provider_subject, p.verified_at
+             FROM public.users u
+             JOIN public.user_auth_providers p
+               ON p.user_id = u.id AND p.provider = 'phone'
+            WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
+            LIMIT 1`
+        : `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject, p.verified_at
+             FROM public.users u
+             JOIN public.user_auth_providers p
+               ON p.user_id = u.id AND p.provider = 'email'
+            WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
+            LIMIT 1`,
       [input.identifier],
     );
 
@@ -1613,14 +1798,22 @@ export class AuthService {
       user.verified_contact === true &&
       user.verified_at !== null
     ) {
-      void this.emailProvider
-        .sendPasswordResetChallenge(input.identifier, user.id)
-        .catch((error: unknown) => {
-          this.logger.error(
-            `Failed to dispatch password reset challenge for user ${user.id}`,
-            error instanceof Error ? error.stack : String(error),
-          );
-        });
+      const challengePromise =
+        channel === 'phone'
+          ? this.smsProvider!.sendPasswordResetChallenge(
+              input.identifier,
+              user.id,
+            )
+          : this.emailProvider!.sendPasswordResetChallenge(
+              input.identifier,
+              user.id,
+            );
+      void challengePromise.catch((error: unknown) => {
+        this.logger.error(
+          `Failed to dispatch password reset challenge for user ${user.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
     }
 
     return {
@@ -1634,15 +1827,20 @@ export class AuthService {
       this.config.get<number>('AUTH_PASSWORD_MIN_LENGTH') ?? 8,
     );
     const input = normalizeResetPasswordRequest(body, configuredMinimum);
-    if (input.channel !== 'email') {
-      fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        'Phone password recovery is temporarily unavailable',
-        [],
-        true,
-        5,
-      );
+    const channel = input.channel;
+
+    if (channel === 'phone') {
+      if (!this.smsProvider) {
+        fail(
+          503,
+          'SERVICE_UNAVAILABLE',
+          'Phone password recovery is temporarily unavailable',
+          [],
+          true,
+          5,
+        );
+      }
+      this.smsProvider.ready();
     }
 
     if (!this.otpStore) {
@@ -1657,12 +1855,19 @@ export class AuthService {
     }
 
     const rows = await this.database.query(
-      `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject
-         FROM public.users u
-         JOIN public.user_auth_providers p
-           ON p.user_id = u.id AND p.provider = 'email'
-        WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
-        LIMIT 1`,
+      channel === 'phone'
+        ? `SELECT u.id, u.phone, u.status, u.verified_contact, p.provider_subject
+             FROM public.users u
+             JOIN public.user_auth_providers p
+               ON p.user_id = u.id AND p.provider = 'phone'
+            WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
+            LIMIT 1`
+        : `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject
+             FROM public.users u
+             JOIN public.user_auth_providers p
+               ON p.user_id = u.id AND p.provider = 'email'
+            WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
+            LIMIT 1`,
       [input.identifier],
     );
 

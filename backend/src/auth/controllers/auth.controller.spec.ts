@@ -236,4 +236,46 @@ describe('C05 OAuth session response', () => {
       Reflect.getMetadata('access-policy', AuthController.prototype.addContact),
     ).toEqual({ allowUnverifiedContact: true });
   });
+
+  it('delegates verifyOtp to authService.verifyOtp with public policy', async () => {
+    const mockSession = {
+      access_token: 'otp-token',
+      refresh_token: 'refresh',
+      user: { id: 'u1', verified_contact: true },
+    };
+    const verifyOtp = vi.fn().mockResolvedValue(mockSession);
+    const controller = new AuthController(
+      { verifyOtp } as unknown as AuthService,
+      {} as never,
+    );
+    const req = {} as any;
+    const body = { channel: 'phone', phone: '+8801712345678', code: '123456' };
+
+    const result = await controller.verifyOtp(req, body);
+    expect(result).toEqual(mockSession);
+    expect(verifyOtp).toHaveBeenCalledWith(body, req);
+    expect(
+      Reflect.getMetadata('access-policy', AuthController.prototype.verifyOtp),
+    ).toEqual({ public: true });
+  });
+
+  it('delegates resendOtp to registration.resend with public policy', async () => {
+    const mockPending = {
+      verification_channel: 'phone',
+      contact_masked: '+8801****5678',
+      expires_in_seconds: 600,
+      resend_available_at: '2026-11-10T00:01:00.000Z',
+    };
+    const resend = vi.fn().mockResolvedValue(mockPending);
+    const controller = new AuthController({} as never, { resend } as any);
+    const req = {} as any;
+    const body = { channel: 'phone', contact: '+8801712345678' };
+
+    const result = await controller.resendOtp(req, body);
+    expect(result).toEqual(mockPending);
+    expect(resend).toHaveBeenCalledWith(body, req);
+    expect(
+      Reflect.getMetadata('access-policy', AuthController.prototype.resendOtp),
+    ).toEqual({ public: true });
+  });
 });

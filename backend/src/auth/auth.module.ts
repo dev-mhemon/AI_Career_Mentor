@@ -12,6 +12,7 @@ import { ProfileController } from '../profile/profile.controller.js';
 import { ProfileService } from '../profile/profile.service.js';
 import { AuthAbuseControlModule } from './abuse-control/abuse-control.module.js';
 import { EmailRegistrationProvider } from './services/email-registration.provider.js';
+import { TextBeeSmsProvider } from './services/textbee-sms.provider.js';
 import { EmailRegistrationService } from './services/email-registration.service.js';
 import { SessionApprovalService } from './services/session-approval.service.js';
 import { OtpSecretStore } from './services/otp-secret-store.service.js';
@@ -33,6 +34,16 @@ import { OtpSecretStore } from './services/otp-secret-store.service.js';
         database: DatabaseService,
         otpStore: OtpSecretStore,
       ) => new EmailRegistrationProvider(config, database, otpStore),
+      inject: [ConfigService, DatabaseService, OtpSecretStore],
+    },
+    {
+      provide: TextBeeSmsProvider,
+      /** Instantiates the shared TextBeeSmsProvider configured with runtime transport from ConfigService. */
+      useFactory: (
+        config: ConfigService,
+        database: DatabaseService,
+        otpStore: OtpSecretStore,
+      ) => new TextBeeSmsProvider(config, database, otpStore),
       inject: [ConfigService, DatabaseService, OtpSecretStore],
     },
     EmailRegistrationService,

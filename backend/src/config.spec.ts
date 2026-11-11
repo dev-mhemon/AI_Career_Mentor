@@ -90,6 +90,7 @@ describe('Public runtime key boundary', () => {
       'AUTH_EMAIL_TRANSPORT_URL',
       'EMAIL_TRANSPORT_URL',
       'MAILPIT_URL',
+      'TEXTBEE_BASE_URL',
     ];
 
     for (const key of keys) {
@@ -139,6 +140,22 @@ describe('Public runtime key boundary', () => {
         }),
       ).not.toThrow();
     }
+  });
+  it('validates optional TEXTBEE_TIMEOUT_MS as a positive integer', () => {
+    for (const invalid of ['0', '-5', 'abc', '10.5']) {
+      expect(() =>
+        validateConfiguration({
+          ...base,
+          TEXTBEE_TIMEOUT_MS: invalid,
+        }),
+      ).toThrow('Invalid TEXTBEE_TIMEOUT_MS');
+    }
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TEXTBEE_TIMEOUT_MS: '5000',
+      }),
+    ).not.toThrow();
   });
   it('requires AUTH_EMAIL_FROM when RESEND_API_KEY is configured', () => {
     expect(() =>

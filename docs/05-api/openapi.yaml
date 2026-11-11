@@ -3,8 +3,8 @@ info:
   title: AI Career Mentor - Authentication, Password Recovery, Phone, Account Deletion, Retention Purge & Outbox Contract (M03-03)
   version: 0.1.0
   description: >-
-    Synchronized through M03-03, 2026-11-10. Derived from adopted C05 v1.5.1. Source baseline:
-    ed6bf9f2296fe7c34873f893298df8f5ed3236f0. Canonical auth operations including email registration (EP-A01),
+    Synchronized through M03-05, 2026-11-11. Derived from adopted C05 v1.5.1. Source baseline:
+    eda14c57c1fae7f65a69802b05a1c4472321c56c. Canonical auth operations including email and phone registration (EP-A01),
     email and phone verification (EP-A02/EP-A03), verification resend (EP-A04), login (EP-A05), logout (EP-A06),
     token refresh (EP-A07), password recovery (EP-A08/EP-A09), OAuth bootstrap (EP-A10), social linking (EP-A11),
     add contact (EP-A12), me (EP-A13), account deletion re-authentication, atomic cascade execution, session
@@ -53,10 +53,10 @@ paths:
         - Email and session
       summary: Register by email or Bangladesh phone
       description: >-
-        C05 EP-A01. Implemented for email registration with Option 2B GoTrue Admin pending identity creation,
-        atomic unverified public.users/public.user_auth_providers persistence, and S1 Redis HMAC-SHA256 OTP
-        challenge dispatch. Phone registration shares the contract and fails closed with retryable 503
-        SERVICE_UNAVAILABLE while the SMS provider adapter is disabled. No session is issued until verification.
+        C05 EP-A01. Implemented for email and Bangladesh phone registration (TextBeeSmsProvider) with Option 2B GoTrue Admin
+        pending identity creation, atomic unverified public.users/public.user_auth_providers persistence, and S1 Redis
+        HMAC-SHA256 OTP challenge dispatch. Delivers SMS via TextBee REST API when configured, falls back to Mailpit in
+        non-production, or fails closed with retryable 503 SERVICE_UNAVAILABLE when unconfigured. No session is issued until verification.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
       x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
@@ -183,7 +183,7 @@ paths:
         - Email and session
       summary: Verify email code and establish session
       description: >-
-        C05 EP-A02. Implemented for both public signup verification (EP-A01) and secondary email contact
+        C05 EP-A02. Implemented for public signup verification (EP-A01 email) and secondary contact
         verification initiated via EP-A12 (M02-04). Consumes a six-digit S1 Redis OTP challenge once, confirms
         the GoTrue user, atomically marks public.users/public.user_auth_providers verified, ensures empty
         profile/preferences rows exist, and mints an approved session.
@@ -337,8 +337,10 @@ paths:
         - Email and session
       summary: Verify Bangladesh mobile OTP and establish session
       description: >-
-        SPECIFIED; phone SMS provider gated in Phase 1 (EP-A03 returns 503 while SMS adapter disabled).
-        Submits six-digit SMS OTP challenge; on success establishes authenticated session and returns AuthSessionDTO.
+        C05 EP-A03. Implemented for public signup phone verification (EP-A01 phone) and secondary phone contact
+        verification initiated via EP-A12 (M02-04). Consumes a six-digit S1 Redis OTP challenge once via TextBee SMS delivery,
+        confirms the GoTrue user, atomically marks public.users/public.user_auth_providers verified, ensures empty
+        profile/preferences rows exist, and mints an approved session.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
       x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
@@ -491,10 +493,10 @@ paths:
         - Email and session
       summary: Resend email or phone verification
       description: >-
-        C05 EP-A04. Implemented for both unverified signup email identities and unverified OAuth users who
-        added a secondary email contact via EP-A12 (M02-04). Returns uniform anti-enumeration metadata for
-        known and unknown contacts; phone channel fails closed with retryable 503 SERVICE_UNAVAILABLE while
-        SMS provider is disabled.
+        C05 EP-A04. Implemented for both unverified signup identities (email/phone) and unverified OAuth users who
+        added a secondary contact via EP-A12 (M02-04). Returns uniform anti-enumeration metadata for
+        known and unknown contacts; dispatches SMS via TextBee/Mailpit fallback, and fails closed with retryable 503
+        SERVICE_UNAVAILABLE when SMS provider is unconfigured.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
       x-implementation-status: implemented
       x-authorization-profile: AZ-PUB
@@ -1481,7 +1483,7 @@ paths:
       description: >-
         C05 EP-A12. Authenticated user adds an additional email or phone contact and initiates verification challenge.
         Contact must not belong to another verified account. Completion uses EP-A02 or EP-A03.
-        Phone contact verification returns 503 SERVICE_UNAVAILABLE while SMS provider is disabled.
+        Phone contact verification dispatches SMS OTP via TextBee/Mailpit fallback, and returns 503 SERVICE_UNAVAILABLE when unconfigured.
       x-source: API-Specification.md sections 13, 14.1, 15.1-2, 16, 17.1; accepted R18/R24/R31
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER

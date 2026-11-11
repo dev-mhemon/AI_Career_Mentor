@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
@@ -18,6 +19,75 @@ const root = path.resolve(
 const local = path.resolve(
   process.env.MENTOR_LOCAL_DIR || path.join(root, ".local/foundation"),
 );
+export const parseEnvContent = (content) => {
+  if (!content || typeof content !== "string") return {};
+  if (typeof parseEnv === "function") {
+    return parseEnv(content);
+  }
+  const parsed = {};
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const idx = trimmed.indexOf("=");
+    const key = trimmed.slice(0, idx).trim();
+    let val = trimmed.slice(idx + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      const q = val[0];
+      val = val.slice(1, -1);
+      if (q === '"') {
+        val = val
+          .replace(/\\n/g, "\n")
+          .replace(/\\r/g, "\r")
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, "\\");
+      }
+    } else {
+      const commentIdx = val.indexOf("#");
+      if (commentIdx !== -1) val = val.slice(0, commentIdx).trim();
+    }
+    parsed[key] = val;
+  }
+  return parsed;
+};
+
+export const parseEnvFile = (filePath) => {
+  if (!existsSync(filePath)) return {};
+  return parseEnvContent(readFileSync(filePath, "utf8"));
+};
+
+export function buildBackendLaunchEnv(
+  baseConfig = {},
+  dotEnvSource = "",
+  procEnv = process.env,
+  localDir = local,
+) {
+  const backendEnv =
+    typeof dotEnvSource === "string"
+      ? parseEnvContent(dotEnvSource)
+      : (dotEnvSource || {});
+
+  const textBeeOverlay = Object.fromEntries(
+    [
+      "TEXTBEE_API_KEY",
+      "TEXTBEE_DEVICE_ID",
+      "TEXTBEE_BASE_URL",
+      "TEXTBEE_TIMEOUT_MS",
+    ]
+      .map((k) => [k, procEnv[k] || backendEnv[k] || ""])
+      .filter(([, v]) => Boolean(v)),
+  );
+
+  return {
+    ...procEnv,
+    ...backendEnv,
+    ...baseConfig,
+    ...textBeeOverlay,
+    ...(localDir ? { MENTOR_LOCAL_DIR: localDir } : {}),
+  };
+}
 const cli = process.env.SUPABASE_BIN || "supabase";
 const env = {
   ...process.env,
@@ -43,7 +113,14 @@ const run = (args, privateLog) => {
     );
   return r.stdout;
 };
-mkdirSync(local, { recursive: true, mode: 0o700 });
+
+const isMain =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]).toLowerCase() ===
+    fileURLToPath(import.meta.url).toLowerCase();
+
+if (isMain) {
+  mkdirSync(local, { recursive: true, mode: 0o700 });
 chmodSync(local, 0o700);
 if (local === root || local.includes("reviewed-baseline"))
   throw Error("Use a dedicated disposable directory");
@@ -120,6 +197,7 @@ if (command === "start") {
     mode: 0o600,
   });
   const db = new URL(status.DB_URL);
+  const backendEnv = parseEnvFile(path.join(root, "backend/.env"));
   const backend = {
     PORT: "3200",
     SUPABASE_URL: status.API_URL,
@@ -132,17 +210,21 @@ if (command === "start") {
     DB_NAME: db.pathname.slice(1),
     SUPABASE_SERVICE_ROLE_KEY: status.SERVICE_ROLE_KEY,
     AUTH_REDIS_URL:
-      process.env.AUTH_REDIS_URL || "redis://127.0.0.1:56379",
+      process.env.AUTH_REDIS_URL || backendEnv.AUTH_REDIS_URL || "redis://127.0.0.1:56379",
     AUTH_HMAC_SECRET:
-      process.env.AUTH_HMAC_SECRET || "01234567890123456789012345678901",
+      process.env.AUTH_HMAC_SECRET || backendEnv.AUTH_HMAC_SECRET || "01234567890123456789012345678901",
     AUTH_OTP_HMAC_SECRET:
-      process.env.AUTH_OTP_HMAC_SECRET || "01234567890123456789012345678901",
+      process.env.AUTH_OTP_HMAC_SECRET || backendEnv.AUTH_OTP_HMAC_SECRET || "01234567890123456789012345678901",
     MAILPIT_URL:
       process.env.MAILPIT_URL || status.MAILPIT_URL || status.INBUCKET_URL || "http://127.0.0.1:56324",
     PROVIDER_CLEANUP_ENCRYPTION_KEY:
-      process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY || "01234567890123456789012345678901",
+      process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY || backendEnv.PROVIDER_CLEANUP_ENCRYPTION_KEY || "01234567890123456789012345678901",
     DELETION_RECEIPT_SECRET:
-      process.env.DELETION_RECEIPT_SECRET || "01234567890123456789012345678901",
+      process.env.DELETION_RECEIPT_SECRET || backendEnv.DELETION_RECEIPT_SECRET || "01234567890123456789012345678901",
+    TEXTBEE_API_KEY: process.env.TEXTBEE_API_KEY || backendEnv.TEXTBEE_API_KEY || "",
+    TEXTBEE_DEVICE_ID: process.env.TEXTBEE_DEVICE_ID || backendEnv.TEXTBEE_DEVICE_ID || "",
+    TEXTBEE_BASE_URL: process.env.TEXTBEE_BASE_URL || backendEnv.TEXTBEE_BASE_URL || "https://api.textbee.dev/api/v1",
+    TEXTBEE_TIMEOUT_MS: process.env.TEXTBEE_TIMEOUT_MS || backendEnv.TEXTBEE_TIMEOUT_MS || "10000",
   };
   const frontend = {
     NEXT_PUBLIC_SUPABASE_URL: status.API_URL,
@@ -203,10 +285,21 @@ else {
     ],
   };
   if (!commands[command]) throw Error("Unknown command");
+  const backendEnv = !isFrontend
+    ? parseEnvFile(path.join(root, "backend/.env"))
+    : {};
+  const launchEnv = !isFrontend
+    ? buildBackendLaunchEnv(config, backendEnv, process.env, local)
+    : {
+        ...process.env,
+        ...config,
+        MENTOR_LOCAL_DIR: local,
+      };
   const r = spawnSync("npm", commands[command], {
     cwd: path.join(root, isFrontend ? "frontend" : "backend"),
-    env: { ...process.env, ...config, MENTOR_LOCAL_DIR: local },
+    env: launchEnv,
     stdio: "inherit",
   });
   process.exit(r.status ?? 1);
+}
 }

@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { EntityManager } from 'typeorm';
-import { type INestApplication } from '@nestjs/common';
+import { type INestApplication, HttpException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { configureHttp, fail } from '../../common/http.js';
@@ -14,6 +14,9 @@ import { AuthService } from './auth.service.js';
 import { EmailRegistrationProvider } from './email-registration.provider.js';
 import { EmailRegistrationService } from './email-registration.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
+import { TextBeeSmsProvider } from './textbee-sms.provider.js';
+// @ts-expect-error - script utility import outside tsconfig rootDir
+import { buildBackendLaunchEnv } from '../../../../scripts/foundation/local.mjs';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -2863,6 +2866,532 @@ describe('AuthService session approval boundary', () => {
       });
 
       expect(result.expires_in_seconds).toBe(1);
+    });
+  });
+
+  describe('Phone Auth Lifecycle & verifyOtp (EP-A02, EP-A03, EP-A12, EP-A08)', () => {
+    it('verifyOtp delegates to verifyPhone when channel is phone', async () => {
+      const service = new AuthService(
+        {} as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+      const spy = vi.spyOn(service, 'verifyPhone').mockResolvedValueOnce({
+        access_token: 'phone_token',
+      } as any);
+
+      const result = await service.verifyOtp({
+        channel: 'phone',
+        phone: '+8801712345678',
+        code: '123456',
+      });
+
+      expect(spy).toHaveBeenCalledWith(
+        { phone: '+8801712345678', code: '123456' },
+        undefined,
+      );
+      expect(result).toEqual({ access_token: 'phone_token' });
+    });
+
+    it('verifyOtp delegates to verifyEmail when channel is email', async () => {
+      const service = new AuthService(
+        {} as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+      const spy = vi.spyOn(service, 'verifyEmail').mockResolvedValueOnce({
+        access_token: 'email_token',
+      } as any);
+
+      const result = await service.verifyOtp({
+        channel: 'email',
+        email: 'person@example.com',
+        code: '654321',
+      });
+
+      expect(spy).toHaveBeenCalledWith(
+        { email: 'person@example.com', code: '654321' },
+        undefined,
+      );
+      expect(result).toEqual({ access_token: 'email_token' });
+    });
+
+    it('addContact dispatches SMS challenge via smsProvider for phone channel', async () => {
+      const testIdentity = {
+        sub: '11111111-1111-4111-8111-111111111111',
+        sessionId: '11111111-1111-4111-8111-111111111112',
+      };
+      const smsProvider = {
+        ready: vi.fn(),
+        sendChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+        }),
+      } as unknown as TextBeeSmsProvider;
+
+      const query = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT verified_contact'))
+          return [{ verified_contact: false }];
+        if (sql.includes('SELECT id FROM public.users')) return [];
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+          return [];
+        if (sql.includes('SELECT contact_value, verified_at')) return [];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      vi.spyOn(service as any, 'authUser').mockResolvedValueOnce({
+        id: testIdentity.sub,
+      });
+
+      const result = await service.addContact(testIdentity, 'Bearer token', {
+        channel: 'phone',
+        contact: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendChallenge).toHaveBeenCalledWith({
+        id: testIdentity.sub,
+        phone: '+8801712345678',
+      });
+      expect(result.verification_channel).toBe('phone');
+      expect(result.contact_masked).toBe('+8801****5678');
+      expect(result.expires_in_seconds).toBe(600);
+    });
+
+    it('forgotPassword dispatches password reset challenge via smsProvider for phone channel', async () => {
+      const smsProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi.fn().mockResolvedValue({
+          expiresInSeconds: 600,
+        }),
+      } as unknown as TextBeeSmsProvider;
+
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            phone: '+8801712345678',
+            status: 'active',
+            verified_contact: true,
+            provider_subject: '11111111-1111-4111-8111-111111111111',
+            verified_at: new Date().toISOString(),
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      const result = await service.forgotPassword({
+        identifier: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
+        '+8801712345678',
+        '11111111-1111-4111-8111-111111111111',
+      );
+      expect(result).toEqual({
+        message: 'If the account exists, a code was sent.',
+      });
+    });
+
+    it('forgotPassword returns uniform message for unknown phone contact without dispatching challenge', async () => {
+      const smsProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi.fn(),
+      } as unknown as TextBeeSmsProvider;
+
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([]),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      const result = await service.forgotPassword({
+        identifier: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendPasswordResetChallenge).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        message: 'If the account exists, a code was sent.',
+      });
+    });
+
+    it('forgotPassword returns uniform message even if phone challenge background dispatch rejects', async () => {
+      const smsProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('SMS Gateway failure')),
+      } as unknown as TextBeeSmsProvider;
+
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            phone: '+8801712345678',
+            status: 'active',
+            verified_contact: true,
+            provider_subject: '11111111-1111-4111-8111-111111111111',
+            verified_at: new Date().toISOString(),
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const abuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        abuse,
+        {} as SessionApprovalService,
+        {} as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      const result = await service.forgotPassword({
+        identifier: '+8801712345678',
+      });
+
+      expect(smsProvider.ready).toHaveBeenCalled();
+      expect(smsProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
+        '+8801712345678',
+        '11111111-1111-4111-8111-111111111111',
+      );
+      expect(result).toEqual({
+        message: 'If the account exists, a code was sent.',
+      });
+    });
+
+    it('confirmGoTruePhoneUser passes normalized phone and phone_confirm: true to GoTrue Admin API', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ id: 'user-1' }), { status: 200 }),
+        );
+
+      const service = new AuthService(
+        {} as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      await (service as any).confirmGoTruePhoneUser('user-1', '+8801712345678');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/users/user-1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            phone: '+8801712345678',
+            phone_confirm: true,
+          }),
+        }),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('verifyPhone prevents race condition and aborts with 409 when pending provider mapping is replaced concurrently', async () => {
+      const database = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('SELECT u.id, u.phone, u.verified_contact')) {
+            return [
+              {
+                id: 'user-race-1',
+                phone: '+8801712345678',
+                verified_contact: false,
+                provider_subject: '+8801712345678',
+                verified_at: null,
+                is_primary: true,
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi.fn().mockImplementation(async (sql: string) => {
+              if (sql.includes('p.contact_value')) {
+                // Pending mapping was replaced concurrently by another phone B
+                return [];
+              }
+              return [];
+            }),
+          }),
+        ),
+      } as unknown as DatabaseService;
+
+      const otpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_id, _contact, _code, cb) => {
+          await cb();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+        otpStore,
+      );
+
+      await expect(
+        service.verifyPhone({ phone: '+8801712345678', code: '123456' }),
+      ).rejects.toThrow(HttpException);
+    });
+
+    it('verifyPhone for EP-A12 secondary phone returns verified: true without minting session or touching GoTrue email', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ id: 'user-sec-1' }), { status: 200 }),
+        );
+
+      const database = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('SELECT u.id, u.phone, u.verified_contact')) {
+            return [
+              {
+                id: 'user-sec-1',
+                phone: '+8801712345678',
+                verified_contact: false,
+                provider_subject: '+8801712345678',
+                verified_at: null,
+                is_primary: false, // secondary contact
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi.fn().mockImplementation(async (sql: string) => {
+              if (sql.includes('p.contact_value')) {
+                return [{ id: 'prov-1', verified_at: null }];
+              }
+              if (sql.includes('UPDATE public.users')) {
+                return [[], 1];
+              }
+              if (sql.includes('UPDATE public.user_auth_providers')) {
+                return [[], 1];
+              }
+              return [];
+            }),
+          }),
+        ),
+      } as unknown as DatabaseService;
+
+      const otpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_id, _contact, _code, cb) => {
+          await cb();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+        otpStore,
+      );
+
+      const result = await service.verifyPhone({
+        phone: '+8801712345678',
+        code: '123456',
+      });
+
+      expect(result).toEqual({ verified: true });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/users/user-sec-1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            phone: '+8801712345678',
+            phone_confirm: true,
+          }),
+        }),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('mintAndApproveSession preserves existing GoTrue email for phone user without synthetic email overwrite', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (url: any) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/admin/generate_link')) {
+            return new Response(
+              JSON.stringify({ hashed_token: 'valid-hash' }),
+              { status: 200 },
+            );
+          }
+          if (urlStr.includes('/auth/v1/verify')) {
+            return new Response(
+              JSON.stringify({
+                access_token: accessToken(),
+                refresh_token: 'refresh-1',
+                expires_in: 3600,
+                token_type: 'bearer',
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response('{}', { status: 200 });
+        });
+
+      const database = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('FROM auth.users WHERE id = $1')) {
+            return [
+              {
+                email: 'real-user@example.com',
+                email_confirmed_at: '2026-01-01T00:00:00Z',
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi.fn().mockResolvedValue([]),
+          }),
+        ),
+      } as unknown as DatabaseService;
+
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        approvals,
+      );
+
+      vi.spyOn(service as any, 'meInTransaction').mockResolvedValueOnce({
+        user: { id: userId },
+        profile_complete: true,
+      });
+
+      const session = await (service as any).mintAndApproveSession(
+        userId,
+        '+8801712345678',
+        'phone',
+      );
+
+      expect(session.access_token).toBeDefined();
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/generate_link',
+        expect.objectContaining({
+          body: JSON.stringify({
+            type: 'magiclink',
+            email: 'real-user@example.com',
+          }),
+        }),
+      );
+      expect(fetchSpy).not.toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/users/' + userId,
+        expect.anything(),
+      );
+
+      fetchSpy.mockRestore();
+    });
+
+    it('validates local.mjs buildBackendLaunchEnv dotenv parsing and TextBee credentials overlay logic', () => {
+      const sampleEnv = `
+        TEXTBEE_API_KEY="secret-api-key"
+        TEXTBEE_DEVICE_ID='device-123'
+        TEXTBEE_BASE_URL=https://custom.api.textbee.dev # inline comment
+        UNQUOTED_VAL=regular-value
+      `;
+      const baseConfig = {
+        DB_HOST: '127.0.0.1',
+        DB_PORT: '5432',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
+        AUTH_REDIS_URL: 'redis://127.0.0.1:56379',
+        MAILPIT_URL: 'http://127.0.0.1:56324',
+        TEXTBEE_API_KEY: '',
+        TEXTBEE_DEVICE_ID: '',
+        TEXTBEE_BASE_URL: 'https://api.textbee.dev/api/v1',
+        TEXTBEE_TIMEOUT_MS: '10000',
+      };
+      const procEnv = {
+        TEXTBEE_DEVICE_ID: 'proc-device-override',
+      };
+
+      const launchEnv = buildBackendLaunchEnv(
+        baseConfig,
+        sampleEnv,
+        procEnv,
+        '/test/local',
+      );
+
+      // Verify dotenv parsing stripped quotes and comments
+      expect(launchEnv.UNQUOTED_VAL).toBe('regular-value');
+      // Verify process.env overrides dotenv and base config for TextBee keys
+      expect(launchEnv.TEXTBEE_DEVICE_ID).toBe('proc-device-override');
+      expect(launchEnv.TEXTBEE_API_KEY).toBe('secret-api-key');
+      expect(launchEnv.TEXTBEE_BASE_URL).toBe('https://custom.api.textbee.dev');
+      expect(launchEnv.TEXTBEE_TIMEOUT_MS).toBe('10000');
+      // Verify local connection settings are preserved from baseConfig
+      expect(launchEnv.DB_HOST).toBe('127.0.0.1');
+      expect(launchEnv.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
+      expect(launchEnv.MAILPIT_URL).toBe('http://127.0.0.1:56324');
+      expect(launchEnv.MENTOR_LOCAL_DIR).toBe('/test/local');
     });
   });
 });

@@ -20,6 +20,13 @@ export class AuthController {
   resendVerification(@Req() req: any, @Body() body: unknown) {
     return this.registration.resend(body, req);
   }
+  /** EP-A04 alias: Resend email or phone OTP verification challenge. */
+  @Post('resend-otp')
+  @HttpCode(200)
+  @Policy({ public: true })
+  resendOtp(@Req() req: any, @Body() body: unknown) {
+    return this.registration.resend(body, req);
+  }
   @Post('verify-email')
   @HttpCode(200)
   @Policy({ public: true })
@@ -32,6 +39,13 @@ export class AuthController {
   @Policy({ public: true })
   verifyPhone(@Req() req: any, @Body() body: unknown) {
     return this.auth.verifyPhone(body, req);
+  }
+  /** EP-A02: Verifies email or phone OTP challenge and mints authenticated session. */
+  @Post('verify-otp')
+  @HttpCode(200)
+  @Policy({ public: true })
+  verifyOtp(@Req() req: any, @Body() body: unknown) {
+    return this.auth.verifyOtp(body, req);
   }
   @Post('login')
   @HttpCode(200)
