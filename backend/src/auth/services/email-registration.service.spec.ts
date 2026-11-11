@@ -61,6 +61,7 @@ function harness() {
     findByPhone: vi.fn().mockResolvedValue(null),
     createPending: vi.fn().mockResolvedValue(phoneIdentity),
     sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
+    checkDeliveryHealth: vi.fn().mockResolvedValue(undefined),
   };
   const abuse = {
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
@@ -733,12 +734,41 @@ describe('A01/A04 email service with synthetic provider', () => {
       expect(smsProvider.sendChallenge).not.toHaveBeenCalled();
     });
 
-    it('translates smsProvider delivery failure to 502 retryable error on phone resend', async () => {
+    it('translates smsProvider delivery failure to 502 retryable error on phone resend for pending contact', async () => {
       const { service, smsProvider } = harness();
       smsProvider.findByPhone.mockResolvedValueOnce(phoneIdentity);
       smsProvider.sendChallenge.mockRejectedValueOnce(
         new Error('SMS Gateway failure'),
       );
+      await rejection(
+        () => service.resend({ channel: 'phone', contact: phone }, peer),
+        502,
+        'SMS_PROVIDER_ERROR',
+      );
+    });
+
+    it('translates smsProvider delivery outage to 502 error on phone resend for unknown contact (failure parity)', async () => {
+      const { service, smsProvider } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce(null);
+      smsProvider.checkDeliveryHealth = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('SMS Gateway outage'));
+      await rejection(
+        () => service.resend({ channel: 'phone', contact: phone }, peer),
+        502,
+        'SMS_PROVIDER_ERROR',
+      );
+    });
+
+    it('translates smsProvider delivery outage to 502 error on phone resend for verified contact (failure parity)', async () => {
+      const { service, smsProvider } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce({
+        ...phoneIdentity,
+        verified: true,
+      });
+      smsProvider.checkDeliveryHealth = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('SMS Gateway outage'));
       await rejection(
         () => service.resend({ channel: 'phone', contact: phone }, peer),
         502,

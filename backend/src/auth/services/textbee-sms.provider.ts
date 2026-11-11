@@ -83,6 +83,31 @@ export class TextBeeSmsProvider {
     }
   }
 
+  /**
+   * Validates SMS delivery readiness and channel reachability without dispatching unsolicited messages.
+   */
+  async checkDeliveryHealth(_signal?: AbortSignal): Promise<void> {
+    void _signal;
+    this.ready();
+    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+    if (apiKey) return;
+    const isProd =
+      (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
+      'production';
+    if (!isProd) {
+      const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
+      if (mailpit) return;
+    }
+    fail(
+      503,
+      'SERVICE_UNAVAILABLE',
+      'SMS delivery is unavailable',
+      [],
+      true,
+      5,
+    );
+  }
+
   private getTimeoutMs(): number {
     const rawTimeout = Number(this.config?.get('TEXTBEE_TIMEOUT_MS'));
     return Number.isInteger(rawTimeout) && rawTimeout > 0 ? rawTimeout : 10000;

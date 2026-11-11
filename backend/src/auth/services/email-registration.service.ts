@@ -294,6 +294,15 @@ export class EmailRegistrationService {
         !identity.id ||
         !identity.subject
       ) {
+        if (typeof this.smsProvider.checkDeliveryHealth === 'function') {
+          try {
+            await this.providerCall((signal) =>
+              this.smsProvider!.checkDeliveryHealth!(signal),
+            );
+          } catch (error) {
+            return this.providerError(error, 'phone');
+          }
+        }
         return metadata;
       }
       try {

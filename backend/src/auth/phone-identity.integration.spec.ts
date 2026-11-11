@@ -601,15 +601,25 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
     });
 
     it('returns 503 SERVICE_UNAVAILABLE when OtpSecretStore is missing or unconfigured', async () => {
-      database.query.mockResolvedValueOnce([
-        {
-          id: TEST_USER_ID,
-          phone: TEST_PHONE,
-          verified_contact: false,
-          provider_subject: TEST_USER_ID,
-          verified_at: null,
-        },
-      ]);
+      database.query
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: TEST_PHONE,
+            verified_contact: false,
+            provider_subject: TEST_USER_ID,
+            verified_at: null,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            contact_value: TEST_PHONE,
+            provider_subject: TEST_USER_ID,
+            verified_at: null,
+          },
+        ])
+        .mockResolvedValue([]);
 
       const authWithoutOtp = new AuthService(
         database as unknown as DatabaseService,
@@ -634,15 +644,25 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
     });
 
     it('cleans up synthetic ephemeral email on GoTrue admin confirmation failure', async () => {
-      database.query.mockResolvedValueOnce([
-        {
-          id: TEST_USER_ID,
-          phone: TEST_PHONE,
-          verified_contact: false,
-          provider_subject: TEST_USER_ID,
-          verified_at: null,
-        },
-      ]);
+      database.query
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: TEST_PHONE,
+            verified_contact: false,
+            provider_subject: TEST_USER_ID,
+            verified_at: null,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            contact_value: TEST_PHONE,
+            provider_subject: TEST_USER_ID,
+            verified_at: null,
+          },
+        ])
+        .mockResolvedValue([]);
 
       const fetchMock = vi.mocked(globalThis.fetch);
       fetchMock.mockResolvedValueOnce(

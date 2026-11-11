@@ -1105,14 +1105,26 @@ export class AuthService {
   /**
    * EP-A03: Verifies Bangladesh mobile OTP challenge, updates application account, and mints approved session.
    */
-  async verifyPhone(body: unknown, _request?: Request) {
+  async verifyPhone(
+    body: unknown,
+    _request?: Request,
+  ): Promise<{
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: 'Bearer';
+    user?: any;
+    profile_complete?: boolean;
+    next_step?: 'app_home' | 'profile_setup';
+    verified?: boolean;
+  }> {
     void _request;
     const input = normalizeVerifyPhoneRequest(body);
     const phone = input.phone;
     const code = input.code;
 
     const [user] = await this.database.query(
-      `SELECT u.id, u.phone, u.verified_contact, p.provider_subject, p.verified_at
+      `SELECT u.id, u.phone, u.verified_contact, p.provider_subject, p.verified_at, p.is_primary
          FROM public.users u
          JOIN public.user_auth_providers p
            ON p.user_id = u.id AND p.provider = 'phone'
@@ -1150,8 +1162,39 @@ export class AuthService {
         phone,
         code,
         async () => {
+          // Recheck and lock the pending provider mapping before calling GoTrue
+          await this.database.transaction(
+            userId,
+            async (db) => {
+              const [pendingRow] = await db.query(
+                `SELECT u.id, p.contact_value, p.provider_subject, p.verified_at
+                   FROM public.users u
+                   JOIN public.user_auth_providers p
+                     ON p.user_id = u.id AND p.provider = 'phone'
+                  WHERE u.id = $1
+                    AND (p.contact_value IN ($2, ltrim($2, '+')) OR p.provider_subject IN ($2, ltrim($2, '+')))
+                    AND p.verified_at IS NULL
+                  LIMIT 1
+                  FOR UPDATE`,
+                [userId, phone],
+              );
+              if (!pendingRow) {
+                fail(
+                  409,
+                  'ALREADY_VERIFIED',
+                  'Contact already verified or replaced',
+                );
+              }
+            },
+            false,
+          );
+
           providerConfirmAttempted = true;
-          await this.confirmGoTruePhoneUser(userId);
+          const isSecondary = user.is_primary === false;
+          await this.confirmGoTruePhoneUser(
+            userId,
+            isSecondary ? phone : undefined,
+          );
 
           await this.database.transaction(
             userId,
@@ -1169,9 +1212,12 @@ export class AuthService {
 
               const providersRes = await db.query(
                 `UPDATE public.user_auth_providers
-                    SET verified_at = now(), updated_at = now()
-                  WHERE user_id = $1 AND provider = 'phone' AND verified_at IS NULL`,
-                [userId],
+                    SET verified_at = clock_timestamp(), updated_at = now()
+                  WHERE user_id = $1
+                    AND provider = 'phone'
+                    AND (contact_value IN ($2, ltrim($2, '+')) OR provider_subject IN ($2, ltrim($2, '+')))
+                    AND verified_at IS NULL`,
+                [userId, phone],
               );
               const providersAffected =
                 Array.isArray(providersRes) &&
@@ -1200,7 +1246,7 @@ export class AuthService {
       );
     } catch (error) {
       if (!committed) {
-        if (providerConfirmAttempted) {
+        if (providerConfirmAttempted && user.is_primary !== false) {
           const synthEmail = `phone-${userId}@synthetic.mentor`;
           try {
             await this.cleanupSyntheticPhoneEmail(userId, synthEmail);
@@ -1219,6 +1265,11 @@ export class AuthService {
         `OTP consumption failed after phone verification commit for user ${userId}`,
         error instanceof Error ? error.stack : String(error),
       );
+    }
+
+    // EP-A12 secondary phone verification confirms contact without minting new session
+    if (user.is_primary === false) {
+      return { verified: true };
     }
 
     try {
@@ -1307,9 +1358,12 @@ export class AuthService {
   }
 
   /**
-   * Confirms phone number on GoTrue user record and attaches ephemeral synthetic email for session minting.
+   * Confirms phone number on GoTrue user record and assigns the verified phone number.
    */
-  private async confirmGoTruePhoneUser(userId: string): Promise<void> {
+  private async confirmGoTruePhoneUser(
+    userId: string,
+    phone?: string,
+  ): Promise<void> {
     const supabaseUrl = this.config
       .getOrThrow<string>('SUPABASE_URL')
       .replace(/\/$/, '');
@@ -1318,6 +1372,14 @@ export class AuthService {
       this.config.get<string>('SERVICE_ROLE_KEY');
 
     const synthEmail = `phone-${userId}@synthetic.mentor`;
+    const payload = phone
+      ? { phone, phone_confirm: true }
+      : {
+          phone_confirm: true,
+          email: synthEmail,
+          email_confirm: true,
+        };
+
     let response: Response;
     try {
       response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
@@ -1327,11 +1389,7 @@ export class AuthService {
           Authorization: `Bearer ${serviceRoleKey || ''}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          phone_confirm: true,
-          email: synthEmail,
-          email_confirm: true,
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       });
     } catch (error) {
@@ -1405,7 +1463,25 @@ export class AuthService {
     const anonKey = this.config.getOrThrow<string>('SUPABASE_ANON_KEY');
 
     const synthEmail = `phone-${userId}@synthetic.mentor`;
-    const targetEmail = channel === 'phone' ? synthEmail : contact;
+    let targetEmail = contact;
+    let hasRealEmail = false;
+
+    if (channel === 'phone') {
+      const [authUser] = await this.database.query(
+        'SELECT email FROM auth.users WHERE id = $1 LIMIT 1',
+        [userId],
+      );
+      if (
+        authUser?.email &&
+        !authUser.email.endsWith('@synthetic.mentor') &&
+        !authUser.email.endsWith('@phone.invalid')
+      ) {
+        hasRealEmail = true;
+        targetEmail = authUser.email;
+      } else {
+        targetEmail = synthEmail;
+      }
+    }
 
     try {
       let linkRes: Response;
@@ -1445,6 +1521,11 @@ export class AuthService {
         fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
       }
 
+      const verificationType =
+        linkData?.verification_type ||
+        linkData?.properties?.verification_type ||
+        'magiclink';
+
       let verifyRes: Response;
       try {
         verifyRes = await fetch(`${supabaseUrl}/auth/v1/verify`, {
@@ -1455,7 +1536,7 @@ export class AuthService {
           },
           body: JSON.stringify({
             token_hash: tokenHash,
-            type: 'magiclink',
+            type: verificationType,
           }),
           signal: AbortSignal.timeout(10000),
         });
@@ -1497,7 +1578,7 @@ export class AuthService {
       const result = await this.database.transaction(
         userId,
         async (db) => {
-          if (channel === 'phone') {
+          if (channel === 'phone' && !hasRealEmail) {
             await this.cleanupSyntheticPhoneEmail(userId, synthEmail, db);
           }
           await this.approvals.approve(
@@ -1509,6 +1590,8 @@ export class AuthService {
           return this.meInTransaction(db, userId);
         },
         false,
+        false,
+        channel !== 'phone',
       );
 
       return {
@@ -1523,7 +1606,7 @@ export class AuthService {
           : ('profile_setup' as const),
       };
     } catch (mintError) {
-      if (channel === 'phone') {
+      if (channel === 'phone' && !hasRealEmail) {
         try {
           await this.cleanupSyntheticPhoneEmail(userId, synthEmail);
         } catch (cleanupErr) {

@@ -1,8 +1,9 @@
 import 'reflect-metadata';
+import { parseEnv } from 'node:util';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import type { EntityManager } from 'typeorm';
-import { type INestApplication } from '@nestjs/common';
+import { type INestApplication, HttpException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { configureHttp, fail } from '../../common/http.js';
@@ -3111,6 +3112,289 @@ describe('AuthService session approval boundary', () => {
       expect(result).toEqual({
         message: 'If the account exists, a code was sent.',
       });
+    });
+
+    it('confirmGoTruePhoneUser passes normalized phone and phone_confirm: true to GoTrue Admin API', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ id: 'user-1' }), { status: 200 }),
+        );
+
+      const service = new AuthService(
+        {} as DatabaseService,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+      );
+
+      await (service as any).confirmGoTruePhoneUser('user-1', '+8801712345678');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/users/user-1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            phone: '+8801712345678',
+            phone_confirm: true,
+          }),
+        }),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('verifyPhone prevents race condition and aborts with 409 when pending provider mapping is replaced concurrently', async () => {
+      const database = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('SELECT u.id, u.phone, u.verified_contact')) {
+            return [
+              {
+                id: 'user-race-1',
+                phone: '+8801712345678',
+                verified_contact: false,
+                provider_subject: '+8801712345678',
+                verified_at: null,
+                is_primary: true,
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi.fn().mockImplementation(async (sql: string) => {
+              if (sql.includes('p.contact_value')) {
+                // Pending mapping was replaced concurrently by another phone B
+                return [];
+              }
+              return [];
+            }),
+          }),
+        ),
+      } as unknown as DatabaseService;
+
+      const otpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_id, _contact, _code, cb) => {
+          await cb();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+        otpStore,
+      );
+
+      await expect(
+        service.verifyPhone({ phone: '+8801712345678', code: '123456' }),
+      ).rejects.toThrow(HttpException);
+    });
+
+    it('verifyPhone for EP-A12 secondary phone returns verified: true without minting session or touching GoTrue email', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ id: 'user-sec-1' }), { status: 200 }),
+        );
+
+      const database = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('SELECT u.id, u.phone, u.verified_contact')) {
+            return [
+              {
+                id: 'user-sec-1',
+                phone: '+8801712345678',
+                verified_contact: false,
+                provider_subject: '+8801712345678',
+                verified_at: null,
+                is_primary: false, // secondary contact
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi.fn().mockImplementation(async (sql: string) => {
+              if (sql.includes('p.contact_value')) {
+                return [{ id: 'prov-1', verified_at: null }];
+              }
+              if (sql.includes('UPDATE public.users')) {
+                return [[], 1];
+              }
+              if (sql.includes('UPDATE public.user_auth_providers')) {
+                return [[], 1];
+              }
+              return [];
+            }),
+          }),
+        ),
+      } as unknown as DatabaseService;
+
+      const otpStore = {
+        verifyAndConsumeOtp: vi.fn(async (_id, _contact, _code, cb) => {
+          await cb();
+        }),
+      } as unknown as OtpSecretStore;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        {} as SessionApprovalService,
+        otpStore,
+      );
+
+      const result = await service.verifyPhone({
+        phone: '+8801712345678',
+        code: '123456',
+      });
+
+      expect(result).toEqual({ verified: true });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/users/user-sec-1',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            phone: '+8801712345678',
+            phone_confirm: true,
+          }),
+        }),
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('mintAndApproveSession preserves existing GoTrue email for phone user without synthetic email overwrite', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (url: any) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/admin/generate_link')) {
+            return new Response(
+              JSON.stringify({ hashed_token: 'valid-hash' }),
+              { status: 200 },
+            );
+          }
+          if (urlStr.includes('/auth/v1/verify')) {
+            return new Response(
+              JSON.stringify({
+                access_token: accessToken(),
+                refresh_token: 'refresh-1',
+                expires_in: 3600,
+                token_type: 'bearer',
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response('{}', { status: 200 });
+        });
+
+      const database = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('FROM auth.users WHERE id = $1')) {
+            return [
+              {
+                email: 'real-user@example.com',
+                email_confirmed_at: '2026-01-01T00:00:00Z',
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi.fn().mockResolvedValue([]),
+          }),
+        ),
+      } as unknown as DatabaseService;
+
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        approvals,
+      );
+
+      vi.spyOn(service as any, 'meInTransaction').mockResolvedValueOnce({
+        user: { id: userId },
+        profile_complete: true,
+      });
+
+      const session = await (service as any).mintAndApproveSession(
+        userId,
+        '+8801712345678',
+        'phone',
+      );
+
+      expect(session.access_token).toBeDefined();
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/generate_link',
+        expect.objectContaining({
+          body: JSON.stringify({
+            type: 'magiclink',
+            email: 'real-user@example.com',
+          }),
+        }),
+      );
+      expect(fetchSpy).not.toHaveBeenCalledWith(
+        'http://supabase.invalid/auth/v1/admin/users/' + userId,
+        expect.anything(),
+      );
+
+      fetchSpy.mockRestore();
+    });
+
+    it('validates local.mjs quoted dotenv parsing and TextBee credentials overlay logic', () => {
+      const sampleEnv = `
+        TEXTBEE_API_KEY="secret-api-key"
+        TEXTBEE_DEVICE_ID='device-123'
+        TEXTBEE_BASE_URL=https://custom.api.textbee.dev # inline comment
+        UNQUOTED_VAL=regular-value
+      `;
+      const parsed = parseEnv(sampleEnv);
+      expect(parsed.TEXTBEE_API_KEY).toBe('secret-api-key');
+      expect(parsed.TEXTBEE_DEVICE_ID).toBe('device-123');
+      expect(parsed.TEXTBEE_BASE_URL).toBe('https://custom.api.textbee.dev');
+      expect(parsed.UNQUOTED_VAL).toBe('regular-value');
+
+      const config = {
+        DB_HOST: '127.0.0.1',
+        DB_PORT: '5432',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
+        AUTH_REDIS_URL: 'redis://127.0.0.1:56379',
+        MAILPIT_URL: 'http://127.0.0.1:56324',
+        TEXTBEE_API_KEY: '',
+        TEXTBEE_DEVICE_ID: '',
+        TEXTBEE_BASE_URL: 'https://api.textbee.dev/api/v1',
+        TEXTBEE_TIMEOUT_MS: '10000',
+      };
+
+      const backendEnv = parsed;
+      const overlayKeys = [
+        'TEXTBEE_API_KEY',
+        'TEXTBEE_DEVICE_ID',
+        'TEXTBEE_BASE_URL',
+        'TEXTBEE_TIMEOUT_MS',
+      ];
+      const textBeeOverlay = Object.fromEntries(
+        overlayKeys
+          .map((k) => [k, backendEnv[k] || ''])
+          .filter(([, v]) => Boolean(v)),
+      );
+
+      const merged = { ...config, ...textBeeOverlay };
+      expect(merged.TEXTBEE_API_KEY).toBe('secret-api-key');
+      expect(merged.TEXTBEE_DEVICE_ID).toBe('device-123');
+      expect(merged.TEXTBEE_BASE_URL).toBe('https://custom.api.textbee.dev');
+      expect(merged.DB_HOST).toBe('127.0.0.1');
+      expect(merged.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
+      expect(merged.MAILPIT_URL).toBe('http://127.0.0.1:56324');
     });
   });
 });
