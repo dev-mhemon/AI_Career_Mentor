@@ -83,7 +83,9 @@ export function pickCredentialPair(
   const readSingle = (source, key) => {
     if (!source || typeof source !== "object") return "";
     const v = source[key];
-    return typeof v === "string" && v.trim() ? v.trim() : "";
+    if (v === undefined || v === null) return "";
+    const s = String(v).trim();
+    return s.toLowerCase() === "undefined" || s.toLowerCase() === "null" ? "" : s;
   };
 
   for (const source of [procEnv, backendEnv, baseConfig]) {
@@ -124,36 +126,60 @@ export function resolveOAuthProviders(
     baseConfig,
   );
 
+  const googleEnabled = Boolean(googleClientId && googleSecret);
+  const facebookEnabled = Boolean(facebookClientId && facebookSecret);
+
   return {
     google: {
-      enabled: Boolean(googleClientId && googleSecret),
-      clientId: googleClientId,
-      secret: googleSecret,
+      enabled: googleEnabled,
+      clientId: googleEnabled ? googleClientId : "",
+      secret: googleEnabled ? googleSecret : "",
     },
     facebook: {
-      enabled: Boolean(facebookClientId && facebookSecret),
-      clientId: facebookClientId,
-      secret: facebookSecret,
+      enabled: facebookEnabled,
+      clientId: facebookEnabled ? facebookClientId : "",
+      secret: facebookEnabled ? facebookSecret : "",
     },
     envVars: {
-      SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: googleClientId,
-      SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: googleSecret,
-      SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: facebookClientId,
-      SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: facebookSecret,
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: googleEnabled ? googleClientId : "",
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: googleEnabled ? googleSecret : "",
+      SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: facebookEnabled ? facebookClientId : "",
+      SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: facebookEnabled ? facebookSecret : "",
     },
   };
 }
 
 export function injectOAuthIntoConfigToml(configText, oauth) {
+  if (!configText || typeof configText !== "string") return "";
   let updated = configText;
   for (const provider of ["google", "facebook"]) {
-    const isEnabled = Boolean(oauth?.[provider]?.enabled);
-    const sectionRegex = new RegExp(
+    const conf = oauth?.[provider];
+    const isEnabled = Boolean(conf?.enabled && conf?.clientId && conf?.secret);
+    const clientId = isEnabled ? conf.clientId : "";
+    const secret = isEnabled ? conf.secret : "";
+
+    const enabledRegex = new RegExp(
       `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^enabled\\s*=\\s*)(?:true|false)`,
       "m",
     );
-    if (sectionRegex.test(updated)) {
-      updated = updated.replace(sectionRegex, `$1${isEnabled}`);
+    if (enabledRegex.test(updated)) {
+      updated = updated.replace(enabledRegex, `$1${isEnabled}`);
+    }
+
+    const clientIdRegex = new RegExp(
+      `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^client_id\\s*=\\s*)(?:"[^"]*"|'[^']*'|[^\\r\\n]*)`,
+      "m",
+    );
+    if (clientIdRegex.test(updated)) {
+      updated = updated.replace(clientIdRegex, `$1${JSON.stringify(clientId)}`);
+    }
+
+    const secretRegex = new RegExp(
+      `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^secret\\s*=\\s*)(?:"[^"]*"|'[^']*'|[^\\r\\n]*)`,
+      "m",
+    );
+    if (secretRegex.test(updated)) {
+      updated = updated.replace(secretRegex, `$1${JSON.stringify(secret)}`);
     }
   }
   return updated;
@@ -208,7 +234,12 @@ export function buildBackendLaunchEnv(
 
   return merged;
 }
-const cli = process.env.SUPABASE_BIN || "supabase";
+const winToolsPath = path.join(root, ".local/windows-tools.json");
+const winTools =
+  process.platform === "win32" && existsSync(winToolsPath)
+    ? JSON.parse(readFileSync(winToolsPath, "utf8"))
+    : {};
+const cli = process.env.SUPABASE_BIN || winTools.SUPABASE_BIN || "supabase";
 const startupBackendEnv = parseEnvFile(path.join(root, "backend/.env"));
 const oauthConfig = resolveOAuthProviders(startupBackendEnv, process.env);
 const env = {
@@ -224,12 +255,14 @@ const run = (args, privateLog) => {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   });
-  if (privateLog)
+  if (privateLog) {
+    const errorPrefix = r.error ? `Process spawn error: ${r.error.message}\n` : "";
     writeFileSync(
       path.join(local, privateLog),
-      (r.stdout || "") + (r.stderr || ""),
+      errorPrefix + (r.stdout || "") + (r.stderr || ""),
       { mode: 0o600 },
     );
+  }
   if (r.status !== 0)
     throw Error(
       `Supabase ${args[0]} failed (${r.status}); inspect private ${privateLog || "CLI output"} locally`,
@@ -249,10 +282,17 @@ if (local === root || local.includes("reviewed-baseline"))
   throw Error("Use a dedicated disposable directory");
 const command = process.argv[2] || "start";
 if (command === "start") {
+  const pythonBin =
+    process.env.PYTHON_BIN ||
+    winTools.PYTHON_BIN ||
+    (process.platform === "win32" ? "python" : "python3");
   execFileSync(
     "python3",
     [path.join(root, "scripts/foundation/verify-baseline.py")],
-    { stdio: "inherit" },
+    {
+      env: { ...process.env, PYTHON_BIN: pythonBin },
+      stdio: "inherit",
+    },
   );
   mkdirSync(path.join(local, "supabase"), { recursive: true });
   const existingConfig = path.join(local, "supabase/config.toml");

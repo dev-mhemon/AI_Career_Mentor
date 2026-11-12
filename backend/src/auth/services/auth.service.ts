@@ -273,11 +273,20 @@ export class AuthService {
           'Provider is not linked to this Auth identity',
         );
 
-      const isOAuthSession = amr?.some(
-        (entry) =>
-          entry.method === 'oauth' &&
-          typeof entry.provider === 'string' &&
-          entry.provider.toLowerCase() === provider.toLowerCase(),
+      const isOAuthSession = Boolean(
+        amr?.some(
+          (entry) =>
+            entry.method === 'oauth' &&
+            (entry.provider?.toLowerCase() === provider.toLowerCase() ||
+              (!entry.provider &&
+                (payload?.app_metadata?.provider?.toLowerCase() ===
+                  provider.toLowerCase() ||
+                  payload?.app_metadata?.providers?.includes(provider)))),
+        ) ||
+        payload?.app_metadata?.provider?.toLowerCase() ===
+          provider.toLowerCase() ||
+        (Array.isArray(payload?.app_metadata?.providers) &&
+          payload.app_metadata.providers.includes(provider)),
       );
       if (!isOAuthSession) {
         fail(
@@ -289,14 +298,20 @@ export class AuthService {
       activeProvider = provider.toLowerCase();
       activeContact = user.email || null;
     } else {
-      const oauthEntry = amr?.find(
-        (entry) =>
-          entry.method === 'oauth' &&
-          typeof entry.provider === 'string' &&
-          ['google', 'facebook'].includes(entry.provider.toLowerCase()),
-      );
-      if (oauthEntry?.provider) {
-        activeProvider = oauthEntry.provider.toLowerCase();
+      const oauthEntry = amr?.find((entry) => entry.method === 'oauth');
+      const appMetaProvider = payload?.app_metadata?.provider?.toLowerCase();
+      const resolvedOAuthProvider =
+        oauthEntry?.provider?.toLowerCase() ||
+        (appMetaProvider && ['google', 'facebook'].includes(appMetaProvider)
+          ? appMetaProvider
+          : null);
+
+      if (
+        oauthEntry &&
+        resolvedOAuthProvider &&
+        ['google', 'facebook'].includes(resolvedOAuthProvider)
+      ) {
+        activeProvider = resolvedOAuthProvider;
         activeContact = user.email || payload?.email || null;
       } else if (amr?.some((entry) => entry.method === 'sms')) {
         activeProvider = 'phone';
@@ -395,18 +410,47 @@ export class AuthService {
               'VALIDATION_FAILED',
               'Only Bangladesh mobile contacts are supported',
             );
-          await db.query(
-            `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,clock_timestamp(),clock_timestamp())
-        ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact`,
-            [user.id, email, phone, !!(email || phone)],
-          );
+
+          // Reconcile if an existing account in public.users already has this email
+          const [existingUserByEmail] = email
+            ? await db.query(
+                `SELECT id FROM public.users WHERE LOWER(email) = LOWER($1) AND id <> $2`,
+                [email, user.id],
+              )
+            : [null];
+
+          const targetUserId = existingUserByEmail?.id || user.id;
+
+          if (existingUserByEmail) {
+            await db.query(
+              `UPDATE public.users SET
+                 verified_contact = true,
+                 last_active_at = clock_timestamp(),
+                 last_login_at = clock_timestamp()
+               WHERE id = $1`,
+              [targetUserId],
+            );
+            if (identity.sessionId) {
+              await db.query(
+                `UPDATE auth.sessions SET user_id = $1 WHERE id = $2`,
+                [targetUserId, identity.sessionId],
+              );
+            }
+          } else {
+            await db.query(
+              `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,clock_timestamp(),clock_timestamp())
+          ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact`,
+              [user.id, email, phone, !!(email || phone)],
+            );
+          }
+
           for (const i of identities) {
             await db.query(
               `INSERT INTO public.user_auth_providers(user_id,provider,provider_subject,contact_value,verified_at,is_primary)
           VALUES($1,$2,$3,$4,$5,NOT EXISTS(SELECT 1 FROM public.user_auth_providers WHERE user_id=$1))
           ON CONFLICT(user_id,provider) DO UPDATE SET provider_subject=excluded.provider_subject,contact_value=excluded.contact_value,verified_at=excluded.verified_at`,
               [
-                user.id,
+                targetUserId,
                 i.provider,
                 i.identity_data?.sub || i.id,
                 i.provider === 'phone' ? phone : email,
@@ -418,23 +462,23 @@ export class AuthService {
           }
           await db.query(
             'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING',
-            [user.id],
+            [targetUserId],
           );
           await db.query(
             'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING',
-            [user.id],
+            [targetUserId],
           );
-          const result = await this.meInTransaction(db, user.id);
+          const result = await this.meInTransaction(db, targetUserId);
           if (result.user.verified_contact && identity.sessionId && provider) {
             await this.approvals.approve(
               db,
-              user.id,
+              targetUserId,
               identity.sessionId,
               'oauth',
             );
             await db.query(
               'UPDATE public.users SET last_login_at=clock_timestamp() WHERE id=$1',
-              [user.id],
+              [targetUserId],
             );
           }
           return result;

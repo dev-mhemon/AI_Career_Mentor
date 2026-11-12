@@ -3602,5 +3602,46 @@ describe('AuthService session approval boundary', () => {
         secret: '',
       });
     });
+
+    it('gracefully disables providers and outputs valid empty strings when credentials are null, undefined, or literal undefined/null strings', () => {
+      const corruptEnv = {
+        GOOGLE_CLIENT_ID: 'undefined',
+        GOOGLE_CLIENT_SECRET: 'null',
+        FACEBOOK_CLIENT_ID: null as unknown as string,
+        FACEBOOK_CLIENT_SECRET: undefined as unknown as string,
+      };
+
+      const resolved = resolveOAuthProviders('', corruptEnv);
+      expect(resolved.google).toEqual({
+        enabled: false,
+        clientId: '',
+        secret: '',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: false,
+        clientId: '',
+        secret: '',
+      });
+      expect(resolved.envVars).toEqual({
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: '',
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: '',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: '',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: '',
+      });
+
+      // injectOAuthIntoConfigToml handles corrupt or empty input safely
+      expect(injectOAuthIntoConfigToml('', resolved)).toBe('');
+      const rawToml = [
+        '[auth.external.google]',
+        'enabled = true',
+        '[auth.external.facebook]',
+        'enabled = true',
+      ].join('\n');
+      const disabledToml = injectOAuthIntoConfigToml(rawToml, resolved);
+      expect(disabledToml).toContain('[auth.external.google]\nenabled = false');
+      expect(disabledToml).toContain(
+        '[auth.external.facebook]\nenabled = false',
+      );
+    });
   });
 });
