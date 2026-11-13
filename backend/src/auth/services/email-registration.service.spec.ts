@@ -66,29 +66,61 @@ function harness() {
   const abuse = {
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
   };
-  const queries = vi.fn(async (sql: string): Promise<any[]> => {
-    if (sql.startsWith('SELECT verified_contact'))
-      return [{ verified_contact: false, email: null, phone: null }];
-    if (sql.startsWith('SELECT provider_subject')) {
-      if (sql.includes("provider='phone'")) {
+  const queries = vi.fn(
+    async (sql: string, params?: unknown[]): Promise<any[]> => {
+      if (sql.includes('FROM auth.users') && sql.includes('FOR UPDATE')) {
+        const isPhone = params?.[0] === phoneIdentity.id;
         return [
           {
-            provider_subject: phoneIdentity.subject,
-            contact_value: phone,
+            id: params?.[0],
+            email: isPhone ? null : email,
+            phone: isPhone ? phone : null,
+            email_confirmed_at: null,
+            phone_confirmed_at: null,
+          },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact FROM public.users')) {
+        return [{ verified_contact: false }];
+      }
+      if (sql.includes('SELECT provider,provider_subject')) {
+        const isPhone = params?.[0] === phoneIdentity.id;
+        return [
+          {
+            provider: isPhone ? 'phone' : 'email',
+            provider_subject: isPhone
+              ? phoneIdentity.subject
+              : identity.subject,
+            contact_value: isPhone ? phone : email,
             verified_at: null,
           },
         ];
       }
-      return [
-        {
-          provider_subject: identity.subject,
-          contact_value: email,
-          verified_at: null,
-        },
-      ];
-    }
-    return [];
-  });
+      if (sql.includes('FROM auth.identities')) return [];
+      if (sql.startsWith('UPDATE auth.users')) return [{ id: params?.[0] }];
+      if (sql.startsWith('SELECT verified_contact'))
+        return [{ verified_contact: false, email: null, phone: null }];
+      if (sql.startsWith('SELECT provider_subject')) {
+        if (sql.includes("provider='phone'")) {
+          return [
+            {
+              provider_subject: phoneIdentity.subject,
+              contact_value: phone,
+              verified_at: null,
+            },
+          ];
+        }
+        return [
+          {
+            provider_subject: identity.subject,
+            contact_value: email,
+            verified_at: null,
+          },
+        ];
+      }
+      return [];
+    },
+  );
   const database = {
     transaction: vi.fn(
       async (
@@ -202,18 +234,22 @@ describe('A01/A04 email service with synthetic provider', () => {
       },
     ],
   ])(
-    'rejects a %s pending registration retry without changing its password',
+    'resumes a %s pending email registration, replaces its password, and sends a fresh OTP',
     async (_kind, retry) => {
-      const { service, provider, database } = harness();
+      const { service, provider, database, queries } = harness();
       provider.findByEmail.mockResolvedValue(identity);
-      await rejection(
-        () => service.register(retry, peer),
-        409,
-        'CONTACT_ALREADY_REGISTERED',
-      );
+      const result = await service.register(retry, peer);
+      expect(result.verification_channel).toBe('email');
       expect(provider.createPending).not.toHaveBeenCalled();
-      expect(provider.sendChallenge).not.toHaveBeenCalled();
-      expect(database.transaction).not.toHaveBeenCalled();
+      expect(provider.sendChallenge).toHaveBeenCalledWith(
+        identity,
+        expect.any(AbortSignal),
+      );
+      expect(database.transaction).toHaveBeenCalledTimes(2);
+      expect(queries).toHaveBeenCalledWith(
+        expect.stringContaining('SET encrypted_password=extensions.crypt'),
+        [identity.id, retry.password],
+      );
     },
   );
 
@@ -228,19 +264,82 @@ describe('A01/A04 email service with synthetic provider', () => {
       'SERVICE_UNAVAILABLE',
     );
     provider.findByEmail.mockResolvedValue(identity);
-    await rejection(
-      () => service.register(body, peer),
-      409,
-      'CONTACT_ALREADY_REGISTERED',
-    );
-    const result = await service.resend(
-      { channel: 'email', contact: email },
-      peer,
-    );
+    const result = await service.register(body, peer);
     expect(result.verification_channel).toBe('email');
     expect(provider.createPending).toHaveBeenCalledTimes(1);
     expect(provider.sendChallenge).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [
+      'confirmed email',
+      { email_confirmed_at: '2026-01-01T00:00:00Z' },
+      false,
+      [],
+      [],
+    ],
+    [
+      'confirmed phone',
+      { phone_confirmed_at: '2026-01-01T00:00:00Z' },
+      false,
+      [],
+      [],
+    ],
+    ['aggregate verified state', {}, true, [], []],
+    [
+      'verified provider mapping',
+      {},
+      false,
+      [{ provider: 'email', verified_at: '2026-01-01T00:00:00Z' }],
+      [],
+    ],
+    [
+      'linked OAuth provider',
+      {},
+      false,
+      [{ provider: 'google', verified_at: null }],
+      [],
+    ],
+    ['linked OAuth identity', {}, false, [], [{ exists: 1 }]],
+  ])(
+    'fails closed without changing a pending email password when account has %s',
+    async (_case, authOverrides, appVerified, providerRows, oauthRows) => {
+      const { service, provider, queries } = harness();
+      provider.findByEmail.mockResolvedValue(identity);
+      queries.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM auth.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              id: identity.id,
+              email,
+              phone: null,
+              email_confirmed_at: null,
+              phone_confirmed_at: null,
+              ...authOverrides,
+            },
+          ];
+        }
+        if (sql.startsWith('SELECT verified_contact FROM public.users')) {
+          return [{ verified_contact: appVerified }];
+        }
+        if (sql.includes('SELECT provider,provider_subject')) {
+          return providerRows;
+        }
+        if (sql.includes('FROM auth.identities')) return oauthRows;
+        if (sql.startsWith('UPDATE auth.users')) return [{ id: params?.[0] }];
+        return [];
+      });
+      await rejection(
+        () => service.register(body, peer),
+        409,
+        'CONTACT_ALREADY_REGISTERED',
+      );
+      expect(
+        queries.mock.calls.some(([sql]) => sql.startsWith('UPDATE auth.users')),
+      ).toBe(false);
+      expect(provider.sendChallenge).not.toHaveBeenCalled();
+    },
+  );
 
   it('maps provider create and send failures to retryable 502 with retained reservations', async () => {
     for (const method of [
@@ -704,6 +803,23 @@ describe('A01/A04 email service with synthetic provider', () => {
         () => service.register(phoneBody, peer),
         409,
         'CONTACT_ALREADY_REGISTERED',
+      );
+    });
+
+    it('resumes an unverified phone registration, replaces its password, and dispatches a fresh OTP', async () => {
+      const { service, smsProvider, queries, database } = harness();
+      smsProvider.findByPhone.mockResolvedValueOnce(phoneIdentity);
+      const result = await service.register(phoneBody, peer);
+      expect(result.verification_channel).toBe('phone');
+      expect(smsProvider.createPending).not.toHaveBeenCalled();
+      expect(smsProvider.sendChallenge).toHaveBeenCalledWith(
+        phoneIdentity,
+        expect.any(AbortSignal),
+      );
+      expect(database.transaction).toHaveBeenCalledTimes(2);
+      expect(queries).toHaveBeenCalledWith(
+        expect.stringContaining('SET encrypted_password=extensions.crypt'),
+        [phoneIdentity.id, phoneBody.password],
       );
     });
 

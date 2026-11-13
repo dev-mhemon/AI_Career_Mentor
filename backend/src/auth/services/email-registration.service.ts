@@ -170,11 +170,25 @@ export class EmailRegistrationService {
           this.smsProvider!.findByPhone(identifier, signal),
         );
         if (existing) {
-          fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+          if (existing.verified) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Account already exists, please sign in',
+            );
+          }
+          await this.resumePendingRegistration(
+            existing,
+            input.password,
+            'phone',
+            identifier,
+          );
+          identity = existing;
+        } else {
+          identity = await this.providerCall((signal) =>
+            this.smsProvider!.createPending(identifier, input.password, signal),
+          );
         }
-        identity = await this.providerCall((signal) =>
-          this.smsProvider!.createPending(identifier, input.password, signal),
-        );
         if (identity?.phone && !identity.phone.startsWith('+')) {
           identity = { ...identity, phone: `+${identity.phone}` };
         }
@@ -219,11 +233,25 @@ export class EmailRegistrationService {
         this.provider.findByEmail(identifier, signal),
       );
       if (existing) {
-        fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+        if (existing.verified) {
+          fail(
+            409,
+            'CONTACT_ALREADY_REGISTERED',
+            'Account already exists, please sign in',
+          );
+        }
+        await this.resumePendingRegistration(
+          existing,
+          input.password,
+          'email',
+          identifier,
+        );
+        identity = existing;
+      } else {
+        identity = await this.providerCall((signal) =>
+          this.provider.createPending(identifier, input.password, signal),
+        );
       }
-      identity = await this.providerCall((signal) =>
-        this.provider.createPending(identifier, input.password, signal),
-      );
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === 409) {
         throw error;
@@ -250,6 +278,135 @@ export class EmailRegistrationService {
       return this.providerError(error, 'email');
     }
     return metadata;
+  }
+
+  /**
+   * Replaces credentials only for the same still-pending first-party identity.
+   * The Auth row lock makes verification and password replacement mutually exclusive,
+   * while the provider checks prevent an OAuth-linked account from entering this path.
+   */
+  private async resumePendingRegistration(
+    identity: { id: string; subject: string },
+    password: string,
+    channel: 'email' | 'phone',
+    contact: string,
+  ): Promise<void> {
+    try {
+      await this.database.transaction(
+        null,
+        async (db) => {
+          await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+            identity.id,
+          ]);
+          await db.query(
+            'SELECT pg_advisory_xact_lock(hashtextextended($1, 1))',
+            [`auth:pending-${channel}:${contact}`],
+          );
+          const [authUser] = await db.query(
+            `SELECT id,email,phone,email_confirmed_at,phone_confirmed_at
+               FROM auth.users
+              WHERE id=$1 AND deleted_at IS NULL
+              FOR UPDATE`,
+            [identity.id],
+          );
+          const [appUser] = await db.query(
+            'SELECT verified_contact FROM public.users WHERE id=$1 FOR UPDATE',
+            [identity.id],
+          );
+          const providers = await db.query(
+            `SELECT provider,provider_subject,contact_value,verified_at
+               FROM public.user_auth_providers
+              WHERE user_id=$1
+              FOR UPDATE`,
+            [identity.id],
+          );
+          const [oauthIdentity] = await db.query(
+            `SELECT 1
+               FROM auth.identities
+              WHERE user_id=$1 AND provider IN ('google','facebook')
+              LIMIT 1`,
+            [identity.id],
+          );
+
+          const expectedContact =
+            channel === 'email'
+              ? String(authUser?.email ?? '')
+                  .trim()
+                  .toLowerCase()
+              : String(authUser?.phone ?? '').replace(/^\+?/, '+');
+          const normalizedContact =
+            channel === 'email'
+              ? contact.toLowerCase()
+              : contact.replace(/^\+?/, '+');
+          const hasProtectedProvider = providers.some(
+            (provider: { provider?: string; verified_at?: string | null }) =>
+              provider.verified_at != null ||
+              provider.provider === 'google' ||
+              provider.provider === 'facebook',
+          );
+          const pendingProvider = providers.find(
+            (provider: {
+              provider?: string;
+              provider_subject?: string;
+              contact_value?: string | null;
+            }) => provider.provider === channel,
+          );
+          const pendingProviderContact = pendingProvider?.contact_value
+            ? channel === 'email'
+              ? pendingProvider.contact_value.toLowerCase()
+              : pendingProvider.contact_value.replace(/^\+?/, '+')
+            : normalizedContact;
+
+          if (
+            !authUser ||
+            expectedContact !== normalizedContact ||
+            authUser.email_confirmed_at != null ||
+            authUser.phone_confirmed_at != null ||
+            appUser?.verified_contact === true ||
+            hasProtectedProvider ||
+            oauthIdentity ||
+            (pendingProvider &&
+              (pendingProvider.provider_subject !== identity.subject ||
+                pendingProviderContact !== normalizedContact))
+          ) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Account already exists, please sign in',
+            );
+          }
+
+          const updated = await db.query(
+            `UPDATE auth.users
+                SET encrypted_password=extensions.crypt($2,extensions.gen_salt('bf',10)),
+                    updated_at=clock_timestamp()
+              WHERE id=$1
+                AND email_confirmed_at IS NULL
+                AND phone_confirmed_at IS NULL
+              RETURNING id`,
+            [identity.id, password],
+          );
+          if (!Array.isArray(updated) || updated.length !== 1) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Account already exists, please sign in',
+            );
+          }
+        },
+        false,
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Account storage is unavailable',
+        [],
+        true,
+        5,
+      );
+    }
   }
 
   /** A04: unknown and pending contacts share the same successful wire metadata. */

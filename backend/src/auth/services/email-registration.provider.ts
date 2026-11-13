@@ -226,8 +226,18 @@ export class EmailRegistrationProvider {
       `SELECT u.id,
               COALESCE(p.contact_value, u.email) AS email,
               u.email_confirmed_at,
+              u.phone_confirmed_at,
               pu.verified_contact,
-              p.verified_at AS provider_verified_at
+              p.verified_at AS provider_verified_at,
+              EXISTS (
+                SELECT 1 FROM public.user_auth_providers linked
+                 WHERE linked.user_id=u.id
+                   AND (linked.verified_at IS NOT NULL OR linked.provider IN ('google','facebook'))
+              ) AS has_protected_provider,
+              EXISTS (
+                SELECT 1 FROM auth.identities identity
+                 WHERE identity.user_id=u.id AND identity.provider IN ('google','facebook')
+              ) AS has_oauth_identity
          FROM auth.users u
          LEFT JOIN public.users pu ON pu.id = u.id
          LEFT JOIN public.user_auth_providers p
@@ -251,7 +261,14 @@ export class EmailRegistrationProvider {
       subject: row.id,
       email:
         typeof row.email === 'string' ? row.email.toLowerCase() : normalized,
-      verified: Boolean(row.verified_contact || row.provider_verified_at),
+      verified: Boolean(
+        row.email_confirmed_at ||
+        row.phone_confirmed_at ||
+        row.verified_contact ||
+        row.provider_verified_at ||
+        row.has_protected_provider ||
+        row.has_oauth_identity,
+      ),
     };
   }
 

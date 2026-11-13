@@ -103,7 +103,7 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       expect(result).toBeNull();
     });
 
-    it('returns verified = false when GoTrue email_confirmed_at is set but public.users.verified_contact is false (Failure Boundary 2)', async () => {
+    it('protects a GoTrue-confirmed email even when public.users.verified_contact is false', async () => {
       database.query.mockResolvedValue([
         {
           id: userId,
@@ -118,11 +118,11 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         id: userId,
         subject: userId,
         email,
-        verified: false,
+        verified: true,
       });
     });
 
-    it('returns verified = true only when public.users.verified_contact is true', async () => {
+    it('returns verified = true when public.users.verified_contact is true', async () => {
       database.query.mockResolvedValue([
         {
           id: userId,

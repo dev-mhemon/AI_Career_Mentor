@@ -521,3 +521,7 @@ Base/start: live phase1-restart `4dffb54835f62f806accbb883a2cf6557c30bcdf`; know
 6. Inventory each initial tracked file, focused Conventional Commits, push branch, inspect base/head diff and open PR into phase1-restart when API permitted. Report blockers truthfully. Main promotion waits for reviewed alignment merge.
 
 Current evidence and final handoff live in current-phase/alignment; original foundation records are historical. No future modules/docs are fabricated. Full Auth/deletion/AI/worker/admin/UI and production performance/PITR/security/owner acceptance remain later milestones.
+
+## M03-06 checkpoint — unverified sign-up resume
+
+The authorized `auth-fixing` checkpoint from clean `main` HEAD `36fc2071ff830d0c0eda58c5b4d17722b5d1e6dd` adds locked, idempotent email/phone re-signup for pending unverified identities while preserving cooldown/quota reservation and protecting every confirmed contact, verified provider state, and linked Google/Facebook identity. The pre-commit worktree passes backend lint and all 584 tests across 33 files plus frontend lint and all 344 tests across 22 files. `full_name` remains blocked because the adopted registration contract/UI and physical schema define neither an input nor a storage column; see [M03-06](current-phase/M03-06.md). The containing commit and remote receipt are identified by final Git state; separate review/owner acceptance remains pending.

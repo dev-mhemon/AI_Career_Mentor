@@ -1,5 +1,11 @@
 # Open issues and decisions
 
+## M03-06 idempotent sign-up resume
+
+| ID / conflict and evidence | Impact | Smallest proposed resolution / decision boundary |
+|---|---|---|
+| NAME-01 — Owner request requires replacing a newly submitted `full_name` during resumed registration, but C05 `RegisterRequestDTO` and C09 Screen 03 have no name input; C06 `public.users` and `public.user_profiles` have no name column; current backend DTO rejects extra fields and current frontend submits none | Password/OTP resume can be implemented securely, but a name value cannot be received or stored without inventing API, UI, validation, and physical schema | Owner chooses either to remove name persistence from this task or authorize exact `full_name` semantics, storage table/constraints, C05/OpenAPI/Screen 03/frontend expansion, and a separately reviewed forward migration. Do not edit frozen migrations or silently store the value elsewhere |
+
 Use [START-HERE](START-HERE.md) for the current task and [M01-03 post-merge handoff](../07-planning/current-phase/M01-03.md#post-merge-status-and-evidence-2026-10-26). PR #9 merged at `862d6e00b1f6fb849e25e17d62f198afceaa51b0` after PR #8 and the bounded M01-02 helper PR #7. M01-03's A01/A04 boundaries are merged but fail closed with the production provider's 503 response; synthetic provider tests are not live-delivery acceptance. M01-01, M01-02, DOC-01 and DOC-02 remain historical records; the [master plan](../07-planning/master-execution-plan.md) remains proposed. Requirements remain governed by the [source register](source-of-truth.md); the [phase audit](../07-planning/phase-1-audit.md) preserves its dated observation scope.
 
 ## M01-01 contract findings
