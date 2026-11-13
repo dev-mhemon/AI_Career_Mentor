@@ -436,6 +436,10 @@ export class AuthService {
       .transaction(
         null,
         async (db) => {
+          await db.query(
+            'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
+            [user.id],
+          );
           await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
             user.id,
           ]);
@@ -1394,76 +1398,89 @@ export class AuthService {
     let goTrueConfirmed = false;
     try {
       await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
-        await this.database.transaction(
-          userId,
-          async (db) => {
-            await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
-              userId,
-            ]);
-            const [userRow] = await db.query(
-              'SELECT id, status, email, verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
-              [userId],
-            );
-            if (!userRow || userRow.status !== 'active') {
-              fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
-            }
-            if (userRow.verified_contact) {
-              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
-            }
+        try {
+          await this.database.transaction(
+            userId,
+            async (db) => {
+              await db.query(
+                'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+                [userId],
+              );
+              const [userRow] = await db.query(
+                'SELECT id, status, email, verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+                [userId],
+              );
+              if (!userRow || userRow.status !== 'active') {
+                fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+              }
+              if (userRow.verified_contact) {
+                fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+              }
 
-            const [providerRow] = await db.query(
-              `SELECT id, contact_value, provider_subject, verified_at
-                 FROM public.user_auth_providers
-                WHERE user_id = $1
-                  AND provider = 'email'
-                  AND (lower(contact_value) = $2 OR lower(provider_subject) = $2)
-                FOR UPDATE`,
-              [userId, email],
-            );
-            if (!providerRow || providerRow.verified_at !== null) {
-              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
-            }
+              const [providerRow] = await db.query(
+                `SELECT id, contact_value, provider_subject, verified_at
+                   FROM public.user_auth_providers
+                  WHERE user_id = $1
+                    AND provider = 'email'
+                    AND (lower(contact_value) = $2 OR lower(provider_subject) = $2)
+                  FOR UPDATE`,
+                [userId, email],
+              );
+              if (!providerRow || providerRow.verified_at !== null) {
+                fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+              }
 
-            const usersRes = await db.query(
-              `UPDATE public.users
-                  SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
-                WHERE id = $2 AND verified_contact = false`,
-              [email, userId],
-            );
-            const usersAffected =
-              Array.isArray(usersRes) && typeof usersRes[1] === 'number'
-                ? usersRes[1]
-                : (usersRes?.rowCount ?? 0);
+              const usersRes = await db.query(
+                `UPDATE public.users
+                    SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                  WHERE id = $2 AND verified_contact = false`,
+                [email, userId],
+              );
+              const usersAffected =
+                Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                  ? usersRes[1]
+                  : (usersRes?.rowCount ?? 0);
 
-            const providersRes = await db.query(
-              `UPDATE public.user_auth_providers
-                  SET verified_at = now(), updated_at = now()
-                WHERE user_id = $1 AND provider = 'email' AND (lower(contact_value) = $2 OR lower(provider_subject) = $2) AND verified_at IS NULL`,
-              [userId, email],
-            );
-            const providersAffected =
-              Array.isArray(providersRes) && typeof providersRes[1] === 'number'
-                ? providersRes[1]
-                : (providersRes?.rowCount ?? 0);
+              const providersRes = await db.query(
+                `UPDATE public.user_auth_providers
+                    SET verified_at = now(), updated_at = now()
+                  WHERE user_id = $1 AND provider = 'email' AND (lower(contact_value) = $2 OR lower(provider_subject) = $2) AND verified_at IS NULL`,
+                [userId, email],
+              );
+              const providersAffected =
+                Array.isArray(providersRes) &&
+                typeof providersRes[1] === 'number'
+                  ? providersRes[1]
+                  : (providersRes?.rowCount ?? 0);
 
-            if (usersAffected !== 1 || providersAffected !== 1) {
-              fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
-            }
+              if (usersAffected !== 1 || providersAffected !== 1) {
+                fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+              }
 
-            await db.query(
-              'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-              [userId],
-            );
-            await db.query(
-              'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-              [userId],
-            );
+              await db.query(
+                'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                [userId],
+              );
+              await db.query(
+                'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                [userId],
+              );
 
-            await this.confirmGoTrueUser(userId, email);
-            goTrueConfirmed = true;
-          },
-          true,
-        );
+              await this.confirmGoTrueUser(userId, email);
+              goTrueConfirmed = true;
+            },
+            true,
+          );
+        } catch (error) {
+          if (isPgUniqueViolation(error)) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Contact already registered',
+            );
+          }
+          throw error;
+        }
         committed = true;
       });
     } catch (error) {
@@ -1976,81 +1993,92 @@ export class AuthService {
         async () => {
           // Recheck and lock the pending provider mapping before calling GoTrue,
           // keeping the recheck, GoTrue confirmation, and application updates under one serialization boundary.
-          await this.database.transaction(
-            userId,
-            async (db) => {
-              await db.query(
-                'SELECT pg_advisory_xact_lock(hashtext($1::text))',
-                [userId],
-              );
-              const [pendingRow] = await db.query(
-                `SELECT u.id, p.contact_value, p.provider_subject, p.verified_at
-                   FROM public.users u
-                   JOIN public.user_auth_providers p
-                     ON p.user_id = u.id AND p.provider = 'phone'
-                  WHERE u.id = $1
-                    AND (p.contact_value IN ($2, ltrim($2, '+')) OR p.provider_subject IN ($2, ltrim($2, '+')))
-                    AND p.verified_at IS NULL
-                  LIMIT 1
-                  FOR UPDATE`,
-                [userId, phone],
-              );
-              if (!pendingRow) {
-                fail(
-                  409,
-                  'ALREADY_VERIFIED',
-                  'Contact already verified or replaced',
+          try {
+            await this.database.transaction(
+              userId,
+              async (db) => {
+                await db.query(
+                  'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+                  [userId],
                 );
-              }
+                const [pendingRow] = await db.query(
+                  `SELECT u.id, p.contact_value, p.provider_subject, p.verified_at
+                     FROM public.users u
+                     JOIN public.user_auth_providers p
+                       ON p.user_id = u.id AND p.provider = 'phone'
+                    WHERE u.id = $1
+                      AND (p.contact_value IN ($2, ltrim($2, '+')) OR p.provider_subject IN ($2, ltrim($2, '+')))
+                      AND p.verified_at IS NULL
+                    LIMIT 1
+                    FOR UPDATE`,
+                  [userId, phone],
+                );
+                if (!pendingRow) {
+                  fail(
+                    409,
+                    'ALREADY_VERIFIED',
+                    'Contact already verified or replaced',
+                  );
+                }
 
-              providerConfirmAttempted = true;
-              const isSecondary = user.is_primary === false;
-              await this.confirmGoTruePhoneUser(
-                userId,
-                isSecondary ? phone : undefined,
-              );
+                providerConfirmAttempted = true;
+                const isSecondary = user.is_primary === false;
+                await this.confirmGoTruePhoneUser(
+                  userId,
+                  isSecondary ? phone : undefined,
+                );
 
-              const usersRes = await db.query(
-                `UPDATE public.users
-                    SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
-                  WHERE id = $2 AND verified_contact = false`,
-                [phone, userId],
-              );
-              const usersAffected =
-                Array.isArray(usersRes) && typeof usersRes[1] === 'number'
-                  ? usersRes[1]
-                  : (usersRes?.rowCount ?? 0);
+                const usersRes = await db.query(
+                  `UPDATE public.users
+                      SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                    WHERE id = $2 AND verified_contact = false`,
+                  [phone, userId],
+                );
+                const usersAffected =
+                  Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                    ? usersRes[1]
+                    : (usersRes?.rowCount ?? 0);
 
-              const providersRes = await db.query(
-                `UPDATE public.user_auth_providers
-                    SET verified_at = clock_timestamp(), updated_at = now()
-                  WHERE user_id = $1
-                    AND provider = 'phone'
-                    AND (contact_value IN ($2, ltrim($2, '+')) OR provider_subject IN ($2, ltrim($2, '+')))
-                    AND verified_at IS NULL`,
-                [userId, phone],
-              );
-              const providersAffected =
-                Array.isArray(providersRes) &&
-                typeof providersRes[1] === 'number'
-                  ? providersRes[1]
-                  : (providersRes?.rowCount ?? 0);
+                const providersRes = await db.query(
+                  `UPDATE public.user_auth_providers
+                      SET verified_at = clock_timestamp(), updated_at = now()
+                    WHERE user_id = $1
+                      AND provider = 'phone'
+                      AND (contact_value IN ($2, ltrim($2, '+')) OR provider_subject IN ($2, ltrim($2, '+')))
+                      AND verified_at IS NULL`,
+                  [userId, phone],
+                );
+                const providersAffected =
+                  Array.isArray(providersRes) &&
+                  typeof providersRes[1] === 'number'
+                    ? providersRes[1]
+                    : (providersRes?.rowCount ?? 0);
 
-              if (usersAffected !== 1 || providersAffected !== 1) {
-                fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
-              }
+                if (usersAffected !== 1 || providersAffected !== 1) {
+                  fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+                }
 
-              await db.query(
-                'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-                [userId],
+                await db.query(
+                  'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                  [userId],
+                );
+                await db.query(
+                  'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                  [userId],
+                );
+              },
+              false,
+            );
+          } catch (error) {
+            if (isPgUniqueViolation(error)) {
+              fail(
+                409,
+                'CONTACT_ALREADY_REGISTERED',
+                'Contact already registered',
               );
-              await db.query(
-                'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-                [userId],
-              );
-            },
-            false,
-          );
+            }
+            throw error;
+          }
           committed = true;
         },
         'verify_phone',

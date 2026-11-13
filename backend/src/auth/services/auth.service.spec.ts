@@ -581,18 +581,105 @@ describe('AuthService session approval boundary', () => {
       });
       expect(query).toHaveBeenNthCalledWith(
         1,
-        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
         [userId],
       );
       expect(query).toHaveBeenNthCalledWith(
         2,
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [userId],
+      );
+      expect(query).toHaveBeenNthCalledWith(
+        3,
         'SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1::uuid) AS auth_user_exists',
         [userId],
       );
-      expect(query).toHaveBeenNthCalledWith(3, 'SET LOCAL ROLE service_role');
+      expect(query).toHaveBeenNthCalledWith(4, 'SET LOCAL ROLE service_role');
       expect(approvals.approve).not.toHaveBeenCalled();
     },
   );
+
+  it('locks public.users row before hashtext(userId) on bootstrap upsert to match user-ID transaction lock order', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'lock-order@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-lock' }],
+        }),
+      }),
+    );
+    const executedSql: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      executedSql.push(sql);
+      if (sql.includes('auth_user_exists')) return [{ auth_user_exists: true }];
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          { provider: 'google', max_activity_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.includes('SELECT id, phone FROM public.users')) {
+        return [{ id: userId, phone: null }];
+      }
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'lock-order@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const txArgs: unknown[][] = [];
+    const database = {
+      transaction: vi.fn((...args: unknown[]) => {
+        txArgs.push(args);
+        const operation = args[1] as (db: EntityManager) => Promise<unknown>;
+        return operation({ query } as unknown as EntityManager);
+      }),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+      'google',
+    );
+
+    expect(txArgs[0]?.[0]).toBeNull();
+    const rowLockIdx = executedSql.findIndex((sql) =>
+      sql.includes('SELECT id FROM public.users WHERE id = $1 FOR UPDATE'),
+    );
+    const advisoryIdx = executedSql.findIndex((sql) =>
+      sql.includes('pg_advisory_xact_lock(hashtext($1::text))'),
+    );
+    const upsertIdx = executedSql.findIndex((sql) =>
+      sql.includes('INSERT INTO public.users'),
+    );
+    expect(rowLockIdx).toBeGreaterThanOrEqual(0);
+    expect(advisoryIdx).toBeGreaterThan(rowLockIdx);
+    expect(upsertIdx).toBeGreaterThan(advisoryIdx);
+  });
 
   it('exercises full end-to-end bypass rejection: signup -> verify -> HTTP sync -> login while production A01 returns 503', async () => {
     const token = accessToken([{ method: 'password' }]);
@@ -1459,7 +1546,10 @@ describe('AuthService session approval boundary', () => {
       }),
     );
     const query = vi.fn(async (sql: string) => {
-      if (sql.includes('FROM auth.identities')) {
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
         return [
           {
             provider: 'google',
@@ -2404,7 +2494,10 @@ describe('AuthService session approval boundary', () => {
       }),
     );
     const query = vi.fn(async (sql: string) => {
-      if (sql.includes('FROM auth.identities')) {
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
         return [
           {
             provider: 'google',
@@ -2678,7 +2771,10 @@ describe('AuthService session approval boundary', () => {
       }),
     );
     const query = vi.fn(async (sql: string) => {
-      if (sql.includes('FROM auth.identities')) {
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
         return [
           {
             provider: 'google',
@@ -3035,15 +3131,35 @@ describe('AuthService session approval boundary', () => {
         operation({ query } as unknown as EntityManager),
       ),
     } as unknown as DatabaseService;
-    const otpStore = {
-      verifyAndConsumeOtp: vi.fn(async (_u, _e, _c, callback) => {
-        await callback();
-      }),
-    } as unknown as OtpSecretStore;
+    const config = configuration({
+      AUTH_OTP_HMAC_SECRET: '0123456789abcdef0123456789abcdef',
+    });
+    const realOtpAbuse = {
+      getOtpSecret: vi.fn(),
+      verifyChallenge: vi.fn(
+        async (
+          _subject: unknown,
+          candidateCode: string,
+          check: (candidate: string) => Promise<boolean>,
+        ) => {
+          const valid = await check(candidateCode);
+          if (!valid) fail(422, 'VERIFICATION_CODE_INVALID', 'Invalid code');
+        },
+      ),
+    } as unknown as AuthAbuseControl;
+    const otpStore = new OtpSecretStore(realOtpAbuse, config);
+    vi.mocked(realOtpAbuse.getOtpSecret).mockResolvedValue(
+      otpStore.computeDigest(
+        userId,
+        'user@example.invalid',
+        '123456',
+        'verify_email',
+      ),
+    );
     const service = new AuthService(
       database,
-      configuration(),
-      {} as AuthAbuseControl,
+      config,
+      realOtpAbuse,
       {} as SessionApprovalService,
       otpStore,
     );
@@ -3111,15 +3227,35 @@ describe('AuthService session approval boundary', () => {
         operation({ query } as unknown as EntityManager),
       ),
     } as unknown as DatabaseService;
-    const otpStore = {
-      verifyAndConsumeOtp: vi.fn(async (_u, _p, _c, callback) => {
-        await callback();
-      }),
-    } as unknown as OtpSecretStore;
+    const config = configuration({
+      AUTH_OTP_HMAC_SECRET: '0123456789abcdef0123456789abcdef',
+    });
+    const realOtpAbuse = {
+      getOtpSecret: vi.fn(),
+      verifyChallenge: vi.fn(
+        async (
+          _subject: unknown,
+          candidateCode: string,
+          check: (candidate: string) => Promise<boolean>,
+        ) => {
+          const valid = await check(candidateCode);
+          if (!valid) fail(422, 'VERIFICATION_CODE_INVALID', 'Invalid code');
+        },
+      ),
+    } as unknown as AuthAbuseControl;
+    const otpStore = new OtpSecretStore(realOtpAbuse, config);
+    vi.mocked(realOtpAbuse.getOtpSecret).mockResolvedValue(
+      otpStore.computeDigest(
+        userId,
+        '+8801712345678',
+        '123456',
+        'verify_phone',
+      ),
+    );
     const service = new AuthService(
       database,
-      configuration(),
-      {} as AuthAbuseControl,
+      config,
+      realOtpAbuse,
       {} as SessionApprovalService,
       otpStore,
     );
