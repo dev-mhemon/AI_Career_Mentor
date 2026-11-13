@@ -644,25 +644,33 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
     });
 
     it('cleans up synthetic ephemeral email on GoTrue admin confirmation failure', async () => {
-      database.query
-        .mockResolvedValueOnce([
-          {
-            id: TEST_USER_ID,
-            phone: TEST_PHONE,
-            verified_contact: false,
-            provider_subject: TEST_USER_ID,
-            verified_at: null,
-          },
-        ])
-        .mockResolvedValueOnce([
-          {
-            id: TEST_USER_ID,
-            contact_value: TEST_PHONE,
-            provider_subject: TEST_USER_ID,
-            verified_at: null,
-          },
-        ])
-        .mockResolvedValue([]);
+      database.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT u.id, u.phone, u.verified_contact')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              phone: TEST_PHONE,
+              verified_contact: false,
+              provider_subject: TEST_USER_ID,
+              verified_at: null,
+            },
+          ];
+        }
+        if (sql.includes('pg_advisory_xact_lock(hashtext($1::text))')) {
+          return [];
+        }
+        if (sql.includes('SELECT u.id, p.contact_value')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              contact_value: TEST_PHONE,
+              provider_subject: TEST_USER_ID,
+              verified_at: null,
+            },
+          ];
+        }
+        return [];
+      });
 
       const fetchMock = vi.mocked(globalThis.fetch);
       fetchMock.mockResolvedValueOnce(
@@ -1092,7 +1100,7 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
           'google',
         ),
       ).rejects.toMatchObject({
-        status: 403,
+        status: 422,
         response: expect.objectContaining({
           code: 'PROVIDER_MISMATCH',
         }),
@@ -1388,11 +1396,7 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
         ) {
           return [];
         }
-        if (
-          sql.includes(
-            "SELECT user_id FROM public.user_auth_providers WHERE provider = 'email'",
-          )
-        ) {
+        if (sql.includes('SELECT user_id FROM public.user_auth_providers')) {
           return [];
         }
         if (
