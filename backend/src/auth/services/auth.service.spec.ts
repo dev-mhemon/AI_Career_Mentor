@@ -28,6 +28,7 @@ const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 function accessToken(
   amr?: Array<{ method: string; provider?: string; timestamp?: number }>,
   claims: {
+    email?: string;
     phone?: string;
     app_metadata?: { provider?: string; providers?: string[] };
   } = {},
@@ -5936,6 +5937,803 @@ describe('AuthService session approval boundary', () => {
       expect(disabledToml).toContain(
         '[auth.external.facebook]\nenabled = false',
       );
+    });
+  });
+
+  describe('Phone password login when GoTrue phone provider is disabled', () => {
+    const phone = '+8801712345678';
+    const synthEmail = `phone-${userId}@synthetic.mentor`;
+    const mkReq = () =>
+      ({
+        socket: { remoteAddress: '127.0.0.1' },
+        ip: '127.0.0.1',
+        ips: [],
+        headers: {},
+        app: { get: vi.fn() },
+      }) as unknown as Request;
+
+    const mkAbuse = () =>
+      ({
+        login: vi.fn(async (_contact, _ip, authenticate) => {
+          const outcome = await authenticate();
+          if (!outcome.success) {
+            fail(401, 'INVALID_CREDENTIALS', 'Invalid credentials');
+          }
+          return outcome.value;
+        }),
+      }) as unknown as AuthAbuseControl;
+
+    const stubPhoneDisabledAndMintFetch = (
+      expectedEmail: string,
+      token: string,
+    ) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'phone_provider_disabled',
+            msg: 'Phone logins are disabled',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            hashed_token: 'phone-login-hash',
+            verification_type: 'magiclink',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: token,
+            refresh_token: 'phone-login-refresh',
+            expires_in: 3600,
+            token_type: 'bearer',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: userId }),
+        });
+      vi.stubGlobal('fetch', fetchMock);
+      return {
+        fetchMock,
+        assertMintedForEmail: () => {
+          expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('/auth/v1/admin/generate_link'),
+            expect.objectContaining({
+              body: JSON.stringify({ type: 'magiclink', email: expectedEmail }),
+            }),
+          );
+        },
+      };
+    };
+
+    const mkDbForPhoneLogin = (opts: {
+      authRow: Record<string, unknown>;
+      updateRowCount?: number;
+      recheckPasswordHash?: string | null;
+    }) => {
+      const initialHash = String(
+        opts.authRow.encrypted_password ?? '$2a$10$initialhash',
+      );
+      const executedSql: Array<{ sql: string; params?: unknown[] }> = [];
+      const query = vi.fn(async (sql: string, params?: unknown[]) => {
+        executedSql.push({ sql, params });
+        if (sql.includes('FROM auth.users u') && sql.includes('LIMIT 1')) {
+          return [{ id: userId }];
+        }
+        if (
+          sql.includes('FROM auth.users u') &&
+          sql.includes('FOR UPDATE') &&
+          sql.includes('u.email,')
+        ) {
+          return [{ encrypted_password: initialHash, ...opts.authRow }];
+        }
+        if (
+          sql.includes('SELECT encrypted_password') &&
+          sql.includes('FROM auth.users') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          const hash =
+            opts.recheckPasswordHash === undefined
+              ? initialHash
+              : opts.recheckPasswordHash;
+          return hash ? [{ encrypted_password: hash }] : [];
+        }
+        if (sql.includes('UPDATE auth.users')) {
+          const count = opts.updateRowCount ?? 1;
+          return [count === 1 ? [{ email: synthEmail }] : [], count];
+        }
+        if (sql.includes('SELECT u.verified_contact,p.verified_at')) {
+          return [
+            {
+              verified_contact: true,
+              verified_at: '2026-01-01T00:00:00Z',
+              contact_value: phone,
+            },
+          ];
+        }
+        if (sql.includes('SELECT u.id,u.email')) {
+          return [
+            {
+              id: userId,
+              email: null,
+              phone,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['phone'],
+            },
+          ];
+        }
+        if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+        if (sql.includes('effective_feature_access'))
+          return [{ enabled: false }];
+        return [];
+      });
+      const database = {
+        query,
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+      return { database, query, executedSql };
+    };
+
+    it('returns 401 INVALID_CREDENTIALS when phone user does not exist', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'phone_provider_disabled',
+            msg: 'Phone logins are disabled',
+          }),
+        }),
+      );
+      const database = {
+        query: vi.fn().mockResolvedValue([]),
+        transaction: vi.fn(),
+      } as unknown as DatabaseService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.login(
+          { identifier: '01712345678', password: 'WrongPassword1!' },
+          mkReq(),
+        ),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'INVALID_CREDENTIALS' },
+      });
+      expect(database.transaction).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 INVALID_CREDENTIALS when password does not match or hash is non-bcrypt', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'phone_provider_disabled',
+            msg: 'Phone logins are disabled',
+          }),
+        }),
+      );
+      const { database, executedSql } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          email: null,
+          email_confirmed_at: null,
+          password_matches: false,
+        },
+      });
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.login(
+          { identifier: phone, password: 'WrongPassword1!' },
+          mkReq(),
+        ),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'INVALID_CREDENTIALS' },
+      });
+      expect(
+        executedSql.some((q) =>
+          q.sql.includes("u.encrypted_password LIKE '$2%'"),
+        ),
+      ).toBe(true);
+      expect(executedSql.some((q) => q.sql.includes('pg_advisory_lock('))).toBe(
+        false,
+      );
+    });
+
+    it('returns 403 UNVERIFIED_ACCOUNT when phone is not confirmed', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'phone_provider_disabled',
+            msg: 'Phone logins are disabled',
+          }),
+        }),
+      );
+      const { database } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: null,
+          email: null,
+          email_confirmed_at: null,
+          password_matches: true,
+        },
+      });
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        {} as SessionApprovalService,
+      );
+
+      await expect(
+        service.login(
+          { identifier: '01712345678', password: 'ValidPassword1!' },
+          mkReq(),
+        ),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'UNVERIFIED_ACCOUNT' },
+      });
+    });
+
+    it('sets idempotent internal auth email without finally deletion for verified phone-only user', async () => {
+      const token = accessToken();
+      const { assertMintedForEmail } = stubPhoneDisabledAndMintFetch(
+        synthEmail,
+        token,
+      );
+      const { database, executedSql } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          email: null,
+          email_confirmed_at: null,
+          password_matches: true,
+        },
+      });
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        approvals,
+      );
+
+      const res = await service.login(
+        { identifier: '01712345678', password: 'ValidPassword1!' },
+        mkReq(),
+      );
+
+      expect(res).toMatchObject({
+        access_token: token,
+        token_type: 'Bearer',
+        next_step: 'profile_setup',
+        user: { id: userId, email: null, phone },
+      });
+      assertMintedForEmail();
+      expect(
+        executedSql.some(
+          (q) =>
+            q.sql.includes('UPDATE auth.users') &&
+            q.sql.includes('COALESCE(email_confirmed_at, NOW())') &&
+            q.sql.includes("NULLIF(BTRIM(email), '') IS NULL") &&
+            q.sql.includes("LOWER(BTRIM(email)) LIKE '%@synthetic.mentor'"),
+        ),
+      ).toBe(true);
+      expect(executedSql.some((q) => q.sql.includes('SET email = NULL'))).toBe(
+        false,
+      );
+      expect(executedSql.some((q) => q.sql.includes('pg_advisory_lock('))).toBe(
+        false,
+      );
+      expect(
+        executedSql.some((q) => q.sql.includes('SET LOCAL ROLE service_role')),
+      ).toBe(false);
+      expect(database.transaction).toHaveBeenLastCalledWith(
+        userId,
+        expect.any(Function),
+        false,
+        true,
+        false,
+      );
+      expect(
+        executedSql.some(
+          (q) =>
+            q.sql.includes('SELECT encrypted_password') &&
+            q.sql.includes('FOR UPDATE'),
+        ),
+      ).toBe(true);
+      expect(approvals.approve).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        userId,
+        sessionId,
+        'password_login',
+      );
+    });
+
+    it('mints directly with confirmed real email without mutating auth.users', async () => {
+      const token = accessToken();
+      const confirmedEmail = 'verified.user@example.com';
+      const { assertMintedForEmail } = stubPhoneDisabledAndMintFetch(
+        confirmedEmail,
+        token,
+      );
+      const { database, executedSql } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          email: confirmedEmail,
+          email_confirmed_at: '2026-01-02T00:00:00Z',
+          password_matches: true,
+        },
+      });
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        approvals,
+      );
+
+      const res = await service.login(
+        { identifier: phone, password: 'ValidPassword1!' },
+        mkReq(),
+      );
+
+      expect(res.access_token).toBe(token);
+      assertMintedForEmail();
+      expect(executedSql.some((q) => q.sql.includes('UPDATE auth.users'))).toBe(
+        false,
+      );
+    });
+
+    it('moves unconfirmed real email to email_change without temporary swap or restore', async () => {
+      const token = accessToken();
+      const { assertMintedForEmail } = stubPhoneDisabledAndMintFetch(
+        synthEmail,
+        token,
+      );
+      const { database, executedSql } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          email: 'pending@example.com',
+          email_confirmed_at: null,
+          password_matches: true,
+        },
+      });
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        approvals,
+      );
+
+      const res = await service.login(
+        { identifier: phone, password: 'ValidPassword1!' },
+        mkReq(),
+      );
+
+      expect(res.access_token).toBe(token);
+      assertMintedForEmail();
+      expect(
+        executedSql.some(
+          (q) =>
+            q.sql.includes('SET email_change = COALESCE(NULLIF(email_change') &&
+            q.sql.includes('email = $2'),
+        ),
+      ).toBe(true);
+      expect(executedSql.some((q) => q.sql.includes('SET email = NULL'))).toBe(
+        false,
+      );
+    });
+
+    it('fails closed with 503 when synthetic email UPDATE affects zero rows', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'phone_provider_disabled',
+            msg: 'Phone logins are disabled',
+          }),
+        }),
+      );
+      const { database, executedSql } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          email: null,
+          email_confirmed_at: null,
+          password_matches: true,
+        },
+        updateRowCount: 0,
+      });
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        approvals,
+      );
+
+      await expect(
+        service.login(
+          { identifier: phone, password: 'ValidPassword1!' },
+          mkReq(),
+        ),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: { code: 'SERVICE_UNAVAILABLE' },
+      });
+      expect(
+        executedSql.some(
+          (q) =>
+            q.sql.includes("NULLIF(BTRIM(email), '') IS NULL") &&
+            q.sql.includes("LOWER(BTRIM(email)) LIKE '%@synthetic.mentor'"),
+        ),
+      ).toBe(true);
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+
+    it('revokes newly minted GoTrue session and fails with 401 when encrypted_password changes before approval', async () => {
+      const token = accessToken();
+      stubPhoneDisabledAndMintFetch(synthEmail, token);
+      const { database, executedSql } = mkDbForPhoneLogin({
+        authRow: {
+          id: userId,
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          email: synthEmail,
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          encrypted_password: '$2a$10$oldhash',
+          password_matches: true,
+        },
+        recheckPasswordHash: '$2a$10$resetnewhash',
+      });
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        mkAbuse(),
+        approvals,
+      );
+
+      await expect(
+        service.login(
+          { identifier: phone, password: 'ValidPassword1!' },
+          mkReq(),
+        ),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: { code: 'INVALID_CREDENTIALS' },
+      });
+      expect(
+        executedSql.some(
+          (q) =>
+            q.sql.includes('DELETE FROM auth.sessions WHERE id = $1') &&
+            q.params?.[0] === sessionId,
+        ),
+      ).toBe(true);
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+
+    it('mintAndApproveSession preserves deterministic synthetic email for phone-only user after verifyPhone', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (url: unknown) => {
+          const urlStr = String(url);
+          if (urlStr.includes('/admin/generate_link')) {
+            return new Response(
+              JSON.stringify({
+                user: { id: userId },
+                hashed_token: 'valid-hash',
+              }),
+              { status: 200 },
+            );
+          }
+          if (urlStr.includes('/auth/v1/verify')) {
+            return new Response(
+              JSON.stringify({
+                access_token: accessToken(),
+                refresh_token: 'refresh-1',
+                expires_in: 3600,
+                token_type: 'bearer',
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response('{}', { status: 200 });
+        });
+      const executedSql: Array<{ sql: string; params?: unknown[] }> = [];
+      const database = {
+        query: vi
+          .fn()
+          .mockImplementation(async (sql: string, params?: unknown[]) => {
+            executedSql.push({ sql, params });
+            if (sql.includes('FROM auth.users WHERE id = $1')) {
+              return [{ email: synthEmail }];
+            }
+            return [];
+          }),
+        transaction: vi.fn(async (_id, cb) =>
+          cb({
+            query: vi
+              .fn()
+              .mockImplementation(async (sql: string, params?: unknown[]) => {
+                executedSql.push({ sql, params });
+                return [];
+              }),
+          }),
+        ),
+      } as unknown as DatabaseService;
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        approvals,
+      );
+      vi.spyOn(service as any, 'meInTransaction').mockResolvedValueOnce({
+        user: { id: userId, email: null, phone },
+        profile_complete: true,
+      });
+
+      const session = await (service as any).mintAndApproveSession(
+        userId,
+        phone,
+        'phone',
+      );
+
+      expect(session.access_token).toBeDefined();
+      expect(executedSql.some((q) => q.sql.includes('SET email = NULL'))).toBe(
+        false,
+      );
+      expect(
+        executedSql.some((q) => q.sql.includes('DELETE FROM auth.identities')),
+      ).toBe(false);
+      expect(approvals.approve).toHaveBeenCalledWith(
+        expect.anything(),
+        userId,
+        sessionId,
+        'email_verification',
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('treats @synthetic.mentor email as absent during password bootstrap and selects phone provider', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            email: synthEmail,
+            email_confirmed_at: '2026-01-01T00:00:00Z',
+            phone,
+            phone_confirmed_at: '2026-01-01T00:00:00Z',
+            identities: [{ provider: 'phone', id: userId }],
+          }),
+        }),
+      );
+      const executed: Array<{ sql: string; params?: unknown[] }> = [];
+      const query = vi.fn(async (sql: string, params?: unknown[]) => {
+        executed.push({ sql, params });
+        if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+          expect(params?.[1]).toBe('phone');
+          expect(params?.[2]).toBe(phone);
+          return [
+            { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+          ];
+        }
+        if (sql.includes('SELECT u.id,u.email'))
+          return [
+            {
+              id: userId,
+              email: null,
+              phone,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['phone'],
+            },
+          ];
+        if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+        if (sql.includes('effective_feature_access'))
+          return [{ enabled: true }];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        approvals,
+      );
+
+      const token = accessToken([{ method: 'password' }], {
+        email: synthEmail,
+        phone,
+        app_metadata: { provider: 'email' },
+      });
+      const result = await service.bootstrap(
+        { sub: userId, sessionId, authProvider: 'phone' },
+        `Bearer ${token}`,
+      );
+
+      expect(result.user.phone).toBe(phone);
+      expect(result.user.email).toBeNull();
+      expect(
+        executed.some((q) =>
+          (q.params ?? []).some(
+            (p) => typeof p === 'string' && p.includes('@synthetic.mentor'),
+          ),
+        ),
+      ).toBe(false);
+      expect(
+        executed.some(
+          (q) =>
+            q.sql.includes('SELECT u.verified_contact, p.verified_at') &&
+            q.params?.[1] === 'phone' &&
+            q.params?.[2] === phone,
+        ),
+      ).toBe(true);
+      expect(approvals.approve).not.toHaveBeenCalled();
+    });
+
+    it('allows provider-omitted and explicit OAuth bootstrap with @synthetic.mentor via provider_subject', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            id: userId,
+            email: synthEmail,
+            email_confirmed_at: '2026-01-01T00:00:00Z',
+            phone,
+            phone_confirmed_at: '2026-01-01T00:00:00Z',
+            identities: [
+              { provider: 'phone', id: userId },
+              {
+                provider: 'google',
+                id: 'google-identity-1',
+                identity_data: { sub: 'google-sub-123' },
+              },
+            ],
+          }),
+        }),
+      );
+      const executed: Array<{ sql: string; params?: unknown[] }> = [];
+      const query = vi.fn(async (sql: string, params?: unknown[]) => {
+        executed.push({ sql, params });
+        if (sql.includes('SELECT u.verified_contact, p.verified_at'))
+          return [
+            { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+          ];
+        if (sql.startsWith('SELECT verified_contact'))
+          return [{ verified_contact: true }];
+        if (sql.includes('SELECT u.id,u.email'))
+          return [
+            {
+              id: userId,
+              email: null,
+              phone,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['phone', 'google'],
+            },
+          ];
+        if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+        if (sql.includes('effective_feature_access'))
+          return [{ enabled: true }];
+        return [];
+      });
+      const database = {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService;
+      const approvals = {
+        approve: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionApprovalService;
+      const service = new AuthService(
+        database,
+        configuration(),
+        {} as AuthAbuseControl,
+        approvals,
+      );
+
+      const oauthToken = accessToken(
+        [{ method: 'oauth', provider: 'google' }],
+        {
+          email: synthEmail,
+          app_metadata: { provider: 'google', providers: ['phone', 'google'] },
+        },
+      );
+      const syncResult = await service.bootstrap(
+        { sub: userId, sessionId, authProvider: 'google' },
+        `Bearer ${oauthToken}`,
+      );
+      expect(syncResult.user.email).toBeNull();
+      expect(
+        executed.some(
+          (q) =>
+            q.sql.includes('p.provider_subject = $3') &&
+            q.params?.[1] === 'google' &&
+            q.params?.[2] === 'google-sub-123',
+        ),
+      ).toBe(true);
+
+      const explicitResult = await service.bootstrap(
+        { sub: userId, sessionId, authProvider: 'google' },
+        `Bearer ${oauthToken}`,
+        'google',
+      );
+      expect(explicitResult.user.email).toBeNull();
+      expect(
+        executed.some((q) =>
+          (q.params ?? []).some(
+            (p) => typeof p === 'string' && p.includes('@synthetic.mentor'),
+          ),
+        ),
+      ).toBe(false);
     });
   });
 });

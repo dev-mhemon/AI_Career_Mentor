@@ -231,13 +231,13 @@ describe('AuthService - verifyPhone (EP-A03)', () => {
       sessionId,
       'email_verification',
     );
-    expect(mockDb.query).toHaveBeenCalledWith(
-      'UPDATE auth.users SET email = NULL, email_confirmed_at = NULL WHERE id = $1 AND email = $2',
-      [userId, `phone-${userId}@synthetic.mentor`],
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('SET email = NULL'),
+      expect.anything(),
     );
-    expect(mockDb.query).toHaveBeenCalledWith(
-      "DELETE FROM auth.identities WHERE user_id = $1 AND provider = 'email' AND identity_data->>'email' = $2",
-      [userId, `phone-${userId}@synthetic.mentor`],
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM auth.identities'),
+      expect.anything(),
     );
   });
 
@@ -437,7 +437,7 @@ describe('AuthService - verifyPhone (EP-A03)', () => {
     });
   });
 
-  it('cleans up synthetic phone email best-effort when generate_link or /auth/v1/verify fails during verifyPhone', async () => {
+  it('preserves deterministic synthetic phone email when generate_link or /auth/v1/verify fails after verifyPhone commit', async () => {
     setupDbUserLookups(false, false);
 
     vi.spyOn(globalThis, 'fetch')
@@ -462,29 +462,17 @@ describe('AuthService - verifyPhone (EP-A03)', () => {
       }),
     });
 
-    expect(mockDb.query).toHaveBeenCalledWith(
-      'UPDATE auth.users SET email = NULL, email_confirmed_at = NULL WHERE id = $1 AND email = $2',
-      [userId, `phone-${userId}@synthetic.mentor`],
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('SET email = NULL'),
+      expect.anything(),
     );
-    expect(mockDb.query).toHaveBeenCalledWith(
-      "DELETE FROM auth.identities WHERE user_id = $1 AND provider = 'email' AND identity_data->>'email' = $2",
-      [userId, `phone-${userId}@synthetic.mentor`],
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM auth.identities'),
+      expect.anything(),
     );
   });
 
-  it('preserves original session-minting error and logs error when fallback cleanup itself throws', async () => {
-    setupDbUserLookups(false, false);
-
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: userId }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ msg: 'generate_link failed' }), {
-          status: 500,
-        }),
-      );
-
+  it('cleans up synthetic phone email and logs error when uncommitted OTP verification rolls back after GoTrue confirm', async () => {
     mockDb.query.mockImplementation(async (sql: string) => {
       if (sql.includes('JOIN public.user_auth_providers p')) {
         return [
@@ -498,25 +486,23 @@ describe('AuthService - verifyPhone (EP-A03)', () => {
         ];
       }
       if (sql.includes('UPDATE public.users')) return [[], 1];
-      if (sql.includes('UPDATE public.user_auth_providers')) return [[], 1];
+      if (sql.includes('UPDATE public.user_auth_providers')) return [[], 0];
       if (sql.includes('UPDATE auth.users')) {
         throw new Error('Database socket closed during cleanup');
       }
       return [];
     });
 
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: userId }), { status: 200 }),
+    );
     const loggerErrorSpy = vi.spyOn((service as any).logger, 'error');
 
     await expect(
       service.verifyPhone({ phone, code: '123456' }),
     ).rejects.toMatchObject({
-      status: 502,
-      response: expect.objectContaining({
-        code: 'PROVIDER_ERROR',
-        message:
-          'Account is verified; sign in with your phone and password to start your session',
-        retryable: false,
-      }),
+      status: 409,
+      response: expect.objectContaining({ code: 'ALREADY_VERIFIED' }),
     });
 
     expect(loggerErrorSpy).toHaveBeenCalledWith(
@@ -525,7 +511,7 @@ describe('AuthService - verifyPhone (EP-A03)', () => {
     );
   });
 
-  it('cleans up synthetic phone email via fallback path when approvals.approve fails inside session transaction', async () => {
+  it('preserves deterministic synthetic phone email when approvals.approve fails inside session transaction', async () => {
     setupDbUserLookups(false, false);
     const validJwt = makeJwt(userId, sessionId);
 
@@ -566,31 +552,14 @@ describe('AuthService - verifyPhone (EP-A03)', () => {
       }),
     });
 
-    const updateCalls = mockDb.query.mock.calls.filter(([sql]: [string]) =>
-      sql.includes('UPDATE auth.users SET email = NULL'),
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('SET email = NULL'),
+      expect.anything(),
     );
-    expect(updateCalls).toHaveLength(2);
-    expect(updateCalls[0]).toEqual([
-      'UPDATE auth.users SET email = NULL, email_confirmed_at = NULL WHERE id = $1 AND email = $2',
-      [userId, `phone-${userId}@synthetic.mentor`],
-    ]);
-    expect(updateCalls[1]).toEqual([
-      'UPDATE auth.users SET email = NULL, email_confirmed_at = NULL WHERE id = $1 AND email = $2',
-      [userId, `phone-${userId}@synthetic.mentor`],
-    ]);
-
-    const deleteCalls = mockDb.query.mock.calls.filter(([sql]: [string]) =>
-      sql.includes('DELETE FROM auth.identities'),
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM auth.identities'),
+      expect.anything(),
     );
-    expect(deleteCalls).toHaveLength(2);
-    expect(deleteCalls[0]).toEqual([
-      "DELETE FROM auth.identities WHERE user_id = $1 AND provider = 'email' AND identity_data->>'email' = $2",
-      [userId, `phone-${userId}@synthetic.mentor`],
-    ]);
-    expect(deleteCalls[1]).toEqual([
-      "DELETE FROM auth.identities WHERE user_id = $1 AND provider = 'email' AND identity_data->>'email' = $2",
-      [userId, `phone-${userId}@synthetic.mentor`],
-    ]);
   });
 
   it('does NOT run synthetic phone email cleanup when verifyAndConsumeOtp rejects before callback runs', async () => {
