@@ -306,6 +306,87 @@ describe('TextBeeSmsProvider', () => {
       const [, init] = fetchMock.mock.calls[0];
       expect(init?.signal).toBeInstanceOf(AbortSignal);
     });
+
+    it('falls back to Mailpit in non-production when TEXTBEE_DEVICE_ID is missing and MAILPIT_URL is set', async () => {
+      const fetchMock = vi.mocked(globalThis.fetch);
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ ID: 'msg-3' }), { status: 200 }),
+      );
+
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'NODE_ENV') return 'development';
+          if (key === 'TEXTBEE_API_KEY') return 'tb_secret_key_123';
+          if (key === 'MAILPIT_URL') return 'http://127.0.0.1:56324';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(config);
+      await provider.dispatchSms('+8801712345678', 'Code: 777666');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://127.0.0.1:56324/api/v1/send');
+      expect(JSON.parse(init?.body as string)).toEqual({
+        From: { Email: 'noreply@mentor.local' },
+        To: [{ Email: '8801712345678@sms.local' }],
+        Subject: 'Your SMS verification code',
+        Text: 'Code: 777666',
+      });
+    });
+
+    it('uses Mailpit in non-production when SMS_PROVIDER=mailpit even if TextBee credentials are set', async () => {
+      const fetchMock = vi.mocked(globalThis.fetch);
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ ID: 'msg-4' }), { status: 200 }),
+      );
+
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'NODE_ENV') return 'development';
+          if (key === 'SMS_PROVIDER') return 'mailpit';
+          if (key === 'TEXTBEE_API_KEY') return 'tb_secret_key_123';
+          if (key === 'TEXTBEE_DEVICE_ID') return 'device_xyz_789';
+          if (key === 'MAILPIT_URL') return 'http://127.0.0.1:56324';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(config);
+      await provider.dispatchSms('+8801712345678', 'Code: 555444');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://127.0.0.1:56324/api/v1/send');
+    });
+
+    it('ignores SMS_PROVIDER=mailpit in production and fails closed with 503 when TEXTBEE_API_KEY is missing', () => {
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'NODE_ENV') return 'production';
+          if (key === 'SMS_PROVIDER') return 'mailpit';
+          if (key === 'MAILPIT_URL') return 'http://127.0.0.1:56324';
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return '01234567890123456789012345678901';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'sb-service-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(
+        config,
+        {} as DatabaseService,
+        {
+          generateOtp: vi.fn(),
+          storeOtp: vi.fn(),
+        } as unknown as OtpSecretStore,
+      );
+
+      expect(provider.isConfigured()).toBe(false);
+      expect(() => provider.ready()).toThrow(HttpException);
+    });
   });
 
   describe('Database and Identity Lifecycle Methods', () => {

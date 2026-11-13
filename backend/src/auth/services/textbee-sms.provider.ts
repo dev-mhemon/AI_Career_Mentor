@@ -48,17 +48,56 @@ export class TextBeeSmsProvider {
     );
   }
 
-  isConfigured(): boolean {
-    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-    if (apiKey) return true;
+  // [ORIGINAL] Pre-fallback isConfigured():
+  // isConfigured(): boolean {
+  //   const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+  //   if (apiKey) return true;
+  //   const isProd =
+  //     (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
+  //     'production';
+  //   if (!isProd) {
+  //     const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
+  //     if (mailpit) return true;
+  //   }
+  //   return false;
+  // }
+  private resolveDeliveryMode(): 'textbee' | 'mailpit' | 'unconfigured' {
     const isProd =
       (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
       'production';
-    if (!isProd) {
-      const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
-      if (mailpit) return true;
+    const smsProvider = this.config
+      ?.get<string>('SMS_PROVIDER')
+      ?.trim()
+      .toLowerCase();
+    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+    const deviceId = this.config?.get<string>('TEXTBEE_DEVICE_ID')?.trim();
+    const mailpitUrl = this.config?.get<string>('MAILPIT_URL')?.trim();
+
+    if (isProd) {
+      return apiKey ? 'textbee' : 'unconfigured';
     }
-    return false;
+
+    if (smsProvider === 'mailpit') {
+      return mailpitUrl ? 'mailpit' : 'unconfigured';
+    }
+
+    if (smsProvider === 'textbee') {
+      return apiKey ? 'textbee' : 'unconfigured';
+    }
+
+    if (apiKey && (deviceId || !mailpitUrl)) {
+      return 'textbee';
+    }
+
+    if (mailpitUrl) {
+      return 'mailpit';
+    }
+
+    return 'unconfigured';
+  }
+
+  isConfigured(): boolean {
+    return this.resolveDeliveryMode() !== 'unconfigured';
   }
 
   ready(): void {
@@ -89,15 +128,17 @@ export class TextBeeSmsProvider {
   async checkDeliveryHealth(_signal?: AbortSignal): Promise<void> {
     void _signal;
     this.ready();
-    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-    if (apiKey) return;
-    const isProd =
-      (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
-      'production';
-    if (!isProd) {
-      const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
-      if (mailpit) return;
-    }
+    // [ORIGINAL] Pre-fallback checkDeliveryHealth():
+    // const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+    // if (apiKey) return;
+    // const isProd =
+    //   (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
+    //   'production';
+    // if (!isProd) {
+    //   const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
+    //   if (mailpit) return;
+    // }
+    if (this.resolveDeliveryMode() !== 'unconfigured') return;
     fail(
       503,
       'SERVICE_UNAVAILABLE',
@@ -301,16 +342,33 @@ export class TextBeeSmsProvider {
     message: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-    if (apiKey) {
-      await this.dispatchTextBee(phone, message, apiKey, signal);
-      return;
+    // [ORIGINAL] Pre-fallback dispatchSms():
+    // const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+    // if (apiKey) {
+    //   await this.dispatchTextBee(phone, message, apiKey, signal);
+    //   return;
+    // }
+    //
+    // const isProd =
+    //   (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
+    //   'production';
+    // if (!isProd) {
+    //   const mailpitUrl = this.config?.get<string>('MAILPIT_URL')?.trim();
+    //   if (mailpitUrl) {
+    //     await this.dispatchMailpit(phone, message, mailpitUrl, signal);
+    //     return;
+    //   }
+    // }
+    const mode = this.resolveDeliveryMode();
+    if (mode === 'textbee') {
+      const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+      if (apiKey) {
+        await this.dispatchTextBee(phone, message, apiKey, signal);
+        return;
+      }
     }
 
-    const isProd =
-      (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
-      'production';
-    if (!isProd) {
+    if (mode === 'mailpit') {
       const mailpitUrl = this.config?.get<string>('MAILPIT_URL')?.trim();
       if (mailpitUrl) {
         await this.dispatchMailpit(phone, message, mailpitUrl, signal);
@@ -464,5 +522,8 @@ export class TextBeeSmsProvider {
         5,
       );
     }
+    this.logger.log(
+      `Local Mailpit SMS fallback dispatched for ${maskPhone(phone)}`,
+    );
   }
 }

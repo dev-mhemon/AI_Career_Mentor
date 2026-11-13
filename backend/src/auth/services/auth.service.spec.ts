@@ -5691,6 +5691,21 @@ describe('AuthService session approval boundary', () => {
       expect(launchEnv.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
       expect(launchEnv.MAILPIT_URL).toBe('http://127.0.0.1:56324');
       expect(launchEnv.MENTOR_LOCAL_DIR).toBe('/test/local');
+
+      const disabledTextBeeEnv = buildBackendLaunchEnv(
+        {
+          MAILPIT_URL: 'http://127.0.0.1:56324',
+          TEXTBEE_API_KEY: '',
+          TEXTBEE_DEVICE_ID: '',
+          SMS_PROVIDER: '',
+        },
+        '# TEXTBEE_API_KEY=disabled\nSMS_PROVIDER=mailpit\n',
+        {},
+        '/test/local',
+      );
+      expect(disabledTextBeeEnv.TEXTBEE_API_KEY).toBeUndefined();
+      expect(disabledTextBeeEnv.TEXTBEE_DEVICE_ID).toBeUndefined();
+      expect(disabledTextBeeEnv.SMS_PROVIDER).toBe('mailpit');
     });
 
     it('validates local.mjs resolveOAuthProviders and injectOAuthIntoConfigToml for Google and Facebook', () => {
