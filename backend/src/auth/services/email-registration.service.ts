@@ -1,6 +1,5 @@
 import { HttpException, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { QueryFailedError } from 'typeorm';
 import type { Request } from 'express';
 import { fail } from '../../common/http.js';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
@@ -10,6 +9,7 @@ import {
   normalizeResendRequest,
 } from '../registration.dto.js';
 import { DatabaseService } from './database.service.js';
+import { isPgUniqueViolation } from './auth.service.js';
 import {
   EmailRegistrationProvider,
   type PendingEmailIdentity,
@@ -378,6 +378,9 @@ export class EmailRegistrationService {
       await this.database.transaction(
         null,
         async (db) => {
+          await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+            identity.id,
+          ]);
           // The UUID lock used by bootstrap is insufficient when two Auth UUIDs
           // race for the same pending email. All A01/A04 writers take this lock.
           await db.query(
@@ -462,10 +465,7 @@ export class EmailRegistrationService {
         false,
       );
     } catch (error) {
-      if (
-        error instanceof QueryFailedError &&
-        error.driverError?.code === '23505'
-      ) {
+      if (isPgUniqueViolation(error)) {
         fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
       }
       if (error instanceof HttpException) throw error;
@@ -491,6 +491,9 @@ export class EmailRegistrationService {
       await this.database.transaction(
         null,
         async (db) => {
+          await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+            identity.id,
+          ]);
           await db.query(
             'SELECT pg_advisory_xact_lock(hashtextextended($1, 1))',
             [`auth:pending-phone:${identity.phone}`],
@@ -579,10 +582,7 @@ export class EmailRegistrationService {
         false,
       );
     } catch (error) {
-      if (
-        error instanceof QueryFailedError &&
-        error.driverError?.code === '23505'
-      ) {
+      if (isPgUniqueViolation(error)) {
         fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
       }
       if (error instanceof HttpException) throw error;

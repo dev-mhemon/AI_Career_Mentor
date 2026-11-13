@@ -15,15 +15,22 @@ import { EmailRegistrationProvider } from './email-registration.provider.js';
 import { EmailRegistrationService } from './email-registration.service.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 import { TextBeeSmsProvider } from './textbee-sms.provider.js';
-// @ts-expect-error - script utility import outside tsconfig rootDir
-import { buildBackendLaunchEnv } from '../../../../scripts/foundation/local.mjs';
+import {
+  buildBackendLaunchEnv,
+  resolveOAuthProviders,
+  injectOAuthIntoConfigToml,
+  // @ts-expect-error - script utility import outside tsconfig rootDir
+} from '../../../../scripts/foundation/local.mjs';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 function accessToken(
-  amr?: Array<{ method: string; provider?: string }>,
-  claims: { phone?: string; app_metadata?: { provider?: string } } = {},
+  amr?: Array<{ method: string; provider?: string; timestamp?: number }>,
+  claims: {
+    phone?: string;
+    app_metadata?: { provider?: string; providers?: string[] };
+  } = {},
 ): string {
   const encode = (value: object) =>
     Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -52,6 +59,9 @@ function configuration(overrides: Record<string, unknown> = {}): ConfigService {
 }
 
 describe('AuthService session approval boundary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it('refuses sync when an A01 email registration is pending verification', async () => {
@@ -110,10 +120,13 @@ describe('AuthService session approval boundary', () => {
         }),
       }),
     );
-    const query = vi
-      .fn()
-      .mockResolvedValueOnce([{ verified_contact: true }])
-      .mockResolvedValueOnce([{ '?column?': 1 }]);
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM auth.identities')) return [];
+      if (sql.includes("provider='email' AND verified_at IS NULL")) {
+        return [{ '?column?': 1 }];
+      }
+      return [];
+    });
     const database = {
       transaction: vi.fn((_id, operation) =>
         operation({ query } as unknown as EntityManager),
@@ -287,22 +300,10 @@ describe('AuthService session approval boundary', () => {
         'google',
       ),
     ).rejects.toMatchObject({
-      status: 403,
+      status: 422,
       response: { code: 'PROVIDER_MISMATCH' },
     });
     expect(approvals.approve).not.toHaveBeenCalled();
-
-    const missingProviderToken = accessToken([{ method: 'oauth' }]);
-    await expect(
-      service.bootstrap(
-        { sub: userId, sessionId },
-        `Bearer ${missingProviderToken}`,
-        'google',
-      ),
-    ).rejects.toMatchObject({
-      status: 403,
-      response: { code: 'PROVIDER_MISMATCH' },
-    });
 
     const mismatchedProviderToken = accessToken([
       { method: 'oauth', provider: 'facebook' },
@@ -314,7 +315,7 @@ describe('AuthService session approval boundary', () => {
         'google',
       ),
     ).rejects.toMatchObject({
-      status: 403,
+      status: 422,
       response: { code: 'PROVIDER_MISMATCH' },
     });
   });
@@ -380,8 +381,9 @@ describe('AuthService session approval boundary', () => {
       ),
     ).toBe(false);
     expect(database.transaction).toHaveBeenCalledWith(
-      userId,
+      null,
       expect.any(Function),
+      false,
       false,
       false,
     );
@@ -577,10 +579,107 @@ describe('AuthService session approval boundary', () => {
         status: 403,
         response: { code: 'UNVERIFIED_ACCOUNT' },
       });
-      expect(query).not.toHaveBeenCalled();
+      expect(query).toHaveBeenNthCalledWith(
+        1,
+        'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
+      expect(query).toHaveBeenNthCalledWith(
+        2,
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [userId],
+      );
+      expect(query).toHaveBeenNthCalledWith(
+        3,
+        'SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1::uuid) AS auth_user_exists',
+        [userId],
+      );
+      expect(query).toHaveBeenNthCalledWith(4, 'SET LOCAL ROLE service_role');
       expect(approvals.approve).not.toHaveBeenCalled();
     },
   );
+
+  it('locks public.users row before hashtext(userId) on bootstrap upsert to match user-ID transaction lock order', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'lock-order@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-lock' }],
+        }),
+      }),
+    );
+    const executedSql: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      executedSql.push(sql);
+      if (sql.includes('auth_user_exists')) return [{ auth_user_exists: true }];
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          { provider: 'google', max_activity_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.includes('SELECT id, phone FROM public.users')) {
+        return [{ id: userId, phone: null }];
+      }
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'lock-order@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const txArgs: unknown[][] = [];
+    const database = {
+      transaction: vi.fn((...args: unknown[]) => {
+        txArgs.push(args);
+        const operation = args[1] as (db: EntityManager) => Promise<unknown>;
+        return operation({ query } as unknown as EntityManager);
+      }),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+      'google',
+    );
+
+    expect(txArgs[0]?.[0]).toBeNull();
+    const rowLockIdx = executedSql.findIndex((sql) =>
+      sql.includes('SELECT id FROM public.users WHERE id = $1 FOR UPDATE'),
+    );
+    const advisoryIdx = executedSql.findIndex((sql) =>
+      sql.includes('pg_advisory_xact_lock(hashtext($1::text))'),
+    );
+    const upsertIdx = executedSql.findIndex((sql) =>
+      sql.includes('INSERT INTO public.users'),
+    );
+    expect(rowLockIdx).toBeGreaterThanOrEqual(0);
+    expect(advisoryIdx).toBeGreaterThan(rowLockIdx);
+    expect(upsertIdx).toBeGreaterThan(advisoryIdx);
+  });
 
   it('exercises full end-to-end bypass rejection: signup -> verify -> HTTP sync -> login while production A01 returns 503', async () => {
     const token = accessToken([{ method: 'password' }]);
@@ -978,6 +1077,2195 @@ describe('AuthService session approval boundary', () => {
       false,
       true,
     );
+  });
+
+  it('invokes main bootstrap transaction with least-privilege service_role', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'email', id: userId }],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['email'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'password' }])}`,
+    );
+
+    expect(database.transaction).toHaveBeenCalledWith(
+      null,
+      expect.any(Function),
+      false,
+      false,
+      false,
+    );
+  });
+
+  it('rejects with 409 ACCOUNT_EXISTS and executes narrow privileged cleanup when email collision occurs without existing app row', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'collision@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-col' }],
+        }),
+      }),
+    );
+    const executedQueries: string[] = [];
+    let authUserExists = true;
+    const query = vi.fn(async (sql: string) => {
+      executedQueries.push(sql);
+      if (sql.includes('AS auth_user_exists')) {
+        return [{ auth_user_exists: authUserExists }];
+      }
+      if (sql.includes('email_collisions')) {
+        return [{ user_id: 'other-user-id' }];
+      }
+      if (sql.includes('DELETE FROM auth.users')) {
+        authUserExists = false;
+        return [{ id: userId }];
+      }
+      if (sql.includes('FROM public.users') && sql.includes('WHERE id = $1')) {
+        return [];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: 'ACCOUNT_EXISTS',
+        message: expect.stringContaining('already exists'),
+      },
+    });
+
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.identities')),
+    ).toBe(true);
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.sessions')),
+    ).toBe(true);
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.users')),
+    ).toBe(true);
+    expect(database.transaction).toHaveBeenLastCalledWith(
+      null,
+      expect.any(Function),
+      false,
+      false,
+      false,
+    );
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: { code: 'INVALID_TOKEN' },
+    });
+    expect(
+      executedQueries.some((sql) => sql.includes('INSERT INTO public.users(')),
+    ).toBe(false);
+    expect(
+      executedQueries.some((sql) =>
+        sql.includes('INSERT INTO public.user_auth_providers('),
+      ),
+    ).toBe(false);
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('allows a later valid bootstrap when collision cleanup retains an Auth user with another identity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'collision@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub-retained' },
+            { provider: 'facebook', id: 'facebook-sub-retained' },
+          ],
+        }),
+      }),
+    );
+    let collisionPending = true;
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('AS auth_user_exists')) {
+        return [{ auth_user_exists: true }];
+      }
+      if (sql.includes('email_collisions')) {
+        if (collisionPending) {
+          collisionPending = false;
+          return [{ user_id: 'other-user-id' }];
+        }
+        return [];
+      }
+      if (sql.includes('DELETE FROM auth.users')) return [];
+      if (sql.includes('SELECT id, phone FROM public.users')) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'collision@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google', 'facebook'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const service = new AuthService(
+      {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'ACCOUNT_EXISTS' },
+    });
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).resolves.toMatchObject({ user: { id: userId } });
+  });
+
+  it('skips all deferred auth deletes when provisioning wins the race before cleanup', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'collision@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-race' }],
+        }),
+      }),
+    );
+    const executedQueries: string[] = [];
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      executedQueries.push(sql);
+      if (sql.includes('email_collisions')) {
+        expect(params).toEqual(['collision@example.invalid', userId]);
+        return [{ user_id: 'other-user-id' }];
+      }
+      if (sql.includes('SELECT id, phone FROM public.users')) return [];
+      if (sql.includes('SELECT 1 FROM public.users WHERE id = $1 LIMIT 1')) {
+        expect(params).toEqual([userId]);
+        return [{ '?column?': 1 }];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'ACCOUNT_EXISTS' },
+    });
+
+    expect(
+      executedQueries.some((sql) => sql.includes('pg_advisory_xact_lock')),
+    ).toBe(true);
+    const cleanupLockIndex = executedQueries.findLastIndex((sql) =>
+      sql.includes('pg_advisory_xact_lock(hashtext($1::text))'),
+    );
+    const authUserLockIndex = executedQueries.findIndex((sql) =>
+      sql.includes('SELECT id FROM auth.users WHERE id = $1 FOR UPDATE'),
+    );
+    const appCheckIndex = executedQueries.findIndex((sql) =>
+      sql.includes('SELECT 1 FROM public.users WHERE id = $1 LIMIT 1'),
+    );
+    expect(cleanupLockIndex).toBeGreaterThan(-1);
+    expect(authUserLockIndex).toBe(cleanupLockIndex + 1);
+    expect(appCheckIndex).toBe(authUserLockIndex + 1);
+    expect(
+      executedQueries.some((sql) =>
+        sql.includes('DELETE FROM auth.identities'),
+      ),
+    ).toBe(false);
+    expect(
+      executedQueries.some((sql) => sql.includes('DELETE FROM auth.sessions')),
+    ).toBe(false);
+    expect(
+      executedQueries.some((sql) => sql.includes('DELETE FROM auth.users')),
+    ).toBe(false);
+  });
+
+  it('rejects with 409 ACCOUNT_EXISTS and preserves existing account without auth.* cleanup when app row already exists', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'collision@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-col' }],
+        }),
+      }),
+    );
+    const executedQueries: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      executedQueries.push(sql);
+      if (sql.includes('email_collisions')) {
+        return [{ user_id: 'other-user-id' }];
+      }
+      if (sql.includes('FROM public.users') && sql.includes('WHERE id = $1')) {
+        return [{ id: userId, phone: null }];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: 'ACCOUNT_EXISTS',
+        message: expect.stringContaining('already exists'),
+      },
+    });
+
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.identities')),
+    ).toBe(false);
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.sessions')),
+    ).toBe(false);
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.users')),
+    ).toBe(false);
+    expect(database.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects with 409 IDENTITY_LINK_CONFLICT when pre-flight identity check detects existing provider_subject under different user', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-conflict' }],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [{ user_id: 'different-user-id' }];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: 'IDENTITY_LINK_CONFLICT',
+        message: 'Identity belongs to another application account',
+      },
+    });
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('rejects explicit Google callback when Facebook uniquely matches the session AMR timestamp', async () => {
+    const amrTimestamp = 1700000000;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'multi-oauth@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            {
+              provider: 'google',
+              id: 'google-sub',
+              last_sign_in_at: new Date(
+                (amrTimestamp + 600) * 1000,
+              ).toISOString(),
+            },
+            {
+              provider: 'facebook',
+              id: 'facebook-sub',
+              last_sign_in_at: new Date(amrTimestamp * 1000).toISOString(),
+            },
+          ],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            max_activity_at: new Date(
+              (amrTimestamp + 600) * 1000,
+            ).toISOString(),
+          },
+          {
+            provider: 'facebook',
+            max_activity_at: new Date(amrTimestamp * 1000).toISOString(),
+          },
+        ];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', timestamp: amrTimestamp }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      response: {
+        code: 'PROVIDER_MISMATCH',
+        message:
+          'Requested OAuth provider does not match session authentication evidence',
+      },
+    });
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('catches and logs privileged cleanup error on email collision and still rejects with 409 ACCOUNT_EXISTS', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'collision@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-col' }],
+        }),
+      }),
+    );
+    const executedQueries: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      executedQueries.push(sql);
+      if (sql.includes('email_collisions')) {
+        return [{ user_id: 'other-user-id' }];
+      }
+      if (sql.includes('FROM public.users') && sql.includes('WHERE id = $1')) {
+        return [];
+      }
+      return [];
+    });
+    query.mockImplementation(async (sql: string) => {
+      executedQueries.push(sql);
+      if (sql.includes('email_collisions')) {
+        return [{ user_id: 'other-user-id' }];
+      }
+      if (sql.includes('FROM public.users') && sql.includes('WHERE id = $1')) {
+        return [];
+      }
+      if (sql.includes('DELETE FROM auth.identities')) {
+        throw new Error('Simulated cleanup database failure');
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: 'ACCOUNT_EXISTS',
+        message: expect.stringContaining('already exists'),
+      },
+    });
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('does not query email collisions for unconfirmed OAuth email, avoids auth.users deletion, and succeeds with unverified contact', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'unconfirmed@example.com',
+          email_confirmed_at: null,
+          identities: [{ provider: 'google', id: 'google-sub-unconfirmed' }],
+        }),
+      }),
+    );
+    const executedQueries: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      executedQueries.push(sql);
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('WHERE provider = $1')
+      ) {
+        return [];
+      }
+      if (sql.includes('FROM public.users') && sql.includes('WHERE id = $1')) {
+        return [];
+      }
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: null,
+            phone: null,
+            status: 'active',
+            verified_contact: false,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    const result = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+      'google',
+    );
+
+    expect(result.user.verified_contact).toBe(false);
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(executedQueries.some((q) => q.includes('email_collisions'))).toBe(
+      false,
+    );
+    expect(
+      executedQueries.some((q) => q.includes('DELETE FROM auth.users')),
+    ).toBe(false);
+
+    const controller = new AuthController(
+      service,
+      {} as unknown as EmailRegistrationService,
+    );
+    const mockReq = {
+      user: { sub: userId, sessionId },
+      headers: { authorization: `Bearer ${token}` },
+    } as unknown as Parameters<AuthController['oauth']>[0];
+    const oauthResponse = await controller.oauth(mockReq, {
+      provider: 'google',
+    });
+    expect(oauthResponse.verified_contact_required).toBe(true);
+    expect(oauthResponse.next_step).toBe('add_verified_contact');
+    expect(oauthResponse.user.verified_contact).toBe(false);
+  });
+
+  it('clears unverified squatter rows from both public.users and public.user_auth_providers during bootstrap', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'newuser@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-squatter' }],
+        }),
+      }),
+    );
+    const executedQueries: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      executedQueries.push(sql);
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (sql.includes('email_collisions')) {
+        return [];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'newuser@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+      'google',
+    );
+
+    expect(
+      executedQueries.some(
+        (sql) =>
+          sql.includes('UPDATE public.users') &&
+          sql.includes('SET email = NULL') &&
+          sql.includes('verified_contact = false'),
+      ),
+    ).toBe(true);
+    expect(
+      executedQueries.some(
+        (sql) =>
+          sql.includes('DELETE FROM public.user_auth_providers') &&
+          sql.includes('verified_at IS NULL'),
+      ),
+    ).toBe(true);
+  });
+
+  it('allows email-registered user to bootstrap via Google OAuth when user.identities contains existing email identity without 409 IDENTITY_LINK_CONFLICT', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'email', id: userId },
+            { provider: 'google', id: 'google-sub-456' },
+          ],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('WHERE user_id = $1 AND provider = $2')
+      ) {
+        if (params && params[1] === 'email') {
+          return [
+            {
+              contact_value: 'user@example.invalid',
+              provider_subject: 'legacy-email-sub-123',
+              verified_at: '2026-01-01T00:00:00Z',
+            },
+          ];
+        }
+        return [];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['email', 'google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    const res = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+      'google',
+    );
+
+    expect(res).toBeDefined();
+    expect(res.user.id).toBe(userId);
+    expect(approvals.approve).toHaveBeenCalledWith(
+      expect.anything(),
+      userId,
+      sessionId,
+      'oauth',
+    );
+  });
+
+  it('strictly rejects cross-subject OAuth hijack with 409 IDENTITY_LINK_CONFLICT when an existing Google identity subject differs', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'new-google-sub' }],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('WHERE user_id = $1')
+      ) {
+        return [
+          {
+            contact_value: 'user@example.invalid',
+            provider_subject: 'original-google-sub',
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', provider: 'google' }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'IDENTITY_LINK_CONFLICT' },
+    });
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('rejects Google-only bootstrap when confirmed email conflicts with stored verified email mapping', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'bob@example.com',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-email-conflict' }],
+        }),
+      }),
+    );
+    let usersUpserted = false;
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes("provider IN ('email', 'phone', 'google', 'facebook')") &&
+        sql.includes('verified_at IS NOT NULL')
+      ) {
+        expect(params).toEqual([userId]);
+        return [
+          {
+            provider: 'email',
+            contact_value: 'alice@example.com',
+          },
+        ];
+      }
+      if (sql.includes('INSERT INTO public.users(')) usersUpserted = true;
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'IDENTITY_LINK_CONFLICT' },
+    });
+    expect(usersUpserted).toBe(false);
+  });
+
+  it('uses non-destructive upserts that preserve concurrently verified contacts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-upsert' }],
+        }),
+      }),
+    );
+    let usersUpsert = '';
+    let providersUpsert = '';
+    let verifiedMappingsQuery = '';
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('INSERT INTO public.users(')) usersUpsert = sql;
+      if (sql.includes('INSERT INTO public.user_auth_providers(')) {
+        providersUpsert = sql;
+      }
+      if (
+        sql.includes("provider IN ('email', 'phone', 'google', 'facebook')")
+      ) {
+        verifiedMappingsQuery = sql;
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: '+8801712345678',
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+      'google',
+    );
+
+    expect(usersUpsert).toContain('email=CASE');
+    expect(usersUpsert).toContain(
+      'WHEN public.users.verified_contact AND public.users.email IS NOT NULL THEN public.users.email',
+    );
+    expect(usersUpsert).toContain('phone=CASE');
+    expect(usersUpsert).toContain(
+      'WHEN public.users.verified_contact AND public.users.phone IS NOT NULL THEN public.users.phone',
+    );
+    expect(usersUpsert).toContain(
+      'verified_contact=public.users.verified_contact OR EXCLUDED.verified_contact',
+    );
+    expect(verifiedMappingsQuery).toContain('FOR UPDATE');
+    expect(providersUpsert).toContain(
+      'WHEN public.user_auth_providers.verified_at IS NOT NULL',
+    );
+    expect(providersUpsert).toContain(
+      'THEN public.user_auth_providers.contact_value',
+    );
+    expect(providersUpsert).toContain(
+      'verified_at=COALESCE(public.user_auth_providers.verified_at, EXCLUDED.verified_at)',
+    );
+  });
+
+  it('queries email collisions strictly requiring verified holders across public.users, user_auth_providers, and auth.identities', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-incoming' }],
+        }),
+      }),
+    );
+    let capturedCollisionSql = '';
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('email_collisions') ||
+        sql.includes('FROM auth.identities')
+      ) {
+        capturedCollisionSql += `\n${sql}`;
+        return [];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+      'google',
+    );
+
+    expect(capturedCollisionSql).toContain("p.provider = 'email'");
+    expect(capturedCollisionSql).toContain('EXISTS (');
+    expect(capturedCollisionSql).toContain('verified_at IS NOT NULL');
+    expect(capturedCollisionSql).toContain('email_confirmed_at IS NOT NULL');
+  });
+
+  it('queries phone collisions strictly requiring verified holders across public.users, user_auth_providers, and auth.identities', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          phone: '+8801700000000',
+          phone_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-incoming' }],
+        }),
+      }),
+    );
+    let capturedCollisionSql = '';
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('phone_collisions') ||
+        sql.includes('FROM auth.identities')
+      ) {
+        capturedCollisionSql += `\n${sql}`;
+        return [];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: '+8801700000000',
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+      'google',
+    );
+
+    expect(capturedCollisionSql).toContain("p.provider = 'phone'");
+    expect(capturedCollisionSql).toContain('EXISTS (');
+    expect(capturedCollisionSql).toContain('verified_at IS NOT NULL');
+    expect(capturedCollisionSql).toContain('phone_confirmed_at IS NOT NULL');
+  });
+
+  it('provider-less sync selects Facebook AMR evidence over sticky Google app_metadata', async () => {
+    const facebookTimestamp = 1700000300;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub-1' },
+            { provider: 'facebook', id: 'fb-sub-1' },
+          ],
+        }),
+      }),
+    );
+    let selectedProvider = '';
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('SELECT provider') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            max_activity_at: new Date(
+              (facebookTimestamp - 600) * 1000,
+            ).toISOString(),
+          },
+          {
+            provider: 'facebook',
+            max_activity_at: new Date(facebookTimestamp * 1000).toISOString(),
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('WHERE user_id = $1 AND verified_at IS NOT NULL')
+      ) {
+        return [
+          { provider: 'facebook', contact_value: 'user@example.invalid' },
+        ];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        selectedProvider = String(params?.[1] || '');
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google', 'facebook'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken(
+      [{ method: 'oauth', timestamp: facebookTimestamp }],
+      {
+        app_metadata: {
+          provider: 'google',
+          providers: ['google', 'facebook'],
+        },
+      },
+    );
+
+    const res = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+    );
+
+    expect(res).toBeDefined();
+    expect(res.user.id).toBe(userId);
+    expect(selectedProvider).toBe('facebook');
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  it('provider-less OAuth sync resolves by verified provider subject when Auth email changed after preserved contact', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'changed@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            {
+              provider: 'google',
+              id: 'google-identity-id',
+              identity_data: { sub: 'google-sub' },
+            },
+          ],
+        }),
+      }),
+    );
+    const lookupParams: unknown[][] = [];
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('SELECT provider') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            max_activity_at: new Date(1700000000 * 1000).toISOString(),
+          },
+        ];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        lookupParams.push(params || []);
+        // stored mapping keeps the preserved original contact; only the subject can match
+        return params?.[2] === 'google-sub'
+          ? [{ verified_contact: true, verified_at: '2026-01-01T00:00:00Z' }]
+          : [];
+      }
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'original@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', timestamp: 1700000000 }]);
+    const res = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+    );
+
+    expect(res.user.id).toBe(userId);
+    expect(lookupParams).toEqual([[userId, 'google', 'google-sub']]);
+  });
+
+  it('rejects explicit Google bootstrap on a Facebook session even when Google is the only verified mapping', async () => {
+    const amrTimestamp = 1700000000;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'multi-oauth@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub' },
+            { provider: 'facebook', id: 'facebook-sub' },
+          ],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            max_activity_at: new Date(
+              (amrTimestamp - 3600) * 1000,
+            ).toISOString(),
+          },
+          {
+            provider: 'facebook',
+            max_activity_at: new Date(amrTimestamp * 1000).toISOString(),
+          },
+        ];
+      }
+      if (sql.includes('FROM public.user_auth_providers')) {
+        return [{ provider: 'google', contact_value: 'g@example.invalid' }];
+      }
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', timestamp: amrTimestamp }]);
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${token}`,
+        'google',
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      response: { code: 'PROVIDER_MISMATCH' },
+    });
+    expect(approvals.approve).not.toHaveBeenCalled();
+  });
+  it('provider-less sync keeps verified Google session after Facebook T+30 and Google T+600 activity', async () => {
+    const amrTimestamp = 1700000000;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub-1' },
+            { provider: 'facebook', id: 'fb-sub-1' },
+          ],
+        }),
+      }),
+    );
+    let selectedProvider = '';
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('SELECT provider') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            created_at: new Date(amrTimestamp * 1000).toISOString(),
+            updated_at: new Date((amrTimestamp + 600) * 1000).toISOString(),
+            max_activity_at: new Date(
+              (amrTimestamp + 600) * 1000,
+            ).toISOString(),
+          },
+          {
+            provider: 'facebook',
+            max_activity_at: new Date((amrTimestamp + 30) * 1000).toISOString(),
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('WHERE user_id = $1 AND verified_at IS NOT NULL')
+      ) {
+        return [{ provider: 'google', contact_value: 'user@example.invalid' }];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        selectedProvider = String(params?.[1] || '');
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google', 'facebook'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+
+    const result = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', timestamp: amrTimestamp }], {
+        app_metadata: {
+          provider: 'facebook',
+          providers: ['google', 'facebook'],
+        },
+      })}`,
+    );
+
+    expect(result.user.id).toBe(userId);
+    expect(selectedProvider).toBe('google');
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${accessToken([{ method: 'oauth', timestamp: amrTimestamp }])}`,
+        'facebook',
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      response: { code: 'PROVIDER_MISMATCH' },
+    });
+  });
+
+  it('accepts delayed Google callback when Facebook occurs at T+30 and Google signs in again at T+600', async () => {
+    const amrTimestamp = 1700000000;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub-1' },
+            { provider: 'facebook', id: 'fb-sub-1' },
+          ],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('email_collisions')) {
+        return [];
+      }
+      if (
+        sql.includes('SELECT provider') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            created_at: new Date(amrTimestamp * 1000).toISOString(),
+            last_sign_in_at: new Date(
+              (amrTimestamp + 600) * 1000,
+            ).toISOString(),
+            max_activity_at: new Date(
+              (amrTimestamp + 600) * 1000,
+            ).toISOString(),
+          },
+          {
+            provider: 'facebook',
+            last_sign_in_at: new Date((amrTimestamp + 30) * 1000).toISOString(),
+            max_activity_at: new Date((amrTimestamp + 30) * 1000).toISOString(),
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (sql.includes('email_collisions')) {
+        return [];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google', 'facebook'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth', timestamp: amrTimestamp }]);
+    const res = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+      'google',
+    );
+
+    expect(res).toBeDefined();
+    expect(res.user.id).toBe(userId);
+    expect(approvals.approve).toHaveBeenCalledWith(
+      expect.anything(),
+      userId,
+      sessionId,
+      'oauth',
+    );
+  });
+
+  it('rejects an unbound explicit OAuth provider without affirmative AMR timestamp evidence', async () => {
+    const amrTimestamp = 1700000000;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub-1' },
+            { provider: 'facebook', id: 'facebook-sub-1' },
+          ],
+        }),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('AS max_activity_at') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            created_at: new Date((amrTimestamp - 600) * 1000).toISOString(),
+            last_sign_in_at: new Date(
+              (amrTimestamp + 600) * 1000,
+            ).toISOString(),
+            updated_at: new Date((amrTimestamp + 600) * 1000).toISOString(),
+          },
+          {
+            provider: 'facebook',
+            created_at: new Date((amrTimestamp - 900) * 1000).toISOString(),
+            last_sign_in_at: new Date(
+              (amrTimestamp + 700) * 1000,
+            ).toISOString(),
+            updated_at: new Date((amrTimestamp + 700) * 1000).toISOString(),
+          },
+        ];
+      }
+      return [];
+    });
+    const service = new AuthService(
+      {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+
+    await expect(
+      service.bootstrap(
+        { sub: userId, sessionId },
+        `Bearer ${accessToken([{ method: 'oauth', timestamp: amrTimestamp }])}`,
+        'facebook',
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      response: { code: 'PROVIDER_MISMATCH' },
+    });
+  });
+
+  it('keeps a verified Google contact consistent when Auth returns a changed confirmed email', async () => {
+    const storedEmail = 'stored@example.invalid';
+    const incomingEmail = 'changed@example.invalid';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: incomingEmail,
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-consistency' }],
+        }),
+      }),
+    );
+    let providerUpsert = '';
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes("provider IN ('email', 'phone', 'google', 'facebook')")
+      ) {
+        return [{ provider: 'google', contact_value: storedEmail }];
+      }
+      if (sql.includes('SELECT id, phone FROM public.users')) {
+        return [{ id: userId, phone: null }];
+      }
+      if (
+        sql.includes('SELECT contact_value, provider_subject, verified_at') &&
+        params?.[1] === 'google'
+      ) {
+        return [
+          {
+            contact_value: storedEmail,
+            provider_subject: 'google-sub-consistency',
+            verified_at: '2026-01-01T00:00:00Z',
+          },
+        ];
+      }
+      if (sql.includes('INSERT INTO public.user_auth_providers(')) {
+        providerUpsert = sql;
+      }
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: storedEmail,
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const service = new AuthService(
+      {
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
+      } as unknown as DatabaseService,
+      configuration(),
+      {} as AuthAbuseControl,
+      { approve: vi.fn() } as unknown as SessionApprovalService,
+    );
+
+    const result = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+      'google',
+    );
+
+    expect(result.user.email).toBe(storedEmail);
+    expect(providerUpsert).toContain(
+      'THEN public.user_auth_providers.contact_value',
+    );
+  });
+
+  it('repeated OAuth sign-in uses GREATEST activity timestamp when updated_at advances beyond initial last_sign_in_at', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [
+            { provider: 'google', id: 'google-sub-1' },
+            { provider: 'facebook', id: 'fb-sub-1' },
+          ],
+        }),
+      }),
+    );
+    let capturedActiveProviderInLookup = '';
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('SELECT provider') &&
+        sql.includes('FROM auth.identities')
+      ) {
+        return [
+          {
+            provider: 'google',
+            last_sign_in_at: '2026-01-01T00:00:00Z', // older last_sign_in_at
+            updated_at: '2026-01-05T00:00:00Z', // newer updated_at than Facebook
+            created_at: '2026-01-01T00:00:00Z',
+            max_activity_at: '2026-01-05T00:00:00Z',
+          },
+          {
+            provider: 'facebook',
+            last_sign_in_at: '2026-01-03T00:00:00Z',
+            updated_at: '2026-01-03T00:00:00Z',
+            created_at: '2026-01-03T00:00:00Z',
+            max_activity_at: '2026-01-03T00:00:00Z',
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('WHERE user_id = $1 AND verified_at IS NOT NULL')
+      ) {
+        return [
+          { provider: 'google', contact_value: 'user@example.invalid' },
+          { provider: 'facebook', contact_value: 'user@example.invalid' },
+        ];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        if (params && params[1]) {
+          capturedActiveProviderInLookup = String(params[1]);
+        }
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google', 'facebook'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    const token = accessToken([{ method: 'oauth' }], {
+      app_metadata: { provider: 'email', providers: ['google', 'facebook'] },
+    });
+
+    const res = await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${token}`,
+    );
+
+    expect(res).toBeDefined();
+    expect(res.user.id).toBe(userId);
+    expect(capturedActiveProviderInLookup).toBe('google');
+  });
+
+  it('requires identity-level email verification in email_collisions so unverified secondary identity email on confirmed account is ignored', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: userId,
+          email: 'user@example.invalid',
+          email_confirmed_at: '2026-01-01T00:00:00Z',
+          identities: [{ provider: 'google', id: 'google-sub-incoming' }],
+        }),
+      }),
+    );
+    let capturedCollisionSql = '';
+    const query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('email_collisions') ||
+        sql.includes('FROM auth.identities')
+      ) {
+        capturedCollisionSql += `\n${sql}`;
+        return [];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('provider_subject = $2')
+      ) {
+        return [];
+      }
+      if (sql.includes('SELECT u.verified_contact, p.verified_at')) {
+        return [
+          { verified_contact: true, verified_at: '2026-01-01T00:00:00Z' },
+        ];
+      }
+      if (sql.startsWith('SELECT verified_contact')) {
+        return [{ verified_contact: true }];
+      }
+      if (sql.includes("provider='email' AND verified_at IS NULL")) return [];
+      if (sql.includes('SELECT u.id,u.email')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            phone: null,
+            status: 'active',
+            verified_contact: true,
+            role: 'USER',
+            linked_providers: ['google'],
+          },
+        ];
+      }
+      if (sql.includes('SELECT p.*,pr.learning_preference')) return [];
+      if (sql.includes('effective_feature_access')) return [{ enabled: true }];
+      return [];
+    });
+    const database = {
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const approvals = { approve: vi.fn() } as unknown as SessionApprovalService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      {} as AuthAbuseControl,
+      approvals,
+    );
+
+    await service.bootstrap(
+      { sub: userId, sessionId },
+      `Bearer ${accessToken([{ method: 'oauth', provider: 'google' }])}`,
+      'google',
+    );
+
+    expect(capturedCollisionSql).toContain("p.provider = 'email'");
+    expect(capturedCollisionSql).toContain('EXISTS (');
+    expect(capturedCollisionSql).toContain('verified_at IS NOT NULL');
+    expect(capturedCollisionSql).toContain('email_confirmed_at IS NOT NULL');
+    expect(capturedCollisionSql).toContain('LOWER(au.email) = $1');
+    expect(capturedCollisionSql).toContain(
+      "COALESCE(i.identity_data->>'email_verified', 'false')",
+    );
+  });
+
+  it('maps PostgreSQL 23505 unique constraint violation to 409 CONTACT_ALREADY_REGISTERED during verifyEmail', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM public.users u')) {
+        return [
+          {
+            id: userId,
+            email: 'user@example.invalid',
+            verified_contact: false,
+            provider_subject: userId,
+            verified_at: null,
+          },
+        ];
+      }
+      if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+        return [{ id: userId, status: 'active', verified_contact: false }];
+      }
+      if (
+        sql.includes('FROM public.user_auth_providers') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return [
+          {
+            id: 'mapping-1',
+            contact_value: 'user@example.invalid',
+            provider_subject: userId,
+            verified_at: null,
+          },
+        ];
+      }
+      if (sql.includes('UPDATE public.users')) {
+        const err = new Error(
+          'duplicate key value violates unique constraint "uq_users_email"',
+        ) as any;
+        err.code = '23505';
+        err.driverError = { code: '23505', constraint: 'uq_users_email' };
+        throw err;
+      }
+      return [];
+    });
+    const database = {
+      query,
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const config = configuration({
+      AUTH_OTP_HMAC_SECRET: '0123456789abcdef0123456789abcdef',
+    });
+    const realOtpAbuse = {
+      getOtpSecret: vi.fn(),
+      verifyChallenge: vi.fn(
+        async (
+          _subject: unknown,
+          candidateCode: string,
+          check: (candidate: string) => Promise<boolean>,
+        ) => {
+          const valid = await check(candidateCode);
+          if (!valid) fail(422, 'VERIFICATION_CODE_INVALID', 'Invalid code');
+        },
+      ),
+    } as unknown as AuthAbuseControl;
+    const otpStore = new OtpSecretStore(realOtpAbuse, config);
+    vi.mocked(realOtpAbuse.getOtpSecret).mockResolvedValue(
+      otpStore.computeDigest(
+        userId,
+        'user@example.invalid',
+        '123456',
+        'verify_email',
+      ),
+    );
+    const service = new AuthService(
+      database,
+      config,
+      realOtpAbuse,
+      {} as SessionApprovalService,
+      otpStore,
+    );
+
+    await expect(
+      service.verifyEmail({ email: 'user@example.invalid', code: '123456' }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'CONTACT_ALREADY_REGISTERED' },
+    });
+    expect(query).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+      [userId],
+    );
+  });
+
+  it('maps PostgreSQL 23505 unique constraint violation to 409 CONTACT_ALREADY_REGISTERED during verifyPhone', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      }),
+    );
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM public.users u')) {
+        return [
+          {
+            id: userId,
+            phone: '+8801712345678',
+            verified_contact: false,
+            provider_subject: userId,
+            verified_at: null,
+            is_primary: true,
+          },
+        ];
+      }
+      if (
+        sql.includes(
+          'SELECT u.id, p.contact_value, p.provider_subject, p.verified_at',
+        )
+      ) {
+        return [
+          {
+            id: userId,
+            contact_value: '+8801712345678',
+            provider_subject: userId,
+            verified_at: null,
+          },
+        ];
+      }
+      if (sql.includes('UPDATE public.users')) {
+        const err = new Error(
+          'duplicate key value violates unique constraint "uq_users_phone"',
+        ) as any;
+        err.code = '23505';
+        err.driverError = { code: '23505', constraint: 'uq_users_phone' };
+        throw err;
+      }
+      return [];
+    });
+    const database = {
+      query,
+      transaction: vi.fn((_id, operation) =>
+        operation({ query } as unknown as EntityManager),
+      ),
+    } as unknown as DatabaseService;
+    const config = configuration({
+      AUTH_OTP_HMAC_SECRET: '0123456789abcdef0123456789abcdef',
+    });
+    const realOtpAbuse = {
+      getOtpSecret: vi.fn(),
+      verifyChallenge: vi.fn(
+        async (
+          _subject: unknown,
+          candidateCode: string,
+          check: (candidate: string) => Promise<boolean>,
+        ) => {
+          const valid = await check(candidateCode);
+          if (!valid) fail(422, 'VERIFICATION_CODE_INVALID', 'Invalid code');
+        },
+      ),
+    } as unknown as AuthAbuseControl;
+    const otpStore = new OtpSecretStore(realOtpAbuse, config);
+    vi.mocked(realOtpAbuse.getOtpSecret).mockResolvedValue(
+      otpStore.computeDigest(
+        userId,
+        '+8801712345678',
+        '123456',
+        'verify_phone',
+      ),
+    );
+    const service = new AuthService(
+      database,
+      config,
+      realOtpAbuse,
+      {} as SessionApprovalService,
+      otpStore,
+    );
+
+    await expect(
+      service.verifyPhone({ phone: '+8801712345678', code: '123456' }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'CONTACT_ALREADY_REGISTERED' },
+    });
   });
 
   describe('EP-A07 logout', () => {
@@ -2451,6 +4739,10 @@ describe('AuthService session approval boundary', () => {
         expires_in_seconds: 600,
         resend_available_at: expect.any(String),
       });
+      expect(query).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [userId],
+      );
       expect(abuse.reserveSend).toHaveBeenCalledWith(
         { channel: 'email', identifier: 'candidate@example.com' },
         '127.0.0.1',
@@ -3145,6 +5437,14 @@ describe('AuthService session approval boundary', () => {
     });
 
     it('verifyPhone prevents race condition and aborts with 409 when pending provider mapping is replaced concurrently', async () => {
+      const transactionQuery = vi
+        .fn()
+        .mockImplementation(async (sql: string) => {
+          if (sql.includes('p.contact_value')) {
+            return [];
+          }
+          return [];
+        });
       const database = {
         query: vi.fn().mockImplementation(async (sql: string) => {
           if (sql.includes('SELECT u.id, u.phone, u.verified_contact')) {
@@ -3163,13 +5463,7 @@ describe('AuthService session approval boundary', () => {
         }),
         transaction: vi.fn(async (_id, cb) =>
           cb({
-            query: vi.fn().mockImplementation(async (sql: string) => {
-              if (sql.includes('p.contact_value')) {
-                // Pending mapping was replaced concurrently by another phone B
-                return [];
-              }
-              return [];
-            }),
+            query: transactionQuery,
           }),
         ),
       } as unknown as DatabaseService;
@@ -3191,6 +5485,10 @@ describe('AuthService session approval boundary', () => {
       await expect(
         service.verifyPhone({ phone: '+8801712345678', code: '123456' }),
       ).rejects.toThrow(HttpException);
+      expect(transactionQuery).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        ['user-race-1'],
+      );
     });
 
     it('verifyPhone for EP-A12 secondary phone returns verified: true without minting session or touching GoTrue email', async () => {
@@ -3392,6 +5690,252 @@ describe('AuthService session approval boundary', () => {
       expect(launchEnv.AUTH_REDIS_URL).toBe('redis://127.0.0.1:56379');
       expect(launchEnv.MAILPIT_URL).toBe('http://127.0.0.1:56324');
       expect(launchEnv.MENTOR_LOCAL_DIR).toBe('/test/local');
+    });
+
+    it('validates local.mjs resolveOAuthProviders and injectOAuthIntoConfigToml for Google and Facebook', () => {
+      const rawToml = [
+        '[auth.external.google]',
+        'enabled = false',
+        'client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"',
+        'secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"',
+        'redirect_uri = "http://127.0.0.1:56321/auth/v1/callback"',
+        '',
+        '[auth.external.facebook]',
+        'enabled = false',
+        'client_id = "env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID)"',
+        'secret = "env(SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET)"',
+        'redirect_uri = "http://127.0.0.1:56321/auth/v1/callback"',
+      ].join('\n');
+
+      const emptyOAuth = resolveOAuthProviders('', {});
+      expect(emptyOAuth.google.enabled).toBe(false);
+      expect(emptyOAuth.facebook.enabled).toBe(false);
+      expect(injectOAuthIntoConfigToml(rawToml, emptyOAuth)).toContain(
+        '[auth.external.google]\nenabled = false',
+      );
+
+      const configuredOAuth = resolveOAuthProviders(
+        'GOOGLE_CLIENT_ID=g-id\nGOOGLE_CLIENT_SECRET=g-secret\nFACEBOOK_CLIENT_ID=fb-id\nFACEBOOK_CLIENT_SECRET=fb-secret',
+        {},
+      );
+      expect(configuredOAuth.google.enabled).toBe(true);
+      expect(configuredOAuth.facebook.enabled).toBe(true);
+      expect(configuredOAuth.envVars).toEqual({
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: 'g-id',
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: 'g-secret',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: 'fb-id',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: 'fb-secret',
+      });
+
+      const enabledToml = injectOAuthIntoConfigToml(rawToml, configuredOAuth);
+      expect(enabledToml).toContain('[auth.external.google]\nenabled = true');
+      expect(enabledToml).toContain('[auth.external.facebook]\nenabled = true');
+    });
+
+    it('ensures procEnv short aliases override backendEnv Supabase-prefixed keys without mixing partial pairs', () => {
+      const dotEnvWithPrefixedKeys = [
+        'SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=dotenv-google-id',
+        'SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=dotenv-google-secret',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID=dotenv-fb-id',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET=dotenv-fb-secret',
+      ].join('\n');
+
+      const procEnvWithShortAliases = {
+        GOOGLE_CLIENT_ID: 'proc-google-id',
+        GOOGLE_CLIENT_SECRET: 'proc-google-secret',
+        FACEBOOK_CLIENT_ID: 'proc-fb-id',
+        FACEBOOK_CLIENT_SECRET: 'proc-fb-secret',
+      };
+
+      const resolved = resolveOAuthProviders(
+        dotEnvWithPrefixedKeys,
+        procEnvWithShortAliases,
+      );
+
+      expect(resolved.google).toEqual({
+        enabled: true,
+        clientId: 'proc-google-id',
+        secret: 'proc-google-secret',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: true,
+        clientId: 'proc-fb-id',
+        secret: 'proc-fb-secret',
+      });
+      expect(resolved.envVars).toEqual({
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: 'proc-google-id',
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: 'proc-google-secret',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: 'proc-fb-id',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: 'proc-fb-secret',
+      });
+
+      const launchEnv = buildBackendLaunchEnv(
+        {},
+        dotEnvWithPrefixedKeys,
+        procEnvWithShortAliases,
+        '/test/local',
+      );
+      expect(launchEnv.GOOGLE_CLIENT_ID).toBe('proc-google-id');
+      expect(launchEnv.GOOGLE_CLIENT_SECRET).toBe('proc-google-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID).toBe(
+        'proc-google-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET).toBe(
+        'proc-google-secret',
+      );
+      expect(launchEnv.FACEBOOK_CLIENT_ID).toBe('proc-fb-id');
+      expect(launchEnv.FACEBOOK_CLIENT_SECRET).toBe('proc-fb-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID).toBe(
+        'proc-fb-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET).toBe(
+        'proc-fb-secret',
+      );
+    });
+
+    it('rejects partial process-level OAuth override (only ID or only secret) and preserves complete pair from backendEnv', () => {
+      const dotEnvWithCompletePairs = [
+        'GOOGLE_CLIENT_ID=dotenv-google-id',
+        'GOOGLE_CLIENT_SECRET=dotenv-google-secret',
+        'FACEBOOK_CLIENT_ID=dotenv-fb-id',
+        'FACEBOOK_CLIENT_SECRET=dotenv-fb-secret',
+      ].join('\n');
+
+      const procEnvWithPartialOverrides = {
+        GOOGLE_CLIENT_ID: 'rogue-partial-google-id',
+        FACEBOOK_CLIENT_SECRET: 'rogue-partial-fb-secret',
+      };
+
+      const resolved = resolveOAuthProviders(
+        dotEnvWithCompletePairs,
+        procEnvWithPartialOverrides,
+      );
+
+      expect(resolved.google).toEqual({
+        enabled: true,
+        clientId: 'dotenv-google-id',
+        secret: 'dotenv-google-secret',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: true,
+        clientId: 'dotenv-fb-id',
+        secret: 'dotenv-fb-secret',
+      });
+
+      const launchEnv = buildBackendLaunchEnv(
+        {},
+        dotEnvWithCompletePairs,
+        procEnvWithPartialOverrides,
+        '/test/local',
+      );
+      expect(launchEnv.GOOGLE_CLIENT_ID).toBe('dotenv-google-id');
+      expect(launchEnv.GOOGLE_CLIENT_SECRET).toBe('dotenv-google-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID).toBe(
+        'dotenv-google-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET).toBe(
+        'dotenv-google-secret',
+      );
+      expect(launchEnv.FACEBOOK_CLIENT_ID).toBe('dotenv-fb-id');
+      expect(launchEnv.FACEBOOK_CLIENT_SECRET).toBe('dotenv-fb-secret');
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID).toBe(
+        'dotenv-fb-id',
+      );
+      expect(launchEnv.SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET).toBe(
+        'dotenv-fb-secret',
+      );
+
+      // Also verify that if neither backendEnv nor procEnv has a complete pair, partial procEnv keys are stripped
+      const launchEnvOnlyPartial = buildBackendLaunchEnv(
+        {},
+        '',
+        procEnvWithPartialOverrides,
+        '/test/local',
+      );
+      expect(launchEnvOnlyPartial.GOOGLE_CLIENT_ID).toBeUndefined();
+      expect(launchEnvOnlyPartial.FACEBOOK_CLIENT_SECRET).toBeUndefined();
+    });
+
+    it('prevents same-source cross-family alias mixing when a stale Supabase-prefixed key coexists with a complete conventional pair (or vice versa)', () => {
+      const dotEnvWithStalePrefixAndCompleteShort = [
+        'SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=stale-prefixed-google-id',
+        'GOOGLE_CLIENT_ID=fresh-short-google-id',
+        'GOOGLE_CLIENT_SECRET=fresh-short-google-secret',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID=complete-prefixed-fb-id',
+        'SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET=complete-prefixed-fb-secret',
+        'FACEBOOK_CLIENT_ID=stale-short-fb-id',
+      ].join('\n');
+
+      const resolved = resolveOAuthProviders(
+        dotEnvWithStalePrefixAndCompleteShort,
+        {},
+      );
+
+      expect(resolved.google).toEqual({
+        enabled: true,
+        clientId: 'fresh-short-google-id',
+        secret: 'fresh-short-google-secret',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: true,
+        clientId: 'complete-prefixed-fb-id',
+        secret: 'complete-prefixed-fb-secret',
+      });
+
+      // Also verify that mismatched cross-family halves alone (prefixed ID + short secret) do not form a valid pair
+      const mismatchedCrossFamilyOnly = resolveOAuthProviders(
+        [
+          'SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=only-prefixed-id',
+          'GOOGLE_CLIENT_SECRET=only-short-secret',
+        ].join('\n'),
+        {},
+      );
+      expect(mismatchedCrossFamilyOnly.google).toEqual({
+        enabled: false,
+        clientId: '',
+        secret: '',
+      });
+    });
+
+    it('gracefully disables providers and outputs valid empty strings when credentials are null, undefined, or literal undefined/null strings', () => {
+      const corruptEnv = {
+        GOOGLE_CLIENT_ID: 'undefined',
+        GOOGLE_CLIENT_SECRET: 'null',
+        FACEBOOK_CLIENT_ID: null as unknown as string,
+        FACEBOOK_CLIENT_SECRET: undefined as unknown as string,
+      };
+
+      const resolved = resolveOAuthProviders('', corruptEnv);
+      expect(resolved.google).toEqual({
+        enabled: false,
+        clientId: '',
+        secret: '',
+      });
+      expect(resolved.facebook).toEqual({
+        enabled: false,
+        clientId: '',
+        secret: '',
+      });
+      expect(resolved.envVars).toEqual({
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: '',
+        SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: '',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: '',
+        SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: '',
+      });
+
+      // injectOAuthIntoConfigToml handles corrupt or empty input safely
+      expect(injectOAuthIntoConfigToml('', resolved)).toBe('');
+      const rawToml = [
+        '[auth.external.google]',
+        'enabled = true',
+        '[auth.external.facebook]',
+        'enabled = true',
+      ].join('\n');
+      const disabledToml = injectOAuthIntoConfigToml(rawToml, resolved);
+      expect(disabledToml).toContain('[auth.external.google]\nenabled = false');
+      expect(disabledToml).toContain(
+        '[auth.external.facebook]\nenabled = false',
+      );
     });
   });
 });

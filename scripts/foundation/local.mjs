@@ -58,6 +58,133 @@ export const parseEnvFile = (filePath) => {
   return parseEnvContent(readFileSync(filePath, "utf8"));
 };
 
+export function pickCredential(keys, procEnv = {}, backendEnv = {}, baseConfig = {}) {
+  const candidateKeys = Array.isArray(keys) ? keys : [keys];
+  for (const source of [procEnv, backendEnv, baseConfig]) {
+    if (!source || typeof source !== "object") continue;
+    for (const k of candidateKeys) {
+      const v = source[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return "";
+}
+
+export function pickCredentialPair(
+  idKeys,
+  secretKeys,
+  procEnv = {},
+  backendEnv = {},
+  baseConfig = {},
+) {
+  const candidateIdKeys = Array.isArray(idKeys) ? idKeys : [idKeys];
+  const candidateSecretKeys = Array.isArray(secretKeys) ? secretKeys : [secretKeys];
+  const pairCount = Math.min(candidateIdKeys.length, candidateSecretKeys.length);
+  const readSingle = (source, key) => {
+    if (!source || typeof source !== "object") return "";
+    const v = source[key];
+    if (v === undefined || v === null) return "";
+    const s = String(v).trim();
+    return s.toLowerCase() === "undefined" || s.toLowerCase() === "null" ? "" : s;
+  };
+
+  for (const source of [procEnv, backendEnv, baseConfig]) {
+    if (!source || typeof source !== "object") continue;
+    for (let i = 0; i < pairCount; i++) {
+      const clientId = readSingle(source, candidateIdKeys[i]);
+      const secret = readSingle(source, candidateSecretKeys[i]);
+      if (clientId && secret) {
+        return { clientId, secret };
+      }
+    }
+  }
+  return { clientId: "", secret: "" };
+}
+
+export function resolveOAuthProviders(
+  dotEnvSource = "",
+  procEnv = process.env,
+  baseConfig = {},
+) {
+  const backendEnv =
+    typeof dotEnvSource === "string"
+      ? parseEnvContent(dotEnvSource)
+      : (dotEnvSource || {});
+
+  const { clientId: googleClientId, secret: googleSecret } = pickCredentialPair(
+    ["SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_ID"],
+    ["SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET", "GOOGLE_CLIENT_SECRET"],
+    procEnv,
+    backendEnv,
+    baseConfig,
+  );
+  const { clientId: facebookClientId, secret: facebookSecret } = pickCredentialPair(
+    ["SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID", "FACEBOOK_CLIENT_ID"],
+    ["SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET", "FACEBOOK_CLIENT_SECRET"],
+    procEnv,
+    backendEnv,
+    baseConfig,
+  );
+
+  const googleEnabled = Boolean(googleClientId && googleSecret);
+  const facebookEnabled = Boolean(facebookClientId && facebookSecret);
+
+  return {
+    google: {
+      enabled: googleEnabled,
+      clientId: googleEnabled ? googleClientId : "",
+      secret: googleEnabled ? googleSecret : "",
+    },
+    facebook: {
+      enabled: facebookEnabled,
+      clientId: facebookEnabled ? facebookClientId : "",
+      secret: facebookEnabled ? facebookSecret : "",
+    },
+    envVars: {
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: googleEnabled ? googleClientId : "",
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: googleEnabled ? googleSecret : "",
+      SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: facebookEnabled ? facebookClientId : "",
+      SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: facebookEnabled ? facebookSecret : "",
+    },
+  };
+}
+
+export function injectOAuthIntoConfigToml(configText, oauth) {
+  if (!configText || typeof configText !== "string") return "";
+  let updated = configText;
+  for (const provider of ["google", "facebook"]) {
+    const conf = oauth?.[provider];
+    const isEnabled = Boolean(conf?.enabled && conf?.clientId && conf?.secret);
+    const clientId = isEnabled ? conf.clientId : "";
+    const secret = isEnabled ? conf.secret : "";
+
+    const enabledRegex = new RegExp(
+      `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^enabled\\s*=\\s*)(?:true|false)`,
+      "m",
+    );
+    if (enabledRegex.test(updated)) {
+      updated = updated.replace(enabledRegex, `$1${isEnabled}`);
+    }
+
+    const clientIdRegex = new RegExp(
+      `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^client_id\\s*=\\s*)(?:"[^"]*"|'[^']*'|[^\\r\\n]*)`,
+      "m",
+    );
+    if (clientIdRegex.test(updated)) {
+      updated = updated.replace(clientIdRegex, `$1${JSON.stringify(clientId)}`);
+    }
+
+    const secretRegex = new RegExp(
+      `(\\[auth\\.external\\.${provider}\\][\\s\\S]*?^secret\\s*=\\s*)(?:"[^"]*"|'[^']*'|[^\\r\\n]*)`,
+      "m",
+    );
+    if (secretRegex.test(updated)) {
+      updated = updated.replace(secretRegex, `$1${JSON.stringify(secret)}`);
+    }
+  }
+  return updated;
+}
+
 export function buildBackendLaunchEnv(
   baseConfig = {},
   dotEnvSource = "",
@@ -76,21 +203,48 @@ export function buildBackendLaunchEnv(
       "TEXTBEE_BASE_URL",
       "TEXTBEE_TIMEOUT_MS",
     ]
-      .map((k) => [k, procEnv[k] || backendEnv[k] || ""])
+      .map((k) => [k, pickCredential([k], procEnv, backendEnv, baseConfig)])
       .filter(([, v]) => Boolean(v)),
   );
 
-  return {
+  const oauth = resolveOAuthProviders(backendEnv, procEnv, baseConfig);
+  const oauthOverlay = {
+    GOOGLE_CLIENT_ID: oauth.google.clientId,
+    GOOGLE_CLIENT_SECRET: oauth.google.secret,
+    SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: oauth.google.clientId,
+    SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: oauth.google.secret,
+    FACEBOOK_CLIENT_ID: oauth.facebook.clientId,
+    FACEBOOK_CLIENT_SECRET: oauth.facebook.secret,
+    SUPABASE_AUTH_EXTERNAL_FACEBOOK_CLIENT_ID: oauth.facebook.clientId,
+    SUPABASE_AUTH_EXTERNAL_FACEBOOK_SECRET: oauth.facebook.secret,
+  };
+
+  const merged = {
     ...procEnv,
     ...backendEnv,
     ...baseConfig,
     ...textBeeOverlay,
+    ...oauthOverlay,
     ...(localDir ? { MENTOR_LOCAL_DIR: localDir } : {}),
   };
+
+  for (const [k, v] of Object.entries(oauthOverlay)) {
+    if (!v) delete merged[k];
+  }
+
+  return merged;
 }
-const cli = process.env.SUPABASE_BIN || "supabase";
+const winToolsPath = path.join(root, ".local/windows-tools.json");
+const winTools =
+  process.platform === "win32" && existsSync(winToolsPath)
+    ? JSON.parse(readFileSync(winToolsPath, "utf8"))
+    : {};
+const cli = process.env.SUPABASE_BIN || winTools.SUPABASE_BIN || "supabase";
+const startupBackendEnv = parseEnvFile(path.join(root, "backend/.env"));
+const oauthConfig = resolveOAuthProviders(startupBackendEnv, process.env);
 const env = {
   ...process.env,
+  ...oauthConfig.envVars,
   SUPABASE_HOME: process.env.SUPABASE_HOME || path.join(local, "cli-state"),
   SUPABASE_INTERNAL_IMAGE_REGISTRY:
     process.env.SUPABASE_INTERNAL_IMAGE_REGISTRY || "docker.io",
@@ -101,12 +255,14 @@ const run = (args, privateLog) => {
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   });
-  if (privateLog)
+  if (privateLog) {
+    const errorPrefix = r.error ? `Process spawn error: ${r.error.message}\n` : "";
     writeFileSync(
       path.join(local, privateLog),
-      (r.stdout || "") + (r.stderr || ""),
+      errorPrefix + (r.stdout || "") + (r.stderr || ""),
       { mode: 0o600 },
     );
+  }
   if (r.status !== 0)
     throw Error(
       `Supabase ${args[0]} failed (${r.status}); inspect private ${privateLog || "CLI output"} locally`,
@@ -126,10 +282,17 @@ if (local === root || local.includes("reviewed-baseline"))
   throw Error("Use a dedicated disposable directory");
 const command = process.argv[2] || "start";
 if (command === "start") {
+  const pythonBin =
+    process.env.PYTHON_BIN ||
+    winTools.PYTHON_BIN ||
+    (process.platform === "win32" ? "python" : "python3");
   execFileSync(
     "python3",
     [path.join(root, "scripts/foundation/verify-baseline.py")],
-    { stdio: "inherit" },
+    {
+      env: { ...process.env, PYTHON_BIN: pythonBin },
+      stdio: "inherit",
+    },
   );
   mkdirSync(path.join(local, "supabase"), { recursive: true });
   const existingConfig = path.join(local, "supabase/config.toml");
@@ -156,6 +319,13 @@ if (command === "start") {
   cpSync(
     path.join(root, "supabase/config.toml"),
     path.join(local, "supabase/config.toml"),
+  );
+  writeFileSync(
+    path.join(local, "supabase/config.toml"),
+    injectOAuthIntoConfigToml(
+      readFileSync(path.join(local, "supabase/config.toml"), "utf8"),
+      oauthConfig,
+    ),
   );
   for (const folder of ["migrations", "tests", "rollbacks"])
     cpSync(
@@ -221,10 +391,13 @@ if (command === "start") {
       process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY || backendEnv.PROVIDER_CLEANUP_ENCRYPTION_KEY || "01234567890123456789012345678901",
     DELETION_RECEIPT_SECRET:
       process.env.DELETION_RECEIPT_SECRET || backendEnv.DELETION_RECEIPT_SECRET || "01234567890123456789012345678901",
-    TEXTBEE_API_KEY: process.env.TEXTBEE_API_KEY || backendEnv.TEXTBEE_API_KEY || "",
-    TEXTBEE_DEVICE_ID: process.env.TEXTBEE_DEVICE_ID || backendEnv.TEXTBEE_DEVICE_ID || "",
-    TEXTBEE_BASE_URL: process.env.TEXTBEE_BASE_URL || backendEnv.TEXTBEE_BASE_URL || "https://api.textbee.dev/api/v1",
-    TEXTBEE_TIMEOUT_MS: process.env.TEXTBEE_TIMEOUT_MS || backendEnv.TEXTBEE_TIMEOUT_MS || "10000",
+    TEXTBEE_API_KEY: pickCredential(["TEXTBEE_API_KEY"], process.env, backendEnv),
+    TEXTBEE_DEVICE_ID: pickCredential(["TEXTBEE_DEVICE_ID"], process.env, backendEnv),
+    TEXTBEE_BASE_URL:
+      pickCredential(["TEXTBEE_BASE_URL"], process.env, backendEnv) ||
+      "https://api.textbee.dev/api/v1",
+    TEXTBEE_TIMEOUT_MS:
+      pickCredential(["TEXTBEE_TIMEOUT_MS"], process.env, backendEnv) || "10000",
   };
   const frontend = {
     NEXT_PUBLIC_SUPABASE_URL: status.API_URL,

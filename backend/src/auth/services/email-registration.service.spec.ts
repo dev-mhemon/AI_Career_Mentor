@@ -142,7 +142,8 @@ describe('A01/A04 email service with synthetic provider', () => {
       expect.any(AbortSignal),
     );
     expect(queries.mock.calls.map(([sql]) => sql)).toEqual([
-      expect.stringContaining('pg_advisory_xact_lock'),
+      expect.stringContaining('pg_advisory_xact_lock(hashtext($1::text))'),
+      expect.stringContaining('pg_advisory_xact_lock(hashtextextended($1, 1))'),
       expect.stringContaining('SELECT id FROM public.users'),
       expect.stringContaining('SELECT user_id FROM public.user_auth_providers'),
       expect.stringContaining('INSERT INTO public.users'),
@@ -150,6 +151,10 @@ describe('A01/A04 email service with synthetic provider', () => {
       expect.stringContaining('INSERT INTO public.user_auth_providers'),
       expect.stringContaining('SELECT provider_subject'),
     ]);
+    expect(queries).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+      [identity.id],
+    );
     expect(provider.sendChallenge.mock.invocationCallOrder[0]).toBeGreaterThan(
       queries.mock.invocationCallOrder.at(-1) ?? 0,
     );
@@ -425,7 +430,9 @@ describe('A01/A04 email service with synthetic provider', () => {
         second.provider.sendChallenge.mock.calls.length,
     ).toBe(1);
     expect(locks).toEqual([
+      identity.id,
       `auth:pending-email:${email}`,
+      '00000000-0000-4000-8000-000000000002',
       `auth:pending-email:${email}`,
     ]);
   });
@@ -654,7 +661,7 @@ describe('A01/A04 email service with synthetic provider', () => {
 
   describe('Phone registration and OTP resend via TextBee provider', () => {
     it('successfully registers phone contact, persists pending row, and dispatches SMS challenge', async () => {
-      const { service, smsProvider, abuse } = harness();
+      const { service, smsProvider, abuse, queries } = harness();
       const result = await service.register(phoneBody, peer);
       expect(result).toMatchObject({
         verification_channel: 'phone',
@@ -678,6 +685,10 @@ describe('A01/A04 email service with synthetic provider', () => {
       expect(smsProvider.sendChallenge).toHaveBeenCalledWith(
         phoneIdentity,
         expect.any(Object),
+      );
+      expect(queries).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [phoneIdentity.id],
       );
     });
 

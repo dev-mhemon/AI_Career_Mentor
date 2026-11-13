@@ -1,7 +1,7 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
   loginUser,
@@ -802,6 +802,73 @@ export async function resendOtpAction(
   }
 }
 
+const ALLOWED_LOCAL_OAUTH_ORIGINS: ReadonlySet<string> = new Set([
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
+  'http://localhost:3201',
+  'http://127.0.0.1:3201',
+]);
+
+/**
+ * Normalizes a candidate URL or origin string into an exact `protocol//host` origin if valid.
+ */
+function normalizeOrigin(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const parsed = new URL(raw.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves the active trusted site origin for OAuth callbacks.
+ * Prefers the active browser/request origin (`origin`, `referer`, or `host` header) when it matches
+ * the trusted local/configured origin allowlist, preventing drift onto a stale port (e.g. `3000`)
+ * when browsing on `3001` or `3201`.
+ */
+export async function resolveTrustedOAuthOrigin(): Promise<string> {
+  const configuredOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL);
+  const fallbackOrigin = configuredOrigin || 'http://localhost:3001';
+  const allowedOrigins = new Set<string>(ALLOWED_LOCAL_OAUTH_ORIGINS);
+  if (configuredOrigin) {
+    allowedOrigins.add(configuredOrigin);
+  }
+
+  try {
+    const headerStore = await headers();
+    if (headerStore && typeof headerStore.get === 'function') {
+      const rawOrigin = normalizeOrigin(headerStore.get('origin'));
+      if (rawOrigin && allowedOrigins.has(rawOrigin)) {
+        return rawOrigin;
+      }
+
+      const rawReferer = normalizeOrigin(headerStore.get('referer'));
+      if (rawReferer && allowedOrigins.has(rawReferer)) {
+        return rawReferer;
+      }
+
+      const rawHost = (headerStore.get('x-forwarded-host') || headerStore.get('host'))?.trim();
+      if (rawHost) {
+        const rawProto = headerStore.get('x-forwarded-proto')?.split(',')[0]?.trim();
+        const proto = rawProto === 'https' || rawProto === 'http' ? rawProto : 'http';
+        const hostOrigin = normalizeOrigin(`${proto}://${rawHost}`);
+        if (hostOrigin && allowedOrigins.has(hostOrigin)) {
+          return hostOrigin;
+        }
+      }
+    }
+  } catch {
+    // Outside request context or headers() unavailable in unit tests; fall back to configured origin
+  }
+
+  return fallbackOrigin;
+}
+
 /**
  * Server action initiating Supabase OAuth sign-in.
  */
@@ -810,7 +877,7 @@ export async function signInWithOAuth(
 ): Promise<{ error?: string }> {
   try {
     const supabase = await createSupabaseServerClient();
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+    const siteUrl = await resolveTrustedOAuthOrigin();
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -986,7 +1053,7 @@ export async function linkIdentityAction(
       return { success: true, linked_providers: result.linked_providers };
     }
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3001';
+    const siteUrl = await resolveTrustedOAuthOrigin();
     const { data, error } = await supabase.auth.linkIdentity({
       provider,
       options: {

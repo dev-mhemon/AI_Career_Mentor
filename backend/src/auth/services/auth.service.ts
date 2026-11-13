@@ -1,6 +1,6 @@
 import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EntityManager, QueryFailedError } from 'typeorm';
+import { EntityManager } from 'typeorm';
 import { DatabaseService } from './database.service.js';
 import { fail } from '../../common/http.js';
 import { profileComplete } from '../../common/profile-completeness.js';
@@ -32,6 +32,9 @@ export interface AuthIdentity {
   provider: string;
   id: string;
   identity_data?: { sub?: string };
+  last_sign_in_at?: string;
+  updated_at?: string;
+  created_at?: string;
 }
 interface AuthUser {
   id: string;
@@ -55,9 +58,39 @@ const SUPPORTED_AUTH_PROVIDERS: readonly string[] = [
   'google',
   'facebook',
 ];
+const EXACT_OAUTH_AMR_MATCH_WINDOW_SEC = 5;
+
+export function isPgUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const code =
+    'code' in error && typeof (error as { code: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : undefined;
+  if (code === '23505') {
+    return true;
+  }
+  if ('driverError' in error) {
+    const driverError = (error as { driverError: unknown }).driverError;
+    if (driverError && typeof driverError === 'object') {
+      const driverCode =
+        'code' in driverError &&
+        typeof (driverError as { code: unknown }).code === 'string'
+          ? (driverError as { code: string }).code
+          : undefined;
+      if (driverCode === '23505') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly oauthSessionProviders = new Map<string, string>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -231,6 +264,20 @@ export class AuthService {
     const identities = (user.identities || []).filter((i) =>
       ['email', 'phone', 'google', 'facebook'].includes(i.provider),
     );
+    const boundOAuthProvider = identity.sessionId
+      ? this.oauthSessionProviders.get(identity.sessionId)
+      : undefined;
+    if (
+      provider &&
+      boundOAuthProvider &&
+      boundOAuthProvider !== provider.toLowerCase()
+    ) {
+      fail(
+        422,
+        'PROVIDER_MISMATCH',
+        'Requested OAuth provider does not match the bound session provider',
+      );
+    }
     let amr = identity.amr;
     let payload:
       | {
@@ -262,6 +309,7 @@ export class AuthService {
 
     let activeProvider: string;
     let activeContact: string | null = null;
+    let needsDbOAuthProviderCheck = false;
 
     if (provider) {
       if (!['google', 'facebook'].includes(provider))
@@ -273,30 +321,65 @@ export class AuthService {
           'Provider is not linked to this Auth identity',
         );
 
-      const isOAuthSession = amr?.some(
-        (entry) =>
-          entry.method === 'oauth' &&
-          typeof entry.provider === 'string' &&
-          entry.provider.toLowerCase() === provider.toLowerCase(),
+      const oauthAmrEntries = (amr || []).filter(
+        (entry) => entry.method === 'oauth',
       );
-      if (!isOAuthSession) {
+      if (oauthAmrEntries.length === 0) {
         fail(
-          403,
+          422,
           'PROVIDER_MISMATCH',
           'Session was not authenticated via the requested OAuth provider',
         );
       }
+
+      const explicitProviderEntries = oauthAmrEntries.filter(
+        (entry) => typeof entry.provider === 'string' && entry.provider.trim(),
+      );
+      if (explicitProviderEntries.length > 0) {
+        const matchesExplicit = explicitProviderEntries.some(
+          (entry) => entry.provider?.toLowerCase() === provider.toLowerCase(),
+        );
+        if (!matchesExplicit) {
+          fail(
+            422,
+            'PROVIDER_MISMATCH',
+            'Session was not authenticated via the requested OAuth provider',
+          );
+        }
+      } else {
+        needsDbOAuthProviderCheck = true;
+      }
       activeProvider = provider.toLowerCase();
       activeContact = user.email || null;
     } else {
-      const oauthEntry = amr?.find(
-        (entry) =>
-          entry.method === 'oauth' &&
-          typeof entry.provider === 'string' &&
-          ['google', 'facebook'].includes(entry.provider.toLowerCase()),
-      );
-      if (oauthEntry?.provider) {
-        activeProvider = oauthEntry.provider.toLowerCase();
+      const oauthEntry = amr?.find((entry) => entry.method === 'oauth');
+      if (oauthEntry) {
+        const explicitOAuthProvider = oauthEntry.provider?.toLowerCase();
+        if (boundOAuthProvider) {
+          activeProvider = boundOAuthProvider;
+          needsDbOAuthProviderCheck = true;
+        } else if (explicitOAuthProvider) {
+          if (!['google', 'facebook'].includes(explicitOAuthProvider)) {
+            fail(
+              422,
+              'PROVIDER_MISMATCH',
+              'OAuth session is ambiguous or missing an explicit provider in AMR',
+            );
+          }
+          activeProvider = explicitOAuthProvider;
+        } else {
+          const metaProvider = payload?.app_metadata?.provider?.toLowerCase();
+          if (metaProvider && ['google', 'facebook'].includes(metaProvider)) {
+            activeProvider = metaProvider;
+          } else {
+            const oauthIdentities = identities.filter((i) =>
+              ['google', 'facebook'].includes(i.provider),
+            );
+            activeProvider =
+              oauthIdentities.length === 1 ? oauthIdentities[0].provider : '';
+          }
+          needsDbOAuthProviderCheck = true;
+        }
         activeContact = user.email || payload?.email || null;
       } else if (amr?.some((entry) => entry.method === 'sms')) {
         activeProvider = 'phone';
@@ -316,7 +399,11 @@ export class AuthService {
           activeContact = user.email || payload?.email || null;
         }
       } else if (payload?.app_metadata?.provider) {
-        activeProvider = payload.app_metadata.provider.toLowerCase();
+        const metaProvider = payload.app_metadata.provider.toLowerCase();
+        if (['google', 'facebook'].includes(metaProvider)) {
+          needsDbOAuthProviderCheck = true;
+        }
+        activeProvider = metaProvider;
         activeContact =
           activeProvider === 'phone'
             ? user.phone || payload?.phone || null
@@ -329,10 +416,355 @@ export class AuthService {
         activeContact = user.email || payload?.email || null;
       }
     }
-    return this.database
+
+    const email = user.email_confirmed_at ? user.email || null : null;
+    const phone = user.phone_confirmed_at
+      ? user.phone?.startsWith('+')
+        ? user.phone
+        : `+${user.phone}`
+      : null;
+    if (provider && phone && !/^\+8801[3-9][0-9]{8}$/.test(phone))
+      fail(
+        422,
+        'VALIDATION_FAILED',
+        'Only Bangladesh mobile contacts are supported',
+      );
+
+    const incomingEmail = provider ? (email || '').trim().toLowerCase() : '';
+    const incomingDigits = provider ? phone?.replace(/\D/g, '') || null : null;
+    const txResult = await this.database
       .transaction(
-        identity.sub,
+        null,
         async (db) => {
+          await db.query(
+            'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
+            [user.id],
+          );
+          await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+            user.id,
+          ]);
+          const [authUserState] = await db.query(
+            'SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1::uuid) AS auth_user_exists',
+            [user.id],
+          );
+          if (authUserState?.auth_user_exists === false) {
+            fail(401, 'INVALID_TOKEN', 'Invalid or expired token');
+          }
+
+          const oauthIdentities = needsDbOAuthProviderCheck
+            ? await db.query(
+                `SELECT provider,
+                          last_sign_in_at,
+                          updated_at,
+                          created_at,
+                          GREATEST(
+                            COALESCE(last_sign_in_at, '-infinity'::timestamptz),
+                            COALESCE(updated_at, '-infinity'::timestamptz),
+                            COALESCE(created_at, '-infinity'::timestamptz)
+                          ) AS max_activity_at
+                     FROM auth.identities
+                    WHERE user_id = $1::uuid`,
+                [user.id],
+              )
+            : [];
+          const emailCollisions = incomingEmail
+            ? await db.query(
+                `SELECT i.user_id
+                     FROM auth.identities i
+                     JOIN auth.users au ON au.id = i.user_id
+                    WHERE LOWER(i.identity_data->>'email') = $1
+                      AND au.email_confirmed_at IS NOT NULL
+                      AND (
+                        LOWER(au.email) = $1
+                        OR LOWER(COALESCE(i.identity_data->>'email_verified', 'false')) = 'true'
+                      )
+                      AND i.user_id <> $2
+                    LIMIT 1`,
+                [incomingEmail, user.id],
+              )
+            : [];
+          const phoneCollisions = incomingDigits
+            ? await db.query(
+                `SELECT i.user_id
+                     FROM auth.identities i
+                     JOIN auth.users au ON au.id = i.user_id
+                    WHERE i.provider = 'phone'
+                      AND (i.identity_data->>'phone' = $1 OR i.identity_data->>'phone' = $2)
+                      AND au.phone_confirmed_at IS NOT NULL
+                      AND i.user_id <> $3
+                    LIMIT 1`,
+                [`+${incomingDigits}`, incomingDigits, user.id],
+              )
+            : [];
+          const privilegedReads = {
+            oauthIdentities,
+            emailCollisions,
+            phoneCollisions,
+          };
+
+          await db.query('SET LOCAL ROLE service_role');
+
+          if (needsDbOAuthProviderCheck) {
+            const dbOAuthRows = (
+              Array.isArray(privilegedReads.oauthIdentities)
+                ? privilegedReads.oauthIdentities
+                : []
+            ).filter(
+              (row: { provider?: string }) =>
+                row?.provider && ['google', 'facebook'].includes(row.provider),
+            );
+            const candidateOAuth = (
+              dbOAuthRows.length > 0 ? dbOAuthRows : identities
+            ).filter((i: { provider: string }) =>
+              ['google', 'facebook'].includes(i.provider),
+            );
+
+            const toEpochSec = (val?: string | Date | null): number => {
+              if (!val) return -Infinity;
+              const ms =
+                val instanceof Date ? val.getTime() : Date.parse(String(val));
+              return Number.isNaN(ms) ? -Infinity : Math.floor(ms / 1000);
+            };
+
+            const getIdentityActivitySec = (row: unknown): number => {
+              if (!row || typeof row !== 'object') return -Infinity;
+              const r = row as {
+                max_activity_at?: unknown;
+                last_sign_in_at?: unknown;
+                updated_at?: unknown;
+                created_at?: unknown;
+              };
+              if (
+                typeof r.max_activity_at === 'string' ||
+                r.max_activity_at instanceof Date
+              ) {
+                const sec = toEpochSec(r.max_activity_at);
+                if (sec !== -Infinity) return sec;
+              }
+              const lastSignIn =
+                typeof r.last_sign_in_at === 'string' ||
+                r.last_sign_in_at instanceof Date
+                  ? r.last_sign_in_at
+                  : null;
+              const updated =
+                typeof r.updated_at === 'string' || r.updated_at instanceof Date
+                  ? r.updated_at
+                  : null;
+              const created =
+                typeof r.created_at === 'string' || r.created_at instanceof Date
+                  ? r.created_at
+                  : null;
+              return Math.max(
+                toEpochSec(lastSignIn),
+                toEpochSec(updated),
+                toEpochSec(created),
+              );
+            };
+
+            const getIdentityEvidenceSecs = (row: unknown): number[] => {
+              if (!row || typeof row !== 'object') return [];
+              const value = row as {
+                max_activity_at?: unknown;
+                last_sign_in_at?: unknown;
+                updated_at?: unknown;
+                created_at?: unknown;
+              };
+              return [
+                value.last_sign_in_at,
+                value.updated_at,
+                value.created_at,
+                value.max_activity_at,
+              ]
+                .map((timestamp) =>
+                  typeof timestamp === 'string' || timestamp instanceof Date
+                    ? toEpochSec(timestamp)
+                    : -Infinity,
+                )
+                .filter((timestamp) => timestamp !== -Infinity);
+            };
+
+            if (provider) {
+              if (
+                !candidateOAuth.some(
+                  (i: { provider: string }) => i.provider === activeProvider,
+                )
+              ) {
+                fail(
+                  422,
+                  'PROVIDER_MISMATCH',
+                  'Session was not authenticated via the requested OAuth provider',
+                );
+              }
+
+              if (candidateOAuth.length > 1) {
+                const oauthAmrEntry = (amr || []).find(
+                  (entry) => entry.method === 'oauth',
+                );
+                const amrOAuthTimestampSec =
+                  typeof oauthAmrEntry?.timestamp === 'number'
+                    ? oauthAmrEntry.timestamp > 1e11
+                      ? Math.floor(oauthAmrEntry.timestamp / 1000)
+                      : oauthAmrEntry.timestamp
+                    : undefined;
+
+                const hasInlineProvider = Boolean(oauthAmrEntry?.provider);
+                const sessionBoundToRequested =
+                  boundOAuthProvider === activeProvider;
+                if (!hasInlineProvider && !sessionBoundToRequested) {
+                  const requestedRow = candidateOAuth.find(
+                    (i: { provider: string }) => i.provider === activeProvider,
+                  );
+                  const requestedHasExactEvidence =
+                    typeof amrOAuthTimestampSec === 'number' && requestedRow
+                      ? getIdentityEvidenceSecs(requestedRow).some(
+                          (timestamp) =>
+                            Math.abs(timestamp - amrOAuthTimestampSec) <=
+                            EXACT_OAUTH_AMR_MATCH_WINDOW_SEC,
+                        )
+                      : false;
+                  if (!requestedHasExactEvidence) {
+                    fail(
+                      422,
+                      'PROVIDER_MISMATCH',
+                      'Requested OAuth provider does not match session authentication evidence',
+                    );
+                  }
+                }
+              }
+            } else {
+              if (candidateOAuth.length === 0) {
+                fail(
+                  422,
+                  'PROVIDER_MISMATCH',
+                  'Session was not authenticated via the requested OAuth provider',
+                );
+              }
+
+              if (boundOAuthProvider) {
+                if (
+                  !candidateOAuth.some(
+                    (row: { provider: string }) =>
+                      row.provider === boundOAuthProvider,
+                  )
+                ) {
+                  fail(
+                    422,
+                    'PROVIDER_MISMATCH',
+                    'Bound session provider is no longer linked',
+                  );
+                }
+                activeProvider = boundOAuthProvider;
+              } else if (candidateOAuth.length === 1) {
+                activeProvider = candidateOAuth[0].provider;
+              } else {
+                const verifiedAuthRows = await db.query(
+                  `SELECT provider, contact_value
+                     FROM public.user_auth_providers
+                    WHERE user_id = $1 AND verified_at IS NOT NULL`,
+                  [user.id],
+                );
+                const verifiedProviderMap = new Map(
+                  (Array.isArray(verifiedAuthRows) ? verifiedAuthRows : []).map(
+                    (r: { provider: string; contact_value: string }) => [
+                      r.provider,
+                      r.contact_value,
+                    ],
+                  ),
+                );
+                const oauthAmrEntry = (amr || []).find(
+                  (entry) => entry.method === 'oauth',
+                );
+                const amrOAuthTimestampSec =
+                  typeof oauthAmrEntry?.timestamp === 'number'
+                    ? oauthAmrEntry.timestamp > 1e11
+                      ? Math.floor(oauthAmrEntry.timestamp / 1000)
+                      : oauthAmrEntry.timestamp
+                    : undefined;
+
+                let selectedProvider: string | null = null;
+
+                if (typeof amrOAuthTimestampSec === 'number') {
+                  const matchingRows = candidateOAuth
+                    .map((row) => ({
+                      provider: row.provider,
+                      verified: verifiedProviderMap.has(row.provider),
+                      diff: Math.min(
+                        ...getIdentityEvidenceSecs(row).map((timestamp) =>
+                          Math.abs(timestamp - amrOAuthTimestampSec),
+                        ),
+                      ),
+                    }))
+                    .filter(
+                      (item) => item.diff <= EXACT_OAUTH_AMR_MATCH_WINDOW_SEC,
+                    )
+                    .sort(
+                      (a, b) =>
+                        a.diff - b.diff ||
+                        Number(b.verified) - Number(a.verified) ||
+                        Number(b.provider === activeProvider) -
+                          Number(a.provider === activeProvider),
+                    );
+
+                  if (matchingRows.length > 0) {
+                    selectedProvider = matchingRows[0].provider;
+                  }
+                }
+
+                if (!selectedProvider) {
+                  const sortedCandidates = [...candidateOAuth].sort((a, b) => {
+                    const aVerified = verifiedProviderMap.has(a.provider)
+                      ? 1
+                      : 0;
+                    const bVerified = verifiedProviderMap.has(b.provider)
+                      ? 1
+                      : 0;
+                    if (bVerified !== aVerified) return bVerified - aVerified;
+
+                    const activityDifference =
+                      getIdentityActivitySec(b) - getIdentityActivitySec(a);
+                    if (activityDifference !== 0) return activityDifference;
+
+                    if (activeContact) {
+                      const aMatch =
+                        verifiedProviderMap.get(a.provider)?.toLowerCase() ===
+                        activeContact.toLowerCase()
+                          ? 1
+                          : 0;
+                      const bMatch =
+                        verifiedProviderMap.get(b.provider)?.toLowerCase() ===
+                        activeContact.toLowerCase()
+                          ? 1
+                          : 0;
+                      if (bMatch !== aMatch) return bMatch - aMatch;
+                    }
+
+                    return (
+                      Number(b.provider === activeProvider) -
+                      Number(a.provider === activeProvider)
+                    );
+                  });
+
+                  selectedProvider = sortedCandidates[0].provider;
+                }
+
+                activeProvider = selectedProvider || '';
+              }
+
+              if (
+                !activeProvider ||
+                !['google', 'facebook'].includes(activeProvider) ||
+                !candidateOAuth.some(
+                  (i: { provider: string }) => i.provider === activeProvider,
+                )
+              ) {
+                fail(
+                  422,
+                  'PROVIDER_MISMATCH',
+                  'Session was not authenticated via the requested OAuth provider',
+                );
+              }
+            }
+          }
           if (!provider) {
             if (!SUPPORTED_AUTH_PROVIDERS.includes(activeProvider)) {
               fail(
@@ -354,15 +786,33 @@ export class AuthService {
                 'Application account verification is incomplete',
               );
             }
-            const [existing] = await db.query(
-              `SELECT u.verified_contact, p.verified_at
-                 FROM public.users u
-                 JOIN public.user_auth_providers p
-                   ON p.user_id = u.id AND p.provider = $2 AND p.verified_at IS NOT NULL
-                WHERE u.id = $1
-                  AND LOWER(p.contact_value) = LOWER($3)`,
-              [user.id, activeProvider, lookupContact],
-            );
+            const isOAuthSync = ['google', 'facebook'].includes(activeProvider);
+            const oauthSubject = isOAuthSync
+              ? String(
+                  identities.find(
+                    (i: { provider: string }) => i.provider === activeProvider,
+                  )?.identity_data?.sub || '',
+                ).trim()
+              : '';
+            const [existing] = isOAuthSync
+              ? await db.query(
+                  `SELECT u.verified_contact, p.verified_at
+                     FROM public.users u
+                     JOIN public.user_auth_providers p
+                       ON p.user_id = u.id AND p.provider = $2 AND p.verified_at IS NOT NULL
+                    WHERE u.id = $1
+                      AND ($3 = '' OR p.provider_subject = $3)`,
+                  [user.id, activeProvider, oauthSubject],
+                )
+              : await db.query(
+                  `SELECT u.verified_contact, p.verified_at
+                     FROM public.users u
+                     JOIN public.user_auth_providers p
+                       ON p.user_id = u.id AND p.provider = $2 AND p.verified_at IS NOT NULL
+                    WHERE u.id = $1
+                      AND LOWER(p.contact_value) = LOWER($3)`,
+                  [user.id, activeProvider, lookupContact],
+                );
             if (!existing?.verified_contact || !existing?.verified_at) {
               fail(
                 403,
@@ -383,37 +833,336 @@ export class AuthService {
               'UNVERIFIED_ACCOUNT',
               'Pending email registration must complete through verification',
             );
-          const email = user.email_confirmed_at ? user.email || null : null;
-          const phone = user.phone_confirmed_at
-            ? user.phone?.startsWith('+')
-              ? user.phone
-              : `+${user.phone}`
-            : null;
-          if (phone && !/^\+8801[3-9][0-9]{8}$/.test(phone))
-            fail(
-              422,
-              'VALIDATION_FAILED',
-              'Only Bangladesh mobile contacts are supported',
+
+          const verifiedContactMappings = await db.query(
+            `SELECT provider, contact_value
+               FROM public.user_auth_providers
+              WHERE user_id = $1
+                AND provider IN ('email', 'phone', 'google', 'facebook')
+                AND verified_at IS NOT NULL
+              FOR UPDATE`,
+            [user.id],
+          );
+          for (const mapping of Array.isArray(verifiedContactMappings)
+            ? verifiedContactMappings
+            : []) {
+            const contactValue = String(mapping.contact_value || '');
+            if (
+              mapping.provider === 'email' &&
+              contactValue &&
+              email &&
+              contactValue.toLowerCase() !== email.toLowerCase()
+            ) {
+              fail(
+                409,
+                'IDENTITY_LINK_CONFLICT',
+                'Account already has a different verified email mapped',
+              );
+            }
+            if (
+              mapping.provider === 'phone' &&
+              contactValue &&
+              phone &&
+              contactValue.replace(/\D/g, '') !== phone.replace(/\D/g, '')
+            ) {
+              fail(
+                409,
+                'PHONE_CONFLICT',
+                'Account already has a different verified phone mapped',
+              );
+            }
+          }
+
+          // Pre-flight check: ensure none of the incoming identities belong to another user account
+          for (const i of identities) {
+            const subject = (i.identity_data?.sub || i.id || '').trim();
+            if (subject) {
+              const [conflict] = await db.query(
+                `SELECT user_id FROM public.user_auth_providers
+                  WHERE provider = $1::public.auth_provider
+                    AND provider_subject = $2
+                    AND user_id <> $3
+                  LIMIT 1`,
+                [i.provider, subject, user.id],
+              );
+              if (conflict) {
+                fail(
+                  409,
+                  'IDENTITY_LINK_CONFLICT',
+                  'Identity belongs to another application account',
+                );
+              }
+            }
+          }
+
+          // Reject cross-user email collision: a verified account or verified provider mapping with this email
+          // already exists under a different user ID (in public.users, public.user_auth_providers, or auth.identities).
+          const [existingPublicEmailCollision] = incomingEmail
+            ? await db.query(
+                `SELECT user_id FROM (
+                   SELECT u.id AS user_id
+                     FROM public.users u
+                    WHERE LOWER(u.email) = $1
+                      AND u.id <> $2
+                      AND EXISTS (
+                        SELECT 1 FROM public.user_auth_providers p
+                         WHERE p.user_id = u.id
+                           AND p.provider = 'email'
+                           AND LOWER(p.contact_value) = $1
+                           AND p.verified_at IS NOT NULL
+                      )
+                   UNION
+                   SELECT user_id FROM public.user_auth_providers WHERE provider = 'email' AND LOWER(contact_value) = $1 AND verified_at IS NOT NULL AND user_id <> $2
+                 ) AS email_collisions LIMIT 1`,
+                [incomingEmail, user.id],
+              )
+            : [null];
+
+          let existingEmailCollision = existingPublicEmailCollision;
+          if (!existingEmailCollision && incomingEmail) {
+            const [authEmailCollision] = Array.isArray(
+              privilegedReads.emailCollisions,
+            )
+              ? privilegedReads.emailCollisions
+              : [];
+            if (authEmailCollision) {
+              existingEmailCollision = authEmailCollision;
+            }
+          }
+
+          const [existingUserRow] = await db.query(
+            `SELECT id, phone FROM public.users WHERE id = $1`,
+            [user.id],
+          );
+
+          if (existingEmailCollision) {
+            return {
+              __emailCollision: true as const,
+              shouldCleanup: !existingUserRow,
+              activeProvider,
+            };
+          }
+
+          const normalizePhone = (
+            p: string | null | undefined,
+          ): string | null => {
+            if (!p) return null;
+            const digits = p.replace(/\D/g, '');
+            return digits || null;
+          };
+
+          if (incomingDigits) {
+            const phoneE164 = `+${incomingDigits}`;
+            const [crossUserPhone] = await db.query(
+              `SELECT user_id FROM (
+                  SELECT u.id AS user_id FROM public.users u
+                   WHERE (u.phone = $1 OR u.phone = $2)
+                     AND u.id <> $3
+                     AND EXISTS (
+                       SELECT 1 FROM public.user_auth_providers p
+                        WHERE p.user_id = u.id
+                          AND p.provider = 'phone'
+                          AND (p.contact_value = $1 OR p.contact_value = $2)
+                          AND p.verified_at IS NOT NULL
+                     )
+                 UNION
+                 SELECT user_id FROM public.user_auth_providers
+                  WHERE provider = 'phone'
+                    AND (contact_value = $1 OR contact_value = $2)
+                    AND verified_at IS NOT NULL
+                    AND user_id <> $3
+               ) AS phone_collisions LIMIT 1`,
+              [phoneE164, incomingDigits, user.id],
             );
+            if (crossUserPhone) {
+              fail(
+                409,
+                'PHONE_CONFLICT',
+                'Phone number is already associated with another account',
+              );
+            }
+
+            const [authPhoneCollision] = Array.isArray(
+              privilegedReads.phoneCollisions,
+            )
+              ? privilegedReads.phoneCollisions
+              : [];
+            if (authPhoneCollision) {
+              fail(
+                409,
+                'PHONE_CONFLICT',
+                'Phone number is already associated with another account',
+              );
+            }
+          }
+
+          if (phone && existingUserRow?.phone) {
+            if (
+              normalizePhone(existingUserRow.phone) !== normalizePhone(phone)
+            ) {
+              fail(
+                409,
+                'PHONE_CONFLICT',
+                'Account already has a different phone number associated',
+              );
+            }
+          }
+
+          if (email) {
+            await db.query(
+              `UPDATE public.users SET email = NULL WHERE LOWER(email) = $1 AND verified_contact = false AND id <> $2`,
+              [email.trim().toLowerCase(), user.id],
+            );
+            await db.query(
+              `DELETE FROM public.user_auth_providers WHERE (LOWER(contact_value) = $1 OR LOWER(provider_subject) = $1) AND verified_at IS NULL AND user_id <> $2`,
+              [email.trim().toLowerCase(), user.id],
+            );
+          }
+          if (incomingDigits) {
+            await db.query(
+              `UPDATE public.users SET phone = NULL WHERE (phone = $1 OR phone = $2) AND verified_contact = false AND id <> $3`,
+              [`+${incomingDigits}`, incomingDigits, user.id],
+            );
+            await db.query(
+              `DELETE FROM public.user_auth_providers WHERE (contact_value IN ($1, $2) OR provider_subject IN ($1, $2)) AND verified_at IS NULL AND user_id <> $3`,
+              [`+${incomingDigits}`, incomingDigits, user.id],
+            );
+          }
+
           await db.query(
             `INSERT INTO public.users(id,email,phone,verified_contact,last_active_at,last_login_at) VALUES($1,$2,$3,$4,clock_timestamp(),clock_timestamp())
-        ON CONFLICT(id) DO UPDATE SET email=excluded.email,phone=excluded.phone,verified_contact=excluded.verified_contact`,
+        ON CONFLICT(id) DO UPDATE SET
+          email=CASE
+            WHEN public.users.verified_contact AND public.users.email IS NOT NULL THEN public.users.email
+            ELSE COALESCE(EXCLUDED.email, public.users.email)
+          END,
+          phone=CASE
+            WHEN public.users.verified_contact AND public.users.phone IS NOT NULL THEN public.users.phone
+            ELSE COALESCE(EXCLUDED.phone, public.users.phone)
+          END,
+          verified_contact=public.users.verified_contact OR EXCLUDED.verified_contact`,
             [user.id, email, phone, !!(email || phone)],
           );
+
           for (const i of identities) {
+            const isPhone = i.provider === 'phone';
+            const isEmail = i.provider === 'email';
+            const contactVal = isPhone ? phone : email;
+            const verifiedAt =
+              (isPhone ? user.phone_confirmed_at : user.email_confirmed_at) ||
+              null;
+            const subject = (i.identity_data?.sub || i.id || '').trim();
+
+            const [existingMapping] = await db.query(
+              `SELECT contact_value, provider_subject, verified_at FROM public.user_auth_providers WHERE user_id = $1 AND provider = $2`,
+              [user.id, i.provider],
+            );
+
+            if (existingMapping && existingMapping.verified_at) {
+              if (isPhone && existingMapping.contact_value && phone) {
+                if (
+                  normalizePhone(existingMapping.contact_value) !==
+                  normalizePhone(phone)
+                ) {
+                  fail(
+                    409,
+                    'PHONE_CONFLICT',
+                    'Account already has a different phone number mapped',
+                  );
+                }
+              }
+              if (isEmail && existingMapping.contact_value && email) {
+                if (
+                  existingMapping.contact_value.toLowerCase() !==
+                  email.toLowerCase()
+                ) {
+                  fail(
+                    409,
+                    'IDENTITY_LINK_CONFLICT',
+                    'Account already has a different email mapped',
+                  );
+                }
+              }
+              const phoneContactMatched =
+                isPhone &&
+                Boolean(
+                  (existingMapping.contact_value &&
+                    phone &&
+                    normalizePhone(existingMapping.contact_value) ===
+                      normalizePhone(phone)) ||
+                  existingMapping.provider_subject === user.id ||
+                  subject === user.id ||
+                  (existingMapping.contact_value &&
+                    subject &&
+                    normalizePhone(existingMapping.contact_value) ===
+                      normalizePhone(subject)) ||
+                  (phone &&
+                    existingMapping.provider_subject &&
+                    normalizePhone(phone) ===
+                      normalizePhone(existingMapping.provider_subject)),
+                );
+
+              const emailContactMatched =
+                isEmail &&
+                Boolean(
+                  (existingMapping.contact_value &&
+                    email &&
+                    existingMapping.contact_value.toLowerCase() ===
+                      email.toLowerCase()) ||
+                  (existingMapping.contact_value &&
+                    subject &&
+                    existingMapping.contact_value.toLowerCase() ===
+                      subject.toLowerCase()) ||
+                  (email &&
+                    existingMapping.provider_subject &&
+                    email.toLowerCase() ===
+                      existingMapping.provider_subject.toLowerCase()) ||
+                  (existingMapping.provider_subject === user.id &&
+                    (!existingMapping.contact_value ||
+                      !email ||
+                      existingMapping.contact_value.toLowerCase() ===
+                        email.toLowerCase())) ||
+                  (subject === user.id &&
+                    (!existingMapping.contact_value ||
+                      !email ||
+                      existingMapping.contact_value.toLowerCase() ===
+                        email.toLowerCase())),
+                );
+
+              const firstPartyMatched = isEmail
+                ? emailContactMatched
+                : isPhone
+                  ? phoneContactMatched
+                  : false;
+
+              if (
+                !firstPartyMatched &&
+                existingMapping.provider_subject &&
+                subject &&
+                existingMapping.provider_subject !== subject
+              ) {
+                fail(
+                  409,
+                  'IDENTITY_LINK_CONFLICT',
+                  'Account already has a different identity mapped for this provider',
+                );
+              }
+            }
+
             await db.query(
               `INSERT INTO public.user_auth_providers(user_id,provider,provider_subject,contact_value,verified_at,is_primary)
           VALUES($1,$2,$3,$4,$5,NOT EXISTS(SELECT 1 FROM public.user_auth_providers WHERE user_id=$1))
-          ON CONFLICT(user_id,provider) DO UPDATE SET provider_subject=excluded.provider_subject,contact_value=excluded.contact_value,verified_at=excluded.verified_at`,
-              [
-                user.id,
-                i.provider,
-                i.identity_data?.sub || i.id,
-                i.provider === 'phone' ? phone : email,
-                (i.provider === 'phone'
-                  ? user.phone_confirmed_at
-                  : user.email_confirmed_at) || null,
-              ],
+          ON CONFLICT(user_id,provider) DO UPDATE SET
+            provider_subject=EXCLUDED.provider_subject,
+            contact_value=CASE
+              WHEN public.user_auth_providers.verified_at IS NOT NULL
+               AND public.user_auth_providers.contact_value IS NOT NULL
+              THEN public.user_auth_providers.contact_value
+              ELSE COALESCE(EXCLUDED.contact_value, public.user_auth_providers.contact_value)
+            END,
+            verified_at=COALESCE(public.user_auth_providers.verified_at, EXCLUDED.verified_at),
+            updated_at=clock_timestamp()`,
+              [user.id, i.provider, subject, contactVal, verifiedAt],
             );
           }
           await db.query(
@@ -440,18 +1189,11 @@ export class AuthService {
           return result;
         },
         false,
-        !!provider,
+        false,
+        false,
       )
       .catch((error: unknown) => {
-        if (
-          error instanceof QueryFailedError &&
-          error.driverError.code === '23505' &&
-          [
-            'uq_users_email',
-            'uq_users_phone',
-            'uq_user_auth_providers_subject',
-          ].includes(error.driverError.constraint)
-        ) {
+        if (isPgUniqueViolation(error)) {
           fail(
             409,
             'IDENTITY_LINK_CONFLICT',
@@ -460,20 +1202,85 @@ export class AuthService {
         }
         throw error;
       });
+    if (
+      txResult &&
+      typeof txResult === 'object' &&
+      '__emailCollision' in txResult
+    ) {
+      const collision = txResult as {
+        __emailCollision: true;
+        shouldCleanup: boolean;
+        activeProvider: string;
+      };
+      if (collision.shouldCleanup) {
+        await this.database
+          .transaction(
+            null,
+            async (privDb) => {
+              await privDb.query(
+                'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+                [user.id],
+              );
+              await privDb.query(
+                'SELECT id FROM auth.users WHERE id = $1 FOR UPDATE',
+                [user.id],
+              );
+              const appCheck = await privDb.query(
+                'SELECT 1 FROM public.users WHERE id = $1 LIMIT 1',
+                [user.id],
+              );
+              if (Array.isArray(appCheck) && appCheck.length > 0) return;
+              await privDb.query(
+                `DELETE FROM auth.identities
+                  WHERE user_id = $1::uuid
+                    AND provider = $2
+                    AND NOT EXISTS (SELECT 1 FROM public.users WHERE id = $1::uuid)`,
+                [user.id, collision.activeProvider],
+              );
+              await privDb.query(
+                `DELETE FROM auth.sessions
+                  WHERE user_id = $1::uuid
+                    AND NOT EXISTS (SELECT 1 FROM public.users WHERE id = $1::uuid)`,
+                [user.id],
+              );
+              await privDb.query(
+                `DELETE FROM auth.users
+                WHERE id = $1::uuid
+                  AND NOT EXISTS (SELECT 1 FROM public.users WHERE id = $1::uuid)
+                  AND NOT EXISTS (SELECT 1 FROM auth.identities WHERE user_id = $1::uuid)
+                RETURNING id`,
+                [user.id],
+              );
+            },
+            false,
+            false,
+            false,
+          )
+          .catch((cleanupErr: unknown) => {
+            this.logger.error(
+              `Failed to clean up colliding OAuth Auth user ${user.id}`,
+              cleanupErr instanceof Error
+                ? cleanupErr.stack
+                : String(cleanupErr),
+            );
+          });
+      }
+      fail(
+        409,
+        'ACCOUNT_EXISTS',
+        'An account with this email already exists. Please sign in with your original account to link this provider.',
+      );
+    }
+    if (identity.sessionId && ['google', 'facebook'].includes(activeProvider)) {
+      this.oauthSessionProviders.set(identity.sessionId, activeProvider);
+    }
+    return txResult;
   }
   async me(id: string) {
     return this.database
       .transaction(id, (db) => this.meInTransaction(db, id), false)
       .catch((error: unknown) => {
-        if (
-          error instanceof QueryFailedError &&
-          error.driverError.code === '23505' &&
-          [
-            'uq_users_email',
-            'uq_users_phone',
-            'uq_user_auth_providers_subject',
-          ].includes(error.driverError.constraint)
-        ) {
+        if (isPgUniqueViolation(error)) {
           fail(
             409,
             'IDENTITY_LINK_CONFLICT',
@@ -591,73 +1398,89 @@ export class AuthService {
     let goTrueConfirmed = false;
     try {
       await this.otpStore.verifyAndConsumeOtp(userId, email, code, async () => {
-        await this.database.transaction(
-          userId,
-          async (db) => {
-            const [userRow] = await db.query(
-              'SELECT id, status, email, verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
-              [userId],
-            );
-            if (!userRow || userRow.status !== 'active') {
-              fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
-            }
-            if (userRow.verified_contact) {
-              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
-            }
+        try {
+          await this.database.transaction(
+            userId,
+            async (db) => {
+              await db.query(
+                'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+                [userId],
+              );
+              const [userRow] = await db.query(
+                'SELECT id, status, email, verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+                [userId],
+              );
+              if (!userRow || userRow.status !== 'active') {
+                fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+              }
+              if (userRow.verified_contact) {
+                fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+              }
 
-            const [providerRow] = await db.query(
-              `SELECT id, contact_value, provider_subject, verified_at
-                 FROM public.user_auth_providers
-                WHERE user_id = $1
-                  AND provider = 'email'
-                  AND (lower(contact_value) = $2 OR lower(provider_subject) = $2)
-                FOR UPDATE`,
-              [userId, email],
-            );
-            if (!providerRow || providerRow.verified_at !== null) {
-              fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
-            }
+              const [providerRow] = await db.query(
+                `SELECT id, contact_value, provider_subject, verified_at
+                   FROM public.user_auth_providers
+                  WHERE user_id = $1
+                    AND provider = 'email'
+                    AND (lower(contact_value) = $2 OR lower(provider_subject) = $2)
+                  FOR UPDATE`,
+                [userId, email],
+              );
+              if (!providerRow || providerRow.verified_at !== null) {
+                fail(409, 'ALREADY_VERIFIED', 'Contact already verified');
+              }
 
-            const usersRes = await db.query(
-              `UPDATE public.users
-                  SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
-                WHERE id = $2 AND verified_contact = false`,
-              [email, userId],
-            );
-            const usersAffected =
-              Array.isArray(usersRes) && typeof usersRes[1] === 'number'
-                ? usersRes[1]
-                : (usersRes?.rowCount ?? 0);
+              const usersRes = await db.query(
+                `UPDATE public.users
+                    SET email = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                  WHERE id = $2 AND verified_contact = false`,
+                [email, userId],
+              );
+              const usersAffected =
+                Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                  ? usersRes[1]
+                  : (usersRes?.rowCount ?? 0);
 
-            const providersRes = await db.query(
-              `UPDATE public.user_auth_providers
-                  SET verified_at = now(), updated_at = now()
-                WHERE user_id = $1 AND provider = 'email' AND (lower(contact_value) = $2 OR lower(provider_subject) = $2) AND verified_at IS NULL`,
-              [userId, email],
-            );
-            const providersAffected =
-              Array.isArray(providersRes) && typeof providersRes[1] === 'number'
-                ? providersRes[1]
-                : (providersRes?.rowCount ?? 0);
+              const providersRes = await db.query(
+                `UPDATE public.user_auth_providers
+                    SET verified_at = now(), updated_at = now()
+                  WHERE user_id = $1 AND provider = 'email' AND (lower(contact_value) = $2 OR lower(provider_subject) = $2) AND verified_at IS NULL`,
+                [userId, email],
+              );
+              const providersAffected =
+                Array.isArray(providersRes) &&
+                typeof providersRes[1] === 'number'
+                  ? providersRes[1]
+                  : (providersRes?.rowCount ?? 0);
 
-            if (usersAffected !== 1 || providersAffected !== 1) {
-              fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
-            }
+              if (usersAffected !== 1 || providersAffected !== 1) {
+                fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+              }
 
-            await db.query(
-              'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-              [userId],
-            );
-            await db.query(
-              'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-              [userId],
-            );
+              await db.query(
+                'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                [userId],
+              );
+              await db.query(
+                'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                [userId],
+              );
 
-            await this.confirmGoTrueUser(userId, email);
-            goTrueConfirmed = true;
-          },
-          true,
-        );
+              await this.confirmGoTrueUser(userId, email);
+              goTrueConfirmed = true;
+            },
+            true,
+          );
+        } catch (error) {
+          if (isPgUniqueViolation(error)) {
+            fail(
+              409,
+              'CONTACT_ALREADY_REGISTERED',
+              'Contact already registered',
+            );
+          }
+          throw error;
+        }
         committed = true;
       });
     } catch (error) {
@@ -666,6 +1489,9 @@ export class AuthService {
           `Post-confirmation DB commit failed for user ${userId}`,
           error instanceof Error ? error.stack : String(error),
         );
+      }
+      if (isPgUniqueViolation(error)) {
+        fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
       }
       if (!committed) {
         throw error;
@@ -680,14 +1506,20 @@ export class AuthService {
       return await this.mintAndApproveSession(userId, email);
     } catch (error) {
       if (error instanceof HttpException) {
-        const resp = error.getResponse() as any;
+        const resp = error.getResponse();
+        const respObj =
+          typeof resp === 'object' && resp !== null
+            ? (resp as Record<string, unknown>)
+            : null;
         const status = error.getStatus();
-        const code = resp?.code || 'SESSION_MINT_FAILED';
+        const code =
+          (typeof respObj?.code === 'string' ? respObj.code : undefined) ||
+          'SESSION_MINT_FAILED';
         fail(
           status,
           code,
           'Account is verified; sign in with your email and password to start your session',
-          resp?.details || [],
+          Array.isArray(respObj?.details) ? respObj.details : [],
           false,
         );
       }
@@ -827,10 +1659,7 @@ export class AuthService {
         true,
       )
       .catch((error: unknown) => {
-        if (
-          error instanceof QueryFailedError &&
-          error.driverError?.code === '23505'
-        ) {
+        if (isPgUniqueViolation(error)) {
           fail(
             409,
             'IDENTITY_LINK_CONFLICT',
@@ -909,6 +1738,9 @@ export class AuthService {
       await this.database.transaction(
         identity.sub,
         async (db) => {
+          await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+            identity.sub,
+          ]);
           await db.query(
             'SELECT pg_advisory_xact_lock(hashtextextended($1, 1))',
             [`auth:pending-${channel}:${identifier}`],
@@ -1012,10 +1844,7 @@ export class AuthService {
         true,
       );
     } catch (error) {
-      if (
-        error instanceof QueryFailedError &&
-        error.driverError?.code === '23505'
-      ) {
+      if (isPgUniqueViolation(error)) {
         fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
       }
       throw error;
@@ -1164,77 +1993,92 @@ export class AuthService {
         async () => {
           // Recheck and lock the pending provider mapping before calling GoTrue,
           // keeping the recheck, GoTrue confirmation, and application updates under one serialization boundary.
-          await this.database.transaction(
-            userId,
-            async (db) => {
-              const [pendingRow] = await db.query(
-                `SELECT u.id, p.contact_value, p.provider_subject, p.verified_at
-                   FROM public.users u
-                   JOIN public.user_auth_providers p
-                     ON p.user_id = u.id AND p.provider = 'phone'
-                  WHERE u.id = $1
-                    AND (p.contact_value IN ($2, ltrim($2, '+')) OR p.provider_subject IN ($2, ltrim($2, '+')))
-                    AND p.verified_at IS NULL
-                  LIMIT 1
-                  FOR UPDATE`,
-                [userId, phone],
-              );
-              if (!pendingRow) {
-                fail(
-                  409,
-                  'ALREADY_VERIFIED',
-                  'Contact already verified or replaced',
+          try {
+            await this.database.transaction(
+              userId,
+              async (db) => {
+                await db.query(
+                  'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+                  [userId],
                 );
-              }
+                const [pendingRow] = await db.query(
+                  `SELECT u.id, p.contact_value, p.provider_subject, p.verified_at
+                     FROM public.users u
+                     JOIN public.user_auth_providers p
+                       ON p.user_id = u.id AND p.provider = 'phone'
+                    WHERE u.id = $1
+                      AND (p.contact_value IN ($2, ltrim($2, '+')) OR p.provider_subject IN ($2, ltrim($2, '+')))
+                      AND p.verified_at IS NULL
+                    LIMIT 1
+                    FOR UPDATE`,
+                  [userId, phone],
+                );
+                if (!pendingRow) {
+                  fail(
+                    409,
+                    'ALREADY_VERIFIED',
+                    'Contact already verified or replaced',
+                  );
+                }
 
-              providerConfirmAttempted = true;
-              const isSecondary = user.is_primary === false;
-              await this.confirmGoTruePhoneUser(
-                userId,
-                isSecondary ? phone : undefined,
-              );
+                providerConfirmAttempted = true;
+                const isSecondary = user.is_primary === false;
+                await this.confirmGoTruePhoneUser(
+                  userId,
+                  isSecondary ? phone : undefined,
+                );
 
-              const usersRes = await db.query(
-                `UPDATE public.users
-                    SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
-                  WHERE id = $2 AND verified_contact = false`,
-                [phone, userId],
-              );
-              const usersAffected =
-                Array.isArray(usersRes) && typeof usersRes[1] === 'number'
-                  ? usersRes[1]
-                  : (usersRes?.rowCount ?? 0);
+                const usersRes = await db.query(
+                  `UPDATE public.users
+                      SET phone = $1, verified_contact = true, last_login_at = now(), last_active_at = now(), updated_at = now()
+                    WHERE id = $2 AND verified_contact = false`,
+                  [phone, userId],
+                );
+                const usersAffected =
+                  Array.isArray(usersRes) && typeof usersRes[1] === 'number'
+                    ? usersRes[1]
+                    : (usersRes?.rowCount ?? 0);
 
-              const providersRes = await db.query(
-                `UPDATE public.user_auth_providers
-                    SET verified_at = clock_timestamp(), updated_at = now()
-                  WHERE user_id = $1
-                    AND provider = 'phone'
-                    AND (contact_value IN ($2, ltrim($2, '+')) OR provider_subject IN ($2, ltrim($2, '+')))
-                    AND verified_at IS NULL`,
-                [userId, phone],
-              );
-              const providersAffected =
-                Array.isArray(providersRes) &&
-                typeof providersRes[1] === 'number'
-                  ? providersRes[1]
-                  : (providersRes?.rowCount ?? 0);
+                const providersRes = await db.query(
+                  `UPDATE public.user_auth_providers
+                      SET verified_at = clock_timestamp(), updated_at = now()
+                    WHERE user_id = $1
+                      AND provider = 'phone'
+                      AND (contact_value IN ($2, ltrim($2, '+')) OR provider_subject IN ($2, ltrim($2, '+')))
+                      AND verified_at IS NULL`,
+                  [userId, phone],
+                );
+                const providersAffected =
+                  Array.isArray(providersRes) &&
+                  typeof providersRes[1] === 'number'
+                    ? providersRes[1]
+                    : (providersRes?.rowCount ?? 0);
 
-              if (usersAffected !== 1 || providersAffected !== 1) {
-                fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
-              }
+                if (usersAffected !== 1 || providersAffected !== 1) {
+                  fail(409, 'ALREADY_VERIFIED', 'Account is already verified');
+                }
 
-              await db.query(
-                'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-                [userId],
+                await db.query(
+                  'INSERT INTO public.user_profiles(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                  [userId],
+                );
+                await db.query(
+                  'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
+                  [userId],
+                );
+              },
+              false,
+            );
+          } catch (error) {
+            if (isPgUniqueViolation(error)) {
+              fail(
+                409,
+                'CONTACT_ALREADY_REGISTERED',
+                'Contact already registered',
               );
-              await db.query(
-                'INSERT INTO public.user_preferences(user_id) VALUES($1) ON CONFLICT (user_id) DO NOTHING',
-                [userId],
-              );
-            },
-            false,
-          );
+            }
+            throw error;
+          }
           committed = true;
         },
         'verify_phone',
@@ -1254,6 +2098,9 @@ export class AuthService {
             );
           }
         }
+        if (isPgUniqueViolation(error)) {
+          fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+        }
         throw error;
       }
       this.logger.error(
@@ -1271,14 +2118,20 @@ export class AuthService {
       return await this.mintAndApproveSession(userId, phone, 'phone');
     } catch (error) {
       if (error instanceof HttpException) {
-        const resp = error.getResponse() as any;
+        const resp = error.getResponse();
+        const respObj =
+          typeof resp === 'object' && resp !== null
+            ? (resp as Record<string, unknown>)
+            : null;
         const status = error.getStatus();
-        const code = resp?.code || 'SESSION_MINT_FAILED';
+        const code =
+          (typeof respObj?.code === 'string' ? respObj.code : undefined) ||
+          'SESSION_MINT_FAILED';
         fail(
           status,
           code,
           'Account is verified; sign in with your phone and password to start your session',
-          resp?.details || [],
+          Array.isArray(respObj?.details) ? respObj.details : [],
           false,
         );
       }
@@ -1335,11 +2188,13 @@ export class AuthService {
     }
 
     if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as any;
-      if (
-        response.status === 422 &&
-        /already confirmed/i.test(data?.msg || '')
-      ) {
+      const data: unknown = await response.json().catch(() => null);
+      const dataObj =
+        typeof data === 'object' && data !== null
+          ? (data as Record<string, unknown>)
+          : null;
+      const msg = typeof dataObj?.msg === 'string' ? dataObj.msg : '';
+      if (response.status === 422 && /already confirmed/i.test(msg)) {
         return;
       }
       fail(
@@ -1405,11 +2260,13 @@ export class AuthService {
     }
 
     if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as any;
-      if (
-        response.status === 422 &&
-        /already confirmed/i.test(data?.msg || '')
-      ) {
+      const data: unknown = await response.json().catch(() => null);
+      const dataObj =
+        typeof data === 'object' && data !== null
+          ? (data as Record<string, unknown>)
+          : null;
+      const msg = typeof dataObj?.msg === 'string' ? dataObj.msg : '';
+      if (response.status === 422 && /already confirmed/i.test(msg)) {
         return;
       }
       fail(
@@ -1509,16 +2366,33 @@ export class AuthService {
         fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
       }
 
-      const linkData = (await linkRes.json().catch(() => null)) as any;
+      const linkData: unknown = await linkRes.json().catch(() => null);
+      const linkObj =
+        typeof linkData === 'object' && linkData !== null
+          ? (linkData as Record<string, unknown>)
+          : null;
+      const propsObj =
+        typeof linkObj?.properties === 'object' && linkObj.properties !== null
+          ? (linkObj.properties as Record<string, unknown>)
+          : null;
       const tokenHash =
-        linkData?.hashed_token || linkData?.properties?.hashed_token;
+        (typeof linkObj?.hashed_token === 'string'
+          ? linkObj.hashed_token
+          : undefined) ||
+        (typeof propsObj?.hashed_token === 'string'
+          ? propsObj.hashed_token
+          : undefined);
       if (!tokenHash) {
         fail(502, 'PROVIDER_ERROR', 'Auth provider error', [], true);
       }
 
       const verificationType =
-        linkData?.verification_type ||
-        linkData?.properties?.verification_type ||
+        (typeof linkObj?.verification_type === 'string'
+          ? linkObj.verification_type
+          : undefined) ||
+        (typeof propsObj?.verification_type === 'string'
+          ? propsObj.verification_type
+          : undefined) ||
         'magiclink';
 
       let verifyRes: Response;
