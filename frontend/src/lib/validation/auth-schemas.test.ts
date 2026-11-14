@@ -13,6 +13,7 @@ import {
   validateGoal,
   validateIdentifier,
   validateIdentifierOnChange,
+  validateLoginPassword,
   validateOtp,
   validateOtpLive,
   validatePassword,
@@ -183,6 +184,17 @@ describe("live display & onChange validation", () => {
     expect(validatePasswordLive("1234567").ok).toBe(false);
     expect(validatePasswordLive("12345678").ok).toBe(true);
     expect(validatePasswordLive("a".repeat(129)).ok).toBe(false);
+
+    expect(validateLoginPassword("")).toEqual({
+      ok: false,
+      error: "Enter your password.",
+    });
+    expect(validateLoginPassword("1")).toEqual({ ok: true, value: "1" });
+    expect(validateLoginPassword("1234567")).toEqual({
+      ok: true,
+      value: "1234567",
+    });
+    expect(validateLoginPassword("a".repeat(129)).ok).toBe(false);
 
     expect(validateOtpLive("").ok).toBe(true);
     expect(validateOtpLive("12345").ok).toBe(false);

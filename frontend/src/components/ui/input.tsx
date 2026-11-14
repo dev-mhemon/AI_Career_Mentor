@@ -8,6 +8,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type FocusEvent,
+  type KeyboardEvent,
   type Ref,
 } from 'react';
 import { cn } from './cn';
@@ -93,7 +94,7 @@ export function FieldShell({
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline">
         {labelFor ? (
-          <label htmlFor={id} className="text-label-lg text-text-primary">
+          <label id={`${id}-label`} htmlFor={id} className="text-label-lg text-text-primary">
             {label}
           </label>
         ) : (
@@ -132,62 +133,316 @@ function describedBy(id: string, error?: string, hint?: string) {
   return error ? `${id}-error` : hint ? `${id}-hint` : undefined;
 }
 
+function sanitizeOtp(raw: string): string {
+  return raw.replace(/\D/g, '').slice(0, 6);
+}
+
 /**
- * otp_6: one real numeric input (so FormData, label, paste and autofill work natively) drawn as
- * six 48x56 boxes via the segmented background. Non-digits are stripped; max 6 chars.
+ * otp_6: six individually rounded full-width cells synchronized with one canonical input
+ * (so FormData, label, required, paste, and autofill work seamlessly).
  */
-function OtpInput({ id, name, label, error, hint, disabled, readOnly, value, defaultValue, onChange, onBlur, required, ref }: InputProps & { id: string }) {
-  const handle = (e: ChangeEvent<HTMLInputElement>) => {
-    const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
+function OtpInput({
+  id,
+  name,
+  label,
+  error,
+  hint,
+  disabled,
+  readOnly,
+  value,
+  defaultValue,
+  onChange,
+  onBlur,
+  required,
+  className,
+  ref,
+}: InputProps & { id: string }) {
+  const initialDefault = sanitizeOtp(String(defaultValue ?? ''));
+  const [internalCode, setInternalCode] = useState(initialDefault);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const groupRef = useRef<HTMLDivElement | null>(null);
+  const primaryRef = useRef<HTMLInputElement | null>(null);
+  const cellRefs = useRef<Array<HTMLInputElement | null>>([]);
+
+  const currentCode =
+    value !== undefined ? sanitizeOtp(String(value)) : internalCode;
+
+  useEffect(() => {
+    if (value !== undefined) return;
+    const form = primaryRef.current?.form;
+    if (!form) return;
+    const handleReset = () => {
+      if (primaryRef.current) {
+        primaryRef.current.value = initialDefault;
+      }
+      setInternalCode(initialDefault);
+    };
+    form.addEventListener('reset', handleReset);
+    return () => form.removeEventListener('reset', handleReset);
+  }, [value, initialDefault]);
+
+  const commitCode = (nextRaw: string) => {
+    const clean = sanitizeOtp(nextRaw);
+    const primary = primaryRef.current;
+    if (primary) {
+      setNativeValue(primary, clean);
+    } else if (value === undefined) {
+      setInternalCode(clean);
+    }
+  };
+
+  const focusCell = (index: number) => {
+    const bounded = Math.max(0, Math.min(5, index));
+    cellRefs.current[bounded]?.focus();
+  };
+
+  const handlePrimaryChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const clean = sanitizeOtp(e.target.value);
     if (clean !== e.target.value) e.target.value = clean;
+    if (value === undefined) setInternalCode(clean);
     onChange?.(e);
   };
-  const handlePaste = (e: ClipboardEvent<HTMLInputElement>) => {
+
+  const handlePrimaryPaste = (e: ClipboardEvent<HTMLInputElement>) => {
     if (readOnly || disabled) return;
     const raw = e.clipboardData?.getData('text') ?? '';
-    const clean = raw.replace(/\D/g, '').slice(0, 6);
+    const clean = sanitizeOtp(raw);
     if (!clean) return;
     e.preventDefault();
-    setNativeValue(e.currentTarget, clean);
+    commitCode(clean);
   };
-  const boxW = 'var(--size-otp-box-width)';
-  const gap = '8px';
+
+  const handleCellChange = (index: number, rawInput: string) => {
+    if (readOnly || disabled) return;
+    const digitsOnly = rawInput.replace(/\D/g, '');
+    const currentDigit = currentCode[index] ?? '';
+
+    if (!digitsOnly) {
+      const chars = currentCode.split('');
+      if (index < chars.length) {
+        chars.splice(index, 1);
+        commitCode(chars.join(''));
+      }
+      return;
+    }
+
+    if (digitsOnly.length >= 6) {
+      const clean = digitsOnly.slice(0, 6);
+      commitCode(clean);
+      focusCell(5);
+      return;
+    }
+
+    if (digitsOnly.length > 1) {
+      let nextChar = digitsOnly.slice(-1);
+      if (currentDigit && digitsOnly.length === 2) {
+        nextChar =
+          digitsOnly[0] === currentDigit
+            ? digitsOnly[1]
+            : digitsOnly[1] === currentDigit
+              ? digitsOnly[0]
+              : digitsOnly.slice(-1);
+      } else if (digitsOnly.length <= 6 - index && !currentDigit) {
+        const chars = currentCode.split('');
+        const insertAt = Math.min(index, chars.length);
+        chars.splice(insertAt, digitsOnly.length, ...digitsOnly.split(''));
+        const next = chars.join('').slice(0, 6);
+        commitCode(next);
+        focusCell(Math.min(insertAt + digitsOnly.length, 5));
+        return;
+      }
+      const chars = currentCode.split('');
+      const targetIdx = Math.min(index, chars.length);
+      chars[targetIdx] = nextChar;
+      commitCode(chars.join('').slice(0, 6));
+      focusCell(Math.min(targetIdx + 1, 5));
+      return;
+    }
+
+    const chars = currentCode.split('');
+    const targetIdx = Math.min(index, chars.length);
+    chars[targetIdx] = digitsOnly;
+    commitCode(chars.join('').slice(0, 6));
+    focusCell(Math.min(targetIdx + 1, 5));
+  };
+
+  const handleCellKeyDown = (index: number, e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      focusCell(index - 1);
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      focusCell(index + 1);
+      return;
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      focusCell(0);
+      return;
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      focusCell(Math.min(currentCode.length, 5));
+      return;
+    }
+    if (readOnly || disabled) return;
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      const chars = currentCode.split('');
+      if (chars[index]) {
+        chars.splice(index, 1);
+        commitCode(chars.join(''));
+        focusCell(index);
+      } else if (index > 0) {
+        const removeIdx = Math.min(index - 1, chars.length - 1);
+        if (removeIdx >= 0) {
+          chars.splice(removeIdx, 1);
+          commitCode(chars.join(''));
+        }
+        focusCell(index - 1);
+      }
+      return;
+    }
+    if (e.key === 'Delete') {
+      e.preventDefault();
+      const chars = currentCode.split('');
+      if (chars[index]) {
+        chars.splice(index, 1);
+        commitCode(chars.join(''));
+      }
+    }
+  };
+
+  const handleCellPaste = (index: number, e: ClipboardEvent<HTMLInputElement>) => {
+    if (readOnly || disabled) return;
+    const raw = e.clipboardData?.getData('text') ?? '';
+    const pasted = sanitizeOtp(raw);
+    if (!pasted) return;
+    e.preventDefault();
+    if (pasted.length === 6 || index === 0) {
+      commitCode(pasted);
+      focusCell(Math.min(pasted.length, 5));
+      return;
+    }
+    const chars = currentCode.split('');
+    const startIdx = Math.min(index, chars.length);
+    const nextChars = [
+      ...chars.slice(0, startIdx),
+      ...pasted.split(''),
+      ...chars.slice(startIdx + pasted.length),
+    ].slice(0, 6);
+    const nextCode = nextChars.join('');
+    commitCode(nextCode);
+    focusCell(Math.min(startIdx + pasted.length, 5));
+  };
+
+  const handleGroupBlur = (e: FocusEvent<HTMLInputElement>) => {
+    const nextFocused = e.relatedTarget as Node | null;
+    if (nextFocused && groupRef.current?.contains(nextFocused)) return;
+    setActiveIndex(null);
+    if (!onBlur) return;
+    const primary = primaryRef.current;
+    if (primary && e.target !== primary) {
+      onBlur({
+        ...e,
+        target: primary,
+        currentTarget: primary,
+      } as FocusEvent<HTMLInputElement>);
+    } else {
+      onBlur(e);
+    }
+  };
+
+  const otpDescribedBy =
+    [label ? `${id}-label` : undefined, describedBy(id, error, hint)]
+      .filter(Boolean)
+      .join(' ') || undefined;
+
   return (
     <FieldShell id={id} label={label} error={error} hint={hint} required={required}>
-      <input
-        ref={ref as Ref<HTMLInputElement>}
-        id={id}
-        name={name}
-        type="text"
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        pattern="\d{6}"
-        maxLength={6}
-        value={value}
-        defaultValue={defaultValue}
-        disabled={disabled}
-        readOnly={readOnly}
-        required={required}
-        aria-invalid={error ? 'true' : undefined}
-        aria-describedby={describedBy(id, error, hint)}
-        onChange={handle}
-        onPaste={handlePaste}
-        onBlur={onBlur}
-        style={{
-          width: `calc(6 * ${boxW} + 5 * ${gap})`,
-          maxWidth: '100%',
-          height: 'var(--size-otp-box-height)',
-          letterSpacing: `calc(${boxW} + ${gap} - 1ch)`,
-          paddingLeft: `calc((${boxW} - 1ch) / 2)`,
-          backgroundImage: `repeating-linear-gradient(90deg, var(--surface-sunken) 0 ${boxW}, transparent ${boxW} calc(${boxW} + ${gap}))`,
-          backgroundClip: 'padding-box',
-        }}
-        className={cn(
-          'rounded-md border-0 font-mono text-heading-md tabular-nums text-text-primary outline-offset-4',
-          'disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)',
-          error && 'outline-2 outline-border-danger',
-        )}
-      />
+      <div ref={groupRef} className="relative w-full">
+        <input
+          ref={(el) => {
+            primaryRef.current = el;
+            if (typeof ref === 'function') ref(el);
+            else if (ref) ref.current = el;
+          }}
+          id={id}
+          name={name}
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="\d{6}"
+          maxLength={6}
+          tabIndex={-1}
+          value={currentCode}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={describedBy(id, error, hint)}
+          onChange={handlePrimaryChange}
+          onPaste={handlePrimaryPaste}
+          onFocus={() => {
+            if (disabled) return;
+            const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+            if (activeEl && cellRefs.current.includes(activeEl as HTMLInputElement)) return;
+            focusCell(Math.min(currentCode.length, 5));
+          }}
+          onBlur={handleGroupBlur}
+          className="sr-only"
+        />
+        <div
+          role="group"
+          aria-describedby={otpDescribedBy}
+          className={cn('grid w-full grid-cols-6 gap-2 sm:gap-3', className)}
+        >
+          {Array.from({ length: 6 }, (_, index) => {
+            const digit = currentCode[index] ?? '';
+            const isActive = activeIndex === index && !disabled;
+            return (
+              <input
+                key={index}
+                ref={(el) => {
+                  cellRefs.current[index] = el;
+                }}
+                type="text"
+                inputMode="numeric"
+                autoComplete={index === 0 ? 'one-time-code' : 'off'}
+                maxLength={6}
+                value={digit}
+                disabled={disabled}
+                readOnly={readOnly}
+                aria-label={`Digit ${index + 1} of 6`}
+                aria-describedby={otpDescribedBy}
+                aria-invalid={error ? 'true' : undefined}
+                data-otp-cell={index}
+                onChange={(e) => handleCellChange(index, e.target.value)}
+                onKeyDown={(e) => handleCellKeyDown(index, e)}
+                onPaste={(e) => handleCellPaste(index, e)}
+                onFocus={(e) => {
+                  setActiveIndex(index);
+                  e.currentTarget.select();
+                }}
+                onBlur={handleGroupBlur}
+                className={cn(
+                  'w-full h-12 sm:h-13 rounded-xl border text-center font-mono text-lg font-semibold tabular-nums text-text-primary',
+                  'transition-colors duration-(--duration-fast) ease-standard outline-none focus:outline-none',
+                  'disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled',
+                  'read-only:bg-surface-subtle',
+                  error
+                    ? 'border-border-danger border-2 bg-surface-sunken focus:ring-2 focus:ring-border-danger focus:border-border-danger'
+                    : isActive
+                      ? 'border-border-focus bg-surface-raised ring-2 ring-focus-ring'
+                      : 'border-border-default bg-surface-sunken hover:border-border-strong focus:ring-2 focus:ring-focus-ring focus:border-border-focus focus:bg-surface-raised',
+                )}
+              />
+            );
+          })}
+        </div>
+      </div>
     </FieldShell>
   );
 }

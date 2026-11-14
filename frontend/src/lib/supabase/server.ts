@@ -1,5 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import {
+  applyRememberPreference,
+  buildRememberMeCookie,
+  REMEMBER_ME_COOKIE,
+  resolveRememberCookieValue,
+} from "./remember";
 
 /**
  * Creates a Supabase client configured for server-side use
@@ -14,7 +20,10 @@ import { cookies } from "next/headers";
  * This client is NOT a singleton — call it per-request to get
  * a fresh cookie-bound instance.
  */
-export async function createSupabaseServerClient(options?: { readOnly?: boolean }) {
+export async function createSupabaseServerClient(options?: {
+  readOnly?: boolean;
+  rememberMe?: boolean;
+}) {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -30,9 +39,35 @@ export async function createSupabaseServerClient(options?: { readOnly?: boolean 
             return;
           }
           try {
-            cookiesToSet.forEach(({ name, value, options: cookieOptions }) =>
-              cookieStore.set(name, value, cookieOptions),
+            const rememberCookie =
+              typeof cookieStore.get === "function"
+                ? cookieStore.get(REMEMBER_ME_COOKIE)?.value
+                : undefined;
+            const effectiveRememberMe =
+              options?.rememberMe ?? resolveRememberCookieValue(rememberCookie);
+
+            cookiesToSet.forEach(({ name, value, options: cookieOptions }) => {
+              cookieStore.set(
+                name,
+                value,
+                applyRememberPreference(
+                  value,
+                  cookieOptions,
+                  effectiveRememberMe,
+                ),
+              );
+            });
+            const renewedRememberCookie = buildRememberMeCookie(
+              effectiveRememberMe,
+              cookiesToSet,
             );
+            if (renewedRememberCookie) {
+              cookieStore.set(
+                renewedRememberCookie.name,
+                renewedRememberCookie.value,
+                renewedRememberCookie.options,
+              );
+            }
           } catch {
             // setAll can throw in Server Components where cookies
             // are read-only. This is expected and safe — the Proxy

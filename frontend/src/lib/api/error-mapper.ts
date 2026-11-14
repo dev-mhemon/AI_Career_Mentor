@@ -67,6 +67,19 @@ export function mapApiError(error: unknown): MappedError {
     };
   }
   if (s === 401) {
+    if (
+      error.code === 'AUTH_INVALID_CREDENTIALS' ||
+      error.code === 'INVALID_CREDENTIALS'
+    ) {
+      return {
+        ...m,
+        message:
+          error.message ||
+          'Invalid credentials. Please try again.',
+        requiresSignIn: false,
+        retryable: false,
+      };
+    }
     return {
       ...m,
       message: 'Your session has expired or details are incorrect. Please sign in again.',
@@ -76,6 +89,16 @@ export function mapApiError(error: unknown): MappedError {
   }
   if (s === 403) {
     return { ...m, message: "You don't have permission to do that.", retryable: false };
+  }
+  if (s === 404) {
+    return {
+      ...m,
+      message:
+        error.code === 'AUTH_USER_NOT_FOUND' || error.code === 'ACCOUNT_NOT_FOUND'
+          ? error.message || 'No account found with this email address.'
+          : error.message || 'The requested resource was not found.',
+      retryable: false,
+    };
   }
   if (s === 409) {
     return {

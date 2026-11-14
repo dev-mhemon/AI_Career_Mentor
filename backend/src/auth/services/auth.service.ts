@@ -171,75 +171,113 @@ export class AuthService {
 
   async login(body: unknown, request: Request) {
     const input = normalizeLoginRequest(body);
+    const ip = request ? trustedClientIp(request) : '127.0.0.1';
+    if (typeof this.abuse?.enforceIpQuota === 'function') {
+      await this.abuse.enforceIpQuota('login', ip);
+    }
+    const notFoundMessage =
+      input.channel === 'phone'
+        ? 'No account found with this phone number.'
+        : 'No account found with this email address.';
+    const exists = await this.accountExists(input.channel, input.identifier);
+    if (!exists) {
+      fail(404, 'AUTH_USER_NOT_FOUND', notFoundMessage);
+    }
     let verifiedPhonePasswordHash: string | null = null;
-    const providerResult = await this.abuse.login<ProviderLoginResult>(
-      { channel: input.channel, identifier: input.identifier },
-      trustedClientIp(request),
-      async () => {
-        const response = await fetch(
-          `${this.config.getOrThrow<string>('SUPABASE_URL').replace(/\/$/, '')}/auth/v1/token?grant_type=password`,
-          {
-            method: 'POST',
-            headers: {
-              apikey: this.config.getOrThrow<string>('SUPABASE_ANON_KEY'),
-              'Content-Type': 'application/json',
+    let providerResult: ProviderLoginResult;
+    try {
+      providerResult = await this.abuse.login<ProviderLoginResult>(
+        { channel: input.channel, identifier: input.identifier },
+        ip,
+        async () => {
+          const response = await fetch(
+            `${this.config.getOrThrow<string>('SUPABASE_URL').replace(/\/$/, '')}/auth/v1/token?grant_type=password`,
+            {
+              method: 'POST',
+              headers: {
+                apikey: this.config.getOrThrow<string>('SUPABASE_ANON_KEY'),
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                [input.channel]: input.identifier,
+                password: input.password,
+              }),
+              signal: AbortSignal.timeout(10000),
             },
-            body: JSON.stringify({
-              [input.channel]: input.identifier,
-              password: input.password,
-            }),
-            signal: AbortSignal.timeout(10000),
-          },
-        );
-        if (
-          response.status === 400 ||
-          response.status === 401 ||
-          (response.status === 422 && input.channel === 'phone')
-        ) {
-          const error = (await response.json().catch(() => null)) as {
-            code?: unknown;
-            error_code?: unknown;
-          } | null;
+          );
           if (
-            ['email_not_confirmed', 'phone_not_confirmed'].includes(
-              String(error?.code),
-            ) ||
-            ['email_not_confirmed', 'phone_not_confirmed'].includes(
-              String(error?.error_code),
-            )
-          )
-            return {
-              success: true as const,
-              value: { unverified: true as const },
-            };
-          if (
-            input.channel === 'phone' &&
-            (error?.error_code === 'phone_provider_disabled' ||
-              error?.code === 'phone_provider_disabled')
+            response.status === 400 ||
+            response.status === 401 ||
+            (response.status === 422 && input.channel === 'phone')
           ) {
-            const fallbackResult = await this.loginPhoneWhenProviderDisabled(
-              input.identifier,
-              input.password,
-            );
-            if (!fallbackResult.success) {
+            const error = (await response.json().catch(() => null)) as {
+              code?: unknown;
+              error_code?: unknown;
+            } | null;
+            if (
+              ['email_not_confirmed', 'phone_not_confirmed'].includes(
+                String(error?.code),
+              ) ||
+              ['email_not_confirmed', 'phone_not_confirmed'].includes(
+                String(error?.error_code),
+              )
+            )
+              return {
+                success: true as const,
+                value: { unverified: true as const },
+              };
+            if (
+              input.channel === 'phone' &&
+              (error?.error_code === 'phone_provider_disabled' ||
+                error?.code === 'phone_provider_disabled')
+            ) {
+              const fallbackResult = await this.loginPhoneWhenProviderDisabled(
+                input.identifier,
+                input.password,
+              );
+              if (!fallbackResult.success) {
+                return { success: false as const };
+              }
+              if ('verifiedPasswordHash' in fallbackResult) {
+                verifiedPhonePasswordHash = fallbackResult.verifiedPasswordHash;
+              }
+              return { success: true as const, value: fallbackResult.value };
+            }
+            if (response.status === 400 || response.status === 401) {
               return { success: false as const };
             }
-            if ('verifiedPasswordHash' in fallbackResult) {
-              verifiedPhonePasswordHash = fallbackResult.verifiedPasswordHash;
-            }
-            return { success: true as const, value: fallbackResult.value };
           }
-          if (response.status === 400 || response.status === 401) {
-            return { success: false as const };
-          }
+          if (!response.ok) throw new Error('Auth provider unavailable');
+          return {
+            success: true as const,
+            value: (await response.json()) as ProviderSession,
+          };
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof HttpException &&
+        error.getStatus() === 401 &&
+        ((error.getResponse() as { code?: string } | null)?.code ===
+          'INVALID_CREDENTIALS' ||
+          (error.getResponse() as { code?: string } | null)?.code ===
+            'AUTH_INVALID_CREDENTIALS')
+      ) {
+        const stillExists = await this.accountExists(
+          input.channel,
+          input.identifier,
+        );
+        if (!stillExists) {
+          fail(404, 'AUTH_USER_NOT_FOUND', notFoundMessage);
         }
-        if (!response.ok) throw new Error('Auth provider unavailable');
-        return {
-          success: true as const,
-          value: (await response.json()) as ProviderSession,
-        };
-      },
-    );
+        fail(
+          401,
+          'AUTH_INVALID_CREDENTIALS',
+          'Invalid credentials. Please try again.',
+        );
+      }
+      throw error;
+    }
     if ('unverified' in providerResult)
       fail(403, 'UNVERIFIED_ACCOUNT', 'Verify the account before login');
     const providerSession = providerResult;
@@ -333,7 +371,11 @@ export class AuthService {
             : String(revokeError),
         );
       }
-      fail(401, 'INVALID_CREDENTIALS', 'Invalid credentials');
+      fail(
+        401,
+        'INVALID_CREDENTIALS',
+        'Invalid credentials. Please try again.',
+      );
     }
     return {
       access_token: providerSession.access_token,
@@ -346,6 +388,53 @@ export class AuthService {
         ? ('app_home' as const)
         : ('profile_setup' as const),
     };
+  }
+
+  /**
+   * Checks whether a non-deleted account exists for the normalized email or phone identifier.
+   */
+  private async accountExists(
+    channel: 'email' | 'phone',
+    identifier: string,
+  ): Promise<boolean> {
+    if (typeof this.database?.query !== 'function') return true;
+    const rows = await this.database.query(
+      channel === 'phone'
+        ? `SELECT u.id
+             FROM auth.users u
+            WHERE u.deleted_at IS NULL
+              AND (
+                u.phone IN ($1, ltrim($1, '+'))
+                OR EXISTS (
+                  SELECT 1
+                    FROM public.user_auth_providers p
+                   WHERE p.user_id = u.id
+                     AND p.provider = 'phone'
+                     AND p.contact_value IN ($1, ltrim($1, '+'))
+                )
+              )
+            LIMIT 1`
+        : `SELECT u.id
+             FROM auth.users u
+            WHERE u.deleted_at IS NULL
+              AND (
+                (
+                  lower(COALESCE(u.email, '')) = $1
+                  AND lower(COALESCE(u.email, '')) NOT LIKE '%@synthetic.mentor'
+                  AND lower(COALESCE(u.email, '')) NOT LIKE '%@phone.invalid'
+                )
+                OR EXISTS (
+                  SELECT 1
+                    FROM public.user_auth_providers p
+                   WHERE p.user_id = u.id
+                     AND p.provider = 'email'
+                     AND lower(p.contact_value) = $1
+                )
+              )
+            LIMIT 1`,
+      [identifier],
+    );
+    return !Array.isArray(rows) || rows.length > 0;
   }
   async bootstrap(
     identity: JwtIdentity,
@@ -2933,28 +3022,46 @@ export class AuthService {
     }
 
     const ip = request ? trustedClientIp(request) : '127.0.0.1';
-    await this.abuse.reserveSend(input, ip);
+    if (typeof this.abuse?.enforceIpQuota === 'function') {
+      await this.abuse.enforceIpQuota('forgot-password', ip);
+    }
 
-    const rows = await this.database.query(
-      channel === 'phone'
-        ? `SELECT u.id, u.phone, u.status, u.verified_contact, p.provider_subject, p.verified_at
-             FROM public.users u
-             JOIN public.user_auth_providers p
-               ON p.user_id = u.id AND p.provider = 'phone'
-            WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
-            LIMIT 1`
-        : `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject, p.verified_at
-             FROM public.users u
-             JOIN public.user_auth_providers p
-               ON p.user_id = u.id AND p.provider = 'email'
-            WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
-            LIMIT 1`,
-      [input.identifier],
-    );
+    const rows =
+      typeof this.database?.query === 'function'
+        ? await this.database.query(
+            channel === 'phone'
+              ? `SELECT u.id, u.phone, u.status, u.verified_contact, p.provider_subject, p.verified_at
+                   FROM public.users u
+                   JOIN public.user_auth_providers p
+                     ON p.user_id = u.id AND p.provider = 'phone'
+                  WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
+                  LIMIT 1`
+              : `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject, p.verified_at
+                   FROM public.users u
+                   JOIN public.user_auth_providers p
+                     ON p.user_id = u.id AND p.provider = 'email'
+                  WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
+                  LIMIT 1`,
+            [input.identifier],
+          )
+        : undefined;
 
     const user = rows?.[0];
+    const notFoundMessage =
+      channel === 'phone'
+        ? 'No account found with this phone number.'
+        : 'No account found with this email address.';
+    if (Array.isArray(rows) && (!user || user.status === 'deleted')) {
+      await this.abuse.reserveSend(input, ip, { ipOnly: true });
+      fail(404, 'AUTH_USER_NOT_FOUND', notFoundMessage);
+    }
+
+    await this.abuse.reserveSend(input, ip);
+
+    if (!user || user.status === 'deleted') {
+      fail(404, 'AUTH_USER_NOT_FOUND', notFoundMessage);
+    }
     if (
-      user &&
       user.status === 'active' &&
       user.verified_contact === true &&
       user.verified_at !== null

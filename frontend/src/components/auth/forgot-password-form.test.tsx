@@ -318,4 +318,50 @@ describe("ForgotPasswordForm", () => {
       dateSpy.mockRestore();
     }
   });
+
+  it("auto-dismisses channel-specific 404 AuthAlert on input focus or change and re-displays on resubmit", async () => {
+    vi.mocked(forgotPasswordAction)
+      .mockResolvedValueOnce({
+        error: "No account found with this email address.",
+        status: 404,
+      })
+      .mockResolvedValueOnce({
+        error: "No account found with this phone number.",
+        status: 404,
+      });
+
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i);
+    const button = screen.getByRole("button", { name: /send reset code/i });
+    fireEvent.change(input, { target: { value: "missing@example.com" } });
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(
+      screen.getByText(/no account found with this email address\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.focus(input);
+    expect(
+      screen.queryByText(/no account found with this email address\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/registered phone number/i);
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(
+      screen.getByText(/no account found with this phone number\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: "01712345679" } });
+    expect(
+      screen.queryByText(/no account found with this phone number\./i),
+    ).not.toBeInTheDocument();
+  });
 });

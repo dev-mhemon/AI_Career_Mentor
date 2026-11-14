@@ -30,7 +30,40 @@ describe("mapApiError", () => {
 
   it("maps 401 and UnauthorizedError to sign-in", () => {
     expect(mapApiError(new ApiError(401, "x")).requiresSignIn).toBe(true);
+    expect(
+      mapApiError(
+        new ApiError(
+          401,
+          "Invalid credentials. Please try again.",
+          "AUTH_INVALID_CREDENTIALS",
+        ),
+      ).message,
+    ).toBe("Invalid credentials. Please try again.");
     expect(mapApiError(new UnauthorizedError()).requiresSignIn).toBe(true);
+  });
+
+  it("maps 404 account errors without rewriting message", () => {
+    const emailErr = mapApiError(
+      new ApiError(
+        404,
+        "No account found with this email address.",
+        "AUTH_USER_NOT_FOUND",
+      ),
+    );
+    expect(emailErr.status).toBe(404);
+    expect(emailErr.message).toBe("No account found with this email address.");
+    expect(emailErr.retryable).toBe(false);
+
+    const phoneErr = mapApiError(
+      new ApiError(
+        404,
+        "No account found with this phone number.",
+        "AUTH_USER_NOT_FOUND",
+      ),
+    );
+    expect(phoneErr.status).toBe(404);
+    expect(phoneErr.message).toBe("No account found with this phone number.");
+    expect(phoneErr.retryable).toBe(false);
   });
 
   it("maps 403 and 409", () => {

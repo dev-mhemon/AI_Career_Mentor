@@ -154,16 +154,20 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
       });
     });
 
-    it('returns uniform 202 anti-enumeration response for unknown account without sending code', async () => {
+    it('returns 404 AUTH_USER_NOT_FOUND for unknown account without sending code', async () => {
       database.query.mockResolvedValueOnce([]);
 
-      const result = await authService.forgotPassword(
-        { identifier: 'unknown@example.com' },
-        createMockRequest(),
-      );
-
-      expect(result).toEqual({
-        message: 'If the account exists, a code was sent.',
+      await expect(
+        authService.forgotPassword(
+          { identifier: 'unknown@example.com' },
+          createMockRequest(),
+        ),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: {
+          code: 'AUTH_USER_NOT_FOUND',
+          message: 'No account found with this email address.',
+        },
       });
       expect(emailProvider.sendPasswordResetChallenge).not.toHaveBeenCalled();
     });

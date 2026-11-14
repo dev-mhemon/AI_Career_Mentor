@@ -22,7 +22,10 @@ export const EyeIcon = (p: P) => (
   <svg {...base} {...p}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>
 );
 export const EyeOffIcon = (p: P) => (
-  <svg {...base} {...p}><path d="M17.9 17.9A10.9 10.9 0 0 1 12 19c-6.5 0-10-7-10-7a18.7 18.7 0 0 1 4.1-5M9.9 4.2A9.9 9.9 0 0 1 12 5c6.5 0 10 7 10 7a18.5 18.5 0 0 1-2.2 3.2M1 1l22 22" /></svg>
+  <svg {...base} {...p}><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c6.5 0 10 7 10 7a16.8 16.8 0 0 1-1.95 2.95" /><path d="M6.61 6.61A16.8 16.8 0 0 0 2 12s3.5 7 10 7a10.4 10.4 0 0 0 5.39-1.61" /><circle cx="12" cy="12" r="3" /><path d="M2 2l20 20" /></svg>
+);
+export const ClockIcon = (p: P) => (
+  <svg {...base} {...p}><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
 );
 export const CloseIcon = (p: P) => (
   <svg {...base} {...p}><path d="M18 6 6 18M6 6l12 12" /></svg>

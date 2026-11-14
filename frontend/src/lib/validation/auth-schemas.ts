@@ -223,6 +223,14 @@ export function validatePasswordLive(password: string): Result<string> {
   return validatePassword(password);
 }
 
+/** Sign-In password check: avoids leaking 8-char policy hints to unauthenticated callers. */
+export function validateLoginPassword(password: string): Result<string> {
+  if (!password) return { ok: false, error: 'Enter your password.' };
+  if (password.length > PASSWORD_MAX)
+    return { ok: false, error: `Password must be at most ${PASSWORD_MAX} characters.` };
+  return { ok: true, value: password };
+}
+
 export type PasswordStrength = { score: 0 | 1 | 2 | 3 | 4; label: 'Too short' | 'Weak' | 'Fair' | 'Good' | 'Strong' };
 
 export function passwordStrength(password: string): PasswordStrength {

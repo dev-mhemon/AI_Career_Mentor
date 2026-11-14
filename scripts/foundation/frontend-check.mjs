@@ -52,7 +52,8 @@ try {
     );
     if (route === "/login") {
       assert(
-        html.includes('name="email"') && html.includes('name="password"'),
+        (html.includes('name="identifier"') || html.includes('name="email"')) &&
+          html.includes('name="password"'),
         "Actual login fields render",
       );
     }

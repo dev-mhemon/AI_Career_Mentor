@@ -1,10 +1,10 @@
 'use client';
 
-import { useActionState, useState, useEffect, useRef, Suspense } from 'react';
+import { type SyntheticEvent, useActionState, useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
-import { AuthAlert } from '@/components/auth/auth-alert';
-import { Alert } from '@/components/ui/alert';
+import { AuthAlert, useDismissedActionState } from '@/components/auth/auth-alert';
+import { Alert, formatCountdown } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -23,146 +23,22 @@ import {
   saveFallbackVerificationDraft,
   updateVerificationDraftExpiry,
   clearVerificationDraft,
-  setPersistedCooldown,
-  getPersistedCooldown,
-  clearPersistedCooldown,
-  MAX_COOLDOWN_DURATION_SECONDS,
   type VerificationDraft,
-  type VerificationChannel,
 } from '@/lib/auth/verification-draft';
+import {
+  parseCooldownParam,
+  parseExpiryTimestamp,
+  computeInitialCooldown,
+  useResendCooldown,
+  type InitialCooldownResult,
+} from '@/lib/auth/use-resend-cooldown';
 
-/**
- * Safely parses and validates a cooldown query parameter in seconds.
- * Strictly accepts only digit-only strings in the range [1, 600].
- * Any non-digit characters (e.g. "600junk", "-10", "12.5") or out-of-range
- * values return 0.
- *
- * @param param - Raw query parameter string from search params.
- * @returns Validated cooldown duration in seconds, or 0 if missing or invalid.
- */
-export function parseCooldownParam(param: string | null): number {
-  if (!param) return 0;
-  const trimmed = param.trim();
-  if (!/^\d+$/.test(trimmed)) return 0;
-  const parsed = Number(trimmed);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) return 0;
-  return Math.min(parsed, MAX_COOLDOWN_DURATION_SECONDS);
-}
-
-/**
- * Parses and validates an absolute expiry timestamp from query parameter or storage.
- * Strictly validates digit-only epoch timestamps or valid ISO 8601 strings.
- *
- * @param param - Raw expiry string (epoch milliseconds or ISO 8601 date string).
- * @returns Validated expiry timestamp in epoch milliseconds, or null if invalid.
- */
-export function parseExpiryTimestamp(param: string | null): number | null {
-  if (!param) return null;
-  const trimmed = param.trim();
-  if (!trimmed) return null;
-  if (/^\d+$/.test(trimmed)) {
-    const epochMs = Number(trimmed);
-    return Number.isSafeInteger(epochMs) && epochMs > 0 ? epochMs : null;
-  }
-  const parsed = Date.parse(trimmed);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-/** Result structure for computeInitialCooldown containing seconds, target deadline, and original duration. */
-export interface InitialCooldownResult {
-  seconds: number;
-  deadlineMs: number | null;
-  originalSeconds: number;
-}
-
-/**
- * Computes the initial resend cooldown state purely on mount without writing to sessionStorage.
- * Reads existing persisted deadline (if in browser) or parses query parameters.
- *
- * @param channel - Active verification channel ('email' | 'phone').
- * @param searchParams - Readonly search parameters from the active URL.
- * @param nowMs - Current timestamp in epoch milliseconds (defaults to Date.now()).
- * @returns Initial remaining seconds, target deadline timestamp, and original duration in seconds.
- */
-export function computeInitialCooldown(
-  channel: VerificationChannel | null | undefined,
-  searchParams: { get(name: string): string | null },
-  nowMs: number = Date.now(),
-): InitialCooldownResult {
-  const expiryParam =
-    searchParams.get('cooldownUntil') ||
-    searchParams.get('resendAvailableAt') ||
-    searchParams.get('resend_available_at');
-  const directExpiryMs = parseExpiryTimestamp(expiryParam);
-
-  const cooldownParam = searchParams.get('cooldown');
-  const paramSeconds = parseCooldownParam(cooldownParam);
-
-  const persisted = getPersistedCooldown(channel);
-
-  // Do not let an expired URL deadline (directExpiryMs <= nowMs) override a newer valid persisted.deadlineMs > nowMs
-  const effectiveExpiryMs =
-    directExpiryMs !== null && directExpiryMs > nowMs
-      ? persisted !== null && persisted.deadlineMs > nowMs
-        ? Math.max(directExpiryMs, persisted.deadlineMs)
-        : directExpiryMs
-      : null;
-
-  if (effectiveExpiryMs !== null) {
-    const cappedMs = Math.min(effectiveExpiryMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
-    const remaining = Math.max(0, Math.ceil((cappedMs - nowMs) / 1000));
-    const originalSecs =
-      persisted !== null && persisted.originalSeconds > 0
-        ? persisted.originalSeconds
-        : paramSeconds > 0
-          ? paramSeconds
-          : remaining;
-    return {
-      seconds: remaining,
-      deadlineMs: cappedMs,
-      originalSeconds: originalSecs,
-    };
-  }
-
-  if (persisted !== null) {
-    if (persisted.deadlineMs > nowMs) {
-      const cappedMs = Math.min(persisted.deadlineMs, nowMs + MAX_COOLDOWN_DURATION_SECONDS * 1000);
-      const remaining = Math.max(0, Math.ceil((cappedMs - nowMs) / 1000));
-      return {
-        seconds: remaining,
-        deadlineMs: cappedMs,
-        originalSeconds: persisted.originalSeconds,
-      };
-    }
-
-    if (
-      paramSeconds > 0 &&
-      persisted.originalSeconds === paramSeconds &&
-      nowMs - persisted.deadlineMs < MAX_COOLDOWN_DURATION_SECONDS * 1000
-    ) {
-      return {
-        seconds: 0,
-        deadlineMs: null,
-        originalSeconds: persisted.originalSeconds,
-      };
-    }
-  }
-
-  if (paramSeconds > 0) {
-    const deadlineMs = nowMs + paramSeconds * 1000;
-    return {
-      seconds: paramSeconds,
-      deadlineMs,
-      originalSeconds: paramSeconds,
-    };
-  }
-
-  return {
-    seconds: 0,
-    deadlineMs: null,
-    originalSeconds: 0,
-  };
-}
+export {
+  parseCooldownParam,
+  parseExpiryTimestamp,
+  computeInitialCooldown,
+  type InitialCooldownResult,
+};
 
 /**
  * Verification form content component enforcing R18 draft lifecycle and contact privacy.
@@ -181,6 +57,8 @@ function VerifyFormContent() {
     verifyOtpAction,
     {},
   );
+  const { visibleState: visibleAlertState, onFormActivity } =
+    useDismissedActionState(state);
 
   /* SSR-safe: initialize to null/false; single mount effect hydrates from sessionStorage */
   const [draft, setDraft] = useState<VerificationDraft | null>(null);
@@ -196,10 +74,31 @@ function VerifyFormContent() {
   } | null>(null);
   const identifierBlurredRef = useRef(false);
 
-  // SSR-deterministic initial state (0/false); restored asynchronously on client mount
-  const [cooldown, setCooldown] = useState<number>(0);
-  const [isCooldownHydrated, setIsCooldownHydrated] = useState<boolean>(false);
-  const cooldownDeadlineRef = useRef<number | null>(null);
+  const normalizedReentered =
+    channelParam === 'phone'
+      ? normalizeBdPhone(reenteredIdentifier) ?? reenteredIdentifier.trim()
+      : reenteredIdentifier.trim().toLowerCase();
+  const activeIdentifier = draft?.normalized_identifier || normalizedReentered || null;
+  const activeContactKey =
+    channelParam && activeIdentifier ? `${channelParam}:${activeIdentifier}` : null;
+  const activeContactRef = useRef<string | null>(activeContactKey);
+  useEffect(() => {
+    activeContactRef.current = activeContactKey;
+  }, [activeContactKey]);
+
+  // Cooldown managed cleanly via shared monotonic + wall-clock hook
+  const {
+    cooldown,
+    isCooldownHydrated,
+    startCooldown,
+    startCooldownFromIso,
+    clearCooldown,
+  } = useResendCooldown({
+    channel: channelParam,
+    identifier: activeIdentifier,
+    searchParams,
+    consumeUrlParams: true,
+  });
   const [resendError, setResendError] = useState<ActionErrorLike | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
@@ -217,38 +116,6 @@ function VerifyFormContent() {
     setIsDraftExpired(expired);
   }, [channelParam]);
 
-  /** Restore cooldown from query params or sessionStorage after mount (SSR-safe). */
-  useEffect(() => {
-    let cancelled = false;
-    const initial = computeInitialCooldown(channelParam, searchParams, Date.now());
-    if (initial.deadlineMs && initial.deadlineMs > Date.now()) {
-      cooldownDeadlineRef.current = initial.deadlineMs;
-      const contactIdentifier =
-        draft?.normalized_identifier ||
-        getRawVerificationDraft()?.normalized_identifier ||
-        reenteredIdentifier;
-      setPersistedCooldown(
-        channelParam,
-        initial.deadlineMs,
-        initial.originalSeconds,
-        Date.now(),
-        contactIdentifier,
-      );
-    }
-
-    queueMicrotask(() => {
-      if (cancelled) return;
-      if (initial.seconds > 0) {
-        setCooldown(initial.seconds);
-      }
-      setIsCooldownHydrated(true);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [channelParam, searchParams, draft, reenteredIdentifier]);
-
   /** Successful verification navigation & draft clearance. */
   useEffect(() => {
     if (state?.success && state?.redirectTo) {
@@ -262,70 +129,13 @@ function VerifyFormContent() {
         getRawVerificationDraft()?.normalized_identifier ||
         reenteredIdentifier;
 
-      cooldownDeadlineRef.current = null;
-      clearPersistedCooldown(channelParam, contactIdentifier);
+      clearCooldown(contactIdentifier);
       if (currentDraft || getRawVerificationDraft()) {
         clearVerificationDraft();
       }
       router.push(state.redirectTo);
     }
-  }, [state, router, channelParam, reenteredIdentifier]);
-
-  /** Cooldown timer: single-responsibility effect computing remaining time from deadline on each tick. */
-  useEffect(() => {
-    if (cooldown <= 0) return;
-
-    if (!cooldownDeadlineRef.current) {
-      const initial = computeInitialCooldown(channelParam, searchParams, Date.now());
-      if (initial.deadlineMs && initial.deadlineMs > Date.now()) {
-        cooldownDeadlineRef.current = initial.deadlineMs;
-      } else {
-        cooldownDeadlineRef.current = Date.now() + cooldown * 1000;
-      }
-    }
-
-    const timer = setTimeout(() => {
-      const deadline = cooldownDeadlineRef.current;
-      if (!deadline) {
-        setCooldown(0);
-        return;
-      }
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      setCooldown(remaining);
-      if (remaining <= 0) {
-        cooldownDeadlineRef.current = null;
-        const contactIdentifier =
-          draft?.normalized_identifier ||
-          getRawVerificationDraft()?.normalized_identifier ||
-          reenteredIdentifier;
-        clearPersistedCooldown(channelParam, contactIdentifier);
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [cooldown, channelParam, searchParams, draft, reenteredIdentifier]);
-
-  /** Consume one-time cooldown query parameter to ensure clean browser history on reload. */
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.history?.replaceState) return;
-    if (
-      searchParams.has('cooldown') ||
-      searchParams.has('cooldownUntil') ||
-      searchParams.has('resendAvailableAt') ||
-      searchParams.has('resend_available_at')
-    ) {
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.delete('cooldown');
-        url.searchParams.delete('cooldownUntil');
-        url.searchParams.delete('resendAvailableAt');
-        url.searchParams.delete('resend_available_at');
-        window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
-      } catch {
-        // Ignore URL parsing errors in mocked test environments
-      }
-    }
-  }, [searchParams]);
+  }, [state, router, channelParam, reenteredIdentifier, clearCooldown]);
 
   /**
    * Handles resend: calls server action, updates or creates draft on success.
@@ -333,49 +143,43 @@ function VerifyFormContent() {
    * to saveVerificationDraft while preserving the original draft context.
    */
   const handleResend = async () => {
-    if (!channelParam || cooldown > 0) return;
+    if (!channelParam || cooldown > 0 || isResending || isPending) return;
+
+    const requestChannel = channelParam;
+    const identifierToSend = activeIdentifier ?? '';
+    const requestKey =
+      requestChannel && identifierToSend ? `${requestChannel}:${identifierToSend}` : null;
 
     setIsResending(true);
     setResendError(null);
     setResendSuccess(null);
 
     try {
-      const normalizedReentered =
-        channelParam === 'phone'
-          ? normalizeBdPhone(reenteredIdentifier) ?? reenteredIdentifier.trim()
-          : reenteredIdentifier.trim().toLowerCase();
-      const identifierToSend = draft?.normalized_identifier || normalizedReentered;
-      const result = await resendOtpAction(channelParam, identifierToSend);
+      const result = await resendOtpAction(requestChannel, identifierToSend);
+
+      if (activeContactRef.current !== requestKey) {
+        return;
+      }
 
       if (result.error) {
         setResendError(result);
+        if (typeof result.retryAfterSeconds === 'number' && result.retryAfterSeconds > 0) {
+          startCooldown(result.retryAfterSeconds, undefined, identifierToSend);
+        }
       } else {
         setResendSuccess('Verification code sent successfully.');
-        const availableAtRaw = (result as { resendAvailableAt?: string }).resendAvailableAt;
-        const availableAtMs = availableAtRaw ? Date.parse(availableAtRaw) : NaN;
-        const hasValidAvailableAt = Number.isFinite(availableAtMs) && availableAtMs > Date.now();
-        const cappedAvailableAtMs = hasValidAvailableAt
-          ? Math.min(availableAtMs, Date.now() + MAX_COOLDOWN_DURATION_SECONDS * 1000)
-          : null;
-        const cooldownSecs =
-          cappedAvailableAtMs !== null
-            ? Math.max(0, Math.ceil((cappedAvailableAtMs - Date.now()) / 1000))
-            : 60;
-        const deadlineMs =
-          cappedAvailableAtMs !== null
-            ? cappedAvailableAtMs
-            : Date.now() + cooldownSecs * 1000;
-
-        cooldownDeadlineRef.current = deadlineMs;
-        setPersistedCooldown(channelParam, deadlineMs, cooldownSecs, Date.now());
-        setCooldown(cooldownSecs);
+        startCooldownFromIso(
+          (result as { resendAvailableAt?: string }).resendAvailableAt,
+          60,
+          identifierToSend,
+        );
         if (result.expiresInSeconds) {
           const updated = identifierToSend
             ? updateVerificationDraftExpiry(
                 result.expiresInSeconds,
                 result.contactMasked,
                 Date.now(),
-                channelParam,
+                requestChannel,
                 identifierToSend,
               )
             : null;
@@ -383,7 +187,7 @@ function VerifyFormContent() {
             updated ??
             (identifierToSend
               ? saveFallbackVerificationDraft({
-                  channel: channelParam,
+                  channel: requestChannel,
                   identifier: identifierToSend,
                   contactMasked: result.contactMasked || draft?.contact_masked,
                   expiresInSeconds: result.expiresInSeconds,
@@ -397,7 +201,9 @@ function VerifyFormContent() {
         }
       }
     } catch {
-      setResendError({ error: 'Failed to resend verification code. Please try again.' });
+      if (activeContactRef.current === requestKey) {
+        setResendError({ error: 'Failed to resend verification code. Please try again.' });
+      }
     } finally {
       setIsResending(false);
     }
@@ -435,11 +241,25 @@ function VerifyFormContent() {
       ? undefined
       : state?.fieldErrors?.[field];
 
+  const handleFormActivity = (e: SyntheticEvent<HTMLFormElement>) => {
+    onFormActivity(e);
+    if (
+      resendError &&
+      (e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement)
+    ) {
+      setResendError(null);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <form
         action={formAction}
         noValidate
+        onFocusCapture={handleFormActivity}
+        onChangeCapture={handleFormActivity}
         onSubmit={(e) => {
           const form = e.currentTarget;
           let invalid = false;
@@ -514,6 +334,17 @@ function VerifyFormContent() {
               onChange={(e) => {
                 const v = e.target.value;
                 setReenteredIdentifier(v);
+                if (channelParam) {
+                  const nextNormalized =
+                    channelParam === 'phone'
+                      ? normalizeBdPhone(v) ?? v.trim()
+                      : v.trim().toLowerCase();
+                  activeContactRef.current = nextNormalized
+                    ? `${channelParam}:${nextNormalized}`
+                    : null;
+                }
+                setResendError(null);
+                setResendSuccess(null);
                 dismissServerField('identifier');
                 if (channelParam === 'email') {
                   const check = validateEmailLive(v);
@@ -542,7 +373,7 @@ function VerifyFormContent() {
                   setIdentifierError(undefined);
                 }
               }}
-              readOnly={isPending}
+              readOnly={isPending || isResending}
               placeholder={channelParam === 'email' ? 'you@example.com' : '01712-345678'}
             />
             {isDraftExpired && (
@@ -575,26 +406,30 @@ function VerifyFormContent() {
           }}
         />
 
-        <AuthAlert result={state} />
+        <AuthAlert result={visibleAlertState} />
 
         <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Verifying…">
           Verify Code
         </Button>
       </form>
 
-      <div className="flex flex-col items-center gap-2">
-        <Button
-          variant="ghost"
-          isLoading={isResending}
-          loadingText="Sending…"
-          disabled={!isCooldownHydrated || cooldown > 0 || isResending}
-          onClick={() => handleResend()}
-        >
-          {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend verification code'}
-        </Button>
-        <p aria-live="polite" className="text-caption text-text-muted">
-          {cooldown > 0 ? 'You can request a new code when the timer ends.' : ''}
-        </p>
+      <div className="flex flex-col items-center gap-2 text-body-sm text-text-secondary">
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          <span>Didn&apos;t receive a code?</span>
+          <Button
+            variant="link"
+            isLoading={isResending}
+            loadingText="Sending…"
+            disabled={!isCooldownHydrated || cooldown > 0 || isResending}
+            onClick={() => handleResend()}
+            className={cooldown > 0 ? 'no-underline tabular-nums' : 'underline-offset-4'}
+          >
+            {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : 'Resend code'}
+          </Button>
+          <span className="sr-only" aria-live="polite">
+            {isCooldownHydrated && cooldown === 0 ? 'You can now resend the verification code.' : ''}
+          </span>
+        </div>
 
         <AuthAlert result={resendError} />
         {resendSuccess && <Alert variant="success">{resendSuccess}</Alert>}

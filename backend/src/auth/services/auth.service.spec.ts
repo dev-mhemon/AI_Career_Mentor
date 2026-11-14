@@ -990,6 +990,122 @@ describe('AuthService session approval boundary', () => {
     expect(database.transaction).not.toHaveBeenCalled();
   });
 
+  it('returns 404 AUTH_USER_NOT_FOUND with email-specific message when email account does not exist on login', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 400,
+        ok: false,
+        json: async () => ({
+          code: 'invalid_credentials',
+          error_description: 'Invalid login credentials',
+        }),
+      }),
+    );
+    const abuse = {
+      login: vi.fn(async (_contact, _ip, authenticate) => {
+        const result = await authenticate();
+        if (!result.success) {
+          fail(
+            401,
+            'INVALID_CREDENTIALS',
+            'Invalid credentials. Please try again.',
+          );
+        }
+        return result.value;
+      }),
+    } as unknown as AuthAbuseControl;
+    const database = {
+      query: vi.fn().mockResolvedValue([]),
+      transaction: vi.fn(),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      abuse,
+      {} as SessionApprovalService,
+    );
+    const request = {
+      socket: { remoteAddress: '127.0.0.1' },
+      ip: '127.0.0.1',
+      ips: [],
+      headers: {},
+      app: { get: vi.fn() },
+    } as unknown as Request;
+
+    await expect(
+      service.login(
+        { identifier: 'missing@example.invalid', password: 'WrongPassword1!' },
+        request,
+      ),
+    ).rejects.toMatchObject({
+      status: 404,
+      response: {
+        code: 'AUTH_USER_NOT_FOUND',
+        message: 'No account found with this email address.',
+      },
+    });
+    expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 AUTH_INVALID_CREDENTIALS with generic message when email account exists and password is wrong', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 400,
+        ok: false,
+        json: async () => ({
+          code: 'invalid_credentials',
+          error_description: 'Invalid login credentials',
+        }),
+      }),
+    );
+    const abuse = {
+      login: vi.fn(async (_contact, _ip, authenticate) => {
+        const result = await authenticate();
+        if (!result.success) {
+          fail(
+            401,
+            'INVALID_CREDENTIALS',
+            'Invalid credentials. Please try again.',
+          );
+        }
+        return result.value;
+      }),
+    } as unknown as AuthAbuseControl;
+    const database = {
+      query: vi.fn().mockResolvedValue([{ id: userId }]),
+      transaction: vi.fn(),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      abuse,
+      {} as SessionApprovalService,
+    );
+    const request = {
+      socket: { remoteAddress: '127.0.0.1' },
+      ip: '127.0.0.1',
+      ips: [],
+      headers: {},
+      app: { get: vi.fn() },
+    } as unknown as Request;
+
+    await expect(
+      service.login(
+        { identifier: 'person@example.invalid', password: 'WrongPassword1!' },
+        request,
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      response: {
+        code: 'AUTH_INVALID_CREDENTIALS',
+        message: 'Invalid credentials. Please try again.',
+      },
+    });
+    expect(database.transaction).not.toHaveBeenCalled();
+  });
+
   it('allows suspended EP-A05 and approves exactly its returned session', async () => {
     const token = accessToken();
     vi.stubGlobal(
@@ -1078,6 +1194,93 @@ describe('AuthService session approval boundary', () => {
       false,
       true,
     );
+  });
+
+  it('enforces login IP rate limit before querying database in login', async () => {
+    const enforceIpQuota = vi.fn().mockRejectedValueOnce(
+      new HttpException(
+        {
+          code: 'RATE_LIMITED',
+          message: 'Too many login attempts. Please wait and try again.',
+        },
+        429,
+      ),
+    );
+    const abuse = {
+      enforceIpQuota,
+      login: vi.fn(),
+    } as unknown as AuthAbuseControl;
+    const database = {
+      query: vi.fn(),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      abuse,
+      {} as SessionApprovalService,
+    );
+    const request = {
+      socket: { remoteAddress: '127.0.0.1' },
+      ip: '127.0.0.1',
+      ips: [],
+      headers: {},
+      app: { get: vi.fn() },
+    } as unknown as Request;
+
+    await expect(
+      service.login(
+        { identifier: 'unknown@example.com', password: 'valid-password' },
+        request,
+      ),
+    ).rejects.toMatchObject({ status: 429 });
+
+    expect(enforceIpQuota).toHaveBeenCalledWith('login', '127.0.0.1');
+    expect(database.query).not.toHaveBeenCalled();
+    expect(abuse.login).not.toHaveBeenCalled();
+  });
+
+  it('queries auth.users without invalid user_status deleted enum comparison and returns 404 for unknown account', async () => {
+    const abuse = {
+      enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+      login: vi.fn(),
+    } as unknown as AuthAbuseControl;
+    const executedSql: string[] = [];
+    const database = {
+      query: vi.fn(async (sql: string) => {
+        executedSql.push(sql);
+        return [];
+      }),
+    } as unknown as DatabaseService;
+    const service = new AuthService(
+      database,
+      configuration(),
+      abuse,
+      {} as SessionApprovalService,
+    );
+    const request = {
+      socket: { remoteAddress: '127.0.0.1' },
+      ip: '127.0.0.1',
+      ips: [],
+      headers: {},
+      app: { get: vi.fn() },
+    } as unknown as Request;
+
+    await expect(
+      service.login(
+        { identifier: 'unknown@example.com', password: 'valid-password' },
+        request,
+      ),
+    ).rejects.toMatchObject({
+      status: 404,
+      response: {
+        code: 'AUTH_USER_NOT_FOUND',
+        message: 'No account found with this email address.',
+      },
+    });
+
+    expect(executedSql.length).toBe(1);
+    expect(executedSql[0]).not.toContain("status = 'deleted'");
+    expect(abuse.login).not.toHaveBeenCalled();
   });
 
   it('invokes main bootstrap transaction with least-privilege service_role', async () => {
@@ -3666,7 +3869,7 @@ describe('AuthService session approval boundary', () => {
       });
     });
 
-    it('preserves anti-enumeration: returns 202 when user does not exist without sending challenge', async () => {
+    it('returns 404 AUTH_USER_NOT_FOUND when user does not exist without sending challenge', async () => {
       const mockAbuse = {
         isReady: vi.fn().mockReturnValue(true),
         reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
@@ -3689,17 +3892,73 @@ describe('AuthService session approval boundary', () => {
         mockEmailProvider,
       );
 
-      const response = await service.forgotPassword(
-        { identifier: 'unknown@example.com' },
-        { ip: '127.0.0.1', socket: { remoteAddress: '127.0.0.1' } } as Request,
-      );
-
-      expect(response).toEqual({
-        message: 'If the account exists, a code was sent.',
+      await expect(
+        service.forgotPassword({ identifier: 'unknown@example.com' }, {
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' },
+        } as Request),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: {
+          code: 'AUTH_USER_NOT_FOUND',
+          message: 'No account found with this email address.',
+        },
       });
+
+      expect(mockAbuse.reserveSend).toHaveBeenCalledWith(
+        { channel: 'email', identifier: 'unknown@example.com' },
+        '127.0.0.1',
+        { ipOnly: true },
+      );
       expect(
         mockEmailProvider.sendPasswordResetChallenge,
       ).not.toHaveBeenCalled();
+    });
+
+    it('enforces forgotPassword IP quota before querying the database', async () => {
+      const mockAbuse = {
+        isReady: vi.fn().mockReturnValue(true),
+        enforceIpQuota: vi.fn().mockRejectedValueOnce(
+          new HttpException(
+            {
+              code: 'OTP_LIMIT_EXCEEDED',
+              message: 'Verification send limit reached',
+            },
+            429,
+          ),
+        ),
+        reserveSend: vi.fn(),
+      } as unknown as AuthAbuseControl;
+      const mockEmailProvider = {
+        ready: vi.fn(),
+        sendPasswordResetChallenge: vi.fn(),
+      } as unknown as EmailRegistrationProvider;
+      const database = {
+        query: vi.fn(),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        database,
+        configuration(),
+        mockAbuse,
+        {} as never,
+        {} as OtpSecretStore,
+        mockEmailProvider,
+      );
+
+      await expect(
+        service.forgotPassword({ identifier: 'unknown@example.com' }, {
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' },
+        } as Request),
+      ).rejects.toMatchObject({ status: 429 });
+
+      expect(mockAbuse.enforceIpQuota).toHaveBeenCalledWith(
+        'forgot-password',
+        '127.0.0.1',
+      );
+      expect(database.query).not.toHaveBeenCalled();
+      expect(mockAbuse.reserveSend).not.toHaveBeenCalled();
     });
 
     it('dispatches challenge and returns uniform 202 for active, verified email user', async () => {
@@ -5322,7 +5581,7 @@ describe('AuthService session approval boundary', () => {
       });
     });
 
-    it('forgotPassword returns uniform message for unknown phone contact without dispatching challenge', async () => {
+    it('forgotPassword throws 404 AUTH_USER_NOT_FOUND for unknown phone contact without dispatching challenge', async () => {
       const smsProvider = {
         ready: vi.fn(),
         sendPasswordResetChallenge: vi.fn(),
@@ -5347,15 +5606,20 @@ describe('AuthService session approval boundary', () => {
         smsProvider,
       );
 
-      const result = await service.forgotPassword({
-        identifier: '+8801712345678',
+      await expect(
+        service.forgotPassword({
+          identifier: '+8801712345678',
+        }),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: {
+          code: 'AUTH_USER_NOT_FOUND',
+          message: 'No account found with this phone number.',
+        },
       });
 
       expect(smsProvider.ready).toHaveBeenCalled();
       expect(smsProvider.sendPasswordResetChallenge).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        message: 'If the account exists, a code was sent.',
-      });
     });
 
     it('forgotPassword returns uniform message even if phone challenge background dispatch rejects', async () => {
@@ -6087,7 +6351,7 @@ describe('AuthService session approval boundary', () => {
       return { database, query, executedSql };
     };
 
-    it('returns 401 INVALID_CREDENTIALS when phone user does not exist', async () => {
+    it('returns 404 AUTH_USER_NOT_FOUND with phone-specific message when phone user does not exist', async () => {
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue({
@@ -6100,9 +6364,12 @@ describe('AuthService session approval boundary', () => {
           }),
         }),
       );
+      const query = vi.fn().mockResolvedValue([]);
       const database = {
-        query: vi.fn().mockResolvedValue([]),
-        transaction: vi.fn(),
+        query,
+        transaction: vi.fn((_id, operation) =>
+          operation({ query } as unknown as EntityManager),
+        ),
       } as unknown as DatabaseService;
       const service = new AuthService(
         database,
@@ -6117,13 +6384,15 @@ describe('AuthService session approval boundary', () => {
           mkReq(),
         ),
       ).rejects.toMatchObject({
-        status: 401,
-        response: { code: 'INVALID_CREDENTIALS' },
+        status: 404,
+        response: {
+          code: 'AUTH_USER_NOT_FOUND',
+          message: 'No account found with this phone number.',
+        },
       });
-      expect(database.transaction).not.toHaveBeenCalled();
     });
 
-    it('returns 401 INVALID_CREDENTIALS when password does not match or hash is non-bcrypt', async () => {
+    it('returns 401 AUTH_INVALID_CREDENTIALS when password does not match or hash is non-bcrypt', async () => {
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue({
@@ -6159,7 +6428,10 @@ describe('AuthService session approval boundary', () => {
         ),
       ).rejects.toMatchObject({
         status: 401,
-        response: { code: 'INVALID_CREDENTIALS' },
+        response: {
+          code: 'AUTH_INVALID_CREDENTIALS',
+          message: 'Invalid credentials. Please try again.',
+        },
       });
       expect(
         executedSql.some((q) =>

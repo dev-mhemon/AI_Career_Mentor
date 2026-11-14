@@ -56,8 +56,9 @@ const mockCookieStore = {
   delete: vi.fn(),
 };
 
-vi.mock('@/lib/supabase/server', () => ({
-  createSupabaseServerClient: () => ({
+const mockCreateSupabaseServerClient = vi.fn((options?: { rememberMe?: boolean; readOnly?: boolean }) => {
+  void options;
+  return {
     auth: {
       signUp: mockSignUp,
       signOut: mockSignOut,
@@ -69,7 +70,12 @@ vi.mock('@/lib/supabase/server', () => ({
       linkIdentity: mockLinkIdentity,
       exchangeCodeForSession: mockExchangeCodeForSession,
     },
-  }),
+  };
+});
+
+vi.mock('@/lib/supabase/server', () => ({
+  createSupabaseServerClient: (options?: { rememberMe?: boolean; readOnly?: boolean }) =>
+    mockCreateSupabaseServerClient(options),
 }));
 
 // Mock API Client
@@ -258,9 +264,56 @@ describe('Auth Actions', () => {
         contact: '+8801712345678',
       });
       expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_remember_me',
+        '0',
+        expect.objectContaining({
+          httpOnly: false,
+          sameSite: 'lax',
+          path: '/',
+        }),
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
         'mentor_verification_context',
         expect.any(String),
         expect.objectContaining({ path: '/verify', maxAge: 600 }),
+      );
+    });
+
+    it('persists mentor_remember_me=1 before redirecting unverified login when rememberMe is checked', async () => {
+      const formData = new FormData();
+      formData.set('email', 'candidate@example.com');
+      formData.set('password', 'password123');
+      formData.set('rememberMe', 'on');
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          403,
+          'Account unapproved; contact confirmation required',
+          'UNVERIFIED_ACCOUNT',
+        ),
+      );
+      vi.mocked(resendVerification).mockResolvedValueOnce({
+        verification_channel: 'email',
+        contact_masked: 'c***@example.com',
+        expires_in_seconds: 600,
+        resend_available_at: '2026-01-01T00:00:00Z',
+      });
+
+      const result = await loginAction({}, formData);
+      expect(result).toEqual({
+        error: 'Please verify your contact before logging in.',
+        redirectTo: '/verify?channel=email',
+      });
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('auth_remember');
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_remember_me',
+        '1',
+        expect.objectContaining({
+          httpOnly: false,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 60 * 60 * 24 * 30,
+        }),
       );
     });
 
@@ -477,6 +530,129 @@ describe('Auth Actions', () => {
         error: 'Unable to send verification code. Please try again.',
       });
       expect(mockCookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it('allows short non-empty passwords on sign-in and surfaces 404/401 credential errors', async () => {
+      const shortPwForm = new FormData();
+      shortPwForm.set('email', 'test@example.com');
+      shortPwForm.set('password', '123456');
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          404,
+          'No account found with this email address.',
+          'AUTH_USER_NOT_FOUND',
+        ),
+      );
+
+      const notFoundResult = await loginAction({}, shortPwForm);
+      expect(loginUser).toHaveBeenCalledWith('test@example.com', '123456');
+      expect(notFoundResult).toEqual({
+        error: 'No account found with this email address.',
+        status: 404,
+        code: 'AUTH_USER_NOT_FOUND',
+      });
+      expect(resendVerification).not.toHaveBeenCalled();
+
+      const phoneForm = new FormData();
+      phoneForm.set('identifier', '01712345678');
+      phoneForm.set('password', '123456');
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          404,
+          'No account found with this phone number.',
+          'AUTH_USER_NOT_FOUND',
+        ),
+      );
+      const phoneNotFoundResult = await loginAction({}, phoneForm);
+      expect(loginUser).toHaveBeenCalledWith('+8801712345678', '123456');
+      expect(phoneNotFoundResult).toEqual({
+        error: 'No account found with this phone number.',
+        status: 404,
+        code: 'AUTH_USER_NOT_FOUND',
+      });
+
+      (loginUser as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ApiError(
+          401,
+          'Invalid credentials. Please try again.',
+          'AUTH_INVALID_CREDENTIALS',
+        ),
+      );
+
+      const invalidCredResult = await loginAction({}, shortPwForm);
+      expect(invalidCredResult).toEqual({
+        error: 'Invalid credentials. Please try again.',
+        status: 401,
+        code: 'AUTH_INVALID_CREDENTIALS',
+      });
+    });
+
+    it('sets 30-day persistent mentor_remember_me=1 when rememberMe is checked and session-only mentor_remember_me=0 when unchecked', async () => {
+      const formData = new FormData();
+      formData.set('email', 'user@example.com');
+      formData.set('password', 'password123');
+      formData.set('rememberMe', 'on');
+
+      vi.mocked(loginUser).mockResolvedValueOnce({
+        access_token: 'acc',
+        refresh_token: 'ref',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: { id: 'u1', email: 'user@example.com', phone: null, status: 'active', role: 'USER', verified_contact: true },
+        profile_complete: true,
+        next_step: 'app_home',
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+      vi.mocked(redirect).mockImplementationOnce(() => {
+        throw new Error('NEXT_REDIRECT');
+      });
+
+      await expect(loginAction({}, formData)).rejects.toThrow('NEXT_REDIRECT');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('auth_remember');
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_remember_me',
+        '1',
+        expect.objectContaining({
+          httpOnly: false,
+          maxAge: 60 * 60 * 24 * 30,
+          path: '/',
+        }),
+      );
+
+      mockCookieStore.set.mockClear();
+      mockCookieStore.delete.mockClear();
+      const sessionFormData = new FormData();
+      sessionFormData.set('email', 'user@example.com');
+      sessionFormData.set('password', 'password123');
+
+      vi.mocked(loginUser).mockResolvedValueOnce({
+        access_token: 'acc',
+        refresh_token: 'ref',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: { id: 'u1', email: 'user@example.com', phone: null, status: 'active', role: 'USER', verified_contact: true },
+        profile_complete: true,
+        next_step: 'app_home',
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+      vi.mocked(redirect).mockImplementationOnce(() => {
+        throw new Error('NEXT_REDIRECT');
+      });
+
+      await expect(loginAction({}, sessionFormData)).rejects.toThrow('NEXT_REDIRECT');
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_remember_me',
+        '0',
+        expect.objectContaining({
+          httpOnly: false,
+          path: '/',
+        }),
+      );
+      const call = mockCookieStore.set.mock.calls.find(
+        (c) => c[0] === 'mentor_remember_me',
+      );
+      expect(call?.[2]).not.toHaveProperty('maxAge');
     });
   });
 
@@ -779,6 +955,69 @@ describe('Auth Actions', () => {
         success: true,
         redirectTo: '/onboarding/profile',
       });
+    });
+
+    it('passes rememberMe from mentor_remember_me cookie into createSupabaseServerClient during verification', async () => {
+      mockCreateSupabaseServerClient.mockClear();
+      mockCookieStore.get.mockImplementation((name?: string) => {
+        if (name === 'mentor_remember_me') return { value: '1' };
+        return { value: verificationContext };
+      });
+      vi.mocked(verifyEmail).mockResolvedValueOnce({
+        access_token: 'acc-remember',
+        refresh_token: 'ref-remember',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: {
+          id: 'test-user-id',
+          email: 'test@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          linked_providers: ['email'],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: 'app_home',
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const formData = new FormData();
+      formData.set('type', 'email');
+      formData.set('token', '123456');
+
+      const rememberedResult = await verifyOtpAction({}, formData);
+      expect(rememberedResult).toEqual({ success: true, redirectTo: '/dashboard' });
+      expect(mockCreateSupabaseServerClient).toHaveBeenCalledWith({ rememberMe: true });
+
+      mockCreateSupabaseServerClient.mockClear();
+      mockCookieStore.get.mockImplementation((name?: string) => {
+        if (name === 'mentor_remember_me') return { value: '0' };
+        return { value: verificationContext };
+      });
+      vi.mocked(verifyEmail).mockResolvedValueOnce({
+        access_token: 'acc-session',
+        refresh_token: 'ref-session',
+        expires_in: 3600,
+        token_type: 'Bearer',
+        user: {
+          id: 'test-user-id',
+          email: 'test@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          linked_providers: ['email'],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        next_step: 'app_home',
+      });
+      mockSetSession.mockResolvedValueOnce({ error: null });
+
+      const sessionResult = await verifyOtpAction({}, formData);
+      expect(sessionResult).toEqual({ success: true, redirectTo: '/dashboard' });
+      expect(mockCreateSupabaseServerClient).toHaveBeenCalledWith({ rememberMe: false });
+      mockCookieStore.get.mockImplementation(() => ({ value: verificationContext }));
     });
   });
 
@@ -1355,6 +1594,8 @@ describe('Auth Actions', () => {
 
       expect(logoutUser).toHaveBeenCalledWith('active-token');
       expect(mockSignOut).toHaveBeenCalled();
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_remember_me');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('auth_remember');
       expect(redirect).toHaveBeenCalledWith('/login');
     });
 
@@ -1408,6 +1649,68 @@ describe('Auth Actions', () => {
         expect.objectContaining({ path: '/reset-password' }),
       );
       expect(redirect).toHaveBeenCalledWith('/reset-password');
+    });
+
+    it('returns { success: true } without redirecting when mode is resend', async () => {
+      const formData = new FormData();
+      formData.set('identifier', 'user@example.com');
+      formData.set('mode', 'resend');
+      vi.mocked(forgotPassword).mockResolvedValueOnce({
+        message: 'If the account exists, a code was sent.',
+      });
+
+      const result = await forgotPasswordAction({}, formData);
+
+      expect(result).toEqual({ success: true });
+      expect(forgotPassword).toHaveBeenCalledWith('user@example.com');
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_recovery_context',
+        expect.any(String),
+        expect.objectContaining({ path: '/reset-password' }),
+      );
+      expect(redirect).not.toHaveBeenCalled();
+    });
+
+    it('returns channel-specific 404 error without setting cookie or redirecting when email or phone account does not exist', async () => {
+      const emailFormData = new FormData();
+      emailFormData.set('identifier', 'missing@example.com');
+      vi.mocked(forgotPassword).mockRejectedValueOnce(
+        new ApiError(
+          404,
+          'No account found with this email address.',
+          'AUTH_USER_NOT_FOUND',
+        ),
+      );
+
+      const emailResult = await forgotPasswordAction({}, emailFormData);
+
+      expect(emailResult).toEqual({
+        error: 'No account found with this email address.',
+        status: 404,
+        code: 'AUTH_USER_NOT_FOUND',
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
+
+      const phoneFormData = new FormData();
+      phoneFormData.set('identifier', '01712345678');
+      vi.mocked(forgotPassword).mockRejectedValueOnce(
+        new ApiError(
+          404,
+          'No account found with this phone number.',
+          'AUTH_USER_NOT_FOUND',
+        ),
+      );
+
+      const phoneResult = await forgotPasswordAction({}, phoneFormData);
+
+      expect(phoneResult).toEqual({
+        error: 'No account found with this phone number.',
+        status: 404,
+        code: 'AUTH_USER_NOT_FOUND',
+      });
+      expect(mockCookieStore.set).not.toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
     });
   });
 

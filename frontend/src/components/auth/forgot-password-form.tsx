@@ -3,7 +3,7 @@
 import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
-import { AuthAlert } from "@/components/auth/auth-alert";
+import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
@@ -11,6 +11,9 @@ import {
   saveVerificationDraft,
   loadVerificationDraft,
   clearVerificationDraft,
+  setPersistedCooldown,
+  clearPersistedCooldown,
+  MAX_COOLDOWN_DURATION_SECONDS,
   type VerificationChannel,
   type VerificationDraft,
 } from "@/lib/auth/verification-draft";
@@ -34,13 +37,38 @@ export function ForgotPasswordForm() {
   const [channel, setChannel] = useState<VerificationChannel>("email");
   const [identifier, setIdentifier] = useState("");
   const [clientError, setClientError] = useState<string | undefined>();
-  const [dismissedServerState, setDismissedServerState] =
-    useState<AuthActionResult | null>(null);
+  const {
+    visibleState: visibleAlertState,
+    isDismissed,
+    dismiss: dismissAlert,
+    onFormActivity,
+  } = useDismissedActionState(state);
   const previousDraftRef = useRef<VerificationDraft | null>(null);
+  const submittedCooldownTargetRef = useRef<{
+    channel: VerificationChannel;
+    identifier: string;
+  } | null>(null);
   const phoneBlurredRef = useRef(false);
 
   useEffect(() => {
     if (state?.error) {
+      const target = submittedCooldownTargetRef.current;
+      if (target) {
+        if (typeof state.retryAfterSeconds === "number" && state.retryAfterSeconds > 0) {
+          const secs = Math.min(state.retryAfterSeconds, MAX_COOLDOWN_DURATION_SECONDS);
+          const now = Date.now();
+          setPersistedCooldown(
+            target.channel,
+            now + secs * 1000,
+            secs,
+            now,
+            target.identifier,
+          );
+        } else {
+          clearPersistedCooldown(target.channel, target.identifier);
+        }
+        submittedCooldownTargetRef.current = null;
+      }
       if (previousDraftRef.current) {
         const originalExpiresAtMs = new Date(
           previousDraftRef.current.expires_at,
@@ -89,6 +117,7 @@ export function ForgotPasswordForm() {
           setIdentifier("");
           setClientError(undefined);
           phoneBlurredRef.current = false;
+          dismissAlert();
         }}
         items={[
           { id: "email", label: "Email", panel: null },
@@ -104,6 +133,8 @@ export function ForgotPasswordForm() {
         <form
           action={formAction}
           noValidate
+          onFocusCapture={onFormActivity}
+          onChangeCapture={onFormActivity}
           onSubmit={(e) => {
             const form = e.currentTarget;
             const check =
@@ -131,6 +162,9 @@ export function ForgotPasswordForm() {
               identifier: normalized,
               context: "password_recovery",
             });
+            submittedCooldownTargetRef.current = { channel, identifier: normalized };
+            const nowMs = Date.now();
+            setPersistedCooldown(channel, nowMs + 60 * 1000, 60, nowMs, normalized);
           }}
           className="flex flex-col gap-4"
         >
@@ -146,12 +180,12 @@ export function ForgotPasswordForm() {
               value={identifier}
               error={
                 clientError ??
-                (dismissedServerState === state ? undefined : state?.fieldErrors?.identifier)
+                (isDismissed ? undefined : state?.fieldErrors?.identifier)
               }
               onChange={(e) => {
                 const v = e.target.value;
                 setIdentifier(v);
-                if (state?.fieldErrors?.identifier) setDismissedServerState(state);
+                if (state?.fieldErrors?.identifier) dismissAlert();
                 const res = validateEmailLive(v);
                 setClientError(res.ok ? undefined : res.error);
               }}
@@ -178,12 +212,12 @@ export function ForgotPasswordForm() {
               value={identifier}
               error={
                 clientError ??
-                (dismissedServerState === state ? undefined : state?.fieldErrors?.identifier)
+                (isDismissed ? undefined : state?.fieldErrors?.identifier)
               }
               onChange={(e) => {
                 const v = e.target.value;
                 setIdentifier(v);
-                if (state?.fieldErrors?.identifier) setDismissedServerState(state);
+                if (state?.fieldErrors?.identifier) dismissAlert();
                 const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
                 if (check.resetBlurred) phoneBlurredRef.current = false;
                 setClientError(check.error);
@@ -201,7 +235,7 @@ export function ForgotPasswordForm() {
             />
           )}
 
-          <AuthAlert result={state} />
+          <AuthAlert result={visibleAlertState} />
 
           <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Sending code…">
             Send Reset Code
