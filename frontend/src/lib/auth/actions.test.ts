@@ -529,7 +529,7 @@ describe('Auth Actions', () => {
       vi.mocked(registerUser).mockRejectedValueOnce(new ApiError(429, 'Too many requests'));
 
       const result = await registerAction({}, formData);
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         error: 'Email delivery is temporarily rate-limited. Please try again later.',
       });
     });
@@ -728,7 +728,7 @@ describe('Auth Actions', () => {
       formData.set('token', '000000');
 
       const result = await verifyOtpAction({}, formData);
-      expect(result).toEqual({ error: 'Verification code is invalid' });
+      expect(result).toMatchObject({ error: 'Verification code is invalid' });
     });
 
     it('verifies phone via backend EP-A03 and redirects to /onboarding/profile', async () => {
@@ -813,7 +813,7 @@ describe('Auth Actions', () => {
       vi.mocked(resendVerification).mockRejectedValueOnce(new ApiError(429, 'Rate limit'));
 
       const result = await resendOtpAction('email');
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         error: 'Email delivery is temporarily rate-limited. Please try again later.',
       });
     });
@@ -1426,6 +1426,15 @@ describe('Auth Actions', () => {
       formData.set('confirm_new_password', 'Mismatch!');
       const mismatch = await resetPasswordAction({}, formData);
       expect(mismatch.error).toContain('Passwords do not match');
+
+      const missingPwForm = new FormData();
+      missingPwForm.set('identifier', 'user@example.com');
+      missingPwForm.set('code', '123456');
+      const missingPw = await resetPasswordAction({}, missingPwForm);
+      expect(missingPw).toEqual({
+        error: 'Password must be at least 8 characters.',
+        fieldErrors: { new_password: 'Password must be at least 8 characters.' },
+      });
     });
 
     it('calls resetPassword, clears recovery cookie, and redirects to /login?reset=success', async () => {
@@ -1574,6 +1583,30 @@ describe('Auth Actions', () => {
         redirectTo: '/settings?verified=contact',
       });
       expect(redirect).not.toHaveBeenCalled();
+    });
+
+    it('normalizes local 01712345678 phone contact to +8801712345678 before calling addContact', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: 'active-token' } },
+      });
+      vi.mocked(addContact).mockResolvedValueOnce({
+        verification_channel: 'phone',
+        contact_masked: '+88017****78',
+        expires_in_seconds: 600,
+        resend_available_at: '2026-01-01T00:01:00.000Z',
+      });
+
+      const formData = new FormData();
+      formData.set('channel', 'phone');
+      formData.set('contact', '01712345678');
+
+      await addContactAction({}, formData);
+
+      expect(addContact).toHaveBeenCalledWith('active-token', {
+        channel: 'phone',
+        contact: '+8801712345678',
+      });
+      expect(redirect).toHaveBeenCalledWith('/verify?channel=phone');
     });
   });
 

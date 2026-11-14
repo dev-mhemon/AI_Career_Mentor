@@ -173,4 +173,32 @@ describe("LoginForm", () => {
     expect(draft?.context).toBe("unverified_login");
     expect(mockPush).toHaveBeenCalledWith("/verify?channel=phone");
   });
+
+  it("validates email/phone and password in real time onChange without waiting for blur", () => {
+    render(<LoginForm />);
+
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+
+    fireEvent.change(identifierInput, { target: { value: "invalid@" } });
+    expect(
+      screen.getByText(/enter a valid email address or bangladesh mobile number/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(identifierInput, { target: { value: "012" } });
+    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
+
+    fireEvent.change(identifierInput, { target: { value: "01712345678" } });
+    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+
+    fireEvent.change(passwordInput, { target: { value: "1234567" } });
+    expect(
+      screen.getByText(/password must be at least 8 characters/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(passwordInput, { target: { value: "12345678" } });
+    expect(
+      screen.queryByText(/password must be at least 8 characters/i),
+    ).not.toBeInTheDocument();
+  });
 });

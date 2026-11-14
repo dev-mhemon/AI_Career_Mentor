@@ -3,6 +3,10 @@
 import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
+import { AuthAlert } from "@/components/auth/auth-alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs } from "@/components/ui/tabs";
 import {
   saveVerificationDraft,
   loadVerificationDraft,
@@ -10,6 +14,12 @@ import {
   type VerificationChannel,
   type VerificationDraft,
 } from "@/lib/auth/verification-draft";
+import {
+  validateBdPhone,
+  validateBdPhoneOnChange,
+  validateEmail,
+  validateEmailLive,
+} from "@/lib/validation/auth-schemas";
 
 /**
  * Screen 05: Password Recovery Form component.
@@ -22,7 +32,12 @@ export function ForgotPasswordForm() {
   >(forgotPasswordAction, {});
 
   const [channel, setChannel] = useState<VerificationChannel>("email");
+  const [identifier, setIdentifier] = useState("");
+  const [clientError, setClientError] = useState<string | undefined>();
+  const [dismissedServerState, setDismissedServerState] =
+    useState<AuthActionResult | null>(null);
   const previousDraftRef = useRef<VerificationDraft | null>(null);
+  const phoneBlurredRef = useRef(false);
 
   useEffect(() => {
     if (state?.error) {
@@ -62,93 +77,143 @@ export function ForgotPasswordForm() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex w-full rounded-lg bg-foreground/5 p-1">
-        <button
-          type="button"
-          onClick={() => setChannel("email")}
-          className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-            channel === "email"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-foreground/60 hover:text-foreground"
-          }`}
-        >
-          Email
-        </button>
-        <button
-          type="button"
-          onClick={() => setChannel("phone")}
-          className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-            channel === "phone"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-foreground/60 hover:text-foreground"
-          }`}
-        >
-          Phone
-        </button>
-      </div>
+      <Tabs
+        aria-label="Recovery method"
+        variant="segmented_pill"
+        idPrefix="forgot"
+        hidePanels
+        disabled={isPending}
+        value={channel}
+        onValueChange={(id) => {
+          setChannel(id as VerificationChannel);
+          setIdentifier("");
+          setClientError(undefined);
+          phoneBlurredRef.current = false;
+        }}
+        items={[
+          { id: "email", label: "Email", panel: null },
+          { id: "phone", label: "Phone", panel: null },
+        ]}
+      />
 
-      <form
-        action={formAction}
-        onSubmit={(e) => {
-          const form = e.currentTarget;
-          const identifier = (
-            form.elements.namedItem("identifier") as HTMLInputElement
-          )?.value;
-          if (identifier) {
+      <div
+        role="tabpanel"
+        id="forgot-panel"
+        aria-label={channel === "email" ? "Recover via Email" : "Recover via Phone"}
+      >
+        <form
+          action={formAction}
+          noValidate
+          onSubmit={(e) => {
+            const form = e.currentTarget;
+            const check =
+              channel === "email" ? validateEmail(identifier) : validateBdPhone(identifier);
+            if (!check.ok) {
+              e.preventDefault();
+              if (channel === "phone" && identifier.trim()) {
+                phoneBlurredRef.current = true;
+              }
+              setClientError(check.error);
+              return;
+            }
+            const normalized = check.value;
+            setClientError(undefined);
+            if (channel === "email") {
+              const el = form.elements.namedItem("identifier") as HTMLInputElement | null;
+              if (el) el.value = normalized;
+            }
             const { draft: existing } = loadVerificationDraft(null, Date.now());
             if (existing) {
               previousDraftRef.current = existing;
             }
             saveVerificationDraft({
-              channel: identifier.includes("@") ? "email" : "phone",
-              identifier,
+              channel,
+              identifier: normalized,
               context: "password_recovery",
             });
-          }
-        }}
-        className="flex flex-col gap-4"
-      >
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="identifier"
-            className="text-sm font-medium text-foreground"
-          >
-            {channel === "email" ? "Registered Email" : "Registered Phone Number"}
-          </label>
-          <input
-            id="identifier"
-            name="identifier"
-            type={channel === "email" ? "email" : "tel"}
-            autoComplete={channel === "email" ? "email" : "tel"}
-            required
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder={
-              channel === "email" ? "you@example.com" : "+8801712345678"
-            }
-          />
-        </div>
-
-        {state?.error && (
-          <p role="alert" className="text-sm text-red-600">
-            {state.error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={isPending}
-          className="mt-2 h-11 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+          }}
+          className="flex flex-col gap-4"
         >
-          {isPending ? "Sending code…" : "Send Reset Code"}
-        </button>
-      </form>
+          {channel === "email" ? (
+            <Input
+              key="email"
+              id="identifier"
+              name="identifier"
+              variant="email"
+              label="Registered Email"
+              required
+              readOnly={isPending}
+              value={identifier}
+              error={
+                clientError ??
+                (dismissedServerState === state ? undefined : state?.fieldErrors?.identifier)
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                setIdentifier(v);
+                if (state?.fieldErrors?.identifier) setDismissedServerState(state);
+                const res = validateEmailLive(v);
+                setClientError(res.ok ? undefined : res.error);
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) return;
+                const res = validateEmail(e.target.value);
+                if (!res.ok) setClientError(res.error);
+                else {
+                  setIdentifier(res.value);
+                  setClientError(undefined);
+                }
+              }}
+              placeholder="you@example.com"
+            />
+          ) : (
+            <Input
+              key="phone"
+              id="identifier"
+              name="identifier"
+              variant="phone_bd"
+              label="Registered Phone Number"
+              required
+              readOnly={isPending}
+              value={identifier}
+              error={
+                clientError ??
+                (dismissedServerState === state ? undefined : state?.fieldErrors?.identifier)
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                setIdentifier(v);
+                if (state?.fieldErrors?.identifier) setDismissedServerState(state);
+                const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
+                if (check.resetBlurred) phoneBlurredRef.current = false;
+                setClientError(check.error);
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) {
+                  phoneBlurredRef.current = false;
+                  return;
+                }
+                phoneBlurredRef.current = true;
+                const res = validateBdPhone(e.target.value);
+                setClientError(res.ok ? undefined : res.error);
+              }}
+              placeholder="01712-345678"
+            />
+          )}
 
-      <p className="text-center text-sm text-foreground/60">
+          <AuthAlert result={state} />
+
+          <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Sending code…">
+            Send Reset Code
+          </Button>
+        </form>
+      </div>
+
+      <p className="text-center text-body-sm text-text-secondary">
         Remember your password?{" "}
         <Link
           href="/login"
-          className="font-medium text-foreground underline underline-offset-4 hover:text-foreground/80"
+          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
         >
           Sign in
         </Link>

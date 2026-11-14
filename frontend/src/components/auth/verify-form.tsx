@@ -3,6 +3,20 @@
 import { useActionState, useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
+import { AuthAlert } from '@/components/auth/auth-alert';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  normalizeBdPhone,
+  validateBdPhone,
+  validateBdPhoneOnChange,
+  validateEmail,
+  validateEmailLive,
+  validateOtp,
+  validateOtpLive,
+} from '@/lib/validation/auth-schemas';
+import type { ActionErrorLike } from '@/lib/api/error-mapper';
 import {
   loadVerificationDraft,
   getRawVerificationDraft,
@@ -174,12 +188,19 @@ function VerifyFormContent() {
   const draftLoaded = useRef(false);
 
   const [reenteredIdentifier, setReenteredIdentifier] = useState('');
+  const [identifierError, setIdentifierError] = useState<string | undefined>();
+  const [codeError, setCodeError] = useState<string | undefined>();
+  const [dismissedServer, setDismissedServer] = useState<{
+    ref: AuthActionResult;
+    fields: Set<string>;
+  } | null>(null);
+  const identifierBlurredRef = useRef(false);
 
   // SSR-deterministic initial state (0/false); restored asynchronously on client mount
   const [cooldown, setCooldown] = useState<number>(0);
   const [isCooldownHydrated, setIsCooldownHydrated] = useState<boolean>(false);
   const cooldownDeadlineRef = useRef<number | null>(null);
-  const [resendError, setResendError] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<ActionErrorLike | null>(null);
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
 
@@ -319,11 +340,15 @@ function VerifyFormContent() {
     setResendSuccess(null);
 
     try {
-      const identifierToSend = draft?.normalized_identifier || reenteredIdentifier.trim();
+      const normalizedReentered =
+        channelParam === 'phone'
+          ? normalizeBdPhone(reenteredIdentifier) ?? reenteredIdentifier.trim()
+          : reenteredIdentifier.trim().toLowerCase();
+      const identifierToSend = draft?.normalized_identifier || normalizedReentered;
       const result = await resendOtpAction(channelParam, identifierToSend);
 
       if (result.error) {
-        setResendError(result.error);
+        setResendError(result);
       } else {
         setResendSuccess('Verification code sent successfully.');
         const availableAtRaw = (result as { resendAvailableAt?: string }).resendAvailableAt;
@@ -372,7 +397,7 @@ function VerifyFormContent() {
         }
       }
     } catch {
-      setResendError('Failed to resend verification code. Please try again.');
+      setResendError({ error: 'Failed to resend verification code. Please try again.' });
     } finally {
       setIsResending(false);
     }
@@ -380,9 +405,9 @@ function VerifyFormContent() {
 
   if (!channelParam || !['email', 'phone'].includes(channelParam)) {
     return (
-      <div className="text-center text-sm text-red-600">
+      <Alert variant="error_retryable" action={{ label: 'Back to sign in', href: '/login' }}>
         Invalid verification link. Please go back and try again.
-      </div>
+      </Alert>
     );
   }
 
@@ -396,10 +421,58 @@ function VerifyFormContent() {
         ? `Enter the verification code sent to ${maskedDisplay} via SMS.`
         : 'Enter the verification code sent to your phone via SMS.';
 
+  const dismissServerField = (field: string) =>
+    setDismissedServer((prev) => {
+      if (!state?.fieldErrors?.[field]) return prev;
+      if (prev?.ref === state && prev.fields.has(field)) return prev;
+      const fields = new Set(prev?.ref === state ? prev.fields : []);
+      fields.add(field);
+      return { ref: state, fields };
+    });
+
+  const serverFieldError = (field: string) =>
+    dismissedServer?.ref === state && dismissedServer.fields.has(field)
+      ? undefined
+      : state?.fieldErrors?.[field];
+
   return (
     <div className="flex flex-col gap-6">
       <form
         action={formAction}
+        noValidate
+        onSubmit={(e) => {
+          const form = e.currentTarget;
+          let invalid = false;
+          if (!draft) {
+            const check =
+              channelParam === 'email'
+                ? validateEmail(reenteredIdentifier)
+                : validateBdPhone(reenteredIdentifier);
+            if (!check.ok) {
+              if (channelParam === 'phone' && reenteredIdentifier.trim()) {
+                identifierBlurredRef.current = true;
+              }
+              setIdentifierError(check.error);
+              invalid = true;
+            } else {
+              setIdentifierError(undefined);
+              if (channelParam === 'email') {
+                const emailEl = form.elements.namedItem('identifier') as HTMLInputElement | null;
+                if (emailEl) emailEl.value = check.value;
+              }
+            }
+          }
+          const code = validateOtp(
+            (form.elements.namedItem('token') as HTMLInputElement).value,
+          );
+          if (!code.ok) {
+            setCodeError(code.error);
+            invalid = true;
+          } else {
+            setCodeError(undefined);
+          }
+          if (invalid) e.preventDefault();
+        }}
         className="flex flex-col gap-4"
       >
         <input type="hidden" name="channel" value={channelParam} />
@@ -416,97 +489,111 @@ function VerifyFormContent() {
           />
         ) : (
           <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="identifier"
-              className="text-sm font-medium text-foreground"
-            >
-              {channelParam === 'email' ? 'Email Address' : 'Phone Number'}
-            </label>
-            <input
+            <Input
               id="identifier"
               name="identifier"
-              type={channelParam === 'email' ? 'email' : 'tel'}
+              variant={channelParam === 'email' ? 'email' : 'phone_bd'}
+              label={channelParam === 'email' ? 'Email Address' : 'Phone Number'}
               required
               value={reenteredIdentifier}
-              onChange={(e) => setReenteredIdentifier(e.target.value)}
-              disabled={isPending}
-              className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-              placeholder={channelParam === 'email' ? 'you@example.com' : '+88017...'}
+              error={identifierError ?? serverFieldError('identifier')}
+              onChange={(e) => {
+                const v = e.target.value;
+                setReenteredIdentifier(v);
+                dismissServerField('identifier');
+                if (channelParam === 'email') {
+                  const check = validateEmailLive(v);
+                  setIdentifierError(check.ok ? undefined : check.error);
+                } else {
+                  const check = validateBdPhoneOnChange(v, identifierBlurredRef.current);
+                  if (check.resetBlurred) identifierBlurredRef.current = false;
+                  setIdentifierError(check.error);
+                }
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) {
+                  identifierBlurredRef.current = false;
+                  return;
+                }
+                identifierBlurredRef.current = true;
+                const check =
+                  channelParam === 'email'
+                    ? validateEmail(e.target.value)
+                    : validateBdPhone(e.target.value);
+                if (!check.ok) setIdentifierError(check.error);
+                else {
+                  if (channelParam === 'email') {
+                    setReenteredIdentifier(check.value);
+                  }
+                  setIdentifierError(undefined);
+                }
+              }}
+              readOnly={isPending}
+              placeholder={channelParam === 'email' ? 'you@example.com' : '01712-345678'}
             />
             {isDraftExpired && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
+              <Alert variant="warning">
                 Verification draft expired. Please re-enter your{' '}
                 {channelParam === 'email' ? 'email' : 'phone number'}.
-              </p>
+              </Alert>
             )}
           </div>
         )}
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="token" className="text-sm font-medium text-foreground">
-            {instructionText}
-          </label>
-          <input
-            id="token"
-            name="token"
-            type="text"
-            required
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder="Verification code"
-          />
-        </div>
+        <Input
+          id="token"
+          name="token"
+          variant="otp_6"
+          label={instructionText}
+          required
+          readOnly={isPending}
+          error={codeError ?? serverFieldError('token') ?? serverFieldError('code')}
+          onChange={(e) => {
+            dismissServerField('token');
+            dismissServerField('code');
+            const check = validateOtpLive(e.target.value);
+            setCodeError(check.ok ? undefined : check.error);
+          }}
+          onBlur={(e) => {
+            if (!e.target.value.trim()) return;
+            const check = validateOtp(e.target.value);
+            setCodeError(check.ok ? undefined : check.error);
+          }}
+        />
 
-        {state.error && (
-          <p role="alert" className="text-sm text-red-600">
-            {state.error}
-          </p>
-        )}
+        <AuthAlert result={state} />
 
-        <button
-          type="submit"
-          disabled={isPending}
-          className="mt-2 h-11 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
-        >
-          {isPending ? 'Verifying...' : 'Verify Code'}
-        </button>
+        <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Verifying…">
+          Verify Code
+        </Button>
       </form>
 
       <div className="flex flex-col items-center gap-2">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          isLoading={isResending}
+          loadingText="Sending…"
           disabled={!isCooldownHydrated || cooldown > 0 || isResending}
           onClick={() => handleResend()}
-          className="text-sm font-medium text-foreground underline underline-offset-4 hover:text-foreground/80 disabled:opacity-50"
         >
-          {isResending
-            ? 'Sending...'
-            : cooldown > 0
-              ? `Resend code in ${cooldown}s`
-              : 'Resend verification code'}
-        </button>
+          {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend verification code'}
+        </Button>
+        <p aria-live="polite" className="text-caption text-text-muted">
+          {cooldown > 0 ? 'You can request a new code when the timer ends.' : ''}
+        </p>
 
-        {resendError && (
-          <p role="alert" className="text-sm text-red-600 text-center">
-            {resendError}
-          </p>
-        )}
-        {resendSuccess && (
-          <p role="alert" className="text-sm text-green-600 text-center">
-            {resendSuccess}
-          </p>
-        )}
+        <AuthAlert result={resendError} />
+        {resendSuccess && <Alert variant="success">{resendSuccess}</Alert>}
       </div>
     </div>
   );
 }
-
 /**
  * Verify form wrapped in Suspense boundary for Next.js searchParams compatibility.
  */
 export function VerifyForm() {
   return (
-    <Suspense fallback={<div className="text-sm text-center">Loading...</div>}>
+    <Suspense fallback={<div role="status" className="text-center text-body-sm text-text-secondary">Loading…</div>}>
       <VerifyFormContent />
     </Suspense>
   );

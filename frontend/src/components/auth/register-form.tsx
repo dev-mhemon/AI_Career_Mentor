@@ -1,13 +1,31 @@
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import { AuthAlert } from "@/components/auth/auth-alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Tabs } from "@/components/ui/tabs";
 import {
   saveVerificationDraft,
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
+import {
+  PASSWORD_MAX,
+  passwordStrength,
+  validateBdPhone,
+  validateBdPhoneOnChange,
+  validateEmail,
+  validateEmailLive,
+  validatePassword,
+  validatePasswordLive,
+  validatePasswordMatch,
+} from "@/lib/validation/auth-schemas";
+
+type Channel = "email" | "phone";
 
 /**
  * Registration form component for email and phone account creation.
@@ -19,166 +37,287 @@ export function RegisterForm() {
     FormData
   >(registerAction, {});
 
-  const [activeTab, setActiveTab] = useState<"email" | "phone">("email");
+  const [activeTab, setActiveTab] = useState<Channel>("email");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
+  const [dismissedServer, setDismissedServer] = useState<{
+    ref: AuthActionResult;
+    fields: Set<string>;
+  } | null>(null);
+  const phoneBlurredRef = useRef(false);
 
   useEffect(() => {
-    if (state?.error || (state as Record<string, unknown>)?.fieldErrors) {
+    if (state?.error || state?.fieldErrors) {
       clearVerificationDraft();
     }
   }, [state]);
 
+  const setFieldError = (field: string, error?: string) =>
+    setClientErrors((prev) => {
+      if (!error) {
+        if (!prev[field]) return prev;
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      if (prev[field] === error) return prev;
+      return { ...prev, [field]: error };
+    });
+
+  const dismissServerField = (field: string) =>
+    setDismissedServer((prev) => {
+      if (!state?.fieldErrors?.[field]) return prev;
+      if (prev?.ref === state && prev.fields.has(field)) return prev;
+      const fields = new Set(prev?.ref === state ? prev.fields : []);
+      fields.add(field);
+      return { ref: state, fields };
+    });
+
+  const serverFieldError = (field: string) =>
+    dismissedServer?.ref === state && dismissedServer.fields.has(field)
+      ? undefined
+      : state?.fieldErrors?.[field];
+
+  const strength = passwordStrength(password);
+  const mismatch =
+    confirm.length > 0 && !validatePasswordMatch(password, confirm).ok
+      ? "Passwords do not match."
+      : undefined;
+
+  const identifierError = clientErrors.identifier ?? serverFieldError("identifier");
+  const passwordError = clientErrors.password ?? serverFieldError("password");
+  const confirmError = clientErrors.confirmPassword ?? mismatch;
+  const conflict = state?.status === 409;
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex w-full rounded-lg bg-foreground/5 p-1">
-        <button
-          type="button"
-          onClick={() => setActiveTab("email")}
-          className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-            activeTab === "email"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-foreground/60 hover:text-foreground"
-          }`}
-        >
-          Email
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("phone")}
-          className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-            activeTab === "phone"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-foreground/60 hover:text-foreground"
-          }`}
-        >
-          Phone
-        </button>
-      </div>
-
-      <form
-        action={formAction}
-        onSubmit={(e) => {
-          const form = e.currentTarget;
-          const identifier = (
-            form.elements.namedItem("identifier") as HTMLInputElement
-          )?.value;
-          if (identifier) {
-            saveVerificationDraft({
-              channel: activeTab,
-              identifier,
-              context: "registration",
-            });
-          }
+      <Tabs
+        aria-label="Sign-up method"
+        variant="segmented_pill"
+        idPrefix="register"
+        hidePanels
+        disabled={isPending}
+        value={activeTab}
+        onValueChange={(id) => {
+          setActiveTab(id as Channel);
+          setIdentifier("");
+          setClientErrors({});
+          phoneBlurredRef.current = false;
         }}
-        className="flex flex-col gap-4"
+        items={[
+          { id: "email", label: "Email", panel: null },
+          { id: "phone", label: "Phone", panel: null },
+        ]}
+      />
+
+      <div
+        role="tabpanel"
+        id="register-panel"
+        aria-label={activeTab === "email" ? "Register with Email" : "Register with Phone"}
       >
-        <input type="hidden" name="type" value={activeTab} />
+        <form
+          action={formAction}
+          noValidate
+          onSubmit={(e) => {
+            const form = e.currentTarget;
+            const consentEl = form.elements.namedItem("privacy_consent") as HTMLInputElement;
+            const errors: Record<string, string> = {};
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="identifier"
-            className="text-sm font-medium text-foreground"
-          >
-            {activeTab === "email" ? "Email" : "Phone Number"}
-          </label>
-          <input
-            id="identifier"
-            name="identifier"
-            type={activeTab === "email" ? "email" : "tel"}
-            autoComplete={activeTab === "email" ? "email" : "tel"}
-            required
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder={
-              activeTab === "email" ? "you@example.com" : "+8801712345678"
+            const id =
+              activeTab === "email" ? validateEmail(identifier) : validateBdPhone(identifier);
+            if (!id.ok) {
+              errors.identifier = id.error;
+              if (activeTab === "phone" && identifier.trim()) {
+                phoneBlurredRef.current = true;
+              }
             }
-          />
-        </div>
+            const pw = validatePassword(password);
+            if (!pw.ok) errors.password = pw.error;
+            const match = validatePasswordMatch(password, confirm);
+            if (!match.ok) errors.confirmPassword = match.error;
+            if (!consentEl.checked) errors.consent = "You must agree to the privacy policy to continue.";
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="password"
-            className="text-sm font-medium text-foreground"
-          >
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder="••••••••"
-          />
-        </div>
+            if (Object.keys(errors).length) {
+              e.preventDefault();
+              setClientErrors(errors);
+              return;
+            }
+            setClientErrors({});
+            if (id.ok) {
+              if (activeTab === "email") {
+                const emailEl = form.elements.namedItem("identifier") as HTMLInputElement | null;
+                if (emailEl) emailEl.value = id.value;
+              }
+              saveVerificationDraft({
+                channel: activeTab,
+                identifier: id.value,
+                context: "registration",
+              });
+            }
+          }}
+          className="flex flex-col gap-4"
+        >
+          <input type="hidden" name="type" value={activeTab} />
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="confirmPassword"
-            className="text-sm font-medium text-foreground"
-          >
-            Confirm Password
-          </label>
-          <input
+          {activeTab === "email" ? (
+            <Input
+              key="email"
+              id="identifier"
+              name="identifier"
+              variant="email"
+              label="Email"
+              required
+              readOnly={isPending}
+              value={identifier}
+              error={identifierError}
+              onChange={(e) => {
+                const v = e.target.value;
+                setIdentifier(v);
+                dismissServerField("identifier");
+                const res = validateEmailLive(v);
+                setFieldError("identifier", res.ok ? undefined : res.error);
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) return;
+                const res = validateEmail(e.target.value);
+                if (!res.ok) setFieldError("identifier", res.error);
+                else {
+                  setIdentifier(res.value);
+                  setFieldError("identifier", undefined);
+                }
+              }}
+              placeholder="you@example.com"
+            />
+          ) : (
+            <Input
+              key="phone"
+              id="identifier"
+              name="identifier"
+              variant="phone_bd"
+              label="Phone Number"
+              required
+              readOnly={isPending}
+              value={identifier}
+              error={identifierError}
+              onChange={(e) => {
+                const v = e.target.value;
+                setIdentifier(v);
+                dismissServerField("identifier");
+                const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
+                if (check.resetBlurred) phoneBlurredRef.current = false;
+                setFieldError("identifier", check.error);
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) {
+                  phoneBlurredRef.current = false;
+                  return;
+                }
+                phoneBlurredRef.current = true;
+                const res = validateBdPhone(e.target.value);
+                setFieldError("identifier", res.ok ? undefined : res.error);
+              }}
+              hint="Bangladesh mobile, e.g. 01712-345678"
+              placeholder="01712-345678"
+            />
+          )}
+
+          <div className="flex flex-col gap-2">
+            <Input
+              id="password"
+              name="password"
+              variant="password"
+              label="Password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              maxLength={PASSWORD_MAX}
+              readOnly={isPending}
+              value={password}
+              error={passwordError}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPassword(v);
+                dismissServerField("password");
+                const pw = validatePasswordLive(v);
+                setFieldError("password", pw.ok ? undefined : pw.error);
+                if (!confirm || validatePasswordMatch(v, confirm).ok) {
+                  setFieldError("confirmPassword", undefined);
+                }
+              }}
+              onBlur={(e) => {
+                if (!e.target.value) return;
+                const pw = validatePassword(e.target.value);
+                setFieldError("password", pw.ok ? undefined : pw.error);
+              }}
+              placeholder="••••••••"
+            />
+            <p aria-live="polite" className="text-caption text-text-secondary">
+              Use 8–128 characters; longer with mixed case, numbers and symbols is stronger.
+              {password && (
+                <>
+                  {" "}
+                  Strength: <strong className="text-text-primary">{strength.label}</strong> ({strength.score}/4)
+                </>
+              )}
+            </p>
+          </div>
+
+          <Input
             id="confirmPassword"
             name="confirmPassword"
-            type="password"
+            variant="password"
+            label="Confirm Password"
             autoComplete="new-password"
             required
             minLength={8}
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
+            maxLength={PASSWORD_MAX}
+            readOnly={isPending}
+            value={confirm}
+            error={confirmError}
+            onChange={(e) => {
+              setConfirm(e.target.value);
+              dismissServerField("confirmPassword");
+              setFieldError("confirmPassword", undefined);
+            }}
             placeholder="••••••••"
           />
-        </div>
 
-        <div className="flex items-center gap-2">
-          <input
+          <Checkbox
             id="privacy_consent"
             name="privacy_consent"
-            type="checkbox"
+            label="I agree to the privacy policy"
             required
-            disabled={isPending}
-            className="h-4 w-4 rounded border-foreground/20 text-foreground focus:ring-foreground"
+            readOnly={isPending}
+            error={clientErrors.consent}
+            onChange={() => setFieldError("consent", undefined)}
           />
-          <label
-            htmlFor="privacy_consent"
-            className="text-sm text-foreground/80"
-          >
-            I agree to the privacy policy
-          </label>
-        </div>
 
-        {state?.error && (
-          <p role="alert" className="text-sm text-red-600">
-            {state.error}
-          </p>
-        )}
+          <AuthAlert
+            result={state}
+            action={conflict ? { label: "Sign in instead", href: "/login" } : undefined}
+          />
 
-        <button
-          type="submit"
-          disabled={isPending}
-          className="mt-2 h-11 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
-        >
-          {isPending ? "Creating account..." : "Create Account"}
-        </button>
-      </form>
+          <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Creating account…">
+            Create Account
+          </Button>
+        </form>
+      </div>
 
       <div className="relative flex items-center">
-        <div className="flex-1 border-t border-foreground/10" />
-        <span className="px-3 text-sm text-foreground/50">or</span>
-        <div className="flex-1 border-t border-foreground/10" />
+        <div className="flex-1 border-t border-border-default" />
+        <span className="px-3 text-body-sm text-text-muted">or</span>
+        <div className="flex-1 border-t border-border-default" />
       </div>
 
       <OAuthButtons />
 
-      <p className="text-center text-sm text-foreground/60">
+      <p className="text-center text-body-sm text-text-secondary">
         Already have an account?{" "}
         <Link
           href="/login"
-          className="font-medium text-foreground underline underline-offset-4 hover:text-foreground/80"
+          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
         >
           Sign in
         </Link>

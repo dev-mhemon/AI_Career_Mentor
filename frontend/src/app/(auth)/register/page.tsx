@@ -17,11 +17,14 @@ export default async function RegisterPage() {
   }
 
   return (
-    <>
-      <h1 className="mb-6 text-2xl font-bold text-foreground">
-        Create Account
-      </h1>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-heading-lg text-text-primary">Create Account</h1>
+        <p className="text-body-sm text-text-secondary">
+          Start with your email or Bangladesh mobile number.
+        </p>
+      </div>
       <RegisterForm />
-    </>
+    </div>
   );
 }

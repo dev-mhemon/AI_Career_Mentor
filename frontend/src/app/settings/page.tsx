@@ -9,6 +9,15 @@ import { AddContactForm } from '@/components/settings/add-contact-form';
 import { VerifiedContactPrompt } from '@/components/settings/verified-contact-prompt';
 import { LearningSettingsForm } from '@/components/settings/learning-settings-form';
 import { AccountDeletionCard } from '@/components/settings/account-deletion-card';
+import { Header } from '@/components/ui/header';
+import { Button } from '@/components/ui/button';
+import { Alert } from '@/components/ui/alert';
+
+const primaryLinkClass =
+  'inline-flex h-10 min-h-11 items-center justify-center rounded-md bg-action-primary-background px-5 text-label-lg font-medium text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active';
+
+const secondaryLinkClass =
+  'inline-flex h-10 min-h-11 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-5 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active';
 
 /**
  * Screen 22 (`/settings`) — Account & Settings page for active and suspended users.
@@ -41,29 +50,26 @@ export default async function SettingsPage({
 
   if (result.status === 'transient_error') {
     return (
-      <div className="min-h-screen bg-background text-foreground">
-        <main className="mx-auto flex min-h-[60vh] max-w-lg flex-col justify-center px-4 py-12">
-          <div role="alert" className="flex flex-col gap-4">
-            <h1 className="text-2xl font-bold text-foreground">
+      <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
+        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center">
+          <div className="flex flex-col gap-5 rounded-xl border border-border-default bg-surface-raised p-6 shadow-md sm:p-8">
+            <h1 className="text-heading-lg text-text-primary">
               সার্ভিস সাময়িকভাবে অনুপলব্ধ (Service Temporarily Unavailable)
             </h1>
-            <p className="text-sm text-foreground/70">
+            <Alert variant="error_retryable" role="alert">
               আমরা আপনার সেটিংস ও অ্যাকাউন্টের তথ্য লোড করতে পারছি না। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।
-            </p>
-            <div className="flex flex-wrap items-center gap-3 pt-2">
-              <Link
-                href="/settings"
-                className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-              >
+            </Alert>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Link href="/settings" className={primaryLinkClass}>
                 আবার চেষ্টা করুন (Try again)
               </Link>
+              <Link href="/" className={secondaryLinkClass}>
+                Back to Home
+              </Link>
               <form action={logoutAction}>
-                <button
-                  type="submit"
-                  className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-                >
+                <Button type="submit" variant="secondary" size="md">
                   Sign Out
-                </button>
+                </Button>
               </form>
             </div>
           </div>
@@ -105,68 +111,49 @@ export default async function SettingsPage({
     : undefined;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-foreground/10">
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4">
-          <span className="text-base font-semibold">AI Career Mentor</span>
-          <div className="flex items-center gap-3">
-            {!isSuspended && (
-              <>
-                <Link
-                  href="/dashboard"
-                  className="text-sm font-medium text-foreground/80 underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-                >
-                  ড্যাশবোর্ড (Dashboard)
-                </Link>
-                <Link
-                  href="/onboarding/profile"
-                  className="text-sm font-medium text-foreground/80 underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-                >
-                  প্রোফাইল সেটআপ (Profile Setup)
-                </Link>
-              </>
-            )}
-            <form action={logoutAction}>
-              <button
-                type="submit"
-                className="h-9 rounded-md border border-foreground/20 px-3 text-xs font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-              >
-                Sign Out
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
+    <div className="flex flex-1 flex-col bg-surface-canvas text-text-primary">
+      <Header
+        variant="authenticated"
+        nav={
+          isSuspended
+            ? [
+                { href: '/', label: 'Home' },
+                { href: '/settings', label: 'Settings' },
+              ]
+            : undefined
+        }
+        actions={
+          <form action={logoutAction}>
+            <Button type="submit" variant="secondary" size="sm">
+              Sign Out
+            </Button>
+          </form>
+        }
+      />
 
-      <main className="mx-auto max-w-2xl px-4 py-8 sm:py-12">
-        <h1 className="text-2xl font-bold text-foreground sm:text-3xl">
+      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12">
+        <h1 className="text-heading-xl text-text-primary">
           অ্যাকাউন্ট ও সেটিংস (Account &amp; Settings)
         </h1>
 
         {isSuspended && (
-          <div
+          <Alert
+            variant="warning"
             role="alert"
-            className="mt-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-4 text-sm text-amber-900 dark:text-amber-200"
+            title="আপনার অ্যাকাউন্ট স্থগিত আছে (Your account is suspended)"
+            className="mt-6"
           >
-            <h2 className="font-semibold">
-              আপনার অ্যাকাউন্ট স্থগিত আছে (Your account is suspended)
-            </h2>
-            <p className="mt-1">
-              সাধারণ ফিচারগুলো বর্তমানে নিষ্ক্রিয় রয়েছে, তবে আপনি আপনার অ্যাকাউন্টের তথ্য দেখতে এবং সাইন আউট করতে পারবেন। অ্যাকাউন্ট মুছে ফেলার অধিকার সক্রিয় আছে (Account deletion is active)।
-            </p>
-          </div>
+            সাধারণ ফিচারগুলো বর্তমানে নিষ্ক্রিয় রয়েছে, তবে আপনি আপনার অ্যাকাউন্টের তথ্য দেখতে এবং সাইন আউট করতে পারবেন। অ্যাকাউন্ট মুছে ফেলার অধিকার সক্রিয় আছে (Account deletion is active)।
+          </Alert>
         )}
 
         {contactVerified && Boolean(user.verified_contact) && (
-          <div
-            role="status"
-            className="mt-6 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:text-emerald-200"
-          >
+          <Alert variant="success" role="status" className="mt-6">
             আপনার যোগাযোগের তথ্য সফলভাবে যাচাই করা হয়েছে (Your contact method has been verified successfully).
-          </div>
+          </Alert>
         )}
 
-        <div className="mt-6 flex flex-col gap-8">
+        <div className="mt-6 flex flex-col gap-6">
           <VerifiedContactPrompt
             verifiedContact={user.verified_contact}
             isSuspended={isSuspended}
@@ -195,69 +182,69 @@ export default async function SettingsPage({
 
           <section
             aria-labelledby="account-overview-heading"
-            className="rounded-lg border border-foreground/15 bg-background p-5"
+            className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
           >
             <h2
               id="account-overview-heading"
-              className="text-base font-semibold text-foreground"
+              className="text-heading-sm text-text-primary"
             >
               অ্যাকাউন্টের তথ্য (Account Overview)
             </h2>
-            <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+            <dl className="mt-4 grid grid-cols-1 gap-4 text-body-sm sm:grid-cols-2">
               <div>
-                <dt className="text-foreground/60">Email</dt>
-                <dd className="font-medium text-foreground">
+                <dt className="text-text-muted">Email</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">
                   {user.email ?? 'Not set'}
                 </dd>
               </div>
               <div>
-                <dt className="text-foreground/60">Phone</dt>
-                <dd className="font-medium text-foreground">
+                <dt className="text-text-muted">Phone</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">
                   {user.phone ?? 'Not set'}
                 </dd>
               </div>
               <div>
-                <dt className="text-foreground/60">Account Status</dt>
-                <dd className="font-medium text-foreground">{user.status}</dd>
+                <dt className="text-text-muted">Account Status</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">{user.status}</dd>
               </div>
               <div>
-                <dt className="text-foreground/60">Profile Completeness</dt>
-                <dd className="font-medium text-foreground">
+                <dt className="text-text-muted">Profile Completeness</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">
                   {profile_complete ? 'Complete' : 'Incomplete'}
                 </dd>
               </div>
               <div>
-                <dt className="text-foreground/60">Linked Providers</dt>
-                <dd className="font-medium text-foreground">
+                <dt className="text-text-muted">Linked Providers</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">
                   {user.linked_providers.length > 0
                     ? user.linked_providers.join(', ')
                     : 'None'}
                 </dd>
               </div>
               <div>
-                <dt className="text-foreground/60">Verified Primary Contact</dt>
-                <dd className="font-medium text-foreground">
+                <dt className="text-text-muted">Verified Primary Contact</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">
                   {user.verified_contact ? 'Verified' : 'Unverified'}
                 </dd>
               </div>
               <div>
-                <dt className="text-foreground/60">Deletion Eligibility</dt>
-                <dd className="font-medium text-foreground">
+                <dt className="text-text-muted">Deletion Eligibility</dt>
+                <dd className="mt-0.5 text-label-lg text-text-primary">
                   {can_delete_account ? 'Eligible' : 'Unavailable'}
                 </dd>
               </div>
             </dl>
 
             {Object.keys(effective_access).length > 0 && (
-              <div className="mt-4 border-t border-foreground/10 pt-4">
-                <p className="text-xs font-medium text-foreground/60">
+              <div className="mt-4 border-t border-border-subtle pt-4">
+                <p className="text-caption font-medium text-text-muted">
                   Effective Feature Access
                 </p>
-                <ul className="mt-2 flex flex-wrap gap-2 text-xs">
+                <ul className="mt-2 flex flex-wrap gap-2 text-caption">
                   {Object.entries(effective_access).map(([key, enabled]) => (
                     <li
                       key={key}
-                      className="rounded border border-foreground/15 px-2 py-1 text-foreground/80"
+                      className="rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-text-secondary"
                     >
                       {key}: {enabled ? 'enabled' : 'disabled'}
                     </li>
@@ -266,20 +253,14 @@ export default async function SettingsPage({
               </div>
             )}
 
-            <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-foreground/10 pt-4">
+            <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
               <form action={logoutAction}>
-                <button
-                  type="submit"
-                  className="h-11 rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-                >
+                <Button type="submit" variant="primary" size="md">
                   Sign Out
-                </button>
+                </Button>
               </form>
               {!isSuspended && (
-                <Link
-                  href="/onboarding/profile"
-                  className="inline-flex h-11 items-center justify-center rounded-lg border border-foreground/20 px-5 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-                >
+                <Link href="/onboarding/profile" className={secondaryLinkClass}>
                   প্রোফাইল সম্পাদনা করুন (Edit Profile)
                 </Link>
               )}

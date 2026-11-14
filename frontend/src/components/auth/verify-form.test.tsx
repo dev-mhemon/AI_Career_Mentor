@@ -793,7 +793,7 @@ describe('VerifyForm', () => {
       expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
     });
 
-    const tokenInput = screen.getByPlaceholderText(/verification code/i);
+    const tokenInput = screen.getByLabelText(/enter the verification code/i);
     fireEvent.change(tokenInput, { target: { value: '123456' } });
 
     const submitBtn = screen.getByRole('button', { name: /verify code/i });
@@ -810,5 +810,42 @@ describe('VerifyForm', () => {
     expect(submittedFormData?.get('context')).toBe('secondary_contact');
     expect(submittedFormData?.get('identifier')).toBe('secondary@example.com');
     expect(submittedFormData?.get('token')).toBe('123456');
+  });
+
+  it('keeps local 01712345678 visible in phone re-entry while submitting +8801712345678 and validates OTP live', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=phone'),
+    );
+    vi.mocked(verifyOtpAction).mockResolvedValueOnce({
+      success: true,
+      redirectTo: '/dashboard',
+    });
+
+    render(<VerifyForm />);
+
+    const phoneInput = await screen.findByLabelText(/phone number/i) as HTMLInputElement;
+    fireEvent.change(phoneInput, { target: { value: '012' } });
+    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: '01712345678' } });
+    fireEvent.blur(phoneInput);
+    expect(phoneInput.value).toBe('01712345678');
+    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+
+    const otpInput = screen.getByLabelText(/enter the verification code/i);
+    fireEvent.change(otpInput, { target: { value: '1234' } });
+    expect(screen.getByText(/enter the 6-digit code/i)).toBeInTheDocument();
+
+    fireEvent.change(otpInput, { target: { value: '123456' } });
+    expect(screen.queryByText(/enter the 6-digit code/i)).not.toBeInTheDocument();
+
+    const submitBtn = screen.getByRole('button', { name: /verify code/i });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    const submittedFormData = vi.mocked(verifyOtpAction).mock.calls[0]?.[1];
+    expect(submittedFormData?.get('identifier')).toBe('+8801712345678');
+    expect(phoneInput.value).toBe('01712345678');
   });
 });

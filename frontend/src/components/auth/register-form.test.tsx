@@ -105,11 +105,11 @@ describe("RegisterForm", () => {
   it("switches to phone tab and saves phone verification draft on submit", async () => {
     render(<RegisterForm />);
 
-    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
     expect(screen.getByLabelText(/^phone number$/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("+8801712345678")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("01712-345678")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/^phone number$/i), {
       target: { value: "+8801712345678" },
@@ -132,5 +132,78 @@ describe("RegisterForm", () => {
       identifier: "+8801712345678",
       context: "registration",
     });
+  });
+
+  it("keeps 01712345678 visible after blur while submitting +8801712345678 in FormData", async () => {
+    render(<RegisterForm />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+
+    const phoneInput = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+    fireEvent.blur(phoneInput);
+
+    expect(phoneInput.value).toBe("01712345678");
+
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm password/i), {
+      target: { value: "password123" },
+    });
+    fireEvent.click(screen.getByLabelText(/agree to the privacy policy/i));
+
+    const form = phoneInput.closest("form")!;
+    const formDataBeforeSubmit = new FormData(form);
+    expect(formDataBeforeSubmit.get("identifier")).toBe("+8801712345678");
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(registerAction).toHaveBeenCalled();
+    const submittedFormData = vi.mocked(registerAction).mock.calls[0]?.[1];
+    expect(submittedFormData?.get("identifier")).toBe("+8801712345678");
+    expect(phoneInput.value).toBe("01712345678");
+  });
+
+  it("validates email, BD phone, password, and confirm password live onChange without waiting for blur", () => {
+    render(<RegisterForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    fireEvent.change(emailInput, { target: { value: "bad-email" } });
+    expect(screen.getByText(/enter a valid email address/i)).toBeInTheDocument();
+
+    fireEvent.change(emailInput, { target: { value: "valid@example.com" } });
+    expect(screen.queryByText(/enter a valid email address/i)).not.toBeInTheDocument();
+
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    fireEvent.change(passwordInput, { target: { value: "short" } });
+    expect(
+      screen.getByText(/password must be at least 8 characters/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(passwordInput, { target: { value: "longenough8" } });
+    expect(
+      screen.queryByText(/password must be at least 8 characters/i),
+    ).not.toBeInTheDocument();
+
+    const confirmInput = screen.getByLabelText(/confirm password/i);
+    fireEvent.change(confirmInput, { target: { value: "longenough9" } });
+    expect(screen.getByText(/passwords do not match/i)).toBeInTheDocument();
+
+    fireEvent.change(confirmInput, { target: { value: "longenough8" } });
+    expect(screen.queryByText(/passwords do not match/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
+    fireEvent.change(phoneInput, { target: { value: "012" } });
+    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: "017123456789" } });
+    expect(screen.getByText(/must be 11 digits/i)).toBeInTheDocument();
   });
 });

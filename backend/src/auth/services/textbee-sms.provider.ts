@@ -29,7 +29,7 @@ export function maskPhone(phone: string): string {
 }
 
 /**
- * SMS registration and OTP delivery provider backed by TextBee REST API with local Mailpit fallback in non-production.
+ * SMS registration and OTP delivery provider backed exclusively by TextBee REST API.
  */
 @Injectable()
 export class TextBeeSmsProvider {
@@ -48,56 +48,8 @@ export class TextBeeSmsProvider {
     );
   }
 
-  // [ORIGINAL] Pre-fallback isConfigured():
-  // isConfigured(): boolean {
-  //   const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-  //   if (apiKey) return true;
-  //   const isProd =
-  //     (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
-  //     'production';
-  //   if (!isProd) {
-  //     const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
-  //     if (mailpit) return true;
-  //   }
-  //   return false;
-  // }
-  private resolveDeliveryMode(): 'textbee' | 'mailpit' | 'unconfigured' {
-    const isProd =
-      (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
-      'production';
-    const smsProvider = this.config
-      ?.get<string>('SMS_PROVIDER')
-      ?.trim()
-      .toLowerCase();
-    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-    const deviceId = this.config?.get<string>('TEXTBEE_DEVICE_ID')?.trim();
-    const mailpitUrl = this.config?.get<string>('MAILPIT_URL')?.trim();
-
-    if (isProd) {
-      return apiKey ? 'textbee' : 'unconfigured';
-    }
-
-    if (smsProvider === 'mailpit') {
-      return mailpitUrl ? 'mailpit' : 'unconfigured';
-    }
-
-    if (smsProvider === 'textbee') {
-      return apiKey ? 'textbee' : 'unconfigured';
-    }
-
-    if (apiKey && (deviceId || !mailpitUrl)) {
-      return 'textbee';
-    }
-
-    if (mailpitUrl) {
-      return 'mailpit';
-    }
-
-    return 'unconfigured';
-  }
-
   isConfigured(): boolean {
-    return this.resolveDeliveryMode() !== 'unconfigured';
+    return Boolean(this.config?.get<string>('TEXTBEE_API_KEY')?.trim());
   }
 
   ready(): void {
@@ -128,17 +80,8 @@ export class TextBeeSmsProvider {
   async checkDeliveryHealth(_signal?: AbortSignal): Promise<void> {
     void _signal;
     this.ready();
-    // [ORIGINAL] Pre-fallback checkDeliveryHealth():
-    // const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-    // if (apiKey) return;
-    // const isProd =
-    //   (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
-    //   'production';
-    // if (!isProd) {
-    //   const mailpit = this.config?.get<string>('MAILPIT_URL')?.trim();
-    //   if (mailpit) return;
-    // }
-    if (this.resolveDeliveryMode() !== 'unconfigured') return;
+    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+    if (apiKey) return;
     fail(
       503,
       'SERVICE_UNAVAILABLE',
@@ -342,38 +285,10 @@ export class TextBeeSmsProvider {
     message: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    // [ORIGINAL] Pre-fallback dispatchSms():
-    // const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-    // if (apiKey) {
-    //   await this.dispatchTextBee(phone, message, apiKey, signal);
-    //   return;
-    // }
-    //
-    // const isProd =
-    //   (this.config?.get<string>('NODE_ENV') || process.env.NODE_ENV) ===
-    //   'production';
-    // if (!isProd) {
-    //   const mailpitUrl = this.config?.get<string>('MAILPIT_URL')?.trim();
-    //   if (mailpitUrl) {
-    //     await this.dispatchMailpit(phone, message, mailpitUrl, signal);
-    //     return;
-    //   }
-    // }
-    const mode = this.resolveDeliveryMode();
-    if (mode === 'textbee') {
-      const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
-      if (apiKey) {
-        await this.dispatchTextBee(phone, message, apiKey, signal);
-        return;
-      }
-    }
-
-    if (mode === 'mailpit') {
-      const mailpitUrl = this.config?.get<string>('MAILPIT_URL')?.trim();
-      if (mailpitUrl) {
-        await this.dispatchMailpit(phone, message, mailpitUrl, signal);
-        return;
-      }
+    const apiKey = this.config?.get<string>('TEXTBEE_API_KEY')?.trim();
+    if (apiKey) {
+      await this.dispatchTextBee(phone, message, apiKey, signal);
+      return;
     }
 
     fail(
@@ -453,77 +368,5 @@ export class TextBeeSmsProvider {
         5,
       );
     }
-  }
-
-  private async dispatchMailpit(
-    phone: string,
-    message: string,
-    rawMailpitUrl: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const mailpitBase = rawMailpitUrl.replace(/\/+$/, '');
-    const mailpitSendUrl = mailpitBase.endsWith('/api/v1/send')
-      ? mailpitBase
-      : `${mailpitBase}/api/v1/send`;
-
-    const fromAddress =
-      this.config?.get<string>('AUTH_EMAIL_FROM')?.trim() ||
-      'noreply@mentor.local';
-    const sanitizedPhone = phone.replace(/[^a-zA-Z0-9]/g, '');
-    const toAddress = `${sanitizedPhone}@sms.local`;
-
-    const timeoutSignal = AbortSignal.timeout(this.getTimeoutMs());
-    const combinedSignal = signal
-      ? AbortSignal.any([signal, timeoutSignal])
-      : timeoutSignal;
-
-    let response: Response;
-    try {
-      response = await fetch(mailpitSendUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          From: { Email: fromAddress },
-          To: [{ Email: toAddress }],
-          Subject: 'Your SMS verification code',
-          Text: message,
-        }),
-        redirect: 'error',
-        signal: combinedSignal,
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        (error.name === 'AbortError' ||
-          /timeout|timed out/i.test(error.message))
-      ) {
-        fail(504, 'PROVIDER_TIMEOUT', 'SMS provider timed out', [], true);
-      }
-      this.logger.error('Mailpit SMS fallback dispatch error');
-      fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        'Local SMS dispatch failed',
-        [],
-        true,
-        5,
-      );
-    }
-
-    if (!response.ok) {
-      fail(
-        503,
-        'SERVICE_UNAVAILABLE',
-        `Local SMS dispatch failed with status ${response.status}`,
-        [],
-        true,
-        5,
-      );
-    }
-    this.logger.log(
-      `Local Mailpit SMS fallback dispatched for ${maskPhone(phone)}`,
-    );
   }
 }

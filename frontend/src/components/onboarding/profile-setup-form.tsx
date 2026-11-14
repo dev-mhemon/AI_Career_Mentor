@@ -8,6 +8,20 @@ import {
   type ProfileSetupFormValues,
 } from '@/lib/profile/actions';
 import type { ProfileResponse } from '@/lib/api/client';
+import { mapActionResult } from '@/lib/api/error-mapper';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { AlertCircleIcon } from '@/components/ui/icons';
+import { cn } from '@/components/ui/cn';
+
+const CONTROL_BASE_CLASS =
+  'min-h-11 w-full rounded-md border bg-surface-default px-3 py-2 text-body text-text-primary placeholder:text-text-muted transition-colors duration-(--duration-fast) ease-standard read-only:bg-surface-subtle';
+
+function fieldBorderClass(hasError: boolean): string {
+  return hasError
+    ? 'border-border-danger border-2'
+    : 'border-border-default hover:border-border-strong focus:border-border-focus';
+}
 
 const DRAFT_STORAGE_KEY = 'mentor_onboarding_profile_draft';
 
@@ -394,6 +408,15 @@ export function ProfileSetupForm({
   const fieldErrors = isErrorDismissed ? {} : (state.fieldErrors ?? {});
   const storedSkills = effectiveProfile?.existing_skills ?? [];
   const showDraftRestored = hasDraft && !isSuccessVisible;
+  const mappedError =
+    state.error && !isErrorDismissed
+      ? mapActionResult({
+          error: state.error,
+          code: state.code,
+          retryAfterSeconds: state.retryAfterSeconds ?? undefined,
+          fieldErrors: state.fieldErrors,
+        })
+      : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -404,23 +427,23 @@ export function ProfileSetupForm({
         aria-valuemin={1}
         aria-valuemax={5}
         aria-label="Onboarding progress: Step 1 of 5"
-        className="flex flex-col gap-2"
+        className="flex flex-col gap-2.5 rounded-lg border border-border-subtle bg-surface-subtle p-4"
       >
-        <div className="flex items-center justify-between text-xs font-medium text-foreground/70">
+        <div className="flex items-center justify-between text-caption font-medium text-text-secondary">
           <span>ধাপ ১ / ৫ (Step 1 of 5): প্রোফাইল সেটআপ (Profile Setup)</span>
-          <span>20%</span>
+          <span className="font-mono tabular-nums text-text-primary">20%</span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
-          <div className="h-full w-1/5 rounded-full bg-foreground transition-all" />
+        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-sunken">
+          <div className="h-full w-1/5 rounded-full bg-action-primary-background transition-all duration-(--duration-normal) ease-standard" />
         </div>
-        <ol className="hidden gap-2 text-xs text-foreground/60 sm:grid sm:grid-cols-5">
+        <ol className="hidden gap-2 text-caption sm:grid sm:grid-cols-5">
           {ONBOARDING_STEPS.map((label, idx) => (
             <li
               key={label}
               className={
                 idx === 0
-                  ? 'font-semibold text-foreground'
-                  : 'text-foreground/50'
+                  ? 'font-semibold text-text-brand'
+                  : 'text-text-muted'
               }
             >
               {label}
@@ -431,54 +454,46 @@ export function ProfileSetupForm({
 
       {/* Initial Profile Load Warning Banner (preserves form usability on failed GET /profile) */}
       {loadError && (
-        <div
+        <Alert
+          variant="warning"
           role="alert"
-          className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200"
+          title="প্রোফাইল লোড করা যায়নি (Profile load warning)"
         >
-          <p className="font-medium">প্রোফাইল লোড করা যায়নি (Profile load warning)</p>
-          <p className="mt-1">{loadError}</p>
-        </div>
+          {loadError}
+        </Alert>
       )}
 
       {showDraftRestored && (
         <p
           role="status"
           aria-live="polite"
-          className="text-xs text-foreground/70"
+          className="text-caption text-text-muted"
         >
           ড্রাফট সংরক্ষিত (Saved locally — unsaved changes restored).
         </p>
       )}
 
-      {state.error && !isErrorDismissed && (
-        <div
-          ref={errorAlertRef}
-          role="alert"
-          tabIndex={-1}
-          className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300 focus:outline-none"
-        >
-          <p>{state.error}</p>
-          {state.retryAfterSeconds !== null &&
-            state.retryAfterSeconds !== undefined && (
-              <p className="mt-1 text-xs">
-                অনুগ্রহ করে {state.retryAfterSeconds} সেকেন্ড পর আবার চেষ্টা করুন (Retry after{' '}
-                {state.retryAfterSeconds}s).
-              </p>
-            )}
+      {mappedError && (
+        <div ref={errorAlertRef} tabIndex={-1} className="focus:outline-none">
+          <Alert
+            variant={
+              mappedError.tone !== 'error' ||
+              (mappedError.retryAfterSeconds ?? 0) > 0
+                ? 'warning'
+                : 'error_retryable'
+            }
+            role="alert"
+            retryAfterSeconds={mappedError.retryAfterSeconds}
+          >
+            {mappedError.message}
+          </Alert>
         </div>
       )}
 
       {isSuccessVisible && state.message && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="rounded-lg border border-green-600/40 bg-green-600/10 p-3 text-sm text-green-800 dark:text-green-200"
-        >
-          <p className="font-medium">{state.message}</p>
-          <p className="mt-1 text-xs">
-            আপনি এখন ড্যাশবোর্ডে যেতে পারেন। পরবর্তী ধাপগুলো (Skills, Preferences, Career Goal) M05-এ যুক্ত হবে।
-          </p>
-        </div>
+        <Alert variant="success" role="status" title={state.message}>
+          আপনি এখন ড্যাশবোর্ডে যেতে পারেন। পরবর্তী ধাপগুলো (Skills, Preferences, Career Goal) M05-এ যুক্ত হবে।
+        </Alert>
       )}
 
       <form action={formAction} noValidate className="flex flex-col gap-5">
@@ -486,7 +501,7 @@ export function ProfileSetupForm({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="current_role"
-            className="text-sm font-medium text-foreground"
+            className="text-label-lg text-text-primary"
           >
             বর্তমান পেশা বা ভূমিকা (Current Role / Profession) <span aria-hidden="true">*</span>
           </label>
@@ -496,7 +511,7 @@ export function ProfileSetupForm({
             type="text"
             required
             maxLength={120}
-            disabled={isPending}
+            readOnly={isPending}
             value={values.current_role}
             onChange={(e) => updateField('current_role', e.target.value)}
             aria-invalid={Boolean(fieldErrors.current_role)}
@@ -504,14 +519,19 @@ export function ProfileSetupForm({
               fieldErrors.current_role ? 'current_role-error' : 'current_role-hint'
             }
             placeholder="যেমন: Student, Frontend Developer, QA Engineer"
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+            className={cn(CONTROL_BASE_CLASS, fieldBorderClass(Boolean(fieldErrors.current_role)))}
           />
-          <p id="current_role-hint" className="text-xs text-foreground/60">
+          <p id="current_role-hint" className="text-caption text-text-muted">
             সর্বোচ্চ ১২০ অক্ষর (Maximum 120 characters).
           </p>
           {fieldErrors.current_role && (
-            <p id="current_role-error" role="alert" className="text-xs text-red-600">
-              {fieldErrors.current_role}
+            <p
+              id="current_role-error"
+              role="alert"
+              className="flex items-start gap-1 text-caption text-text-danger"
+            >
+              <AlertCircleIcon className="mt-0.5 shrink-0" />
+              <span>{fieldErrors.current_role}</span>
             </p>
           )}
         </div>
@@ -525,7 +545,7 @@ export function ProfileSetupForm({
           />
           <label
             htmlFor="education"
-            className="text-sm font-medium text-foreground"
+            className="text-label-lg text-text-primary"
           >
             শিক্ষাগত যোগ্যতা — ঐচ্ছিক (Education — Optional)
           </label>
@@ -534,7 +554,7 @@ export function ProfileSetupForm({
             name="education"
             type="text"
             maxLength={200}
-            disabled={isPending}
+            readOnly={isPending}
             value={values.education}
             onChange={(e) => updateField('education', e.target.value)}
             aria-invalid={Boolean(fieldErrors.education)}
@@ -542,14 +562,19 @@ export function ProfileSetupForm({
               fieldErrors.education ? 'education-error' : 'education-hint'
             }
             placeholder="যেমন: BSc in CSE, Diploma in Engineering (ঐচ্ছিক / Optional)"
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+            className={cn(CONTROL_BASE_CLASS, fieldBorderClass(Boolean(fieldErrors.education)))}
           />
-          <p id="education-hint" className="text-xs text-foreground/60">
+          <p id="education-hint" className="text-caption text-text-muted">
             এই তথ্যটি ঐচ্ছিক — ফাঁকা রাখা যাবে (Optional field — not required for profile completion).
           </p>
           {fieldErrors.education && (
-            <p id="education-error" role="alert" className="text-xs text-red-600">
-              {fieldErrors.education}
+            <p
+              id="education-error"
+              role="alert"
+              className="flex items-start gap-1 text-caption text-text-danger"
+            >
+              <AlertCircleIcon className="mt-0.5 shrink-0" />
+              <span>{fieldErrors.education}</span>
             </p>
           )}
         </div>
@@ -558,7 +583,7 @@ export function ProfileSetupForm({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="experience_level"
-            className="text-sm font-medium text-foreground"
+            className="text-label-lg text-text-primary"
           >
             অভিজ্ঞতার স্তর (Experience Level) <span aria-hidden="true">*</span>
           </label>
@@ -566,7 +591,8 @@ export function ProfileSetupForm({
             id="experience_level"
             name="experience_level"
             required
-            disabled={isPending}
+            aria-disabled={isPending || undefined}
+            tabIndex={isPending ? -1 : undefined}
             value={values.experience_level}
             onChange={(e) => updateField('experience_level', e.target.value)}
             aria-invalid={Boolean(fieldErrors.experience_level)}
@@ -575,7 +601,11 @@ export function ProfileSetupForm({
                 ? 'experience_level-error'
                 : 'experience_level-hint'
             }
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground focus:border-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+            className={cn(
+              CONTROL_BASE_CLASS,
+              fieldBorderClass(Boolean(fieldErrors.experience_level)),
+              isPending && 'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
+            )}
           >
             <option value="">
               অভিজ্ঞতার স্তর নির্বাচন করুন (Select experience level)
@@ -593,22 +623,23 @@ export function ProfileSetupForm({
               Senior — অভিজ্ঞ পেশাদার (Senior)
             </option>
           </select>
-          <p id="experience_level-hint" className="text-xs text-foreground/60">
+          <p id="experience_level-hint" className="text-caption text-text-muted">
             নতুনদের জন্য Beginner নির্বাচন করুন (Choose Beginner if starting from zero).
           </p>
           {fieldErrors.experience_level && (
             <p
               id="experience_level-error"
               role="alert"
-              className="text-xs text-red-600"
+              className="flex items-start gap-1 text-caption text-text-danger"
             >
-              {fieldErrors.experience_level}
+              <AlertCircleIcon className="mt-0.5 shrink-0" />
+              <span>{fieldErrors.experience_level}</span>
             </p>
           )}
         </div>
 
         {/* Explicit Beginner "None" Skills Toggle (C01 §14 / C05 EP-P02 / C09 Component 08) */}
-        <div className="flex flex-col gap-2 rounded-lg border border-foreground/15 bg-foreground/[0.02] p-4">
+        <div className="flex flex-col gap-2 rounded-lg border border-border-default bg-surface-subtle p-4">
           <input
             type="hidden"
             name="existing_skills_none"
@@ -623,13 +654,13 @@ export function ProfileSetupForm({
             <div className="flex flex-col gap-1">
               <span
                 id="existing_skills_none_label"
-                className="text-sm font-medium text-foreground"
+                className="text-label-lg text-text-primary"
               >
                 আমার এখনো কোনো টেক স্কিল নেই (None — Complete Beginner)
               </span>
               <span
                 id="existing_skills_none_hint"
-                className="text-xs text-foreground/60"
+                className="text-caption text-text-muted"
               >
                 নতুনদের জন্য বৈধ — কোনো কৃত্রিম স্কিল তৈরি করা হবে না (Valid for beginners; creates no fabricated skills).
               </span>
@@ -643,28 +674,30 @@ export function ProfileSetupForm({
               aria-describedby="existing_skills_none_hint"
               disabled={isPending}
               onClick={handleToggleSkillsNone}
-              className={`relative inline-flex h-11 min-w-[76px] items-center justify-center rounded-full border px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50 ${
+              className={cn(
+                'relative inline-flex h-11 min-w-[84px] shrink-0 items-center justify-center rounded-full border px-3 text-caption font-semibold transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)',
                 values.existing_skills_none
-                  ? 'border-foreground bg-foreground text-background'
-                  : 'border-foreground/30 bg-background text-foreground'
-              }`}
+                  ? 'border-action-primary-background bg-action-primary-background text-action-primary-foreground'
+                  : 'border-border-default bg-surface-default text-text-primary hover:border-border-strong',
+              )}
             >
               {values.existing_skills_none ? 'None: ON' : 'None: OFF'}
             </button>
           </div>
 
           {storedSkills.length > 0 && !values.existing_skills_none && (
-            <div className="mt-1 text-xs text-foreground/70">
+            <div className="mt-1 text-caption text-text-secondary">
               <span>সংরক্ষিত স্কিল (Stored skills preserved): </span>
-              <span className="font-medium">
+              <span className="font-medium text-text-primary">
                 {storedSkills.map((s) => s.name).join(', ')}
               </span>
             </div>
           )}
 
           {(fieldErrors.existing_skills || fieldErrors.existing_skills_none) && (
-            <p role="alert" className="text-xs text-red-600">
-              {fieldErrors.existing_skills || fieldErrors.existing_skills_none}
+            <p role="alert" className="flex items-start gap-1 text-caption text-text-danger">
+              <AlertCircleIcon className="mt-0.5 shrink-0" />
+              <span>{fieldErrors.existing_skills || fieldErrors.existing_skills_none}</span>
             </p>
           )}
         </div>
@@ -674,7 +707,7 @@ export function ProfileSetupForm({
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor="timezone"
-              className="text-sm font-medium text-foreground"
+              className="text-label-lg text-text-primary"
             >
               টাইমজোন (IANA Timezone)
             </label>
@@ -682,7 +715,7 @@ export function ProfileSetupForm({
               id="timezone"
               name="timezone"
               type="text"
-              disabled={isPending}
+              readOnly={isPending}
               value={values.timezone}
               onChange={(e) => updateField('timezone', e.target.value)}
               aria-invalid={Boolean(fieldErrors.timezone)}
@@ -690,14 +723,19 @@ export function ProfileSetupForm({
                 fieldErrors.timezone ? 'timezone-error' : 'timezone-hint'
               }
               placeholder="Asia/Dhaka"
-              className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+              className={cn(CONTROL_BASE_CLASS, fieldBorderClass(Boolean(fieldErrors.timezone)))}
             />
-            <p id="timezone-hint" className="text-xs text-foreground/60">
+            <p id="timezone-hint" className="text-caption text-text-muted">
               উদাহরণ: Asia/Dhaka, UTC
             </p>
             {fieldErrors.timezone && (
-              <p id="timezone-error" role="alert" className="text-xs text-red-600">
-                {fieldErrors.timezone}
+              <p
+                id="timezone-error"
+                role="alert"
+                className="flex items-start gap-1 text-caption text-text-danger"
+              >
+                <AlertCircleIcon className="mt-0.5 shrink-0" />
+                <span>{fieldErrors.timezone}</span>
               </p>
             )}
           </div>
@@ -705,7 +743,7 @@ export function ProfileSetupForm({
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor="preferred_daily_hours"
-              className="text-sm font-medium text-foreground"
+              className="text-label-lg text-text-primary"
             >
               দৈনিক শেখার সময় — ঘণ্টা (Preferred Daily Hours)
             </label>
@@ -716,7 +754,7 @@ export function ProfileSetupForm({
               min="0.5"
               max="12"
               step="0.5"
-              disabled={isPending}
+              readOnly={isPending}
               value={values.preferred_daily_hours}
               onChange={(e) =>
                 updateField('preferred_daily_hours', e.target.value)
@@ -728,18 +766,22 @@ export function ProfileSetupForm({
                   : 'preferred_daily_hours-hint'
               }
               placeholder="2"
-              className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+              className={cn(
+                CONTROL_BASE_CLASS,
+                fieldBorderClass(Boolean(fieldErrors.preferred_daily_hours)),
+              )}
             />
-            <p id="preferred_daily_hours-hint" className="text-xs text-foreground/60">
+            <p id="preferred_daily_hours-hint" className="text-caption text-text-muted">
               ০.৫ থেকে ১২ ঘণ্টা, ০.৫ ধাপে (0.5 to 12 hours in 0.5 steps).
             </p>
             {fieldErrors.preferred_daily_hours && (
               <p
                 id="preferred_daily_hours-error"
                 role="alert"
-                className="text-xs text-red-600"
+                className="flex items-start gap-1 text-caption text-text-danger"
               >
-                {fieldErrors.preferred_daily_hours}
+                <AlertCircleIcon className="mt-0.5 shrink-0" />
+                <span>{fieldErrors.preferred_daily_hours}</span>
               </p>
             )}
           </div>
@@ -747,37 +789,38 @@ export function ProfileSetupForm({
 
         {/* Action Buttons: Save Profile, Disabled M05 Next Step, and Working Skip to Dashboard */}
         <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <button
+          <Button
             type="submit"
-            disabled={isPending}
-            className="h-11 rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+            variant="primary"
+            size="lg"
+            isLoading={isPending}
+            loadingText="সংরক্ষণ হচ্ছে... (Saving...)"
           >
-            {isPending
-              ? 'সংরক্ষণ হচ্ছে... (Saving...)'
-              : 'প্রোফাইল সংরক্ষণ করুন (Save Profile)'}
-          </button>
+            প্রোফাইল সংরক্ষণ করুন (Save Profile)
+          </Button>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="md"
               disabled
               aria-disabled="true"
               aria-describedby="m05-step-note"
-              className="h-11 cursor-not-allowed rounded-lg border border-foreground/15 px-4 text-sm font-medium text-foreground/40"
             >
               পরবর্তী: স্কিলস (Next: Skills — M05)
-            </button>
+            </Button>
 
             <Link
               href="/dashboard"
-              className="inline-flex h-11 items-center justify-center rounded-lg border border-foreground/20 px-4 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+              className="inline-flex h-10 min-h-11 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-4 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active"
             >
               ড্যাশবোর্ডে যান (Skip to Dashboard)
             </Link>
           </div>
         </div>
 
-        <p id="m05-step-note" className="text-xs text-foreground/60">
+        <p id="m05-step-note" className="text-caption text-text-muted">
           দ্রষ্টব্য: প্রোফাইল সম্পূর্ণ না হলেও আপনি যেকোনো সময় ড্যাশবোর্ড ব্যবহার করতে পারবেন (Profile completion is only required before roadmap generation; Steps 2–5 are scheduled for Milestone M05).
         </p>
       </form>

@@ -7,6 +7,16 @@ import {
   saveVerificationDraft,
   clearVerificationDraft,
 } from '@/lib/auth/verification-draft';
+import { AuthAlert } from '@/components/auth/auth-alert';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { CheckCircleIcon } from '@/components/ui/icons';
+import {
+  validateBdPhone,
+  validateBdPhoneOnChange,
+  validateEmail,
+  validateEmailLive,
+} from '@/lib/validation/auth-schemas';
 
 /**
  * Properties for the AddContactForm component.
@@ -33,6 +43,11 @@ export function AddContactForm({
   );
 
   const [activeTab, setActiveTab] = useState<'email' | 'phone'>('email');
+  const [contact, setContact] = useState('');
+  const [contactError, setContactError] = useState<string | undefined>();
+  const [dismissedServerState, setDismissedServerState] =
+    useState<AuthActionResult | null>(null);
+  const phoneBlurredRef = useRef(false);
 
   const router = useRouter();
   const handledStateRef = useRef<AuthActionResult | null>(null);
@@ -57,11 +72,14 @@ export function AddContactForm({
 
   if (isSuspended) {
     return (
-      <section aria-labelledby="add-contact-heading" className="rounded-lg border border-foreground/15 p-5">
-        <h3 id="add-contact-heading" className="text-base font-semibold text-foreground">
+      <section
+        aria-labelledby="add-contact-heading"
+        className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
+      >
+        <h3 id="add-contact-heading" className="text-heading-sm text-text-primary">
           যোগাযোগ তথ্য যোগ করুন (Add Contact Method)
         </h3>
-        <p className="mt-2 text-sm text-foreground/60">
+        <p className="mt-2 text-body-sm text-text-secondary">
           স্থগিত অ্যাকাউন্ট থেকে নতুন যোগাযোগ মাধ্যম যোগ করা সম্ভব নয়।
         </p>
       </section>
@@ -72,40 +90,52 @@ export function AddContactForm({
     return (
       <section
         aria-labelledby="add-contact-heading"
-        className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-5"
+        className="flex gap-3 rounded-xl border border-feedback-success-border bg-feedback-success-background p-6 shadow-xs"
       >
-        <h3
-          id="add-contact-heading"
-          className="text-base font-semibold text-emerald-950 dark:text-emerald-100"
-        >
-          যোগাযোগের মাধ্যম যাচাইকৃত (Verified Contact Method)
-        </h3>
-        <p className="mt-1 text-sm text-emerald-900/90 dark:text-emerald-200/90">
-          আপনার অ্যাকাউন্টের প্রাথমিক যোগাযোগের মাধ্যম ইতিমধ্যে যাচাই করা হয়েছে (Your account already has a verified primary contact method).
-        </p>
+        <CheckCircleIcon className="mt-0.5 shrink-0 text-feedback-success-icon" />
+        <div>
+          <h3
+            id="add-contact-heading"
+            className="text-heading-sm text-feedback-success-text"
+          >
+            যোগাযোগের মাধ্যম যাচাইকৃত (Verified Contact Method)
+          </h3>
+          <p className="mt-1 text-body-sm text-feedback-success-text">
+            আপনার অ্যাকাউন্টের প্রাথমিক যোগাযোগের মাধ্যম ইতিমধ্যে যাচাই করা হয়েছে (Your account already has a verified primary contact method).
+          </p>
+        </div>
       </section>
     );
   }
 
   return (
-    <section aria-labelledby="add-contact-heading" className="flex flex-col gap-4">
+    <section
+      aria-labelledby="add-contact-heading"
+      className="flex flex-col gap-4 rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
+    >
       <div>
-        <h3 id="add-contact-heading" className="text-base font-semibold text-foreground">
+        <h3 id="add-contact-heading" className="text-heading-sm text-text-primary">
           যোগাযোগ তথ্য যোগ করুন (Add Contact Method)
         </h3>
-        <p className="mt-1 text-sm text-foreground/60">
+        <p className="mt-1 text-body-sm text-text-secondary">
           আপনার অ্যাকাউন্ট সুরক্ষিত করতে এবং পরিচয়-সংবেদনশীল কাজের জন্য একটি যোগাযোগের তথ্য যোগ করুন।
         </p>
       </div>
 
-      <div className="flex w-full rounded-lg bg-foreground/5 p-1">
+      <div className="flex w-full rounded-lg bg-surface-sunken p-1">
         <button
           type="button"
-          onClick={() => setActiveTab('email')}
-          className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
+          disabled={isPending}
+          onClick={() => {
+            setActiveTab('email');
+            setContact('');
+            setContactError(undefined);
+            phoneBlurredRef.current = false;
+          }}
+          className={`flex min-h-11 flex-1 items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
             activeTab === 'email'
-              ? 'bg-background text-foreground shadow-sm'
-              : 'text-foreground/60 hover:text-foreground'
+              ? 'bg-surface-default text-text-primary shadow-xs'
+              : 'text-text-secondary hover:text-text-primary'
           }`}
           aria-pressed={activeTab === 'email'}
         >
@@ -113,11 +143,17 @@ export function AddContactForm({
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('phone')}
-          className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
+          disabled={isPending}
+          onClick={() => {
+            setActiveTab('phone');
+            setContact('');
+            setContactError(undefined);
+            phoneBlurredRef.current = false;
+          }}
+          className={`flex min-h-11 flex-1 items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
             activeTab === 'phone'
-              ? 'bg-background text-foreground shadow-sm'
-              : 'text-foreground/60 hover:text-foreground'
+              ? 'bg-surface-default text-text-primary shadow-xs'
+              : 'text-text-secondary hover:text-text-primary'
           }`}
           aria-pressed={activeTab === 'phone'}
         >
@@ -125,61 +161,104 @@ export function AddContactForm({
         </button>
       </div>
 
-      {state?.error && (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
-        >
-          {state.error}
-        </div>
-      )}
+      <AuthAlert result={state} />
 
       <form
         action={formAction}
+        noValidate
         onSubmit={(e) => {
           const form = e.currentTarget;
-          const contactInput = form.elements.namedItem('contact') as HTMLInputElement;
-          const contact = contactInput?.value?.trim();
-          if (contact) {
-            saveVerificationDraft({
-              channel: activeTab,
-              identifier: contact,
-              context: 'secondary_contact',
-            });
+          const check =
+            activeTab === 'email'
+              ? validateEmail(contact)
+              : validateBdPhone(contact);
+          if (!check.ok) {
+            e.preventDefault();
+            if (activeTab === 'phone' && contact.trim()) {
+              phoneBlurredRef.current = true;
+            }
+            setContactError(check.error);
+            return;
           }
+          setContactError(undefined);
+          if (activeTab === 'email') {
+            const contactInput = form.elements.namedItem('contact') as HTMLInputElement | null;
+            if (contactInput) contactInput.value = check.value;
+          }
+          saveVerificationDraft({
+            channel: activeTab,
+            identifier: check.value,
+            context: 'secondary_contact',
+          });
         }}
         className="flex flex-col gap-4"
       >
         <input type="hidden" name="channel" value={activeTab} />
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="contact" className="text-sm font-medium text-foreground">
-            {activeTab === 'email' ? 'ইমেইল ঠিকানা (Email Address)' : 'বাংলাদেশি মোবাইল নম্বর (BD Mobile Number)'}
-          </label>
-          <input
-            id="contact"
-            name="contact"
-            type={activeTab === 'email' ? 'email' : 'tel'}
-            autoComplete={activeTab === 'email' ? 'email' : 'tel'}
-            required
-            disabled={isPending}
-            placeholder={activeTab === 'email' ? 'you@example.com' : '+8801XXXXXXXXX'}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-          />
-          {activeTab === 'phone' && (
-            <p className="text-xs text-foreground/50">
-              শুধুমাত্র বাংলাদেশি মোবাইল নম্বর সমর্থিত (যেমন +8801712345678 বা 01712345678)।
-            </p>
-          )}
-        </div>
+        <Input
+          key={activeTab}
+          id="contact"
+          name="contact"
+          variant={activeTab === 'email' ? 'email' : 'phone_bd'}
+          label={
+            activeTab === 'email'
+              ? 'ইমেইল ঠিকানা (Email Address)'
+              : 'বাংলাদেশি মোবাইল নম্বর (BD Mobile Number)'
+          }
+          autoComplete={activeTab === 'email' ? 'email' : 'tel'}
+          required
+          readOnly={isPending}
+          value={contact}
+          error={
+            contactError ??
+            (dismissedServerState === state ? undefined : state?.fieldErrors?.contact)
+          }
+          onChange={(e) => {
+            const v = e.target.value;
+            setContact(v);
+            if (state?.fieldErrors?.contact) setDismissedServerState(state);
+            if (activeTab === 'email') {
+              const check = validateEmailLive(v);
+              setContactError(check.ok ? undefined : check.error);
+            } else {
+              const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
+              if (check.resetBlurred) phoneBlurredRef.current = false;
+              setContactError(check.error);
+            }
+          }}
+          onBlur={(e) => {
+            if (!e.target.value.trim()) {
+              phoneBlurredRef.current = false;
+              return;
+            }
+            if (activeTab === 'phone') phoneBlurredRef.current = true;
+            const check =
+              activeTab === 'email'
+                ? validateEmail(e.target.value)
+                : validateBdPhone(e.target.value);
+            if (!check.ok) setContactError(check.error);
+            else {
+              if (activeTab === 'email') setContact(check.value);
+              setContactError(undefined);
+            }
+          }}
+          placeholder={activeTab === 'email' ? 'you@example.com' : '01712-345678'}
+          hint={
+            activeTab === 'phone'
+              ? 'শুধুমাত্র বাংলাদেশি মোবাইল নম্বর সমর্থিত (যেমন 01712-345678 বা +8801712345678)।'
+              : undefined
+          }
+        />
 
-        <button
+        <Button
           type="submit"
-          disabled={isPending}
-          className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+          variant="primary"
+          size="lg"
+          isLoading={isPending}
+          loadingText="কোড পাঠানো হচ্ছে..."
         >
-          {isPending ? 'কোড পাঠানো হচ্ছে...' : 'যাচাইকরণ কোড পাঠান (Send Code)'}
-        </button>
+          যাচাইকরণ কোড পাঠান (Send Code)
+        </Button>
       </form>
     </section>
   );

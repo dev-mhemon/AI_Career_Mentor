@@ -196,20 +196,8 @@ export function buildBackendLaunchEnv(
       ? parseEnvContent(dotEnvSource)
       : (dotEnvSource || {});
 
-  // [ORIGINAL] Pre-fallback textBeeOverlay (without SMS_PROVIDER):
-  // const textBeeOverlay = Object.fromEntries(
-  //   [
-  //     "TEXTBEE_API_KEY",
-  //     "TEXTBEE_DEVICE_ID",
-  //     "TEXTBEE_BASE_URL",
-  //     "TEXTBEE_TIMEOUT_MS",
-  //   ]
-  //     .map((k) => [k, pickCredential([k], procEnv, backendEnv, baseConfig)])
-  //     .filter(([, v]) => Boolean(v)),
-  // );
   const textBeeOverlay = Object.fromEntries(
     [
-      "SMS_PROVIDER",
       "TEXTBEE_API_KEY",
       "TEXTBEE_DEVICE_ID",
       "TEXTBEE_BASE_URL",
@@ -242,9 +230,6 @@ export function buildBackendLaunchEnv(
 
   for (const [k, v] of Object.entries(oauthOverlay)) {
     if (!v) delete merged[k];
-  }
-  for (const k of ["SMS_PROVIDER", "TEXTBEE_API_KEY", "TEXTBEE_DEVICE_ID"]) {
-    if (!textBeeOverlay[k]) delete merged[k];
   }
 
   return merged;
@@ -473,30 +458,11 @@ else {
     ],
   };
   if (!commands[command]) throw Error("Unknown command");
-  // [ORIGINAL] Pre-fallback launchEnv (re-injected stale TextBee keys from .local/foundation/backend.json):
-  // const backendEnv = !isFrontend
-  //   ? parseEnvFile(path.join(root, "backend/.env"))
-  //   : {};
-  // const launchEnv = !isFrontend
-  //   ? buildBackendLaunchEnv(config, backendEnv, process.env, local)
-  //   : {
-  //       ...process.env,
-  //       ...config,
-  //       MENTOR_LOCAL_DIR: local,
-  //     };
-  const backendEnvPath = path.join(root, "backend/.env");
-  const hasBackendDotEnv = !isFrontend && existsSync(backendEnvPath);
-  const backendEnv = hasBackendDotEnv ? parseEnvFile(backendEnvPath) : {};
-  const effectiveBaseConfig = hasBackendDotEnv
-    ? {
-        ...config,
-        SMS_PROVIDER: "",
-        TEXTBEE_API_KEY: "",
-        TEXTBEE_DEVICE_ID: "",
-      }
-    : config;
+  const backendEnv = !isFrontend
+    ? parseEnvFile(path.join(root, "backend/.env"))
+    : {};
   const launchEnv = !isFrontend
-    ? buildBackendLaunchEnv(effectiveBaseConfig, backendEnv, process.env, local)
+    ? buildBackendLaunchEnv(config, backendEnv, process.env, local)
     : {
         ...process.env,
         ...config,

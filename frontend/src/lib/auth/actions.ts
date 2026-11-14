@@ -4,6 +4,13 @@ import { redirect } from 'next/navigation';
 import { cookies, headers } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
+  normalizeBdPhone,
+  validateBdPhone,
+  validateEmail,
+  validateIdentifier,
+  validatePassword,
+} from '@/lib/validation/auth-schemas';
+import {
   loginUser,
   registerUser,
   resendVerification,
@@ -34,6 +41,35 @@ export interface AuthActionResult {
   error?: string;
   success?: boolean;
   redirectTo?: string;
+  /** HTTP status of the failing API call (401/409/423/429/5xx), when known. */
+  status?: number;
+  code?: string;
+  /** Seconds to wait before retrying (423/429); drives live countdown. */
+  retryAfterSeconds?: number;
+  /** Per-field messages from details[] or server-side validation. */
+  fieldErrors?: Record<string, string>;
+}
+
+/** Structured metadata for UI error mapping; only non-default signals are emitted. */
+function apiMeta(
+  err: ApiError,
+): Pick<AuthActionResult, 'status' | 'code' | 'retryAfterSeconds' | 'fieldErrors'> {
+  const fieldErrors: Record<string, string> = {};
+  for (const d of err.details ?? []) {
+    if (d.field && !(d.field in fieldErrors)) {
+      fieldErrors[d.field] = d.message;
+    }
+  }
+  return {
+    ...([401, 409, 423, 429].includes(err.statusCode) || err.statusCode >= 500
+      ? { status: err.statusCode }
+      : {}),
+    ...(err.code && err.statusCode !== 403 ? { code: err.code } : {}),
+    ...(err.retryAfterSeconds && err.retryAfterSeconds > 0
+      ? { retryAfterSeconds: err.retryAfterSeconds }
+      : {}),
+    ...(Object.keys(fieldErrors).length ? { fieldErrors } : {}),
+  };
 }
 
 /**
@@ -469,13 +505,24 @@ export async function loginAction(
   _prevState: AuthActionResult,
   formData: FormData,
 ): Promise<AuthActionResult> {
-  const rawIdentifier = (
+  let rawIdentifier = (
     (formData.get('email') as string) || (formData.get('identifier') as string)
   )?.trim();
   const password = formData.get('password') as string;
 
   if (!rawIdentifier || !password) {
     return { error: 'Email and password are required.' };
+  }
+
+  const idCheck = validateIdentifier(rawIdentifier);
+  if (!idCheck.ok) {
+    return { error: idCheck.error, fieldErrors: { email: idCheck.error } };
+  }
+  rawIdentifier = idCheck.value.value;
+
+  const pwCheck = validatePassword(password);
+  if (!pwCheck.ok) {
+    return { error: pwCheck.error, fieldErrors: { password: pwCheck.error } };
   }
 
   let destination = '/dashboard';
@@ -541,7 +588,7 @@ export async function loginAction(
           redirectTo: verifyUrl,
         };
       }
-      return { error: err.message };
+      return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred during login.' };
   }
@@ -556,7 +603,7 @@ export async function registerAction(
   formData: FormData,
 ): Promise<AuthActionResult> {
   const type = formData.get('type') as 'email' | 'phone';
-  const identifier = formData.get('identifier') as string;
+  let identifier = formData.get('identifier') as string;
   const password = formData.get('password') as string;
   const confirmPassword = formData.get('confirmPassword') as string;
   const consentRaw = formData.get('privacy_consent');
@@ -574,9 +621,17 @@ export async function registerAction(
     return { error: 'Passwords do not match.' };
   }
 
-  if (password.length < 8) {
-    return { error: 'Password must be at least 8 characters.' };
+  const pwCheck = validatePassword(password);
+  if (!pwCheck.ok) {
+    return { error: pwCheck.error };
   }
+
+  const idCheck =
+    type === 'email' ? validateEmail(identifier) : validateBdPhone(identifier);
+  if (!idCheck.ok) {
+    return { error: idCheck.error, fieldErrors: { identifier: idCheck.error } };
+  }
+  identifier = idCheck.value;
 
   try {
     const regResult = (await registerUser({
@@ -610,9 +665,10 @@ export async function registerAction(
       if (err.statusCode === 429) {
         return {
           error: 'Email delivery is temporarily rate-limited. Please try again later.',
+          ...apiMeta(err),
         };
       }
-      return { error: err.message };
+      return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred during registration.' };
   }
@@ -665,6 +721,9 @@ export async function verifyOtpAction(
     }
   }
   if (!identifier) return { error: 'Invalid verification request.' };
+  if (type === 'phone') {
+    identifier = normalizeBdPhone(identifier) ?? identifier;
+  }
 
   let destination = '/dashboard';
   try {
@@ -701,7 +760,7 @@ export async function verifyOtpAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
-      return { error: err.message };
+      return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred during verification.' };
   }
@@ -720,6 +779,9 @@ export async function resendOtpAction(
   expiresInSeconds?: number;
   contactMasked?: string;
   resendAvailableAt?: string;
+  status?: number;
+  code?: string;
+  retryAfterSeconds?: number;
 }> {
   if (type !== 'email' && type !== 'phone') {
     return { error: 'Invalid verification channel.' };
@@ -731,6 +793,9 @@ export async function resendOtpAction(
     identifier = existingContext.identifier;
   }
   if (!identifier) return { error: 'Invalid verification request.' };
+  if (type === 'phone') {
+    identifier = normalizeBdPhone(identifier) ?? identifier;
+  }
 
   try {
     const result = (await resendVerification({
@@ -794,9 +859,10 @@ export async function resendOtpAction(
       if (err.statusCode === 429) {
         return {
           error: 'Email delivery is temporarily rate-limited. Please try again later.',
+          ...apiMeta(err),
         };
       }
-      return { error: err.message };
+      return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred while resending verification.' };
   }
@@ -931,17 +997,22 @@ export async function forgotPasswordAction(
   _prevState: AuthActionResult,
   formData: FormData,
 ): Promise<AuthActionResult> {
-  const identifier = formData.get('identifier') as string;
-  if (!identifier || !identifier.trim()) {
+  const rawIdentifier = formData.get('identifier') as string;
+  if (!rawIdentifier || !rawIdentifier.trim()) {
     return { error: 'Email or phone is required.' };
   }
+  const idCheck = validateIdentifier(rawIdentifier);
+  if (!idCheck.ok) {
+    return { error: idCheck.error, fieldErrors: { identifier: idCheck.error } };
+  }
+  const identifier = idCheck.value.value;
 
   try {
-    await forgotPassword(identifier.trim());
+    await forgotPassword(identifier);
     const store = await cookies();
     store.set(
       RECOVERY_CONTEXT_COOKIE,
-      Buffer.from(JSON.stringify({ identifier: identifier.trim() })).toString('base64url'),
+      Buffer.from(JSON.stringify({ identifier })).toString('base64url'),
       {
         httpOnly: true,
         sameSite: 'strict',
@@ -955,7 +1026,7 @@ export async function forgotPasswordAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
-      return { error: err.message };
+      return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred while requesting password recovery.' };
   }
@@ -985,17 +1056,27 @@ export async function resetPasswordAction(
     }
   }
   const code = (formData.get('code') as string)?.trim();
-  const newPassword = formData.get('new_password') as string;
-  const confirmNewPassword = formData.get('confirm_new_password') as string;
+  const rawNewPassword = formData.get('new_password');
+  const newPassword = typeof rawNewPassword === 'string' ? rawNewPassword : '';
+  const rawConfirmNewPassword = formData.get('confirm_new_password');
+  const confirmNewPassword =
+    typeof rawConfirmNewPassword === 'string' ? rawConfirmNewPassword : '';
 
   if (!identifier) {
     return { error: 'Identifier is required. Please restart password recovery.' };
   }
+  const idCheck = validateIdentifier(identifier);
+  if (!idCheck.ok) {
+    return { error: idCheck.error, fieldErrors: { identifier: idCheck.error } };
+  }
+  identifier = idCheck.value.value;
+
   if (!code || !/^\d{6}$/.test(code)) {
     return { error: 'Enter a six-digit verification code.' };
   }
-  if (!newPassword || newPassword.length < 8) {
-    return { error: 'Password must be at least 8 characters.' };
+  const pwCheck = validatePassword(newPassword);
+  if (!pwCheck.ok) {
+    return { error: pwCheck.error, fieldErrors: { new_password: pwCheck.error } };
   }
   if (newPassword !== confirmNewPassword) {
     return { error: 'Passwords do not match.' };
@@ -1015,7 +1096,7 @@ export async function resetPasswordAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
-      return { error: err.message };
+      return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred while resetting password.' };
   }
@@ -1097,13 +1178,20 @@ export async function addContactAction(
 ): Promise<AuthActionResult> {
   const channelRaw = (formData.get('channel') as string)?.trim().toLowerCase();
   const channel: 'email' | 'phone' = channelRaw === 'phone' ? 'phone' : 'email';
-  const contact = (formData.get('contact') as string)?.trim();
+  let contact = (formData.get('contact') as string)?.trim();
 
   if (!contact) {
     return {
       error: channel === 'phone' ? 'Phone number is required.' : 'Email is required.',
     };
   }
+
+  const contactCheck =
+    channel === 'phone' ? validateBdPhone(contact) : validateEmail(contact);
+  if (!contactCheck.ok) {
+    return { error: contactCheck.error, fieldErrors: { contact: contactCheck.error } };
+  }
+  contact = contactCheck.value;
 
   try {
     const supabase = await createSupabaseServerClient();
