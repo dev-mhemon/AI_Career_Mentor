@@ -1,6 +1,7 @@
 import { createBrowserClient } from "@supabase/ssr";
 import {
   applyRememberPreference,
+  buildRememberMeCookie,
   REMEMBER_ME_COOKIE,
   resolveRememberCookieValue,
 } from "./remember";
@@ -38,6 +39,7 @@ function serializeBrowserCookie(
   options?: {
     domain?: string;
     expires?: Date | string;
+    httpOnly?: boolean;
     maxAge?: number;
     path?: string;
     sameSite?: boolean | "lax" | "strict" | "none";
@@ -106,6 +108,17 @@ export function createSupabaseBrowserClient() {
             );
             document.cookie = serializeBrowserCookie(name, value, nextOptions);
           });
+          const rememberCookie = buildRememberMeCookie(
+            rememberPref,
+            cookiesToSet,
+          );
+          if (rememberCookie) {
+            document.cookie = serializeBrowserCookie(
+              rememberCookie.name,
+              rememberCookie.value,
+              rememberCookie.options,
+            );
+          }
         },
       },
     },

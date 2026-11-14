@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import {
   applyRememberPreference,
+  buildRememberMeCookie,
   REMEMBER_ME_COOKIE,
   resolveRememberCookieValue,
 } from "@/lib/supabase/remember";
@@ -49,6 +50,17 @@ export async function proxy(request: NextRequest) {
               applyRememberPreference(value, options, rememberPref),
             );
           });
+          const rememberCookie = buildRememberMeCookie(
+            rememberPref,
+            cookiesToSet,
+          );
+          if (rememberCookie) {
+            supabaseResponse.cookies.set(
+              rememberCookie.name,
+              rememberCookie.value,
+              rememberCookie.options,
+            );
+          }
         },
       },
     },

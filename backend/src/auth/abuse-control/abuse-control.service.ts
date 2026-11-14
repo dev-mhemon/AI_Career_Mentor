@@ -264,10 +264,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
     const p = this.configuration.policy;
     const isForgotPassword = scope === 'forgot-password';
     const keys = isForgotPassword
-      ? [
-          `auth:v1:ip:forgot-password:${address}`,
-          `auth:v1:send:ip:${address}`,
-        ]
+      ? [`auth:v1:ip:forgot-password:${address}`, `auth:v1:send:ip:${address}`]
       : [`auth:v1:ip:login:${address}`];
     const limit = isForgotPassword
       ? p.AUTH_SEND_IP_LIMIT

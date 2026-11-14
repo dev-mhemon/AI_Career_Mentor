@@ -132,11 +132,6 @@ export function computeInitialCooldown(
     }
 
     clearPersistedCooldown(channel, identifier);
-    return {
-      seconds: 0,
-      deadlineMs: null,
-      originalSeconds: persisted.originalSeconds,
-    };
   }
 
   if (paramSeconds > 0) {

@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import {
   applyRememberPreference,
+  buildRememberMeCookie,
   REMEMBER_ME_COOKIE,
   resolveRememberCookieValue,
 } from "./remember";
@@ -56,6 +57,17 @@ export async function createSupabaseServerClient(options?: {
                 ),
               );
             });
+            const renewedRememberCookie = buildRememberMeCookie(
+              effectiveRememberMe,
+              cookiesToSet,
+            );
+            if (renewedRememberCookie) {
+              cookieStore.set(
+                renewedRememberCookie.name,
+                renewedRememberCookie.value,
+                renewedRememberCookie.options,
+              );
+            }
           } catch {
             // setAll can throw in Server Components where cookies
             // are read-only. This is expected and safe — the Proxy

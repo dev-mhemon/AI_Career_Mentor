@@ -642,7 +642,7 @@ describe('VerifyForm', () => {
     expect(reloadedButton).toBeEnabled();
   });
 
-  it('preserves original cooldown duration across reload mount hydration so revisiting original cooldown URL after expiry is recognized as expired', async () => {
+  it('preserves original cooldown duration across reload hydration and applies fresh relative cooldown after expired storage is cleared', async () => {
     vi.useFakeTimers();
     const baseNow = 1000000;
     vi.setSystemTime(baseNow);
@@ -674,16 +674,30 @@ describe('VerifyForm', () => {
     // 3. User closes page; total 70s elapse (cooldown is now fully expired)
     vi.setSystemTime(baseNow + 70000);
 
-    // User revisits the original URL (?channel=email&cooldown=60)
-    render(<VerifyForm />);
+    // Revisiting cleaned URL keeps resend enabled and removes expired storage entry
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    const cleanRender = render(<VerifyForm />);
     await act(async () => {
       vi.advanceTimersByTime(0);
     });
 
-    // Since originalSeconds was preserved as 60, it recognizes cooldown=60 as expired and keeps button enabled
     const expiredButton = screen.getByRole('button', { name: /^resend code$/i });
     expect(expiredButton).toBeInTheDocument();
     expect(expiredButton).toBeEnabled();
+    expect(getPersistedCooldown('email')).toBeNull();
+    cleanRender.unmount();
+
+    // Revisiting with a fresh relative cooldown=60 after expired storage starts a fresh 60s countdown
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=60'),
+    );
+    render(<VerifyForm />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByRole('button', { name: /resend code in 01:00/i })).toBeDisabled();
   });
 
   it('derives countdown from direct expiry timestamp query param', async () => {

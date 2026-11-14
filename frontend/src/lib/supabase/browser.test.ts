@@ -62,10 +62,14 @@ describe('createSupabaseBrowserClient', () => {
       },
     ]);
 
-    expect(writtenCookies).toHaveLength(1);
+    expect(writtenCookies).toHaveLength(2);
     expect(writtenCookies[0]).not.toContain('Max-Age=');
     expect(writtenCookies[0]).not.toContain('Expires=');
     expect(writtenCookies[0]).toContain('sb-access-token=tok');
+    expect(writtenCookies[1]).toContain('mentor_remember_me=0');
+    expect(writtenCookies[1]).not.toContain('Max-Age=');
+    expect(writtenCookies[1]).toContain('Path=/');
+    expect(writtenCookies[1]).toContain('SameSite=Lax');
   });
 
   it('applies 30-day Max-Age=2592000 when mentor_remember_me=1 is present', () => {
@@ -95,9 +99,13 @@ describe('createSupabaseBrowserClient', () => {
       },
     ]);
 
-    expect(writtenCookies).toHaveLength(1);
+    expect(writtenCookies).toHaveLength(2);
     expect(writtenCookies[0]).toContain('Max-Age=2592000');
     expect(writtenCookies[0]).toContain('sb-access-token=tok');
+    expect(writtenCookies[1]).toContain('mentor_remember_me=1');
+    expect(writtenCookies[1]).toContain('Max-Age=2592000');
+    expect(writtenCookies[1]).toContain('Path=/');
+    expect(writtenCookies[1]).toContain('SameSite=Lax');
   });
 
   it('preserves original Max-Age when mentor_remember_me cookie is absent', () => {
@@ -130,5 +138,37 @@ describe('createSupabaseBrowserClient', () => {
     expect(writtenCookies).toHaveLength(1);
     expect(writtenCookies[0]).toContain('Max-Age=3600');
     expect(writtenCookies[0]).toContain('sb-access-token=tok');
+  });
+
+  it('does not re-emit mentor_remember_me when auth cookies are cleared with empty values', () => {
+    const writtenCookies: string[] = [];
+    const cookieJar = 'mentor_remember_me=1';
+    vi.stubGlobal('document', {
+      get cookie() {
+        return cookieJar;
+      },
+      set cookie(value: string) {
+        writtenCookies.push(value);
+      },
+    });
+
+    createSupabaseBrowserClient();
+    expect(capturedBrowserAdapter).not.toBeNull();
+
+    capturedBrowserAdapter!.setAll([
+      {
+        name: 'sb-access-token',
+        value: '',
+        options: {
+          path: '/',
+          maxAge: 0,
+          sameSite: 'lax',
+        },
+      },
+    ]);
+
+    expect(writtenCookies).toHaveLength(1);
+    expect(writtenCookies[0]).toContain('sb-access-token=');
+    expect(writtenCookies[0]).not.toContain('mentor_remember_me=');
   });
 });

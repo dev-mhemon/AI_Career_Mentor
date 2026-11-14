@@ -109,11 +109,17 @@ return {9, 0}
 
 export const ipQuotaScript = `
 local counterCount = tonumber(ARGV[4])
+local maxTtl = 0
 for i = 1, counterCount do
-  if redis.call('PTTL', KEYS[i]) == -1 then return {6, 1000} end
+  local ttl = redis.call('PTTL', KEYS[i])
+  if ttl == -1 then return {6, 1000} end
   if tonumber(redis.call('GET', KEYS[i]) or '0') >= tonumber(ARGV[1]) then
-    return {tonumber(ARGV[3]), math.max(1, redis.call('PTTL', KEYS[i]))}
+    local remaining = ttl < 0 and math.max(1, tonumber(ARGV[2])) or math.max(1, ttl)
+    maxTtl = math.max(maxTtl, remaining)
   end
+end
+if maxTtl > 0 then
+  return {tonumber(ARGV[3]), maxTtl}
 end
 local n = redis.call('INCR', KEYS[1])
 if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end

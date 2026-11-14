@@ -171,4 +171,86 @@ describe('createSupabaseServerClient', () => {
       maxAge: 0,
     });
   });
+
+  it('renews mentor_remember_me=1 with 30-day maxAge on auth refresh and preserves secure flag', async () => {
+    mockCookieStore.get.mockImplementation((name: string) =>
+      name === 'mentor_remember_me' ? { value: '1' } : undefined,
+    );
+
+    await createSupabaseServerClient();
+    expect(capturedCookiesAdapter).not.toBeNull();
+
+    capturedCookiesAdapter!.setAll([
+      {
+        name: 'sb-access-token',
+        value: 'refreshed-token',
+        options: { httpOnly: true, path: '/', maxAge: 3600, secure: true },
+      },
+    ]);
+
+    expect(mockCookieStore.set).toHaveBeenCalledWith('mentor_remember_me', '1', {
+      httpOnly: false,
+      path: '/',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 30,
+      secure: true,
+    });
+  });
+
+  it('renews session-only mentor_remember_me=0 without maxAge when pref is false', async () => {
+    mockCookieStore.get.mockImplementation((name: string) =>
+      name === 'mentor_remember_me' ? { value: '0' } : undefined,
+    );
+
+    await createSupabaseServerClient();
+    expect(capturedCookiesAdapter).not.toBeNull();
+
+    capturedCookiesAdapter!.setAll([
+      {
+        name: 'sb-access-token',
+        value: 'refreshed-token',
+        options: { httpOnly: true, path: '/', maxAge: 3600 },
+      },
+    ]);
+
+    expect(mockCookieStore.set).toHaveBeenCalledWith('mentor_remember_me', '0', {
+      httpOnly: false,
+      path: '/',
+      sameSite: 'lax',
+    });
+  });
+
+  it('does not re-emit mentor_remember_me when cookies are cleared or pref is absent', async () => {
+    mockCookieStore.get.mockImplementation((name: string) =>
+      name === 'mentor_remember_me' ? { value: '1' } : undefined,
+    );
+
+    await createSupabaseServerClient();
+    capturedCookiesAdapter!.setAll([
+      {
+        name: 'sb-access-token',
+        value: '',
+        options: { httpOnly: true, path: '/', maxAge: 0 },
+      },
+    ]);
+
+    expect(
+      mockCookieStore.set.mock.calls.some((c) => c[0] === 'mentor_remember_me'),
+    ).toBe(false);
+
+    mockCookieStore.set.mockClear();
+    mockCookieStore.get.mockReturnValue(undefined);
+    await createSupabaseServerClient();
+    capturedCookiesAdapter!.setAll([
+      {
+        name: 'sb-access-token',
+        value: 'tok',
+        options: { httpOnly: true, path: '/', maxAge: 3600 },
+      },
+    ]);
+
+    expect(
+      mockCookieStore.set.mock.calls.some((c) => c[0] === 'mentor_remember_me'),
+    ).toBe(false);
+  });
 });

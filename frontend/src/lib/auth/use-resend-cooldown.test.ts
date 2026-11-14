@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useResendCooldown } from '@/lib/auth/use-resend-cooldown';
+import { computeInitialCooldown, useResendCooldown } from '@/lib/auth/use-resend-cooldown';
 import {
   clearVerificationDraft,
   getPersistedCooldown,
@@ -47,5 +47,61 @@ describe('useResendCooldown', () => {
     // Owner's expired cooldown is cleared, while active@example.com retains its persisted cooldown
     expect(getPersistedCooldown('email', 'owner@example.com')).toBeNull();
     expect(getPersistedCooldown('email', 'active@example.com')).not.toBeNull();
+  });
+
+  it('removes expired storage entry and applies fresh relative URL cooldown parameter', () => {
+    const now = 1_000_000;
+    setPersistedCooldown('email', now - 5_000, 60, now - 65_000, 'user@example.com');
+
+    const result = computeInitialCooldown(
+      'email',
+      new URLSearchParams('?cooldown=45'),
+      now,
+      'user@example.com',
+    );
+
+    expect(getPersistedCooldown('email', 'user@example.com')).toBeNull();
+    expect(result).toEqual({
+      seconds: 45,
+      deadlineMs: now + 45_000,
+      originalSeconds: 45,
+    });
+  });
+
+  it('prefers live persisted storage deadline over fresh relative URL cooldown parameter', () => {
+    const now = 1_000_000;
+    setPersistedCooldown('email', now + 20_000, 60, now - 40_000, 'user@example.com');
+
+    const result = computeInitialCooldown(
+      'email',
+      new URLSearchParams('?cooldown=60'),
+      now,
+      'user@example.com',
+    );
+
+    expect(result).toEqual({
+      seconds: 20,
+      deadlineMs: now + 20_000,
+      originalSeconds: 60,
+    });
+  });
+
+  it('still resolves expired explicit cooldownUntil param as expired even with expired storage', () => {
+    const now = 1_000_000;
+    setPersistedCooldown('email', now - 5_000, 60, now - 65_000, 'user@example.com');
+
+    const result = computeInitialCooldown(
+      'email',
+      new URLSearchParams(`?cooldownUntil=${now - 1_000}`),
+      now,
+      'user@example.com',
+    );
+
+    expect(getPersistedCooldown('email', 'user@example.com')).toBeNull();
+    expect(result).toEqual({
+      seconds: 0,
+      deadlineMs: null,
+      originalSeconds: 60,
+    });
   });
 });

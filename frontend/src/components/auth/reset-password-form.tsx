@@ -157,20 +157,22 @@ export function ResetPasswordForm() {
       } else {
         setResendSuccess("Verification code sent successfully.");
         startCooldown(60, undefined, requestContact.identifier);
+        const candidate = updateVerificationDraftExpiry(
+          600,
+          draft?.contact_masked,
+          Date.now(),
+          requestContact.channel,
+          requestContact.identifier,
+        );
         const updated =
-          updateVerificationDraftExpiry(
-            600,
-            draft?.contact_masked,
-            Date.now(),
-            requestContact.channel,
-            requestContact.identifier,
-          ) ??
-          saveVerificationDraft({
-            channel: requestContact.channel,
-            identifier: requestContact.identifier,
-            contactMasked: draft?.contact_masked,
-            context: "password_recovery",
-          });
+          candidate?.context === "password_recovery"
+            ? candidate
+            : saveVerificationDraft({
+                channel: requestContact.channel,
+                identifier: requestContact.identifier,
+                contactMasked: draft?.contact_masked,
+                context: "password_recovery",
+              });
         if (updated) {
           setDraft(updated);
           setIsDraftExpired(false);
@@ -247,6 +249,7 @@ export function ResetPasswordForm() {
               if (idEl.value.trim()) identifierBlurredRef.current = true;
             } else {
               idEl.value = id.value.value;
+              setEnteredIdentifier(id.value.value);
             }
           }
           const code = validateOtp(
@@ -293,6 +296,7 @@ export function ResetPasswordForm() {
             name="identifier"
             label="Email or Phone"
             required
+            value={enteredIdentifier}
             readOnly={isPending || isResending}
             error={clientErrors.identifier ?? serverFieldError("identifier")}
             onChange={(e) => {
@@ -326,8 +330,9 @@ export function ResetPasswordForm() {
                 setEnteredIdentifier(e.target.value);
                 setFieldError("identifier", res.error);
               } else {
-                if (res.value.kind === "email") e.target.value = res.value.value;
-                setEnteredIdentifier(e.target.value);
+                const normalized =
+                  res.value.kind === "email" ? res.value.value : e.target.value;
+                setEnteredIdentifier(normalized);
                 setFieldError("identifier", undefined);
               }
             }}
@@ -443,7 +448,13 @@ export function ResetPasswordForm() {
                 {isCooldownHydrated && cooldown === 0 ? "You can now resend the verification code." : ""}
               </span>
             </div>
-            <AuthAlert result={resendError} />
+            <AuthAlert
+              result={
+                resendError
+                  ? { ...resendError, retryAfterSeconds: undefined }
+                  : null
+              }
+            />
             {resendSuccess && <Alert variant="success">{resendSuccess}</Alert>}
           </div>
         ) : (

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { ResetPasswordForm } from "@/components/auth/reset-password-form";
 import { resetPasswordAction, forgotPasswordAction } from "@/lib/auth/actions";
 import {
+  loadVerificationDraft,
   saveVerificationDraft,
   setPersistedCooldown,
 } from "@/lib/auth/verification-draft";
@@ -357,6 +358,7 @@ describe("ResetPasswordForm", () => {
     expect(screen.getByRole("button", { name: /resend code in 01:00/i })).toBeDisabled();
     expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/try again in/i)).not.toBeInTheDocument();
   });
 
   it("starts cooldown from 429 retryAfterSeconds when forgotPasswordAction resend is rate limited", async () => {
@@ -383,6 +385,7 @@ describe("ResetPasswordForm", () => {
     expect(screen.getByRole("button", { name: /resend code in 00:45/i })).toBeDisabled();
     expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/try again in/i)).not.toBeInTheDocument();
   });
 
   it("unlocks in-place resend button when user enters a valid identifier without a draft", async () => {
@@ -450,5 +453,79 @@ describe("ResetPasswordForm", () => {
     expect(
       screen.queryByText(/reset failed on second try\./i),
     ).not.toBeInTheDocument();
+  });
+
+  it("replaces a non-recovery draft with password_recovery on resend so reload restores it", async () => {
+    saveVerificationDraft({
+      channel: "email",
+      identifier: "recover@example.com",
+      context: "registration",
+    });
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({ success: true });
+
+    const { unmount } = render(<ResetPasswordForm />);
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    fireEvent.change(identifierInput, {
+      target: { value: "recover@example.com" },
+    });
+
+    const resendBtn = await screen.findByRole("button", {
+      name: /^resend code$/i,
+    });
+    await waitFor(() => expect(resendBtn).toBeEnabled());
+    await act(async () => {
+      fireEvent.click(resendBtn);
+    });
+
+    const saved = loadVerificationDraft(
+      "email",
+      Date.now(),
+      "password_recovery",
+    );
+    expect(saved.draft?.context).toBe("password_recovery");
+    expect(saved.draft?.normalized_identifier).toBe("recover@example.com");
+
+    unmount();
+    render(<ResetPasswordForm />);
+    expect(
+      screen.queryByLabelText(/email or phone/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps entered identifier value synchronized after failed submit", async () => {
+    vi.mocked(resetPasswordAction).mockResolvedValueOnce({
+      error: "Invalid or expired reset code.",
+    });
+
+    render(<ResetPasswordForm />);
+
+    const identifierInput = screen.getByLabelText(
+      /email or phone/i,
+    ) as HTMLInputElement;
+    const otpInput = screen.getByLabelText(/6-digit verification code/i);
+    const newPasswordInput = screen.getByLabelText(/^new password$/i);
+    const confirmPasswordInput = screen.getByLabelText(/confirm new password/i);
+    const form = identifierInput.closest("form")!;
+
+    fireEvent.change(identifierInput, {
+      target: { value: "USER@Example.com" },
+    });
+    fireEvent.change(otpInput, { target: { value: "123456" } });
+    fireEvent.change(newPasswordInput, { target: { value: "NewPassw0rd!" } });
+    fireEvent.change(confirmPasswordInput, {
+      target: { value: "NewPassw0rd!" },
+    });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(
+      screen.getByText(/invalid or expired reset code\./i),
+    ).toBeInTheDocument();
+    expect(identifierInput.value).toBe("user@example.com");
+    expect(
+      screen.getByRole("button", { name: /^resend code$/i }),
+    ).toBeEnabled();
   });
 });
