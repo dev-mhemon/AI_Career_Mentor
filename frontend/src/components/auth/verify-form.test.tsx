@@ -126,7 +126,7 @@ describe('VerifyForm', () => {
       expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -162,7 +162,7 @@ describe('VerifyForm', () => {
       expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -170,7 +170,7 @@ describe('VerifyForm', () => {
     await waitFor(() => {
       expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
       expect(resendButton).toBeDisabled();
-      expect(resendButton).toHaveTextContent(/resend code in 60s/i);
+      expect(resendButton).toHaveTextContent(/resend code in 01:00/i);
     });
 
     const persisted = getPersistedCooldown('email');
@@ -207,7 +207,7 @@ describe('VerifyForm', () => {
       expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -215,7 +215,7 @@ describe('VerifyForm', () => {
     await waitFor(() => {
       expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
       expect(resendButton).toBeDisabled();
-      expect(resendButton).toHaveTextContent(/resend code in 45s/i);
+      expect(resendButton).toHaveTextContent(/resend code in 00:45/i);
     });
 
     const persisted = getPersistedCooldown('email');
@@ -246,7 +246,7 @@ describe('VerifyForm', () => {
     const identifierInput = screen.getByLabelText(/email address/i);
     fireEvent.change(identifierInput, { target: { value: 'reentered@example.com' } });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -289,7 +289,7 @@ describe('VerifyForm', () => {
     /* Simulate sessionStorage expiring while the user remains on the page */
     window.sessionStorage.clear();
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -339,7 +339,7 @@ describe('VerifyForm', () => {
       context: 'registration',
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -449,7 +449,7 @@ describe('VerifyForm', () => {
       expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -500,7 +500,7 @@ describe('VerifyForm', () => {
       target: { value: '01712345689' },
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     await act(async () => {
       fireEvent.click(resendButton);
     });
@@ -522,7 +522,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = await screen.findByRole('button', { name: /resend code in 45s/i });
+    const resendButton = await screen.findByRole('button', { name: /resend code in 00:45/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeDisabled();
   });
@@ -533,7 +533,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = await screen.findByRole('button', { name: /resend verification code/i });
+    const resendButton = await screen.findByRole('button', { name: /^resend code$/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeEnabled();
   });
@@ -544,7 +544,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = await screen.findByRole('button', { name: /resend verification code/i });
+    const resendButton = await screen.findByRole('button', { name: /^resend code$/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeEnabled();
     expect(screen.queryByText(/resend code in/i)).not.toBeInTheDocument();
@@ -557,7 +557,7 @@ describe('VerifyForm', () => {
       );
       const { unmount } = render(<VerifyForm />);
 
-      const resendButton = await screen.findByRole('button', { name: /resend verification code/i });
+      const resendButton = await screen.findByRole('button', { name: /^resend code$/i });
       expect(resendButton).toBeInTheDocument();
       expect(resendButton).toBeEnabled();
       unmount();
@@ -570,7 +570,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = await screen.findByRole('button', { name: /resend code in 600s/i });
+    const resendButton = await screen.findByRole('button', { name: /resend code in 10:00/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeDisabled();
   });
@@ -584,7 +584,7 @@ describe('VerifyForm', () => {
       new URLSearchParams('?channel=email&cooldown=45'),
     );
     const firstRender = render(<VerifyForm />);
-    expect(await screen.findByRole('button', { name: /resend code in 45s/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /resend code in 00:45/i })).toBeInTheDocument();
     firstRender.unmount();
 
     // 20 seconds elapse, user reloads the same URL
@@ -592,7 +592,7 @@ describe('VerifyForm', () => {
     render(<VerifyForm />);
 
     // Should resume with remaining 25 seconds instead of restarting to 45s
-    const reloadedButton = await screen.findByRole('button', { name: /resend code in 25s/i });
+    const reloadedButton = await screen.findByRole('button', { name: /resend code in 00:25/i });
     expect(reloadedButton).toBeInTheDocument();
     expect(reloadedButton).toBeDisabled();
   });
@@ -612,7 +612,7 @@ describe('VerifyForm', () => {
     await act(async () => {
       vi.advanceTimersByTime(0);
     });
-    expect(screen.getByRole('button', { name: /resend code in 60s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 01:00/i })).toBeInTheDocument();
 
     // Fast-forward 60s so cooldown expires and timer cleanup effect runs
     for (let i = 0; i < 60; i++) {
@@ -622,7 +622,7 @@ describe('VerifyForm', () => {
     }
 
     // Verify button transitioned to enabled and URL was cleaned
-    const enabledButton = screen.getByRole('button', { name: /resend verification code/i });
+    const enabledButton = screen.getByRole('button', { name: /^resend code$/i });
     expect(enabledButton).toBeEnabled();
     expect(window.location.search).not.toContain('cooldown=');
 
@@ -637,7 +637,7 @@ describe('VerifyForm', () => {
       vi.advanceTimersByTime(0);
     });
 
-    const reloadedButton = screen.getByRole('button', { name: /resend verification code/i });
+    const reloadedButton = screen.getByRole('button', { name: /^resend code$/i });
     expect(reloadedButton).toBeInTheDocument();
     expect(reloadedButton).toBeEnabled();
   });
@@ -655,7 +655,7 @@ describe('VerifyForm', () => {
     await act(async () => {
       vi.advanceTimersByTime(0);
     });
-    expect(screen.getByRole('button', { name: /resend code in 60s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 01:00/i })).toBeInTheDocument();
     firstRender.unmount();
 
     // 2. 20s elapse: user opens the URL again while cooldown is still running (40s left)
@@ -664,7 +664,7 @@ describe('VerifyForm', () => {
     await act(async () => {
       vi.advanceTimersByTime(0);
     });
-    expect(screen.getByRole('button', { name: /resend code in 40s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 00:40/i })).toBeInTheDocument();
 
     // Persisted originalSeconds must remain 60, not overwritten with remaining (40)
     const persistedMid = getPersistedCooldown('email');
@@ -681,7 +681,7 @@ describe('VerifyForm', () => {
     });
 
     // Since originalSeconds was preserved as 60, it recognizes cooldown=60 as expired and keeps button enabled
-    const expiredButton = screen.getByRole('button', { name: /resend verification code/i });
+    const expiredButton = screen.getByRole('button', { name: /^resend code$/i });
     expect(expiredButton).toBeInTheDocument();
     expect(expiredButton).toBeEnabled();
   });
@@ -697,7 +697,7 @@ describe('VerifyForm', () => {
     );
     render(<VerifyForm />);
 
-    const resendButton = await screen.findByRole('button', { name: /resend code in 30s/i });
+    const resendButton = await screen.findByRole('button', { name: /resend code in 00:30/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeDisabled();
   });
@@ -716,26 +716,26 @@ describe('VerifyForm', () => {
       vi.advanceTimersByTime(0);
     });
 
-    expect(screen.getByRole('button', { name: /resend code in 3s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 00:03/i })).toBeInTheDocument();
 
     // Advance 1 second -> 2s
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    expect(screen.getByRole('button', { name: /resend code in 2s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 00:02/i })).toBeInTheDocument();
 
     // Advance 1 second -> 1s
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    expect(screen.getByRole('button', { name: /resend code in 1s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 00:01/i })).toBeInTheDocument();
 
     // Advance 1 second -> 0s (enabled)
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
 
-    const resendButton = screen.getByRole('button', { name: /resend verification code/i });
+    const resendButton = screen.getByRole('button', { name: /^resend code$/i });
     expect(resendButton).toBeInTheDocument();
     expect(resendButton).toBeEnabled();
   });
@@ -756,19 +756,19 @@ describe('VerifyForm', () => {
     });
 
     // Should be clamped to 600s
-    expect(screen.getByRole('button', { name: /resend code in 600s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 10:00/i })).toBeInTheDocument();
 
     // Advance 1 second -> should tick down to 599s, NOT jump to billions of seconds
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    expect(screen.getByRole('button', { name: /resend code in 599s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 09:59/i })).toBeInTheDocument();
 
     // Advance another second -> 598s
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    expect(screen.getByRole('button', { name: /resend code in 598s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resend code in 09:58/i })).toBeInTheDocument();
   });
 
   it('forwards draft.context via hidden input to verifyOtpAction on OTP submit (M02-04 secondary_contact)', async () => {
@@ -847,5 +847,88 @@ describe('VerifyForm', () => {
     const submittedFormData = vi.mocked(verifyOtpAction).mock.calls[0]?.[1];
     expect(submittedFormData?.get('identifier')).toBe('+8801712345678');
     expect(phoneInput.value).toBe('01712345678');
+  });
+
+  it('starts single inline cooldown on 429 retryAfterSeconds from resendOtpAction without duplicate timer badge', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email&cooldown=0'),
+    );
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'user@example.com',
+      contactMasked: 'u***@example.com',
+      context: 'registration',
+    });
+    vi.mocked(resendOtpAction).mockResolvedValueOnce({
+      error: 'Too many requests. Please wait before trying again.',
+      retryAfterSeconds: 75,
+    });
+
+    render(<VerifyForm />);
+
+    const resendBtn = await screen.findByRole('button', {
+      name: /^resend code$/i,
+    });
+    await waitFor(() => expect(resendBtn).toBeEnabled());
+
+    await act(async () => {
+      fireEvent.click(resendBtn);
+    });
+
+    expect(resendOtpAction).toHaveBeenCalledWith('email', 'user@example.com');
+    expect(
+      screen.getByRole('button', { name: /resend code in 01:15/i }),
+    ).toBeDisabled();
+    expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
+  });
+
+  it('auto-dismisses AuthAlert on input focus or change and re-displays on new server error', async () => {
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'candidate@example.com',
+      contactMasked: 'c****@example.com',
+    });
+    vi.mocked(verifyOtpAction)
+      .mockResolvedValueOnce({ error: 'Invalid or expired code.' })
+      .mockResolvedValueOnce({ error: 'Verification failed again.' });
+    vi.mocked(resendOtpAction).mockResolvedValueOnce({
+      error: 'Resend rate limit hit.',
+    });
+
+    render(<VerifyForm />);
+
+    const codeInput = await screen.findByLabelText(/verification code/i);
+    const form = codeInput.closest('form')!;
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(screen.getByText(/invalid or expired code\./i)).toBeInTheDocument();
+
+    fireEvent.focus(codeInput);
+    expect(screen.queryByText(/invalid or expired code\./i)).not.toBeInTheDocument();
+
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(screen.getByText(/verification failed again\./i)).toBeInTheDocument();
+
+    fireEvent.change(codeInput, { target: { value: '654321' } });
+    expect(screen.queryByText(/verification failed again\./i)).not.toBeInTheDocument();
+
+    const resendBtn = screen.getByRole('button', { name: /^resend code$/i });
+    await act(async () => {
+      fireEvent.click(resendBtn);
+    });
+    expect(screen.getByText(/resend rate limit hit\./i)).toBeInTheDocument();
+
+    fireEvent.focus(codeInput);
+    expect(screen.queryByText(/resend rate limit hit\./i)).not.toBeInTheDocument();
   });
 });

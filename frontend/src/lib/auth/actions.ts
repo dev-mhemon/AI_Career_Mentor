@@ -4,10 +4,16 @@ import { redirect } from 'next/navigation';
 import { cookies, headers } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
+  LEGACY_REMEMBER_COOKIE,
+  REMEMBER_ME_COOKIE,
+  REMEMBER_ME_MAX_AGE,
+} from '@/lib/supabase/remember';
+import {
   normalizeBdPhone,
   validateBdPhone,
   validateEmail,
   validateIdentifier,
+  validateLoginPassword,
   validatePassword,
 } from '@/lib/validation/auth-schemas';
 import {
@@ -61,7 +67,7 @@ function apiMeta(
     }
   }
   return {
-    ...([401, 409, 423, 429].includes(err.statusCode) || err.statusCode >= 500
+    ...([401, 404, 409, 423, 429].includes(err.statusCode) || err.statusCode >= 500
       ? { status: err.statusCode }
       : {}),
     ...(err.code && err.statusCode !== 403 ? { code: err.code } : {}),
@@ -70,6 +76,74 @@ function apiMeta(
       : {}),
     ...(Object.keys(fieldErrors).length ? { fieldErrors } : {}),
   };
+}
+
+/**
+ * Resolves a channel-specific 404 / AUTH_USER_NOT_FOUND error message for email vs phone.
+ */
+function resolveUserNotFoundMessage(
+  errMessage: string | undefined,
+  channelOrIdentifier?: 'email' | 'phone' | string,
+): string {
+  if (
+    errMessage === 'No account found with this email address.' ||
+    errMessage === 'No account found with this phone number.'
+  ) {
+    return errMessage;
+  }
+  if (
+    errMessage &&
+    errMessage !== 'No account found with this email or phone number.'
+  ) {
+    return errMessage;
+  }
+  const isPhone =
+    channelOrIdentifier === 'phone' ||
+    (typeof channelOrIdentifier === 'string' &&
+      channelOrIdentifier !== 'email' &&
+      !channelOrIdentifier.includes('@'));
+  return isPhone
+    ? 'No account found with this phone number.'
+    : 'No account found with this email address.';
+}
+
+// Product decision: explicit 404 account-not-found feedback is intentional and bounded by backend IP rate limits.
+function mapAuthApiError(
+  err: ApiError,
+  channelOrIdentifier?: 'email' | 'phone' | string,
+): AuthActionResult {
+  if (
+    err.statusCode === 404 ||
+    err.code === 'AUTH_USER_NOT_FOUND' ||
+    err.code === 'ACCOUNT_NOT_FOUND'
+  ) {
+    return {
+      error: resolveUserNotFoundMessage(err.message, channelOrIdentifier),
+      ...apiMeta(err),
+    };
+  }
+  if (
+    err.statusCode === 401 &&
+    (err.code === 'AUTH_INVALID_CREDENTIALS' ||
+      err.code === 'INVALID_CREDENTIALS')
+  ) {
+    return {
+      error: err.message || 'Invalid credentials. Please try again.',
+      ...apiMeta(err),
+    };
+  }
+  return { error: err.message, ...apiMeta(err) };
+}
+
+function clearRememberMeCookies(cookieStore: {
+  delete: (name: string) => unknown;
+}): void {
+  try {
+    cookieStore.delete(REMEMBER_ME_COOKIE);
+    cookieStore.delete(LEGACY_REMEMBER_COOKIE);
+  } catch {
+    // Ignore cookie cleanup errors outside request context
+  }
 }
 
 /**
@@ -154,6 +228,12 @@ async function safeSignOut(supabase: RefreshableSupabaseClient): Promise<void> {
     await supabase.auth.signOut?.({ scope: 'local' });
   } catch {
     // Ignore sign-out errors during cleanup
+  }
+  try {
+    const cookieStore = await cookies();
+    clearRememberMeCookies(cookieStore);
+  } catch {
+    // Ignore cookie cleanup errors outside request context
   }
 }
 
@@ -520,15 +600,18 @@ export async function loginAction(
   }
   rawIdentifier = idCheck.value.value;
 
-  const pwCheck = validatePassword(password);
+  const pwCheck = validateLoginPassword(password);
   if (!pwCheck.ok) {
     return { error: pwCheck.error, fieldErrors: { password: pwCheck.error } };
   }
 
+  const rawRememberMe = formData.get('rememberMe');
+  const rememberMe = rawRememberMe === 'on' || rawRememberMe === 'true';
+
   let destination = '/dashboard';
   try {
     const session = await loginUser(rawIdentifier, password);
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient({ rememberMe });
     const { error } = await supabase.auth.setSession({
       access_token: session.access_token,
       refresh_token: session.refresh_token,
@@ -537,6 +620,23 @@ export async function loginAction(
     try {
       const cookieStore = await cookies();
       cookieStore.delete('account_deleted');
+      cookieStore.delete(LEGACY_REMEMBER_COOKIE);
+      if (rememberMe) {
+        cookieStore.set(REMEMBER_ME_COOKIE, '1', {
+          httpOnly: false,
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+          maxAge: REMEMBER_ME_MAX_AGE,
+        });
+      } else {
+        cookieStore.set(REMEMBER_ME_COOKIE, '0', {
+          httpOnly: false,
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+        });
+      }
     } catch {
       // Best effort cookie cleanup on successful authentication
     }
@@ -582,13 +682,27 @@ export async function loginAction(
             ? `/verify?channel=${channel}&cooldown=${dispatch.cooldownSeconds}`
             : `/verify?channel=${channel}`;
 
+        try {
+          const cookieStore = await cookies();
+          cookieStore.delete(LEGACY_REMEMBER_COOKIE);
+          cookieStore.set(REMEMBER_ME_COOKIE, rememberMe ? '1' : '0', {
+            httpOnly: false,
+            sameSite: 'lax',
+            secure: process.env.NODE_ENV === 'production',
+            path: '/',
+            ...(rememberMe ? { maxAge: REMEMBER_ME_MAX_AGE } : {}),
+          });
+        } catch {
+          // Best effort cookie persistence before verification redirect
+        }
+
         await setVerificationContext({ type: channel, identifier: rawIdentifier });
         return {
           error: 'Please verify your contact before logging in.',
           redirectTo: verifyUrl,
         };
       }
-      return { error: err.message, ...apiMeta(err) };
+      return mapAuthApiError(err, idCheck.value.kind);
     }
     return { error: 'An unexpected error occurred during login.' };
   }
@@ -737,7 +851,14 @@ export async function verifyOtpAction(
             phone: identifier,
             code: token,
           });
-    const supabase = await createSupabaseServerClient();
+    let rememberMe = false;
+    try {
+      const cookieStore = await cookies();
+      rememberMe = cookieStore.get(REMEMBER_ME_COOKIE)?.value === '1';
+    } catch {
+      // Default to session-only when cookies are unavailable
+    }
+    const supabase = await createSupabaseServerClient({ rememberMe });
     const { error } = await supabase.auth.setSession({
       access_token: session.access_token,
       refresh_token: session.refresh_token,
@@ -760,7 +881,7 @@ export async function verifyOtpAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
-      return { error: err.message, ...apiMeta(err) };
+      return mapAuthApiError(err, type);
     }
     return { error: 'An unexpected error occurred during verification.' };
   }
@@ -862,7 +983,7 @@ export async function resendOtpAction(
           ...apiMeta(err),
         };
       }
-      return { error: err.message, ...apiMeta(err) };
+      return mapAuthApiError(err, type);
     }
     return { error: 'An unexpected error occurred while resending verification.' };
   }
@@ -987,6 +1108,12 @@ export async function logoutAction(): Promise<void> {
     }
   }
   await supabase.auth.signOut();
+  try {
+    const cookieStore = await cookies();
+    clearRememberMeCookies(cookieStore);
+  } catch {
+    // Best-effort companion cookie cleanup
+  }
   redirect('/login');
 }
 
@@ -998,6 +1125,7 @@ export async function forgotPasswordAction(
   formData: FormData,
 ): Promise<AuthActionResult> {
   const rawIdentifier = formData.get('identifier') as string;
+  const inPlaceResend = formData.get('mode') === 'resend';
   if (!rawIdentifier || !rawIdentifier.trim()) {
     return { error: 'Email or phone is required.' };
   }
@@ -1026,9 +1154,13 @@ export async function forgotPasswordAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
-      return { error: err.message, ...apiMeta(err) };
+      return mapAuthApiError(err, idCheck.value.kind);
     }
     return { error: 'An unexpected error occurred while requesting password recovery.' };
+  }
+
+  if (inPlaceResend) {
+    return { success: true };
   }
 
   redirect('/reset-password');
@@ -1096,7 +1228,7 @@ export async function resetPasswordAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
-      return { error: err.message, ...apiMeta(err) };
+      return mapAuthApiError(err, idCheck.value.kind);
     }
     return { error: 'An unexpected error occurred while resetting password.' };
   }
@@ -1323,6 +1455,7 @@ export async function requestAccountDeletionAction(
       }
       try {
         const cookieStore = await cookies();
+        clearRememberMeCookies(cookieStore);
         cookieStore.set('account_deleted', 'true', {
           path: '/',
           maxAge: 15,
@@ -1394,6 +1527,12 @@ export async function pollAccountDeletionStatusAction(
         await supabase.auth.signOut({ scope: 'local' });
       } catch {
         // Best effort local sign out
+      }
+      try {
+        const cookieStore = await cookies();
+        clearRememberMeCookies(cookieStore);
+      } catch {
+        // Best effort cookie cleanup
       }
     }
 

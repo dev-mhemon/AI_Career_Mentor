@@ -12,23 +12,29 @@ redis.call('SET', policyKey, fingerprint, 'PX', lifetime)
 `;
 
 export const sendScript = `
-local cooldown = redis.call('PTTL', KEYS[1])
-if cooldown == -1 then return {6, 1000} end
-if cooldown >= 0 then return {1, math.max(1, cooldown)} end
+local ipOnly = ARGV[5] == '1'
+if not ipOnly then
+  local cooldown = redis.call('PTTL', KEYS[1])
+  if cooldown == -1 then return {6, 1000} end
+  if cooldown >= 0 then return {1, math.max(1, cooldown)} end
+end
+local startIdx = ipOnly and 3 or 2
 local wait = 0
-for i = 2, 3 do
+for i = startIdx, 3 do
   if redis.call('PTTL', KEYS[i]) == -1 then return {6, 1000} end
   if tonumber(redis.call('GET', KEYS[i]) or '0') >= tonumber(ARGV[i]) then
     wait = math.max(wait, math.max(1, redis.call('PTTL', KEYS[i])))
   end
 end
 if wait > 0 then return {2, wait} end
-for i = 2, 3 do
+for i = startIdx, 3 do
   local n = redis.call('INCR', KEYS[i])
   if n == 1 then redis.call('PEXPIRE', KEYS[i], ARGV[4]) end
 end
-redis.call('SET', KEYS[1], '1', 'PX', ARGV[1])
-return {0, tonumber(ARGV[1])}
+if not ipOnly then
+  redis.call('SET', KEYS[1], '1', 'PX', ARGV[1])
+end
+return {0, ipOnly and 0 or tonumber(ARGV[1])}
 `;
 
 export const issueScript = `
@@ -99,4 +105,17 @@ if failures >= tonumber(ARGV[3]) then
   return {8, tonumber(ARGV[5])}
 end
 return {9, 0}
+`;
+
+export const ipQuotaScript = `
+local counterCount = tonumber(ARGV[4])
+for i = 1, counterCount do
+  if redis.call('PTTL', KEYS[i]) == -1 then return {6, 1000} end
+  if tonumber(redis.call('GET', KEYS[i]) or '0') >= tonumber(ARGV[1]) then
+    return {tonumber(ARGV[3]), math.max(1, redis.call('PTTL', KEYS[i]))}
+  end
+end
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
+return {0, 0}
 `;

@@ -10,6 +10,7 @@ import {
   issueScript,
   challengeScript,
   loginScript,
+  ipQuotaScript,
   policyGuard,
 } from './scripts.js';
 
@@ -234,21 +235,76 @@ export class AuthAbuseControl implements OnModuleDestroy {
           retry,
         );
       case 9:
-        return fail(401, 'INVALID_CREDENTIALS', 'Invalid credentials');
+        return fail(
+          401,
+          'INVALID_CREDENTIALS',
+          'Invalid credentials. Please try again.',
+        );
+      case 10:
+        return fail(
+          429,
+          'RATE_LIMITED',
+          'Too many login attempts. Please wait and try again.',
+          [],
+          true,
+          retry,
+        );
       default:
         return this.unavailable();
     }
+  }
+
+  /** Enforce an atomic per-IP request budget before running database account lookups. */
+  async enforceIpQuota(
+    scope: 'forgot-password' | 'login',
+    ip: string,
+  ): Promise<void> {
+    if (!this.configuration) this.unavailable();
+    const address = this.ipKey(ip);
+    const p = this.configuration.policy;
+    const isForgotPassword = scope === 'forgot-password';
+    const keys = isForgotPassword
+      ? [
+          `auth:v1:ip:forgot-password:${address}`,
+          `auth:v1:send:ip:${address}`,
+        ]
+      : [`auth:v1:ip:login:${address}`];
+    const limit = isForgotPassword
+      ? p.AUTH_SEND_IP_LIMIT
+      : p.AUTH_SEND_IP_LIMIT * 2;
+    const windowMs = isForgotPassword
+      ? p.AUTH_SEND_WINDOW_SECONDS * 1000
+      : p.AUTH_LOGIN_WINDOW_SECONDS * 1000;
+    const rejectionCode = isForgotPassword ? 2 : 10;
+    this.check(
+      await this.evaluate(ipQuotaScript, keys, [
+        limit,
+        windowMs,
+        rejectionCode,
+        keys.length,
+      ]),
+    );
   }
 
   /** Reserve before provider delivery, including unknown contacts. Delivery failure does not refund quota. */
   async reserveSend(
     contact: Contact,
     ip: string,
+    options?: { ipOnly?: boolean },
   ): Promise<{ retryAfterSeconds: number }> {
     const id = this.contactKey(contact);
     const address = this.ipKey(ip);
     if (!this.configuration) this.unavailable();
     const p = this.configuration.policy;
+    const args: (string | number)[] = [
+      p.AUTH_RESEND_COOLDOWN_SECONDS * 1000,
+      p.AUTH_SEND_CONTACT_LIMIT,
+      p.AUTH_SEND_IP_LIMIT,
+      p.AUTH_SEND_WINDOW_SECONDS * 1000,
+    ];
+    if (options?.ipOnly) {
+      args.push(1);
+    }
     const result = await this.evaluate(
       sendScript,
       [
@@ -256,12 +312,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
         `auth:v1:send:contact:${id}`,
         `auth:v1:send:ip:${address}`,
       ],
-      [
-        p.AUTH_RESEND_COOLDOWN_SECONDS * 1000,
-        p.AUTH_SEND_CONTACT_LIMIT,
-        p.AUTH_SEND_IP_LIMIT,
-        p.AUTH_SEND_WINDOW_SECONDS * 1000,
-      ],
+      args,
     );
     this.check(result);
     return { retryAfterSeconds: Math.ceil(result[1] / 1000) };

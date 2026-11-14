@@ -5,25 +5,31 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { AuthAlert } from "@/components/auth/auth-alert";
+import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Tabs } from "@/components/ui/tabs";
 import {
   loadVerificationDraft,
   saveVerificationDraft,
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
 import {
-  validateIdentifier,
-  validateIdentifierOnChange,
-  validatePassword,
-  validatePasswordLive,
+  validateBdPhone,
+  validateBdPhoneOnChange,
+  validateEmail,
+  validateEmailLive,
+  validateLoginPassword,
 } from "@/lib/validation/auth-schemas";
+
+type Channel = "email" | "phone";
 
 /**
  * Screen 02: Login form component using useActionState for pending and error states.
- * Supports email/phone credentials, password recovery navigation, and reset success alerts.
+ * Supports Email and Bangladesh Phone (+880) tabs, preserves identifier on failure,
+ * clears only password on error, and handles password recovery navigation.
  */
 export function LoginForm({
   initialError,
@@ -33,17 +39,40 @@ export function LoginForm({
   successMessage?: string;
 }) {
   const router = useRouter();
-  const [state, formAction, isPending] = useActionState<
-    AuthActionResult,
-    FormData
-  >(loginAction, { error: initialError });
+  const [activeTab, setActiveTab] = useState<Channel>("email");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const identifierRef = useRef(identifier);
+  useEffect(() => {
+    identifierRef.current = identifier;
+  }, [identifier]);
   const submittedIdentifier = useRef("");
-  const identifierBlurredRef = useRef(false);
+  const phoneBlurredRef = useRef(false);
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [dismissedServer, setDismissedServer] = useState<{
     ref: AuthActionResult;
     fields: Set<string>;
   } | null>(null);
+
+  const [state, formAction, isPending] = useActionState<
+    AuthActionResult,
+    FormData
+  >(
+    async (prevState, formData) => {
+      const result = await loginAction(prevState, formData);
+      if (result?.error && !result?.redirectTo) {
+        setPassword("");
+      }
+      return result;
+    },
+    { error: initialError },
+  );
+
+  const {
+    visibleState: visibleAlertState,
+    dismiss: dismissAlert,
+    onFormActivity,
+  } = useDismissedActionState(state);
 
   useEffect(() => {
     if (successMessage) {
@@ -63,14 +92,21 @@ export function LoginForm({
       const channel = state.redirectTo.includes("channel=phone")
         ? "phone"
         : "email";
-      const identifier =
-        submittedIdentifier.current ||
-        (document.getElementById("email") as HTMLInputElement | null)?.value?.trim() ||
-        "";
-      if (identifier) {
+      let resolved = submittedIdentifier.current;
+      const currentIdentifier = identifierRef.current;
+      if (!resolved && currentIdentifier.trim()) {
+        if (channel === "phone") {
+          const check = validateBdPhone(currentIdentifier);
+          resolved = check.ok ? check.value : currentIdentifier.trim();
+        } else {
+          const check = validateEmail(currentIdentifier);
+          resolved = check.ok ? check.value : currentIdentifier.trim().toLowerCase();
+        }
+      }
+      if (resolved) {
         saveVerificationDraft({
           channel,
-          identifier,
+          identifier: resolved,
           context: "unverified_login",
         });
       }
@@ -118,124 +154,216 @@ export function LoginForm({
       ? undefined
       : state?.fieldErrors?.[field];
 
-  const identifierError = clientErrors.email ?? serverFieldError("email");
+  const identifierError =
+    clientErrors.identifier ??
+    serverFieldError("identifier") ??
+    serverFieldError("email");
   const passwordError = clientErrors.password ?? serverFieldError("password");
 
   return (
     <div className="flex flex-col gap-6">
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
 
-      <form
-        action={formAction}
-        noValidate
-        onSubmit={(e) => {
-          const form = e.currentTarget;
-          const idEl = form.elements.namedItem("email") as HTMLInputElement | null;
-          const pwEl = form.elements.namedItem("password") as HTMLInputElement | null;
-          const errors: Record<string, string> = {};
-          const id = validateIdentifier(idEl?.value ?? "");
-          if (!id.ok) {
-            errors.email = id.error;
-            if (idEl?.value?.trim()) identifierBlurredRef.current = true;
-          }
-          const pw = validatePassword(pwEl?.value ?? "");
-          if (!pw.ok) errors.password = pw.error;
-          if (Object.keys(errors).length) {
-            e.preventDefault();
-            setClientErrors(errors);
-            return;
-          }
+      <Tabs
+        aria-label="Sign-in method"
+        variant="segmented_pill"
+        idPrefix="login"
+        hidePanels
+        disabled={isPending}
+        value={activeTab}
+        onValueChange={(id) => {
+          setActiveTab(id as Channel);
+          setIdentifier("");
           setClientErrors({});
-          if (id.ok && idEl) idEl.value = id.value.value; // normalized (+8801…, lowercase email)
-          submittedIdentifier.current = idEl?.value?.trim() ?? "";
+          phoneBlurredRef.current = false;
+          dismissAlert();
         }}
-        className="flex flex-col gap-4"
+        items={[
+          { id: "email", label: "Email", panel: null },
+          { id: "phone", label: "Phone", panel: null },
+        ]}
+      />
+
+      <div
+        role="tabpanel"
+        id="login-panel"
+        aria-label={activeTab === "email" ? "Sign in with Email" : "Sign in with Phone"}
       >
-        <Input
-          id="email"
-          name="email"
-          label="Email or Phone"
-          autoComplete="username"
-          required
-          readOnly={isPending}
-          error={identifierError}
-          onChange={(e) => {
-            dismissServerField("email");
-            const check = validateIdentifierOnChange(
-              e.target.value,
-              identifierBlurredRef.current,
-            );
-            if (check.resetBlurred) identifierBlurredRef.current = false;
-            setFieldError("email", check.error);
-          }}
-          onBlur={(e) => {
-            const raw = e.target.value;
-            if (!raw.trim()) {
-              identifierBlurredRef.current = false;
+        <form
+          action={formAction}
+          noValidate
+          onFocusCapture={onFormActivity}
+          onChangeCapture={onFormActivity}
+          onSubmit={(e) => {
+            const form = e.currentTarget;
+            const errors: Record<string, string> = {};
+            const id =
+              activeTab === "email"
+                ? validateEmail(identifier)
+                : validateBdPhone(identifier);
+            if (!id.ok) {
+              errors.identifier = id.error;
+              if (activeTab === "phone" && identifier.trim()) {
+                phoneBlurredRef.current = true;
+              }
+            }
+            const pw = validateLoginPassword(password);
+            if (!pw.ok) errors.password = pw.error;
+            if (Object.keys(errors).length) {
+              e.preventDefault();
+              setClientErrors(errors);
               return;
             }
-            identifierBlurredRef.current = true;
-            const id = validateIdentifier(raw);
-            if (!id.ok) {
-              setFieldError("email", id.error);
-            } else {
-              if (id.value.kind === "email") e.target.value = id.value.value;
-              setFieldError("email", undefined);
+            setClientErrors({});
+            if (id.ok) {
+              if (activeTab === "email") {
+                const emailEl = form.elements.namedItem(
+                  "identifier",
+                ) as HTMLInputElement | null;
+                if (emailEl) emailEl.value = id.value;
+              }
+              submittedIdentifier.current = id.value;
             }
           }}
-          placeholder="you@example.com or +8801712345678"
-        />
+          className="flex flex-col gap-4"
+        >
+          {activeTab === "email" ? (
+            <Input
+              key="email"
+              id="email"
+              name="identifier"
+              variant="email"
+              label="Email"
+              autoComplete="username"
+              required
+              readOnly={isPending}
+              value={identifier}
+              error={identifierError}
+              onChange={(e) => {
+                const v = e.target.value;
+                setIdentifier(v);
+                dismissServerField("email");
+                dismissServerField("identifier");
+                const res = validateEmailLive(v);
+                setFieldError("identifier", res.ok ? undefined : res.error);
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) return;
+                const res = validateEmail(e.target.value);
+                if (!res.ok) setFieldError("identifier", res.error);
+                else {
+                  setIdentifier(res.value);
+                  setFieldError("identifier", undefined);
+                }
+              }}
+              placeholder="you@example.com"
+            />
+          ) : (
+            <Input
+              key="phone"
+              id="phone"
+              name="identifier"
+              variant="phone_bd"
+              label="Phone Number"
+              autoComplete="tel"
+              required
+              readOnly={isPending}
+              value={identifier}
+              error={identifierError}
+              onChange={(e) => {
+                const v = e.target.value;
+                setIdentifier(v);
+                dismissServerField("email");
+                dismissServerField("identifier");
+                const check = validateBdPhoneOnChange(
+                  v,
+                  phoneBlurredRef.current,
+                );
+                if (check.resetBlurred) phoneBlurredRef.current = false;
+                setFieldError("identifier", check.error);
+              }}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) {
+                  phoneBlurredRef.current = false;
+                  return;
+                }
+                phoneBlurredRef.current = true;
+                const res = validateBdPhone(e.target.value);
+                setFieldError("identifier", res.ok ? undefined : res.error);
+              }}
+              hint="Bangladesh mobile, e.g. 01712-345678"
+              placeholder="01712-345678"
+            />
+          )}
 
-        <div className="flex flex-col gap-1.5">
-          <Input
-            id="password"
-            name="password"
-            variant="password"
-            label="Password"
-            autoComplete="current-password"
-            required
-            readOnly={isPending}
-            error={passwordError}
-            onChange={(e) => {
-              dismissServerField("password");
-              const pw = validatePasswordLive(e.target.value);
-              setFieldError("password", pw.ok ? undefined : pw.error);
-            }}
-            onBlur={(e) => {
-              const raw = e.target.value;
-              if (!raw) return;
-              const pw = validatePassword(raw);
-              setFieldError("password", pw.ok ? undefined : pw.error);
-            }}
-            placeholder="••••••••"
-          />
-          <Link
-            href="/forgot-password"
-            className="inline-flex min-h-11 items-center self-end text-label text-text-link underline underline-offset-4 hover:text-text-link-hover"
+          <div className="flex flex-col gap-1.5">
+            <Input
+              id="password"
+              name="password"
+              variant="password"
+              label="Password"
+              autoComplete="current-password"
+              required
+              readOnly={isPending}
+              value={password}
+              error={passwordError}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPassword(v);
+                dismissServerField("password");
+                const pw = validateLoginPassword(v);
+                setFieldError("password", pw.ok ? undefined : pw.error);
+              }}
+              onBlur={(e) => {
+                const raw = e.target.value;
+                if (!raw) return;
+                const pw = validateLoginPassword(raw);
+                setFieldError("password", pw.ok ? undefined : pw.error);
+              }}
+              placeholder="••••••••"
+            />
+            <div className="flex items-center justify-between gap-4">
+              <Checkbox
+                name="rememberMe"
+                label="Keep me signed in"
+                defaultChecked={false}
+                disabled={isPending}
+              />
+              <Link
+                href="/forgot-password"
+                className="inline-flex min-h-11 items-center text-label text-text-link underline underline-offset-4 hover:text-text-link-hover"
+              >
+                Forgot password?
+              </Link>
+            </div>
+          </div>
+
+          {state.redirectTo ? (
+            <Alert variant="info">
+              Your contact is not verified yet. Taking you to verification…
+            </Alert>
+          ) : (
+            <AuthAlert
+              result={visibleAlertState}
+              message={
+                visibleAlertState?.status === 401
+                  ? "Invalid credentials. Please try again."
+                  : undefined
+              }
+            />
+          )}
+
+          <Button
+            type="submit"
+            size="lg"
+            fullWidth
+            isLoading={isPending}
+            loadingText="Signing in…"
           >
-            পাসওয়ার্ড ভুলে গেছেন? (Forgot Password)
-          </Link>
-        </div>
-
-        {state.redirectTo ? (
-          <Alert variant="info">
-            Your contact is not verified yet. Taking you to verification…
-          </Alert>
-        ) : (
-          <AuthAlert
-            result={state}
-            message={
-              state.status === 401
-                ? "Incorrect email, phone or password. Check your details and try again."
-                : undefined
-            }
-          />
-        )}
-
-        <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Signing in…">
-          Sign In
-        </Button>
-      </form>
+            Sign In
+          </Button>
+        </form>
+      </div>
 
       <div className="relative flex items-center">
         <div className="flex-1 border-t border-border-default" />

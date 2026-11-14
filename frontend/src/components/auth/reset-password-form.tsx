@@ -1,17 +1,26 @@
 "use client";
 
-import { useActionState, useState, useEffect, useRef } from "react";
+import { type SyntheticEvent, useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { resetPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
-import { AuthAlert } from "@/components/auth/auth-alert";
-import { Alert } from "@/components/ui/alert";
+import {
+  resetPasswordAction,
+  forgotPasswordAction,
+  type AuthActionResult,
+} from "@/lib/auth/actions";
+import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import { Alert, formatCountdown } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { ActionErrorLike } from "@/lib/api/error-mapper";
 import {
   loadVerificationDraft,
   clearVerificationDraft,
+  updateVerificationDraftExpiry,
+  saveVerificationDraft,
+  type VerificationChannel,
   type VerificationDraft,
 } from "@/lib/auth/verification-draft";
+import { useResendCooldown } from "@/lib/auth/use-resend-cooldown";
 import {
   PASSWORD_MAX,
   passwordStrength,
@@ -38,13 +47,66 @@ export function ResetPasswordForm() {
   const [isDraftExpired, setIsDraftExpired] = useState<boolean>(false);
   const draftLoaded = useRef(false);
   const identifierBlurredRef = useRef(false);
+  const [enteredIdentifier, setEnteredIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [isResending, setIsResending] = useState(false);
+  const [resendError, setResendError] = useState<ActionErrorLike | null>(null);
+  const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
+  const { visibleState: visibleAlertState, onFormActivity } =
+    useDismissedActionState(state);
   const [dismissedServer, setDismissedServer] = useState<{
     ref: AuthActionResult;
     fields: Set<string>;
   } | null>(null);
+
+  const handleFormActivity = (e: SyntheticEvent<HTMLFormElement>) => {
+    onFormActivity(e);
+    if (
+      resendError &&
+      (e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement)
+    ) {
+      setResendError(null);
+    }
+  };
+
+  const resolvedContact = (() => {
+    if (draft?.normalized_identifier) {
+      return {
+        channel: draft.channel as VerificationChannel,
+        identifier: draft.normalized_identifier,
+      };
+    }
+    const trimmed = enteredIdentifier.trim();
+    if (!trimmed) return null;
+    const check = validateIdentifier(trimmed);
+    if (!check.ok) return null;
+    return {
+      channel: check.value.kind as VerificationChannel,
+      identifier: check.value.value,
+    };
+  })();
+
+  const activeContactKey = resolvedContact
+    ? `${resolvedContact.channel}:${resolvedContact.identifier}`
+    : null;
+  const activeContactRef = useRef<string | null>(activeContactKey);
+  useEffect(() => {
+    activeContactRef.current = activeContactKey;
+  }, [activeContactKey]);
+
+  const {
+    cooldown,
+    isCooldownHydrated,
+    startCooldown,
+    clearCooldown,
+  } = useResendCooldown({
+    channel: resolvedContact?.channel ?? null,
+    identifier: resolvedContact?.identifier ?? null,
+  });
 
   useEffect(() => {
     if (draftLoaded.current) return;
@@ -60,11 +122,70 @@ export function ResetPasswordForm() {
 
   useEffect(() => {
     if (state?.success) {
+      clearCooldown(draft?.normalized_identifier ?? resolvedContact?.identifier);
       if (draft?.context === "password_recovery") {
         clearVerificationDraft();
       }
     }
-  }, [state, draft]);
+  }, [state, draft, clearCooldown, resolvedContact?.identifier]);
+
+  const handleResend = async () => {
+    if (!resolvedContact || cooldown > 0 || isResending || isPending) return;
+
+    const requestContact = resolvedContact;
+    const requestKey = `${requestContact.channel}:${requestContact.identifier}`;
+
+    setIsResending(true);
+    setResendError(null);
+    setResendSuccess(null);
+
+    try {
+      const formData = new FormData();
+      formData.set("identifier", requestContact.identifier);
+      formData.set("mode", "resend");
+      const result = await forgotPasswordAction({}, formData);
+
+      if (activeContactRef.current !== requestKey) {
+        return;
+      }
+
+      if (result?.error) {
+        setResendError(result);
+        if (typeof result.retryAfterSeconds === "number" && result.retryAfterSeconds > 0) {
+          startCooldown(result.retryAfterSeconds, undefined, requestContact.identifier);
+        }
+      } else {
+        setResendSuccess("Verification code sent successfully.");
+        startCooldown(60, undefined, requestContact.identifier);
+        const updated =
+          updateVerificationDraftExpiry(
+            600,
+            draft?.contact_masked,
+            Date.now(),
+            requestContact.channel,
+            requestContact.identifier,
+          ) ??
+          saveVerificationDraft({
+            channel: requestContact.channel,
+            identifier: requestContact.identifier,
+            contactMasked: draft?.contact_masked,
+            context: "password_recovery",
+          });
+        if (updated) {
+          setDraft(updated);
+          setIsDraftExpired(false);
+        }
+      }
+    } catch {
+      if (activeContactRef.current === requestKey) {
+        setResendError({
+          error: "Failed to resend verification code. Please try again.",
+        });
+      }
+    } finally {
+      setIsResending(false);
+    }
+  };
 
   const setFieldError = (field: string, error?: string) =>
     setClientErrors((prev) => {
@@ -113,6 +234,8 @@ export function ResetPasswordForm() {
       <form
         action={formAction}
         noValidate
+        onFocusCapture={handleFormActivity}
+        onChangeCapture={handleFormActivity}
         onSubmit={(e) => {
           const form = e.currentTarget;
           const errors: Record<string, string> = {};
@@ -170,9 +293,19 @@ export function ResetPasswordForm() {
             name="identifier"
             label="Email or Phone"
             required
-            readOnly={isPending}
+            readOnly={isPending || isResending}
             error={clientErrors.identifier ?? serverFieldError("identifier")}
             onChange={(e) => {
+              const nextVal = e.target.value;
+              setEnteredIdentifier(nextVal);
+              if (!draft?.normalized_identifier) {
+                const nextCheck = validateIdentifier(nextVal.trim());
+                activeContactRef.current = nextCheck.ok
+                  ? `${nextCheck.value.kind}:${nextCheck.value.value}`
+                  : null;
+              }
+              setResendError(null);
+              setResendSuccess(null);
               dismissServerField("identifier");
               const check = validateIdentifierOnChange(
                 e.target.value,
@@ -184,13 +317,17 @@ export function ResetPasswordForm() {
             onBlur={(e) => {
               if (!e.target.value.trim()) {
                 identifierBlurredRef.current = false;
+                setEnteredIdentifier("");
                 return;
               }
               identifierBlurredRef.current = true;
               const res = validateIdentifier(e.target.value);
-              if (!res.ok) setFieldError("identifier", res.error);
-              else {
+              if (!res.ok) {
+                setEnteredIdentifier(e.target.value);
+                setFieldError("identifier", res.error);
+              } else {
                 if (res.value.kind === "email") e.target.value = res.value.value;
+                setEnteredIdentifier(e.target.value);
                 setFieldError("identifier", undefined);
               }
             }}
@@ -279,23 +416,47 @@ export function ResetPasswordForm() {
           placeholder="Repeat new password"
         />
 
-        <AuthAlert result={state} />
+        <AuthAlert result={visibleAlertState} />
 
         <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Resetting password…">
           Set New Password
         </Button>
       </form>
 
-      <div className="flex flex-col items-center gap-1 text-body-sm text-text-secondary">
-        <p>
-          Didn&apos;t receive a code?{" "}
-          <Link
-            href="/forgot-password"
-            className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
-          >
-            Request a new code
-          </Link>
-        </p>
+      <div className="flex flex-col items-center gap-2 text-body-sm text-text-secondary">
+        {resolvedContact ? (
+          <div className="flex w-full flex-col items-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <span>Didn&apos;t receive a code?</span>
+              <Button
+                type="button"
+                variant="link"
+                isLoading={isResending}
+                loadingText="Sending…"
+                disabled={!isCooldownHydrated || cooldown > 0 || isResending || isPending}
+                onClick={() => handleResend()}
+                className={cooldown > 0 ? "no-underline tabular-nums" : "underline-offset-4"}
+              >
+                {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : "Resend code"}
+              </Button>
+              <span className="sr-only" aria-live="polite">
+                {isCooldownHydrated && cooldown === 0 ? "You can now resend the verification code." : ""}
+              </span>
+            </div>
+            <AuthAlert result={resendError} />
+            {resendSuccess && <Alert variant="success">{resendSuccess}</Alert>}
+          </div>
+        ) : (
+          <p>
+            Didn&apos;t receive a code?{" "}
+            <Link
+              href="/forgot-password"
+              className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+            >
+              Resend code
+            </Link>
+          </p>
+        )}
         <p>
           Remember your password?{" "}
           <Link

@@ -1,5 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import {
+  applyRememberPreference,
+  REMEMBER_ME_COOKIE,
+  resolveRememberCookieValue,
+} from "@/lib/supabase/remember";
 
 /**
  * Next.js 16 Proxy — lightweight edge interceptor.
@@ -30,13 +35,20 @@ export async function proxy(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           // Forward set-cookie instructions into the request and response.
+          const rememberPref = resolveRememberCookieValue(
+            request.cookies.get(REMEMBER_ME_COOKIE)?.value,
+          );
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
           supabaseResponse = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options),
-          );
+          cookiesToSet.forEach(({ name, value, options }) => {
+            supabaseResponse.cookies.set(
+              name,
+              value,
+              applyRememberPreference(value, options, rememberPref),
+            );
+          });
         },
       },
     },
