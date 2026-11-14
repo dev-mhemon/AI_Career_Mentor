@@ -3,11 +3,26 @@
 import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { resetPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
+import { AuthAlert } from "@/components/auth/auth-alert";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   loadVerificationDraft,
   clearVerificationDraft,
   type VerificationDraft,
 } from "@/lib/auth/verification-draft";
+import {
+  PASSWORD_MAX,
+  passwordStrength,
+  validateIdentifier,
+  validateIdentifierOnChange,
+  validateOtp,
+  validateOtpLive,
+  validatePassword,
+  validatePasswordLive,
+  validatePasswordMatch,
+} from "@/lib/validation/auth-schemas";
 
 /**
  * Screen 06: Password Reset Form component.
@@ -22,6 +37,14 @@ export function ResetPasswordForm() {
   const [draft, setDraft] = useState<VerificationDraft | null>(null);
   const [isDraftExpired, setIsDraftExpired] = useState<boolean>(false);
   const draftLoaded = useRef(false);
+  const identifierBlurredRef = useRef(false);
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
+  const [dismissedServer, setDismissedServer] = useState<{
+    ref: AuthActionResult;
+    fields: Set<string>;
+  } | null>(null);
 
   useEffect(() => {
     if (draftLoaded.current) return;
@@ -43,20 +66,96 @@ export function ResetPasswordForm() {
     }
   }, [state, draft]);
 
+  const setFieldError = (field: string, error?: string) =>
+    setClientErrors((prev) => {
+      if (!error) {
+        if (!prev[field]) return prev;
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      if (prev[field] === error) return prev;
+      return { ...prev, [field]: error };
+    });
+
+  const dismissServerField = (field: string) =>
+    setDismissedServer((prev) => {
+      if (!state?.fieldErrors?.[field]) return prev;
+      if (prev?.ref === state && prev.fields.has(field)) return prev;
+      const fields = new Set(prev?.ref === state ? prev.fields : []);
+      fields.add(field);
+      return { ref: state, fields };
+    });
+
+  const serverFieldError = (field: string) =>
+    dismissedServer?.ref === state && dismissedServer.fields.has(field)
+      ? undefined
+      : state?.fieldErrors?.[field];
+
+  const strength = passwordStrength(password);
+  const mismatch =
+    confirm.length > 0 && !validatePasswordMatch(password, confirm).ok
+      ? "Passwords do not match."
+      : undefined;
+
   return (
     <div className="flex flex-col gap-6">
       {draft?.contact_masked ? (
-        <div className="rounded-lg border border-foreground/10 bg-foreground/5 p-3 text-sm text-foreground/80">
-          Reset code sent to: <span className="font-semibold text-foreground">{draft.contact_masked}</span>
-        </div>
+        <Alert variant="info">
+          Reset code sent to: <span className="font-semibold">{draft.contact_masked}</span>
+        </Alert>
       ) : isDraftExpired ? (
-        <div role="status" className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+        <Alert variant="warning">
           Recovery session expired. Please re-enter your email or phone below.
-        </div>
+        </Alert>
       ) : null}
 
       <form
         action={formAction}
+        noValidate
+        onSubmit={(e) => {
+          const form = e.currentTarget;
+          const errors: Record<string, string> = {};
+          const idEl = form.elements.namedItem("identifier") as HTMLInputElement | null;
+          if (idEl && idEl.type !== "hidden") {
+            const id = validateIdentifier(idEl.value);
+            if (!id.ok) {
+              errors.identifier = id.error;
+              if (idEl.value.trim()) identifierBlurredRef.current = true;
+            } else {
+              idEl.value = id.value.value;
+            }
+          }
+          const code = validateOtp(
+            (form.elements.namedItem("code") as HTMLInputElement).value,
+          );
+          if (!code.ok) errors.code = code.error;
+          const pw = validatePassword(password);
+          if (!pw.ok) errors.new_password = pw.error;
+          const match = validatePasswordMatch(password, confirm);
+          if (!match.ok) errors.confirm_new_password = match.error;
+          if (Object.keys(errors).length) {
+            e.preventDefault();
+            setClientErrors(errors);
+            const firstField = (
+              [
+                "identifier",
+                "code",
+                "new_password",
+                "confirm_new_password",
+              ] as const
+            ).find((key) => Boolean(errors[key]));
+            if (firstField) {
+              form
+                .querySelector<HTMLElement>(
+                  `#${firstField}, [name="${firstField}"]:not([type="hidden"])`,
+                )
+                ?.focus();
+            }
+            return;
+          }
+          setClientErrors({});
+        }}
         className="flex flex-col gap-4"
       >
         {draft?.normalized_identifier ? (
@@ -66,110 +165,133 @@ export function ResetPasswordForm() {
             value={draft.normalized_identifier}
           />
         ) : (
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="identifier"
-              className="text-sm font-medium text-foreground"
-            >
-              Email or Phone
-            </label>
-            <input
-              id="identifier"
-              name="identifier"
-              type="text"
-              required
-              disabled={isPending}
-              className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-              placeholder="you@example.com or +8801712345678"
-            />
-          </div>
+          <Input
+            id="identifier"
+            name="identifier"
+            label="Email or Phone"
+            required
+            readOnly={isPending}
+            error={clientErrors.identifier ?? serverFieldError("identifier")}
+            onChange={(e) => {
+              dismissServerField("identifier");
+              const check = validateIdentifierOnChange(
+                e.target.value,
+                identifierBlurredRef.current,
+              );
+              if (check.resetBlurred) identifierBlurredRef.current = false;
+              setFieldError("identifier", check.error);
+            }}
+            onBlur={(e) => {
+              if (!e.target.value.trim()) {
+                identifierBlurredRef.current = false;
+                return;
+              }
+              identifierBlurredRef.current = true;
+              const res = validateIdentifier(e.target.value);
+              if (!res.ok) setFieldError("identifier", res.error);
+              else {
+                if (res.value.kind === "email") e.target.value = res.value.value;
+                setFieldError("identifier", undefined);
+              }
+            }}
+            placeholder="you@example.com or +8801712345678"
+          />
         )}
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="code"
-            className="text-sm font-medium text-foreground"
-          >
-            6-Digit Verification Code
-          </label>
-          <input
-            id="code"
-            name="code"
-            type="text"
-            inputMode="numeric"
-            pattern="\d{6}"
-            maxLength={6}
-            required
-            disabled={isPending}
-            autoComplete="one-time-code"
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-center text-lg font-mono tracking-widest text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder="••••••"
-          />
-        </div>
+        <Input
+          id="code"
+          name="code"
+          variant="otp_6"
+          label="6-Digit Verification Code"
+          required
+          readOnly={isPending}
+          error={clientErrors.code ?? serverFieldError("code")}
+          onChange={(e) => {
+            dismissServerField("code");
+            const res = validateOtpLive(e.target.value);
+            setFieldError("code", res.ok ? undefined : res.error);
+          }}
+          onBlur={(e) => {
+            if (!e.target.value.trim()) return;
+            const res = validateOtp(e.target.value);
+            setFieldError("code", res.ok ? undefined : res.error);
+          }}
+        />
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="new_password"
-            className="text-sm font-medium text-foreground"
-          >
-            New Password
-          </label>
-          <input
+        <div className="flex flex-col gap-2">
+          <Input
             id="new_password"
             name="new_password"
-            type="password"
-            minLength={8}
-            maxLength={128}
-            required
-            disabled={isPending}
+            variant="password"
+            label="New Password"
             autoComplete="new-password"
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
+            required
+            minLength={8}
+            maxLength={PASSWORD_MAX}
+            readOnly={isPending}
+            value={password}
+            error={clientErrors.new_password ?? serverFieldError("new_password")}
+            onChange={(e) => {
+              const v = e.target.value;
+              setPassword(v);
+              dismissServerField("new_password");
+              const pw = validatePasswordLive(v);
+              setFieldError("new_password", pw.ok ? undefined : pw.error);
+              if (!confirm || validatePasswordMatch(v, confirm).ok) {
+                setFieldError("confirm_new_password", undefined);
+              }
+            }}
+            onBlur={(e) => {
+              if (!e.target.value) return;
+              const pw = validatePassword(e.target.value);
+              setFieldError("new_password", pw.ok ? undefined : pw.error);
+            }}
             placeholder="At least 8 characters"
           />
+          {password && (
+            <p aria-live="polite" className="text-caption text-text-secondary">
+              Strength: <strong className="text-text-primary">{strength.label}</strong> ({strength.score}/4)
+            </p>
+          )}
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="confirm_new_password"
-            className="text-sm font-medium text-foreground"
-          >
-            Confirm New Password
-          </label>
-          <input
-            id="confirm_new_password"
-            name="confirm_new_password"
-            type="password"
-            minLength={8}
-            maxLength={128}
-            required
-            disabled={isPending}
-            autoComplete="new-password"
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder="Repeat new password"
-          />
-        </div>
+        <Input
+          id="confirm_new_password"
+          name="confirm_new_password"
+          variant="password"
+          label="Confirm New Password"
+          autoComplete="new-password"
+          required
+          minLength={8}
+          maxLength={PASSWORD_MAX}
+          readOnly={isPending}
+          value={confirm}
+          error={
+            clientErrors.confirm_new_password ??
+            serverFieldError("confirm_new_password") ??
+            mismatch
+          }
+          onChange={(e) => {
+            setConfirm(e.target.value);
+            dismissServerField("confirm_new_password");
+            setFieldError("confirm_new_password", undefined);
+          }}
+          placeholder="Repeat new password"
+        />
 
-        {state?.error && (
-          <p role="alert" className="text-sm text-red-600">
-            {state.error}
-          </p>
-        )}
+        <AuthAlert result={state} />
 
-        <button
-          type="submit"
-          disabled={isPending}
-          className="mt-2 h-11 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
-        >
-          {isPending ? "Resetting password…" : "Set New Password"}
-        </button>
+        <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Resetting password…">
+          Set New Password
+        </Button>
       </form>
 
-      <div className="flex flex-col items-center gap-2 text-sm text-foreground/60">
+      <div className="flex flex-col items-center gap-1 text-body-sm text-text-secondary">
         <p>
           Didn&apos;t receive a code?{" "}
           <Link
             href="/forgot-password"
-            className="font-medium text-foreground underline underline-offset-4 hover:text-foreground/80"
+            className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
           >
             Request a new code
           </Link>
@@ -178,7 +300,7 @@ export function ResetPasswordForm() {
           Remember your password?{" "}
           <Link
             href="/login"
-            className="font-medium text-foreground underline underline-offset-4 hover:text-foreground/80"
+            className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
           >
             Sign in
           </Link>

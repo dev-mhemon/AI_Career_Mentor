@@ -8,6 +8,11 @@ import {
   type LearningSettingsFormValues,
 } from '@/lib/profile/actions';
 import type { ProfileResponse } from '@/lib/api/client';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { AlertCircleIcon } from '@/components/ui/icons';
+import { cn } from '@/components/ui/cn';
 
 /**
  * Properties for the `LearningSettingsForm` component on Screen 22 (`/settings`).
@@ -151,7 +156,9 @@ export function LearningSettingsForm({
     setValues((prev) => ({ ...prev, timezone: e.target.value }));
   };
 
-  const handleHoursChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleHoursChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
     setDismissedState(state);
     setIsDirty(true);
     setValues((prev) => ({
@@ -164,177 +171,161 @@ export function LearningSettingsForm({
     return (
       <section
         aria-labelledby="learning-settings-heading"
-        className="rounded-lg border border-foreground/15 bg-background p-5"
+        className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
       >
         <h2
           id="learning-settings-heading"
-          className="text-base font-semibold text-foreground"
+          className="text-heading-sm text-text-primary"
         >
           শেখার সেটিংস (Learning Settings)
         </h2>
-        <p className="mt-2 text-sm text-foreground/60">
+        <p className="mt-2 text-body-sm text-text-secondary">
           স্থগিত অ্যাকাউন্ট থেকে শেখার সেটিংস পরিবর্তন করা সম্ভব নয় (Learning settings cannot be modified while your account is suspended).
         </p>
       </section>
     );
   }
 
+  const timezoneError = activeState.fieldErrors?.timezone;
+
   return (
     <section
       aria-labelledby="learning-settings-heading"
-      className="rounded-lg border border-foreground/15 bg-background p-5"
+      className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
     >
       <div className="flex flex-col gap-1">
         <h2
           id="learning-settings-heading"
-          className="text-base font-semibold text-foreground"
+          className="text-heading-sm text-text-primary"
         >
           শেখার সেটিংস (Learning Settings)
         </h2>
-        <p className="text-sm text-foreground/60">
+        <p className="text-body-sm text-text-secondary">
           আপনার দৈনিক অধ্যয়নের লক্ষ্যমাত্রা এবং টাইমজোন নির্ধারণ করুন (Configure your daily study commitment and IANA timezone).
         </p>
       </div>
 
       {loadError && (
-        <div
+        <Alert
+          variant="warning"
           role="alert"
-          className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200"
+          retryLabel="পুনরায় চেষ্টা করুন (Retry)"
+          onRetry={() => {
+            if (onRetry) {
+              onRetry();
+            } else {
+              router.refresh();
+            }
+          }}
+          className="mt-4"
         >
-          <span>{loadError}</span>
-          <button
-            type="button"
-            onClick={() => {
-              if (onRetry) {
-                onRetry();
-              } else {
-                router.refresh();
-              }
-            }}
-            className="shrink-0 font-medium underline underline-offset-4 hover:text-amber-950 dark:hover:text-amber-100"
-          >
-            পুনরায় চেষ্টা করুন (Retry)
-          </button>
-        </div>
+          {loadError}
+        </Alert>
       )}
 
       {activeState.error && (
-        <div
+        <Alert
+          variant={
+            activeState.retryAfterSeconds && activeState.retryAfterSeconds > 0
+              ? 'warning'
+              : 'error_retryable'
+          }
           role="alert"
-          className="mt-4 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
+          retryAfterSeconds={activeState.retryAfterSeconds}
+          resetKey={activeState}
+          className="mt-4"
         >
           {activeState.error}
-        </div>
+        </Alert>
       )}
 
       {activeState.success && activeState.message && (
-        <div
-          role="status"
-          className="mt-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-900 dark:text-emerald-200"
-        >
+        <Alert variant="success" role="status" className="mt-4">
           {activeState.message}
-        </div>
+        </Alert>
       )}
 
-      <form action={formAction} className="mt-4 flex flex-col gap-4">
+      <form action={formAction} className="mt-5 flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <label
               htmlFor="learning-timezone"
-              className="text-sm font-medium text-foreground"
+              className="text-label-lg text-text-primary"
             >
               টাইমজোন (IANA Timezone)
             </label>
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="sm"
               disabled={isPending || Boolean(loadError)}
               onClick={handleAutoDetect}
-              className="text-xs font-medium text-foreground/80 underline underline-offset-4 hover:text-foreground disabled:opacity-50"
             >
               স্বয়ংক্রিয়ভাবে শনাক্ত করুন (Auto-detect)
-            </button>
+            </Button>
           </div>
           <input
             id="learning-timezone"
             name="timezone"
             type="text"
             required
-            disabled={isPending || Boolean(loadError)}
+            disabled={Boolean(loadError)}
+            readOnly={isPending}
             value={values.timezone}
             onChange={handleTimezoneChange}
             placeholder="Asia/Dhaka"
-            aria-invalid={Boolean(activeState.fieldErrors?.timezone)}
-            aria-describedby={
-              activeState.fieldErrors?.timezone
-                ? 'learning-timezone-error'
-                : undefined
-            }
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
+            aria-invalid={Boolean(timezoneError)}
+            aria-describedby={timezoneError ? 'learning-timezone-error' : undefined}
+            className={cn(
+              'min-h-11 w-full rounded-md border bg-surface-default px-3 py-2 text-body text-text-primary placeholder:text-text-muted',
+              'transition-colors duration-(--duration-fast) ease-standard',
+              'disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled read-only:bg-surface-subtle',
+              timezoneError
+                ? 'border-border-danger border-2'
+                : 'border-border-default hover:border-border-strong focus:border-border-focus',
+            )}
           />
-          {activeState.fieldErrors?.timezone && (
+          {timezoneError && (
             <p
               id="learning-timezone-error"
               role="alert"
-              className="text-xs text-destructive"
+              className="flex items-start gap-1 text-caption text-text-danger"
             >
-              {activeState.fieldErrors.timezone}
+              <AlertCircleIcon className="mt-0.5 shrink-0" />
+              <span>{timezoneError}</span>
             </p>
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="learning-preferred-daily-hours"
-            className="text-sm font-medium text-foreground"
-          >
-            দৈনিক অধ্যয়নের সময় — ঘণ্টা (Preferred Daily Hours)
-          </label>
-          <input
-            id="learning-preferred-daily-hours"
-            name="preferred_daily_hours"
-            type="number"
-            min="0.5"
-            max="12"
-            step="0.5"
-            required
-            disabled={isPending || Boolean(loadError)}
-            value={values.preferred_daily_hours}
-            onChange={handleHoursChange}
-            placeholder="2"
-            aria-invalid={Boolean(
-              activeState.fieldErrors?.preferred_daily_hours,
-            )}
-            aria-describedby={
-              activeState.fieldErrors?.preferred_daily_hours
-                ? 'learning-hours-error'
-                : 'learning-hours-hint'
-            }
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-          />
-          <p id="learning-hours-hint" className="text-xs text-foreground/60">
-            ০.৫ থেকে ১২ ঘণ্টার মধ্যে (০.৫ ঘণ্টার ধাপে, যেমন ১.৫ বা ২.০)।
-          </p>
-          {activeState.fieldErrors?.preferred_daily_hours && (
-            <p
-              id="learning-hours-error"
-              role="alert"
-              className="text-xs text-destructive"
-            >
-              {activeState.fieldErrors.preferred_daily_hours}
-            </p>
-          )}
-        </div>
+        <Input
+          id="learning-preferred-daily-hours"
+          name="preferred_daily_hours"
+          variant="number"
+          label="দৈনিক অধ্যয়নের সময় — ঘণ্টা (Preferred Daily Hours)"
+          min="0.5"
+          max="12"
+          step="0.5"
+          required
+          disabled={Boolean(loadError)}
+          readOnly={isPending}
+          value={values.preferred_daily_hours}
+          onChange={handleHoursChange}
+          placeholder="2"
+          error={activeState.fieldErrors?.preferred_daily_hours}
+          hint="০.৫ থেকে ১২ ঘণ্টার মধ্যে (০.৫ ঘণ্টার ধাপে, যেমন ১.৫ বা ২.০)।"
+        />
 
         <div className="pt-1">
-          <button
+          <Button
             type="submit"
-            disabled={isPending || Boolean(loadError)}
-            className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-6 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
+            variant="primary"
+            size="lg"
+            isLoading={isPending}
+            loadingText="সংরক্ষণ করা হচ্ছে... (Saving...)"
+            disabled={Boolean(loadError)}
           >
-            {isPending
-              ? 'সংরক্ষণ করা হচ্ছে... (Saving...)'
-              : 'সেটিংস সংরক্ষণ করুন (Save Learning Settings)'}
-          </button>
+            সেটিংস সংরক্ষণ করুন (Save Learning Settings)
+          </Button>
         </div>
       </form>
     </section>

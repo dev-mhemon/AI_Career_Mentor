@@ -182,4 +182,41 @@ describe('AddContactForm Component', () => {
     expect(mockPush).toHaveBeenCalledTimes(1);
     expect(mockClearVerificationDraft).not.toHaveBeenCalled();
   });
+
+  it('keeps 01712345678 visible after blur, submits +8801712345678 in FormData, and validates live onChange', async () => {
+    vi.mocked(addContactAction).mockResolvedValueOnce({
+      redirectTo: '/verify?channel=phone',
+    });
+
+    render(<AddContactForm alreadyVerified={false} />);
+
+    const emailInput = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    fireEvent.change(emailInput, { target: { value: 'bad' } });
+    expect(screen.getByText(/enter a valid email address/i)).toBeInTheDocument();
+
+    const phoneTab = screen.getByRole('button', { name: /ফোন নম্বর \(Phone\)/i });
+    fireEvent.click(phoneTab);
+
+    const phoneInput = screen.getByLabelText(/বাংলাদেশি মোবাইল নম্বর/i) as HTMLInputElement;
+    fireEvent.change(phoneInput, { target: { value: '012' } });
+    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: '01712345678' } });
+    fireEvent.blur(phoneInput);
+    expect(phoneInput.value).toBe('01712345678');
+    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+
+    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    const submittedFormData = vi.mocked(addContactAction).mock.calls[0]?.[1];
+    expect(submittedFormData?.get('contact')).toBe('+8801712345678');
+    expect(mockSaveVerificationDraft).toHaveBeenCalledWith({
+      channel: 'phone',
+      identifier: '+8801712345678',
+      context: 'secondary_contact',
+    });
+  });
 });

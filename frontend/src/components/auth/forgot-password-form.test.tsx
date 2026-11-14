@@ -43,8 +43,8 @@ describe("ForgotPasswordForm", () => {
   it("renders email and phone tabs and default email input", () => {
     render(<ForgotPasswordForm />);
 
-    expect(screen.getByRole("button", { name: /^email$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^phone$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^email$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^phone$/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/registered email/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /send reset code/i }),
@@ -54,12 +54,12 @@ describe("ForgotPasswordForm", () => {
   it("switches to phone channel when phone tab is clicked", () => {
     render(<ForgotPasswordForm />);
 
-    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
     expect(screen.getByLabelText(/registered phone number/i)).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("+8801712345678"),
+      screen.getByPlaceholderText("01712-345678"),
     ).toBeInTheDocument();
   });
 
@@ -87,30 +87,63 @@ describe("ForgotPasswordForm", () => {
     });
   });
 
-  it("derives draft channel as email when an email is submitted while on phone tab", async () => {
+  it("strips non-digits from phone_bd input on phone tab and flags invalid prefix immediately onChange", async () => {
     render(<ForgotPasswordForm />);
 
-    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
     const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "user-name@example.com" } });
-    expect(input.checkValidity()).toBe(true);
+    fireEvent.change(input, { target: { value: "017742590012dddddddd12" } });
+    expect(input.value).toBe("01774259001212");
+    expect(screen.getByText(/must be 11 digits/i)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "01712345678" } });
+    expect(input.value).toBe("01712345678");
+    expect(screen.queryByText(/must be 11 digits/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps 01712345678 visible after blur while submitting +8801712345678 in FormData on phone tab", async () => {
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({});
+    render(<ForgotPasswordForm />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+
+    const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "01712345678" } });
+    fireEvent.blur(input);
+
+    expect(input.value).toBe("01712345678");
 
     const form = input.closest("form")!;
-    fireEvent.submit(form);
+    await act(async () => {
+      fireEvent.submit(form);
+    });
 
     expect(mockSaveVerificationDraft).toHaveBeenCalledWith({
-      channel: "email",
-      identifier: "user-name@example.com",
+      channel: "phone",
+      identifier: "+8801712345678",
       context: "password_recovery",
     });
+    const submittedFormData = vi.mocked(forgotPasswordAction).mock.calls[0]?.[1];
+    expect(submittedFormData?.get("identifier")).toBe("+8801712345678");
+  });
+
+  it("validates email in real time onChange without waiting for blur", () => {
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i);
+    fireEvent.change(input, { target: { value: "not-an-email" } });
+    expect(screen.getByText(/enter a valid email address/i)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "user@example.com" } });
+    expect(screen.queryByText(/enter a valid email address/i)).not.toBeInTheDocument();
   });
 
   it("saves recovery draft with phone channel when a phone number is submitted on phone tab", async () => {
     render(<ForgotPasswordForm />);
 
-    const phoneTab = screen.getByRole("button", { name: /^phone$/i });
+    const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
     const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;

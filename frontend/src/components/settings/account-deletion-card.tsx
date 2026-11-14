@@ -7,6 +7,9 @@ import {
   pollAccountDeletionStatusAction,
   requestAccountDeletionAction,
 } from '@/lib/auth/actions';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 /**
  * Props for `AccountDeletionCard` component on Screen 22 (`/settings`).
@@ -151,155 +154,144 @@ export function AccountDeletionCard({
   return (
     <section
       aria-labelledby="danger-zone-heading"
-      className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-5 text-foreground"
+      className="rounded-xl border border-feedback-danger-border bg-surface-raised p-6 text-text-primary shadow-xs"
     >
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <span
-            className="rounded bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-700 dark:text-rose-300"
+            className="rounded-md border border-feedback-danger-border bg-feedback-danger-background px-2.5 py-0.5 text-caption font-semibold text-feedback-danger-text"
             role="status"
           >
             Danger Zone
           </span>
           <h2
             id="danger-zone-heading"
-            className="text-base font-semibold text-rose-800 dark:text-rose-200"
+            className="text-heading-sm text-text-danger"
           >
             অ্যাকাউন্ট মুছে ফেলা (Account Deletion)
           </h2>
         </div>
 
-        <p className="text-sm text-foreground/80">
+        <p className="text-body-sm text-text-secondary">
           আপনার অ্যাকাউন্ট মুছে ফেললে প্রোফাইল, লার্নিং রোডম্যাপ, অনুশীলনের অগ্রগতি এবং সংরক্ষিত
           ডেটা স্থায়ীভাবে মুছে যাবে। কাঁচা টেক্সট ও বার্তার ক্ষেত্রে ৯০-দিনের ধারণসীমা এবং এআই
           অপারেশনাল লগ ৩০ দিনের মধ্যে স্বয়ংক্রিয়ভাবে মুছে ফেলা হবে (PRD §52)।
         </p>
 
         {isSuspended && (
-          <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
+          <p className="text-caption font-medium text-text-warning">
             স্থগিত অ্যাকাউন্টের ক্ষেত্রেও অ্যাকাউন্ট মুছে ফেলার পূর্ণ অধিকার প্রযোজ্য (AZ-SUSP)।
           </p>
         )}
 
-        <div className="mt-3">
-          <button
+        <div className="pt-1">
+          <Button
             type="button"
+            variant="destructive"
+            size="md"
             onClick={handleOpenModal}
             disabled={!canDeleteAccount}
-            className="inline-flex h-10 items-center justify-center rounded-lg border border-rose-600 bg-rose-600 px-4 text-sm font-medium text-white transition-colors hover:bg-rose-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-600 disabled:opacity-50"
           >
             অ্যাকাউন্ট মুছে ফেলুন (Delete Account)
-          </button>
+          </Button>
         </div>
       </div>
 
       {isModalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-account-modal-title"
-          aria-describedby="delete-account-modal-desc"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-        >
-          <div className="w-full max-w-md rounded-xl border border-foreground/20 bg-background p-6 shadow-xl">
+        <div className="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-surface-overlay sm:items-center sm:p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-modal-title"
+            aria-describedby="delete-account-modal-desc"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                handleCloseModal();
+              }
+            }}
+            className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl border border-border-default bg-surface-raised p-6 text-text-primary shadow-xl sm:max-w-md sm:rounded-xl"
+          >
             <h3
               id="delete-account-modal-title"
-              className="text-lg font-bold text-rose-700 dark:text-rose-300"
+              className="text-heading-md text-text-danger"
             >
               আপনি কি নিশ্চিত? (Are you absolutely sure?)
             </h3>
 
-            <p id="delete-account-modal-desc" className="mt-2 text-sm text-foreground/80">
+            <p id="delete-account-modal-desc" className="text-body-sm text-text-secondary">
               এই প্রক্রিয়াটি অপরিবর্তনীয়। নিশ্চিত করার জন্য নিচের বক্সে হুবহু{' '}
-              <strong className="font-semibold text-foreground">DELETE</strong> লিখুন
+              <strong className="font-semibold text-text-primary">DELETE</strong> লিখুন
               {hasPasswordAuth ? ' এবং আপনার অ্যাকাউন্টের পাসওয়ার্ড দিন।' : '।'}
             </p>
 
             {(state.error || pollError) && (
-              <div
-                role="alert"
-                className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-800 dark:text-rose-200"
-              >
+              <Alert variant="error_retryable" role="alert">
                 {state.error || pollError}
-              </div>
+              </Alert>
             )}
 
             {isPolling && (
-              <div
-                role="status"
-                className="mt-4 rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-sm text-sky-800 dark:text-sky-200"
-              >
-                অ্যাকাউন্ট ডিলিট প্রক্রিয়া সম্পন্ন হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন... (Processing
-                deletion...)
-              </div>
+              <Alert variant="info" role="status">
+                অ্যাকাউন্ট ডিলিট প্রক্রিয়া সম্পন্ন হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন... (Processing deletion...)
+              </Alert>
             )}
 
-            <form action={formAction} className="mt-4 flex flex-col gap-4">
-              <div>
-                <label
-                  htmlFor="confirmation-input"
-                  className="block text-xs font-medium text-foreground/80"
-                >
-                  কনফার্মেশন কোড (Type DELETE to confirm)
-                </label>
-                <input
-                  id="confirmation-input"
-                  name="confirmation"
-                  type="text"
-                  required
-                  value={confirmationInput}
-                  onChange={(e) => setConfirmationInput(e.target.value)}
-                  placeholder="DELETE"
-                  disabled={isPending || isPolling}
-                  className="mt-1 block w-full rounded-lg border border-foreground/20 bg-background px-3 py-2 text-sm text-foreground placeholder-foreground/40 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                />
-              </div>
+            <form action={formAction} className="flex flex-col gap-4">
+              <Input
+                id="confirmation-input"
+                name="confirmation"
+                variant="text"
+                label="কনফার্মেশন কোড (Type DELETE to confirm)"
+                required
+                value={confirmationInput}
+                onChange={(e) => setConfirmationInput(e.target.value)}
+                placeholder="DELETE"
+                readOnly={isPending}
+                disabled={isPolling}
+              />
 
               {hasPasswordAuth ? (
-                <div>
-                  <label
-                    htmlFor="password-input"
-                    className="block text-xs font-medium text-foreground/80"
-                  >
-                    পাসওয়ার্ড (Account Password)
-                  </label>
-                  <input
-                    id="password-input"
-                    name="password"
-                    type="password"
-                    required
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="••••••••"
-                    disabled={isPending || isPolling}
-                    className="mt-1 block w-full rounded-lg border border-foreground/20 bg-background px-3 py-2 text-sm text-foreground placeholder-foreground/40 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                  />
-                </div>
+                <Input
+                  id="password-input"
+                  name="password"
+                  variant="password"
+                  label="পাসওয়ার্ড (Account Password)"
+                  required
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  readOnly={isPending}
+                  disabled={isPolling}
+                />
               ) : (
-                <div className="rounded-lg border border-foreground/15 bg-foreground/5 p-3 text-xs text-foreground/70">
+                <div className="rounded-lg border border-border-subtle bg-surface-subtle p-3 text-caption text-text-secondary">
                   সংযুক্ত প্রোভাইডার ({linkedProviders.join(', ')}) দ্বারা আপনার পরিচয় যাচাই করা
                   হবে।
                 </div>
               )}
 
-              <div className="mt-2 flex items-center justify-end gap-3">
-                <button
+              <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="md"
                   onClick={handleCloseModal}
                   disabled={isPending || isPolling}
-                  className="rounded-lg border border-foreground/20 px-4 py-2 text-sm font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50"
                 >
                   বাতিল (Cancel)
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
+                  variant="destructive"
+                  size="md"
+                  isLoading={isPending || isPolling}
+                  loadingText="মুছে ফেলা হচ্ছে..."
                   disabled={isSubmitDisabled}
-                  className="inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-700 disabled:opacity-50"
                 >
-                  {isPending || isPolling
-                    ? 'মুছে ফেলা হচ্ছে...'
-                    : 'স্থায়ীভাবে মুছে ফেলুন (Permanently Delete)'}
-                </button>
+                  স্থায়ীভাবে মুছে ফেলুন (Permanently Delete)
+                </Button>
               </div>
             </form>
           </div>

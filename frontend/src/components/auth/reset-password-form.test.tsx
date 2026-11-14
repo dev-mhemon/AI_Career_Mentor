@@ -246,4 +246,45 @@ describe("ResetPasswordForm", () => {
     expect(signInLink).toBeInTheDocument();
     expect(signInLink).toHaveAttribute("href", "/login");
   });
+
+  it("validates identifier, 6-digit OTP, password, and confirm password live onChange without waiting for blur", () => {
+    render(<ResetPasswordForm />);
+
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const otpInput = screen.getByLabelText(/6-digit verification code/i);
+    const newPasswordInput = screen.getByLabelText(/^new password$/i);
+    const confirmPasswordInput = screen.getByLabelText(/confirm new password/i);
+
+    fireEvent.change(identifierInput, { target: { value: "not-valid" } });
+    expect(
+      screen.getByText(/enter a valid email address or bangladesh mobile number/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(identifierInput, { target: { value: "user@example.com" } });
+    expect(
+      screen.queryByText(/enter a valid email address or bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(otpInput, { target: { value: "123" } });
+    expect(screen.getByText(/enter the 6-digit code/i)).toBeInTheDocument();
+
+    fireEvent.change(otpInput, { target: { value: "123456" } });
+    expect(screen.queryByText(/enter the 6-digit code/i)).not.toBeInTheDocument();
+
+    fireEvent.change(newPasswordInput, { target: { value: "short" } });
+    expect(
+      screen.getByText(/password must be at least 8 characters/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(newPasswordInput, { target: { value: "NewPassw0rd!" } });
+    expect(
+      screen.queryByText(/password must be at least 8 characters/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(confirmPasswordInput, { target: { value: "Mismatch1!" } });
+    expect(screen.getByText(/passwords do not match/i)).toBeInTheDocument();
+
+    fireEvent.change(confirmPasswordInput, { target: { value: "NewPassw0rd!" } });
+    expect(screen.queryByText(/passwords do not match/i)).not.toBeInTheDocument();
+  });
 });

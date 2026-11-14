@@ -21,6 +21,7 @@ export default async function LoginPage({
   const errorCode = awaitedSearchParams?.error;
   const resetSuccess = awaitedSearchParams?.reset === "success";
   const isDeleted = awaitedSearchParams?.deleted === "true";
+  const isVerified = awaitedSearchParams?.verified === "true";
   let initialError: string | undefined;
 
   if (errorCode === "oauth_failed") {
@@ -33,12 +34,19 @@ export default async function LoginPage({
     ? "Your account has been permanently deleted."
     : resetSuccess
     ? "Password reset successfully. Please sign in with your new password."
+    : isVerified
+    ? "Email verified successfully. Please sign in."
     : undefined;
 
   return (
-    <>
-      <h1 className="mb-6 text-2xl font-bold text-foreground">Sign In</h1>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-heading-lg text-text-primary">Sign In</h1>
+        <p className="text-body-sm text-text-secondary">
+          Welcome back. Continue your learning path.
+        </p>
+      </div>
       <LoginForm initialError={initialError} successMessage={successMessage} />
-    </>
+    </div>
   );
 }

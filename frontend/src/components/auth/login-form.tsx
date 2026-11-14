@@ -1,15 +1,25 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
+import { AuthAlert } from "@/components/auth/auth-alert";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   loadVerificationDraft,
   saveVerificationDraft,
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
+import {
+  validateIdentifier,
+  validateIdentifierOnChange,
+  validatePassword,
+  validatePasswordLive,
+} from "@/lib/validation/auth-schemas";
 
 /**
  * Screen 02: Login form component using useActionState for pending and error states.
@@ -28,6 +38,12 @@ export function LoginForm({
     FormData
   >(loginAction, { error: initialError });
   const submittedIdentifier = useRef("");
+  const identifierBlurredRef = useRef(false);
+  const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
+  const [dismissedServer, setDismissedServer] = useState<{
+    ref: AuthActionResult;
+    fields: Set<string>;
+  } | null>(null);
 
   useEffect(() => {
     if (successMessage) {
@@ -76,101 +92,164 @@ export function LoginForm({
     }
   }, [state]);
 
+  const setFieldError = (field: string, error?: string) =>
+    setClientErrors((prev) => {
+      if (!error) {
+        if (!prev[field]) return prev;
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      if (prev[field] === error) return prev;
+      return { ...prev, [field]: error };
+    });
+
+  const dismissServerField = (field: string) =>
+    setDismissedServer((prev) => {
+      if (!state?.fieldErrors?.[field]) return prev;
+      if (prev?.ref === state && prev.fields.has(field)) return prev;
+      const fields = new Set(prev?.ref === state ? prev.fields : []);
+      fields.add(field);
+      return { ref: state, fields };
+    });
+
+  const serverFieldError = (field: string) =>
+    dismissedServer?.ref === state && dismissedServer.fields.has(field)
+      ? undefined
+      : state?.fieldErrors?.[field];
+
+  const identifierError = clientErrors.email ?? serverFieldError("email");
+  const passwordError = clientErrors.password ?? serverFieldError("password");
+
   return (
     <div className="flex flex-col gap-6">
-      {successMessage && (
-        <div
-          role="status"
-          className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-200"
-        >
-          {successMessage}
-        </div>
-      )}
+      {successMessage && <Alert variant="success">{successMessage}</Alert>}
 
       <form
         action={formAction}
+        noValidate
         onSubmit={(e) => {
-          const el = e.currentTarget.elements.namedItem(
-            "email",
-          ) as HTMLInputElement | null;
-          submittedIdentifier.current = el?.value?.trim() ?? "";
+          const form = e.currentTarget;
+          const idEl = form.elements.namedItem("email") as HTMLInputElement | null;
+          const pwEl = form.elements.namedItem("password") as HTMLInputElement | null;
+          const errors: Record<string, string> = {};
+          const id = validateIdentifier(idEl?.value ?? "");
+          if (!id.ok) {
+            errors.email = id.error;
+            if (idEl?.value?.trim()) identifierBlurredRef.current = true;
+          }
+          const pw = validatePassword(pwEl?.value ?? "");
+          if (!pw.ok) errors.password = pw.error;
+          if (Object.keys(errors).length) {
+            e.preventDefault();
+            setClientErrors(errors);
+            return;
+          }
+          setClientErrors({});
+          if (id.ok && idEl) idEl.value = id.value.value; // normalized (+8801…, lowercase email)
+          submittedIdentifier.current = idEl?.value?.trim() ?? "";
         }}
         className="flex flex-col gap-4"
       >
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="email"
-            className="text-sm font-medium text-foreground"
-          >
-            Email or Phone
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="text"
-            autoComplete="username"
-            required
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
-            placeholder="you@example.com or +8801712345678"
-          />
-        </div>
+        <Input
+          id="email"
+          name="email"
+          label="Email or Phone"
+          autoComplete="username"
+          required
+          readOnly={isPending}
+          error={identifierError}
+          onChange={(e) => {
+            dismissServerField("email");
+            const check = validateIdentifierOnChange(
+              e.target.value,
+              identifierBlurredRef.current,
+            );
+            if (check.resetBlurred) identifierBlurredRef.current = false;
+            setFieldError("email", check.error);
+          }}
+          onBlur={(e) => {
+            const raw = e.target.value;
+            if (!raw.trim()) {
+              identifierBlurredRef.current = false;
+              return;
+            }
+            identifierBlurredRef.current = true;
+            const id = validateIdentifier(raw);
+            if (!id.ok) {
+              setFieldError("email", id.error);
+            } else {
+              if (id.value.kind === "email") e.target.value = id.value.value;
+              setFieldError("email", undefined);
+            }
+          }}
+          placeholder="you@example.com or +8801712345678"
+        />
 
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <label
-              htmlFor="password"
-              className="text-sm font-medium text-foreground"
-            >
-              Password
-            </label>
-            <Link
-              href="/forgot-password"
-              className="text-xs text-foreground/60 underline underline-offset-4 hover:text-foreground"
-            >
-              পাসওয়ার্ড ভুলে গেছেন? (Forgot Password)
-            </Link>
-          </div>
-          <input
+          <Input
             id="password"
             name="password"
-            type="password"
+            variant="password"
+            label="Password"
             autoComplete="current-password"
             required
-            disabled={isPending}
-            className="h-11 w-full rounded-lg border border-foreground/20 bg-background px-3 text-base text-foreground placeholder:text-foreground/40 focus:border-foreground focus:outline-none disabled:opacity-50"
+            readOnly={isPending}
+            error={passwordError}
+            onChange={(e) => {
+              dismissServerField("password");
+              const pw = validatePasswordLive(e.target.value);
+              setFieldError("password", pw.ok ? undefined : pw.error);
+            }}
+            onBlur={(e) => {
+              const raw = e.target.value;
+              if (!raw) return;
+              const pw = validatePassword(raw);
+              setFieldError("password", pw.ok ? undefined : pw.error);
+            }}
             placeholder="••••••••"
           />
+          <Link
+            href="/forgot-password"
+            className="inline-flex min-h-11 items-center self-end text-label text-text-link underline underline-offset-4 hover:text-text-link-hover"
+          >
+            পাসওয়ার্ড ভুলে গেছেন? (Forgot Password)
+          </Link>
         </div>
 
-        {state.error && (
-          <p role="alert" className="text-sm text-red-600">
-            {state.error}
-          </p>
+        {state.redirectTo ? (
+          <Alert variant="info">
+            Your contact is not verified yet. Taking you to verification…
+          </Alert>
+        ) : (
+          <AuthAlert
+            result={state}
+            message={
+              state.status === 401
+                ? "Incorrect email, phone or password. Check your details and try again."
+                : undefined
+            }
+          />
         )}
 
-        <button
-          type="submit"
-          disabled={isPending}
-          className="mt-2 h-11 w-full rounded-lg bg-foreground font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
-        >
-          {isPending ? "Signing in…" : "Sign In"}
-        </button>
+        <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Signing in…">
+          Sign In
+        </Button>
       </form>
 
       <div className="relative flex items-center">
-        <div className="flex-1 border-t border-foreground/10" />
-        <span className="px-3 text-sm text-foreground/50">or</span>
-        <div className="flex-1 border-t border-foreground/10" />
+        <div className="flex-1 border-t border-border-default" />
+        <span className="px-3 text-body-sm text-text-muted">or</span>
+        <div className="flex-1 border-t border-border-default" />
       </div>
 
       <OAuthButtons />
 
-      <p className="text-center text-sm text-foreground/60">
+      <p className="text-center text-body-sm text-text-secondary">
         Don&apos;t have an account?{" "}
         <Link
           href="/register"
-          className="font-medium text-foreground underline underline-offset-4 hover:text-foreground/80"
+          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
         >
           Sign up
         </Link>

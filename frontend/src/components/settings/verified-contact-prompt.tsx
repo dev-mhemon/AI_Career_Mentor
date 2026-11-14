@@ -1,5 +1,8 @@
 'use client';
 
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+
 /**
  * Properties for the VerifiedContactPrompt component.
  */
@@ -27,38 +30,35 @@ export function VerifiedContactPrompt({
   }
 
   return (
-    <div
+    <Alert
+      variant="warning"
       role="alert"
-      className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200"
+      title="যাচাইকৃত যোগাযোগ মাধ্যম প্রয়োজন (Verified Contact Required)"
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="font-semibold text-foreground">
-            যাচাইকৃত যোগাযোগ মাধ্যম প্রয়োজন (Verified Contact Required)
-          </h2>
-          <p className="mt-1 text-xs text-foreground/80 sm:text-sm">
-            আপনার অ্যাকাউন্টটিতে কোনো যাচাইকৃত যোগাযোগ তথ্য (ইমেইল বা ফোন) নেই। সোশ্যাল অ্যাকাউন্ট লিঙ্ক বা অ্যাকাউন্ট মুছে ফেলার মতো পরিচয়-সংবেদনশীল কাজের জন্য অনুগ্রহ করে নিচে একটি যোগাযোগ তথ্য যোগ ও যাচাই করুন।
-          </p>
-        </div>
-        {!isSuspended && (
-          onAddContactClick ? (
-            <button
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-body-sm">
+          আপনার অ্যাকাউন্টটিতে কোনো যাচাইকৃত যোগাযোগ তথ্য (ইমেইল বা ফোন) নেই। সোশ্যাল অ্যাকাউন্ট লিঙ্ক বা অ্যাকাউন্ট মুছে ফেলার মতো পরিচয়-সংবেদনশীল কাজের জন্য অনুগ্রহ করে নিচে একটি যোগাযোগ তথ্য যোগ ও যাচাই করুন।
+        </p>
+        {!isSuspended &&
+          (onAddContactClick ? (
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={onAddContactClick}
-              className="inline-flex h-9 shrink-0 items-center justify-center rounded-md bg-amber-600 px-3 text-xs font-medium text-white transition-colors hover:bg-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 dark:bg-amber-500 dark:text-black dark:hover:bg-amber-400"
+              className="shrink-0"
             >
               যোগাযোগ যোগ করুন
-            </button>
+            </Button>
           ) : (
             <a
               href="#add-contact-heading"
-              className="inline-flex h-9 shrink-0 items-center justify-center rounded-md bg-amber-600 px-3 text-xs font-medium text-white transition-colors hover:bg-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 dark:bg-amber-500 dark:text-black dark:hover:bg-amber-400"
+              className="inline-flex h-8 min-h-11 shrink-0 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-3 text-label font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover"
             >
               যোগাযোগ যোগ করুন
             </a>
-          )
-        )}
+          ))}
       </div>
-    </div>
+    </Alert>
   );
 }

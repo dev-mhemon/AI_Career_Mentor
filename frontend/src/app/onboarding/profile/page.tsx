@@ -4,6 +4,48 @@ import { getAppUser } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
 import { loadProfileForSetup } from '@/lib/profile/actions';
 import { ProfileSetupForm } from '@/components/onboarding/profile-setup-form';
+import { Header } from '@/components/ui/header';
+import { Button } from '@/components/ui/button';
+
+const primaryLinkClass =
+  'inline-flex h-10 min-h-11 items-center justify-center rounded-md bg-action-primary-background px-5 text-label-lg font-medium text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active';
+
+const secondaryLinkClass =
+  'inline-flex h-10 min-h-11 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-5 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active';
+
+function SuspendedAccountShell() {
+  return (
+    <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center outline-none"
+      >
+        <div className="flex flex-col gap-5 rounded-xl border border-feedback-warning-border bg-surface-raised p-6 shadow-md sm:p-8">
+          <h1 className="text-heading-lg text-text-primary">
+            আপনার অ্যাকাউন্ট স্থগিত আছে
+          </h1>
+          <p className="text-body-sm text-text-secondary">
+            অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। আপনি সেটিংস পেজে (Danger Zone) গিয়ে অ্যাকাউন্ট স্থায়ীভাবে মুছে ফেলতে পারেন।
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href="/settings" className={primaryLinkClass}>
+              অ্যাকাউন্ট ও সেটিংস (Settings)
+            </Link>
+            <Link href="/" className={secondaryLinkClass}>
+              Back to Home
+            </Link>
+            <form action={logoutAction}>
+              <Button type="submit" variant="secondary" size="md">
+                Sign Out
+              </Button>
+            </form>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
 
 /**
  * Screen 07 (`/onboarding/profile`) — Server Component for initial profile setup.
@@ -18,32 +60,7 @@ export default async function OnboardingProfilePage() {
   }
 
   if (user.status === 'suspended') {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-4 py-12">
-        <h1 className="mb-2 text-2xl font-bold text-foreground">
-          আপনার অ্যাকাউন্ট স্থগিত আছে
-        </h1>
-        <p className="mb-6 text-sm text-foreground/70">
-          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। আপনি সেটিংস পেজে (Danger Zone) গিয়ে অ্যাকাউন্ট স্থায়ীভাবে মুছে ফেলতে পারেন।
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/settings"
-            className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-          >
-            অ্যাকাউন্ট ও সেটিংস (Settings)
-          </Link>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-            >
-              Sign Out
-            </button>
-          </form>
-        </div>
-      </main>
-    );
+    return <SuspendedAccountShell />;
   }
 
   const { profile, loadError, unauthorized, suspended, userId } =
@@ -54,73 +71,43 @@ export default async function OnboardingProfilePage() {
   }
 
   if (suspended) {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-4 py-12">
-        <h1 className="mb-2 text-2xl font-bold text-foreground">
-          আপনার অ্যাকাউন্ট স্থগিত আছে
-        </h1>
-        <p className="mb-6 text-sm text-foreground/70">
-          অ্যাকাউন্ট মুছে ফেলার অধিকার বজায় আছে। আপনি সেটিংস পেজে (Danger Zone) গিয়ে অ্যাকাউন্ট স্থায়ীভাবে মুছে ফেলতে পারেন।
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/settings"
-            className="inline-flex h-11 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-          >
-            অ্যাকাউন্ট ও সেটিংস (Settings)
-          </Link>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="h-11 rounded-lg border border-foreground/20 px-6 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-            >
-              Sign Out
-            </button>
-          </form>
-        </div>
-      </main>
-    );
+    return <SuspendedAccountShell />;
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-foreground/10">
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4">
-          <span className="text-base font-semibold">AI Career Mentor</span>
-          <div className="flex items-center gap-3">
-            <Link
-              href="/dashboard"
-              className="text-sm font-medium text-foreground/80 underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-            >
-              ড্যাশবোর্ড (Dashboard)
-            </Link>
-            <form action={logoutAction}>
-              <button
-                type="submit"
-                className="h-9 rounded-md border border-foreground/20 px-3 text-xs font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-              >
-                Sign Out
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
+    <div className="flex flex-1 flex-col bg-surface-canvas text-text-primary">
+      <Header
+        variant="authenticated"
+        actions={
+          <form action={logoutAction}>
+            <Button type="submit" variant="secondary" size="sm">
+              Sign Out
+            </Button>
+          </form>
+        }
+      />
 
-      <main className="mx-auto max-w-2xl px-4 py-8 sm:py-12">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto w-full max-w-3xl px-4 py-8 outline-none sm:py-12"
+      >
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-foreground sm:text-3xl">
+          <h1 className="text-heading-xl text-text-primary">
             প্রোফাইল সেটআপ (Profile Setup)
           </h1>
-          <p className="mt-2 text-sm text-foreground/70">
+          <p className="mt-2 text-body-sm text-text-secondary">
             আপনার বর্তমান ভূমিকা, অভিজ্ঞতার স্তর এবং শেখার সময়সূচি দিন। শিক্ষাগত যোগ্যতা ঐচ্ছিক এবং প্রোফাইল সম্পূর্ণ না করেও ড্যাশবোর্ডে যাওয়া যাবে।
           </p>
         </div>
 
-        <ProfileSetupForm
-          initialProfile={profile}
-          loadError={loadError}
-          userId={userId ?? user.id}
-        />
+        <div className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-md sm:p-8">
+          <ProfileSetupForm
+            initialProfile={profile}
+            loadError={loadError}
+            userId={userId ?? user.id}
+          />
+        </div>
       </main>
     </div>
   );

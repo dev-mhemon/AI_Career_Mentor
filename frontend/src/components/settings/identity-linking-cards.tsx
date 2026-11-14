@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import { linkIdentityAction } from '@/lib/auth/actions';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { CheckCircleIcon, WarningIcon } from '@/components/ui/icons';
 
 /**
  * Properties for the IdentityLinkingCards component.
@@ -150,40 +153,40 @@ export function IdentityLinkingCards({
   };
 
   return (
-    <section aria-labelledby="identity-linking-heading" className="flex flex-col gap-4">
+    <section
+      aria-labelledby="identity-linking-heading"
+      className="flex flex-col gap-4 rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
+    >
       <div>
-        <h3 id="identity-linking-heading" className="text-base font-semibold text-foreground">
+        <h3 id="identity-linking-heading" className="text-heading-sm text-text-primary">
           সোশ্যাল অ্যাকাউন্ট সংযোগ (Linked Identities)
         </h3>
-        <p className="mt-1 text-sm text-foreground/60">
+        <p className="mt-1 text-body-sm text-text-secondary">
           আপনার অ্যাকাউন্টে Google বা Facebook যুক্ত করুন যাতে সহজে লগইন করা যায়।
         </p>
       </div>
 
       {error && (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive"
-        >
+        <Alert variant="error_retryable" role="alert">
           {error}
-        </div>
+        </Alert>
       )}
 
       {success && (
-        <div
-          role="status"
-          className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-800 dark:text-emerald-200"
-        >
+        <Alert variant="success" role="status">
           {success}
-        </div>
+        </Alert>
       )}
 
       {!verifiedContact && (
         <div
           role="note"
-          className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200"
+          className="flex items-start gap-2 rounded-lg border border-feedback-warning-border bg-feedback-warning-background p-3 text-caption text-feedback-warning-text"
         >
-          সোশ্যাল অ্যাকাউন্ট যুক্ত করতে আপনার অ্যাকাউন্টে একটি যাচাইকৃত যোগাযোগ তথ্য (ইমেইল বা ফোন) থাকতে হবে।
+          <WarningIcon className="mt-0.5 shrink-0 text-feedback-warning-icon" />
+          <span>
+            সোশ্যাল অ্যাকাউন্ট যুক্ত করতে আপনার অ্যাকাউন্টে একটি যাচাইকৃত যোগাযোগ তথ্য (ইমেইল বা ফোন) থাকতে হবে।
+          </span>
         </div>
       )}
 
@@ -195,37 +198,34 @@ export function IdentityLinkingCards({
           return (
             <div
               key={prov.id}
-              className="flex items-center justify-between rounded-lg border border-foreground/15 bg-background p-4"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-surface-default p-4"
             >
               <div className="flex items-center gap-3">
                 {prov.icon()}
                 <div>
-                  <p className="text-sm font-medium text-foreground">{prov.name}</p>
-                  <p className="text-xs text-foreground/60">{prov.bengaliName}</p>
+                  <p className="text-label-lg text-text-primary">{prov.name}</p>
+                  <p className="text-caption text-text-muted">{prov.bengaliName}</p>
                 </div>
               </div>
 
               {isLinked ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-3 py-1 text-caption font-medium text-feedback-success-text">
+                  <CheckCircleIcon className="h-3.5 w-3.5 text-feedback-success-icon" />
                   সংযুক্ত
                 </span>
               ) : (
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="sm"
+                  isLoading={isPending}
+                  loadingText="সংযোগ হচ্ছে..."
+                  disabled={isSuspended || !verifiedContact}
                   onClick={() => handleLink(prov.id)}
-                  disabled={isPending || isSuspended || !verifiedContact}
-                  className="inline-flex h-9 items-center justify-center rounded-md border border-foreground/20 px-3 text-xs font-medium text-foreground transition-colors hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:opacity-50"
                   aria-label={`Link ${prov.name} account`}
                 >
-                  {isPending ? 'সংযোগ হচ্ছে...' : 'যুক্ত করুন'}
-                </button>
+                  যুক্ত করুন
+                </Button>
               )}
             </div>
           );

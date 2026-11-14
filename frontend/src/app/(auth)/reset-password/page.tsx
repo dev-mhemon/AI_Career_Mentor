@@ -14,12 +14,14 @@ export default async function ResetPasswordPage() {
   }
 
   return (
-    <>
-      <h1 className="mb-2 text-2xl font-bold text-foreground">Set New Password</h1>
-      <p className="mb-6 text-sm text-foreground/60">
-        Enter the 6-digit verification code you received and choose a new password.
-      </p>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-heading-lg text-text-primary">Set New Password</h1>
+        <p className="text-body-sm text-text-secondary">
+          Enter the 6-digit verification code you received and choose a new password.
+        </p>
+      </div>
       <ResetPasswordForm />
-    </>
+    </div>
   );
 }

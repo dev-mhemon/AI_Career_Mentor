@@ -191,33 +191,30 @@ export function buildBackendLaunchEnv(
   procEnv = process.env,
   localDir = local,
 ) {
+  const hasDotEnvSource =
+    typeof dotEnvSource === "string"
+      ? dotEnvSource.length > 0
+      : Boolean(
+          dotEnvSource &&
+            typeof dotEnvSource === "object" &&
+            Object.keys(dotEnvSource).length > 0,
+        );
   const backendEnv =
     typeof dotEnvSource === "string"
       ? parseEnvContent(dotEnvSource)
       : (dotEnvSource || {});
 
-  // [ORIGINAL] Pre-fallback textBeeOverlay (without SMS_PROVIDER):
-  // const textBeeOverlay = Object.fromEntries(
-  //   [
-  //     "TEXTBEE_API_KEY",
-  //     "TEXTBEE_DEVICE_ID",
-  //     "TEXTBEE_BASE_URL",
-  //     "TEXTBEE_TIMEOUT_MS",
-  //   ]
-  //     .map((k) => [k, pickCredential([k], procEnv, backendEnv, baseConfig)])
-  //     .filter(([, v]) => Boolean(v)),
-  // );
-  const textBeeOverlay = Object.fromEntries(
-    [
-      "SMS_PROVIDER",
-      "TEXTBEE_API_KEY",
-      "TEXTBEE_DEVICE_ID",
-      "TEXTBEE_BASE_URL",
-      "TEXTBEE_TIMEOUT_MS",
-    ]
-      .map((k) => [k, pickCredential([k], procEnv, backendEnv, baseConfig)])
-      .filter(([, v]) => Boolean(v)),
-  );
+  const textBeeCredentialSources = hasDotEnvSource
+    ? [procEnv, backendEnv]
+    : [procEnv, backendEnv, baseConfig];
+  const textBeeConfigSources = [procEnv, backendEnv, baseConfig];
+
+  const textBeeOverlay = {
+    TEXTBEE_API_KEY: pickCredential(["TEXTBEE_API_KEY"], ...textBeeCredentialSources),
+    TEXTBEE_DEVICE_ID: pickCredential(["TEXTBEE_DEVICE_ID"], ...textBeeCredentialSources),
+    TEXTBEE_BASE_URL: pickCredential(["TEXTBEE_BASE_URL"], ...textBeeConfigSources),
+    TEXTBEE_TIMEOUT_MS: pickCredential(["TEXTBEE_TIMEOUT_MS"], ...textBeeConfigSources),
+  };
 
   const oauth = resolveOAuthProviders(backendEnv, procEnv, baseConfig);
   const oauthOverlay = {
@@ -240,11 +237,12 @@ export function buildBackendLaunchEnv(
     ...(localDir ? { MENTOR_LOCAL_DIR: localDir } : {}),
   };
 
-  for (const [k, v] of Object.entries(oauthOverlay)) {
+  for (const [k, v] of Object.entries(textBeeOverlay)) {
     if (!v) delete merged[k];
   }
-  for (const k of ["SMS_PROVIDER", "TEXTBEE_API_KEY", "TEXTBEE_DEVICE_ID"]) {
-    if (!textBeeOverlay[k]) delete merged[k];
+
+  for (const [k, v] of Object.entries(oauthOverlay)) {
+    if (!v) delete merged[k];
   }
 
   return merged;
@@ -473,30 +471,13 @@ else {
     ],
   };
   if (!commands[command]) throw Error("Unknown command");
-  // [ORIGINAL] Pre-fallback launchEnv (re-injected stale TextBee keys from .local/foundation/backend.json):
-  // const backendEnv = !isFrontend
-  //   ? parseEnvFile(path.join(root, "backend/.env"))
-  //   : {};
-  // const launchEnv = !isFrontend
-  //   ? buildBackendLaunchEnv(config, backendEnv, process.env, local)
-  //   : {
-  //       ...process.env,
-  //       ...config,
-  //       MENTOR_LOCAL_DIR: local,
-  //     };
   const backendEnvPath = path.join(root, "backend/.env");
-  const hasBackendDotEnv = !isFrontend && existsSync(backendEnvPath);
-  const backendEnv = hasBackendDotEnv ? parseEnvFile(backendEnvPath) : {};
-  const effectiveBaseConfig = hasBackendDotEnv
-    ? {
-        ...config,
-        SMS_PROVIDER: "",
-        TEXTBEE_API_KEY: "",
-        TEXTBEE_DEVICE_ID: "",
-      }
-    : config;
+  const dotEnvSource =
+    !isFrontend && existsSync(backendEnvPath)
+      ? readFileSync(backendEnvPath, "utf8") || "\n"
+      : null;
   const launchEnv = !isFrontend
-    ? buildBackendLaunchEnv(effectiveBaseConfig, backendEnv, process.env, local)
+    ? buildBackendLaunchEnv(config, dotEnvSource, process.env, local)
     : {
         ...process.env,
         ...config,
