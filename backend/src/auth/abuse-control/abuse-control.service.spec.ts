@@ -1,6 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import { AuthAbuseControl } from './abuse-control.service.js';
 import { readAbuseConfiguration } from './config.js';
+import { ipQuotaScript } from './scripts.js';
 
 describe('Unconfigured abuse controls never bypass shared enforcement', () => {
   it('fails closed before send, verification or login work', async () => {
@@ -15,6 +16,8 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       () => service.issueChallenge(contact),
       () => service.verifyChallenge(contact, '000000', provider),
       () => service.login(contact, '192.0.2.1', provider),
+      () => service.enforceIpQuota('forgot-password', '192.0.2.1'),
+      () => service.enforceIpQuota('login', '192.0.2.1'),
     ]) {
       try {
         await call();
@@ -89,6 +92,49 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       'abort',
       5,
     ]);
+    service.onModuleDestroy();
+  });
+
+  it('bounds ipQuotaScript loop to explicit counter count so trailing policyKey is never checked as a counter', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:1',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+    });
+    const service = new AuthAbuseControl(config);
+    const evaluateSpy = vi
+      .spyOn(service as any, 'evaluate')
+      .mockResolvedValue([0, 0]);
+
+    expect(ipQuotaScript).toContain('local counterCount = tonumber(ARGV[4])');
+    expect(ipQuotaScript).toContain('for i = 1, counterCount do');
+    expect(ipQuotaScript).not.toContain('#KEYS');
+
+    await service.enforceIpQuota('forgot-password', '192.0.2.1');
+    expect(evaluateSpy).toHaveBeenLastCalledWith(
+      ipQuotaScript,
+      [
+        expect.stringMatching(/^auth:v1:ip:forgot-password:/),
+        expect.stringMatching(/^auth:v1:send:ip:/),
+      ],
+      [
+        config!.policy.AUTH_SEND_IP_LIMIT,
+        config!.policy.AUTH_SEND_WINDOW_SECONDS * 1000,
+        2,
+        2,
+      ],
+    );
+
+    await service.enforceIpQuota('login', '192.0.2.1');
+    expect(evaluateSpy).toHaveBeenLastCalledWith(
+      ipQuotaScript,
+      [expect.stringMatching(/^auth:v1:ip:login:/)],
+      [
+        config!.policy.AUTH_SEND_IP_LIMIT * 2,
+        config!.policy.AUTH_LOGIN_WINDOW_SECONDS * 1000,
+        10,
+        1,
+      ],
+    );
     service.onModuleDestroy();
   });
 });

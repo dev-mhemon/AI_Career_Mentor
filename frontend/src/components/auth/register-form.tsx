@@ -4,7 +4,7 @@ import { useActionState, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { AuthAlert } from "@/components/auth/auth-alert";
+import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -89,7 +89,12 @@ export function RegisterForm() {
   const identifierError = clientErrors.identifier ?? serverFieldError("identifier");
   const passwordError = clientErrors.password ?? serverFieldError("password");
   const confirmError = clientErrors.confirmPassword ?? mismatch;
-  const conflict = state?.status === 409;
+  const {
+    visibleState: visibleAlertState,
+    dismiss: dismissAlert,
+    onFormActivity,
+  } = useDismissedActionState(state);
+  const conflict = visibleAlertState?.status === 409;
 
   return (
     <div className="flex flex-col gap-6">
@@ -105,6 +110,7 @@ export function RegisterForm() {
           setIdentifier("");
           setClientErrors({});
           phoneBlurredRef.current = false;
+          dismissAlert();
         }}
         items={[
           { id: "email", label: "Email", panel: null },
@@ -120,6 +126,8 @@ export function RegisterForm() {
         <form
           action={formAction}
           noValidate
+          onFocusCapture={onFormActivity}
+          onChangeCapture={onFormActivity}
           onSubmit={(e) => {
             const form = e.currentTarget;
             const consentEl = form.elements.namedItem("privacy_consent") as HTMLInputElement;
@@ -295,7 +303,7 @@ export function RegisterForm() {
           />
 
           <AuthAlert
-            result={state}
+            result={visibleAlertState}
             action={conflict ? { label: "Sign in instead", href: "/login" } : undefined}
           />
 

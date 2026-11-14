@@ -47,10 +47,12 @@ describe("LoginForm", () => {
     window.sessionStorage.clear();
   });
 
-  it("renders email/phone and password fields", () => {
+  it("renders Email/Phone tabs, default Email field, and Password field", () => {
     render(<LoginForm />);
 
-    expect(screen.getByLabelText(/email or phone/i)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^email$/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^phone$/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
   });
 
@@ -58,7 +60,7 @@ describe("LoginForm", () => {
     render(<LoginForm />);
 
     const forgotLink = screen.getByRole("link", {
-      name: /forgot password/i,
+      name: /^forgot password\?$/i,
     });
     expect(forgotLink).toBeInTheDocument();
     expect(forgotLink).toHaveAttribute("href", "/forgot-password");
@@ -128,39 +130,54 @@ describe("LoginForm", () => {
     expect(mockClearVerificationDraft).not.toHaveBeenCalled();
   });
 
-  it("has required attributes on identifier and password inputs and accepts Bangladesh phone format", () => {
+  it("supports Phone tab with +880 prefix, local 017... display, and canonical +8801... FormData payload", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({});
+
     render(<LoginForm />);
 
-    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const emailInput = screen.getByLabelText(/^email$/i);
     const passwordInput = screen.getByLabelText(/^password$/i);
-
-    expect(identifierInput).toBeRequired();
-    expect(identifierInput).toHaveAttribute(
-      "placeholder",
-      "you@example.com or +8801712345678",
-    );
-    expect(passwordInput).toHaveAttribute("type", "password");
+    expect(emailInput).toBeRequired();
     expect(passwordInput).toBeRequired();
-  });
 
-  it("captures identifier in onSubmit and saves unverified_login draft even if uncontrolled inputs reset", async () => {
-    vi.mocked(loginAction).mockImplementation(async () => {
-      // Simulate React 19 uncontrolled form input reset committing before effect
-      const input = document.getElementById("email") as HTMLInputElement | null;
-      if (input) input.value = "";
-      return {
-        error: "Please verify your contact before logging in.",
-        redirectTo: "/verify?channel=phone",
-      };
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+
+    const phoneInput = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
+    expect(phoneInput).toBeRequired();
+    expect(screen.getByText("+880")).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+    fireEvent.change(passwordInput, { target: { value: "secret123" } });
+
+    const form = phoneInput.closest("form")!;
+    const formDataBeforeSubmit = new FormData(form);
+    expect(formDataBeforeSubmit.get("identifier")).toBe("+8801712345678");
+    expect(phoneInput.value).toBe("01712345678");
+
+    await act(async () => {
+      fireEvent.submit(form);
     });
 
+    expect(loginAction).toHaveBeenCalledTimes(1);
+    const submittedFormData = vi.mocked(loginAction).mock.calls[0]?.[1];
+    expect(submittedFormData?.get("identifier")).toBe("+8801712345678");
+    expect(phoneInput.value).toBe("01712345678");
+  });
+
+  it("captures normalized phone in onSubmit and saves unverified_login draft on redirect", async () => {
+    vi.mocked(loginAction).mockImplementation(async () => ({
+      error: "Please verify your contact before logging in.",
+      redirectTo: "/verify?channel=phone",
+    }));
+
     render(<LoginForm />);
 
-    const identifierInput = screen.getByLabelText(/email or phone/i);
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i);
     const passwordInput = screen.getByLabelText(/^password$/i);
-    const form = identifierInput.closest("form")!;
+    const form = phoneInput.closest("form")!;
 
-    fireEvent.change(identifierInput, { target: { value: "+8801712345678" } });
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
     fireEvent.change(passwordInput, { target: { value: "secret123" } });
 
     await act(async () => {
@@ -174,31 +191,157 @@ describe("LoginForm", () => {
     expect(mockPush).toHaveBeenCalledWith("/verify?channel=phone");
   });
 
-  it("validates email/phone and password in real time onChange without waiting for blur", () => {
+  it("preserves typed email/phone and clears ONLY password when sign-in fails", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "Invalid credentials. Please try again.",
+      status: 401,
+      code: "AUTH_INVALID_CREDENTIALS",
+    });
+
     render(<LoginForm />);
 
-    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const emailInput = screen.getByLabelText(/^email$/i) as HTMLInputElement;
+    const passwordInput = screen.getByLabelText(/^password$/i) as HTMLInputElement;
+    const rememberCheckbox = screen.getByRole("checkbox", {
+      name: /keep me signed in/i,
+    }) as HTMLInputElement;
+    expect(rememberCheckbox.checked).toBe(false);
+
+    const form = emailInput.closest("form")!;
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "wrongpass123" } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(emailInput.value).toBe("user@example.com");
+    expect(passwordInput.value).toBe("");
+    expect(
+      screen.getByText(/invalid credentials\. please try again\./i),
+    ).toBeInTheDocument();
+  });
+
+  it("validates email, phone, and password in real time onChange without waiting for blur", () => {
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
     const passwordInput = screen.getByLabelText(/^password$/i);
 
-    fireEvent.change(identifierInput, { target: { value: "invalid@" } });
+    fireEvent.change(emailInput, { target: { value: "invalid@" } });
     expect(
-      screen.getByText(/enter a valid email address or bangladesh mobile number/i),
+      screen.getByText(/enter a valid email address/i),
     ).toBeInTheDocument();
 
-    fireEvent.change(identifierInput, { target: { value: "012" } });
-    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
-
-    fireEvent.change(identifierInput, { target: { value: "01712345678" } });
-    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    expect(
+      screen.queryByText(/enter a valid email address/i),
+    ).not.toBeInTheDocument();
 
     fireEvent.change(passwordInput, { target: { value: "1234567" } });
     expect(
-      screen.getByText(/password must be at least 8 characters/i),
-    ).toBeInTheDocument();
-
-    fireEvent.change(passwordInput, { target: { value: "12345678" } });
-    expect(
       screen.queryByText(/password must be at least 8 characters/i),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/enter your password/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(passwordInput, { target: { value: "" } });
+    expect(
+      screen.getByText(/enter your password/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(passwordInput, { target: { value: "1" } });
+    expect(
+      screen.queryByText(/enter your password/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i);
+
+    fireEvent.change(phoneInput, { target: { value: "012" } });
+    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+  });
+
+  it("auto-dismisses AuthAlert on input focus or change and re-displays on subsequent error", async () => {
+    vi.mocked(loginAction)
+      .mockResolvedValueOnce({
+        error: "No account found with this email address.",
+        status: 404,
+        code: "AUTH_USER_NOT_FOUND",
+      })
+      .mockResolvedValueOnce({
+        error: "Invalid credentials. Please try again.",
+        status: 401,
+        code: "AUTH_INVALID_CREDENTIALS",
+      });
+
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const form = emailInput.closest("form")!;
+
+    fireEvent.change(emailInput, { target: { value: "missing@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "123" } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(
+      screen.getByText(/no account found with this email address\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.focus(emailInput);
+    expect(
+      screen.queryByText(/no account found with this email address\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "wrongpass" } });
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(
+      screen.getByText(/invalid credentials\. please try again\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(passwordInput, { target: { value: "1234" } });
+    expect(
+      screen.queryByText(/invalid credentials/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("includes rememberMe='on' in submitted FormData when Keep me signed in is checked", async () => {
+    let submittedFormData: FormData | null = null;
+    vi.mocked(loginAction).mockImplementationOnce(async (_prev, formData) => {
+      submittedFormData = formData;
+      return {};
+    });
+
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const rememberCheckbox = screen.getByRole("checkbox", {
+      name: /keep me signed in/i,
+    }) as HTMLInputElement;
+    const form = emailInput.closest("form")!;
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "validpass123" } });
+    fireEvent.click(rememberCheckbox);
+    expect(rememberCheckbox.checked).toBe(true);
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(submittedFormData).not.toBeNull();
+    expect(submittedFormData!.get("rememberMe")).toBe("on");
   });
 });

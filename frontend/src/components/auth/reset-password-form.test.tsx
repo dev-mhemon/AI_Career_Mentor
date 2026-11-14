@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { ResetPasswordForm } from "@/components/auth/reset-password-form";
-import { resetPasswordAction } from "@/lib/auth/actions";
-import { saveVerificationDraft } from "@/lib/auth/verification-draft";
+import { resetPasswordAction, forgotPasswordAction } from "@/lib/auth/actions";
+import {
+  saveVerificationDraft,
+  setPersistedCooldown,
+} from "@/lib/auth/verification-draft";
 
 const mockClearVerificationDraft = vi.fn();
 
 vi.mock("@/lib/auth/actions", () => ({
   resetPasswordAction: vi.fn(),
+  forgotPasswordAction: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/verification-draft", async () => {
@@ -237,7 +241,7 @@ describe("ResetPasswordForm", () => {
     render(<ResetPasswordForm />);
 
     const requestNewLink = screen.getByRole("link", {
-      name: /request a new code/i,
+      name: /^resend code$/i,
     });
     expect(requestNewLink).toBeInTheDocument();
     expect(requestNewLink).toHaveAttribute("href", "/forgot-password");
@@ -286,5 +290,165 @@ describe("ResetPasswordForm", () => {
 
     fireEvent.change(confirmPasswordInput, { target: { value: "NewPassw0rd!" } });
     expect(screen.queryByText(/passwords do not match/i)).not.toBeInTheDocument();
+  });
+
+  it("displays single inline resend cooldown, ticks down in real time, and enables Resend code at 0s", async () => {
+    vi.useFakeTimers();
+    try {
+      const baseNow = new Date("2026-11-14T12:00:00Z").getTime();
+      vi.setSystemTime(baseNow);
+      saveVerificationDraft({
+        channel: "email",
+        identifier: "user@example.com",
+        contactMasked: "u***@example.com",
+        context: "password_recovery",
+      });
+      setPersistedCooldown("email", baseNow + 65_000, 65, baseNow, "user@example.com");
+
+      render(<ResetPasswordForm />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
+      const cooldownBtn = screen.getByRole("button", { name: /resend code in 01:05/i });
+      expect(cooldownBtn).toBeDisabled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(screen.getByRole("button", { name: /resend code in 01:00/i })).toBeDisabled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      const readyBtn = screen.getByRole("button", { name: /^resend code$/i });
+      expect(readyBtn).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resends code in place via forgotPasswordAction with mode=resend and starts 60s cooldown", async () => {
+    saveVerificationDraft({
+      channel: "email",
+      identifier: "user@example.com",
+      contactMasked: "u***@example.com",
+      context: "password_recovery",
+    });
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({ success: true });
+
+    render(<ResetPasswordForm />);
+
+    const resendBtn = await screen.findByRole("button", { name: /^resend code$/i });
+    await waitFor(() => expect(resendBtn).toBeEnabled());
+
+    await act(async () => {
+      fireEvent.click(resendBtn);
+    });
+
+    expect(forgotPasswordAction).toHaveBeenCalledTimes(1);
+    const sentForm = vi.mocked(forgotPasswordAction).mock.calls[0]?.[1];
+    expect(sentForm?.get("identifier")).toBe("user@example.com");
+    expect(sentForm?.get("mode")).toBe("resend");
+
+    expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /resend code in 01:00/i })).toBeDisabled();
+    expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
+  });
+
+  it("starts cooldown from 429 retryAfterSeconds when forgotPasswordAction resend is rate limited", async () => {
+    saveVerificationDraft({
+      channel: "phone",
+      identifier: "+8801712345678",
+      contactMasked: "+88017****5678",
+      context: "password_recovery",
+    });
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({
+      error: "Too many resend attempts. Please wait.",
+      retryAfterSeconds: 45,
+    });
+
+    render(<ResetPasswordForm />);
+
+    const resendBtn = await screen.findByRole("button", { name: /^resend code$/i });
+    await waitFor(() => expect(resendBtn).toBeEnabled());
+    await act(async () => {
+      fireEvent.click(resendBtn);
+    });
+
+    expect(screen.getByText(/too many resend attempts/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /resend code in 00:45/i })).toBeDisabled();
+    expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
+  });
+
+  it("unlocks in-place resend button when user enters a valid identifier without a draft", async () => {
+    vi.mocked(forgotPasswordAction).mockResolvedValueOnce({ success: true });
+    render(<ResetPasswordForm />);
+
+    expect(screen.getByRole("link", { name: /^resend code$/i })).toHaveAttribute(
+      "href",
+      "/forgot-password",
+    );
+
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    fireEvent.change(identifierInput, { target: { value: "01712345678" } });
+
+    const resendBtn = await screen.findByRole("button", { name: /^resend code$/i });
+    await waitFor(() => expect(resendBtn).toBeEnabled());
+    await act(async () => {
+      fireEvent.click(resendBtn);
+    });
+
+    const sentForm = vi.mocked(forgotPasswordAction).mock.calls[0]?.[1];
+    expect(sentForm?.get("identifier")).toBe("+8801712345678");
+    expect(sentForm?.get("mode")).toBe("resend");
+  });
+
+  it("auto-dismisses AuthAlert on input focus or change and re-displays on new server error", async () => {
+    vi.mocked(resetPasswordAction)
+      .mockResolvedValueOnce({ error: "Invalid or expired reset code." })
+      .mockResolvedValueOnce({ error: "Reset failed on second try." });
+
+    render(<ResetPasswordForm />);
+
+    const identifierInput = screen.getByLabelText(/email or phone/i);
+    const otpInput = screen.getByLabelText(/6-digit verification code/i);
+    const newPasswordInput = screen.getByLabelText(/^new password$/i);
+    const confirmPasswordInput = screen.getByLabelText(/confirm new password/i);
+    const form = identifierInput.closest("form")!;
+
+    fireEvent.change(identifierInput, { target: { value: "user@example.com" } });
+    fireEvent.change(otpInput, { target: { value: "123456" } });
+    fireEvent.change(newPasswordInput, { target: { value: "NewPassw0rd!" } });
+    fireEvent.change(confirmPasswordInput, { target: { value: "NewPassw0rd!" } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(screen.getByText(/invalid or expired reset code\./i)).toBeInTheDocument();
+
+    fireEvent.focus(newPasswordInput);
+    expect(
+      screen.queryByText(/invalid or expired reset code\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(identifierInput, { target: { value: "user@example.com" } });
+    fireEvent.change(otpInput, { target: { value: "123456" } });
+    fireEvent.change(newPasswordInput, { target: { value: "NewPassw0rd!" } });
+    fireEvent.change(confirmPasswordInput, { target: { value: "NewPassw0rd!" } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(screen.getByText(/reset failed on second try\./i)).toBeInTheDocument();
+
+    fireEvent.change(otpInput, { target: { value: "654321" } });
+    expect(
+      screen.queryByText(/reset failed on second try\./i),
+    ).not.toBeInTheDocument();
   });
 });

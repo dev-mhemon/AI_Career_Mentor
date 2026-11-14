@@ -206,4 +206,56 @@ describe("RegisterForm", () => {
     fireEvent.change(phoneInput, { target: { value: "017123456789" } });
     expect(screen.getByText(/must be 11 digits/i)).toBeInTheDocument();
   });
+
+  it("auto-dismisses AuthAlert on input focus or change and re-displays on new server error", async () => {
+    vi.mocked(registerAction)
+      .mockResolvedValueOnce({
+        error: "Registration failed first time.",
+        status: 400,
+      })
+      .mockResolvedValueOnce({
+        error: "An account already exists with this contact.",
+        status: 409,
+      });
+
+    render(<RegisterForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const confirmInput = screen.getByLabelText(/confirm password/i);
+    const consentCheckbox = screen.getByLabelText(/agree to the privacy policy/i);
+    const form = emailInput.closest("form")!;
+
+    fireEvent.change(emailInput, { target: { value: "test@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "password123" } });
+    fireEvent.change(confirmInput, { target: { value: "password123" } });
+    fireEvent.click(consentCheckbox);
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(screen.getByText(/registration failed first time\./i)).toBeInTheDocument();
+
+    fireEvent.focus(passwordInput);
+    expect(screen.queryByText(/registration failed first time\./i)).not.toBeInTheDocument();
+
+    fireEvent.change(emailInput, { target: { value: "test@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "password123" } });
+    fireEvent.change(confirmInput, { target: { value: "password123" } });
+    if (!consentCheckbox.hasAttribute("checked") && !(consentCheckbox as HTMLInputElement).checked) {
+      fireEvent.click(consentCheckbox);
+    }
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+    expect(
+      screen.getByText(/an account already exists with this contact\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(emailInput, { target: { value: "other@example.com" } });
+    expect(
+      screen.queryByText(/an account already exists with this contact\./i),
+    ).not.toBeInTheDocument();
+  });
 });
