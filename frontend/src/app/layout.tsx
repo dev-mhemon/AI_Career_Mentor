@@ -42,7 +42,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col">
         <SkipLink />
-        <div id="main-content" tabIndex={-1} className="flex flex-1 flex-col outline-none">
+        <div className="flex flex-1 flex-col">
           {children}
         </div>
       </body>

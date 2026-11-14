@@ -36,7 +36,11 @@ export default async function DashboardLayout({
   if (result.status === 'transient_error') {
     return (
       <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
-        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center outline-none"
+        >
           <div className="flex flex-col gap-5 rounded-xl border border-border-default bg-surface-raised p-6 shadow-md sm:p-8">
             <h1 className="text-heading-lg text-text-primary">
               সার্ভিস সাময়িকভাবে অনুপলব্ধ (Service Temporarily Unavailable)
@@ -68,7 +72,11 @@ export default async function DashboardLayout({
   if (user.status === 'suspended') {
     return (
       <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
-        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center outline-none"
+        >
           <div className="flex flex-col gap-5 rounded-xl border border-feedback-warning-border bg-surface-raised p-6 shadow-md sm:p-8">
             <h1 className="text-heading-lg text-text-primary">
               আপনার অ্যাকাউন্ট স্থগিত আছে
@@ -107,7 +115,9 @@ export default async function DashboardLayout({
           </form>
         }
       />
-      <div className="flex flex-1 flex-col">{children}</div>
+      <div id="main-content" tabIndex={-1} className="flex flex-1 flex-col outline-none">
+        {children}
+      </div>
     </div>
   );
 }

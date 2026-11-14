@@ -41,9 +41,13 @@ export default function AuthLayout({
             Your personal guide to a structured learning path.
           </p>
         </header>
-        <div className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-md sm:p-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-md outline-none sm:p-8"
+        >
           {children}
-        </div>
+        </main>
         <Link
           href="/"
           className="mx-auto inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-label-lg text-text-secondary transition-colors hover:text-text-brand hover:underline"

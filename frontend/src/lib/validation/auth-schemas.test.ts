@@ -24,6 +24,7 @@ describe("email", () => {
   it("trims and lowercases", () => {
     expect(normalizeEmail("  A@B.Com ")).toBe("a@b.com");
     expect(validateEmail("  User@Example.COM ")).toEqual({ ok: true, value: "user@example.com" });
+    expect(validateEmail("o'connor@example.com")).toEqual({ ok: true, value: "o'connor@example.com" });
   });
   it.each(["", "a", "a@b", "a@@b.com", "a b@c.com", "a..b@c.com", "a@b..com"])("rejects %j", (v) => {
     expect(validateEmail(v).ok).toBe(false);
@@ -70,6 +71,7 @@ describe("BD phone", () => {
 describe("identifier", () => {
   it("detects kind", () => {
     expect(detectIdentifier("a@b.com")).toBe("email");
+    expect(detectIdentifier("o'connor@example.com")).toBe("email");
     expect(detectIdentifier("01712345678")).toBe("phone");
     expect(detectIdentifier("1712345678")).toBe("phone");
     expect(detectIdentifier("+8801712345678")).toBe("phone");
@@ -79,6 +81,10 @@ describe("identifier", () => {
   });
   it("validates and normalizes", () => {
     expect(validateIdentifier("A@B.com")).toEqual({ ok: true, value: { kind: "email", value: "a@b.com" } });
+    expect(validateIdentifier("O'Connor@Example.com")).toEqual({
+      ok: true,
+      value: { kind: "email", value: "o'connor@example.com" },
+    });
     expect(validateIdentifier("01712345678")).toEqual({ ok: true, value: { kind: "phone", value: "+8801712345678" } });
     expect(validateIdentifier("1712-345678")).toEqual({ ok: true, value: { kind: "phone", value: "+8801712345678" } });
     expect(validateIdentifier("(017) 1234-5678")).toEqual({ ok: true, value: { kind: "phone", value: "+8801712345678" } });
@@ -154,16 +160,24 @@ describe("live display & onChange validation", () => {
   });
 
   it("validates email, unified identifier, password, and OTP live", () => {
-    expect(validateEmailLive("").ok).toBe(true);
+    expect(validateEmailLive("")).toEqual({ ok: true, value: "" });
     expect(validateEmailLive("bad").ok).toBe(false);
     expect(validateEmailLive("bad@").ok).toBe(false);
     expect(validateEmailLive("user@example.com").ok).toBe(true);
+    expect(validateEmailLive("o'connor@example.com")).toEqual({
+      ok: true,
+      value: "o'connor@example.com",
+    });
 
     expect(validateIdentifierOnChange("", false).ok).toBe(true);
     expect(validateIdentifierOnChange("user@", false).ok).toBe(false);
     expect(validateIdentifierOnChange("012", false).ok).toBe(false);
     expect(validateIdentifierOnChange("01712345678", false).ok).toBe(true);
     expect(validateIdentifierOnChange("user@example.com", false).ok).toBe(true);
+    expect(validateIdentifierOnChange("o'connor@example.com", false)).toEqual({
+      ok: true,
+      resetBlurred: false,
+    });
 
     expect(validatePasswordLive("").ok).toBe(true);
     expect(validatePasswordLive("1234567").ok).toBe(false);

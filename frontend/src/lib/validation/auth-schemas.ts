@@ -2,7 +2,7 @@
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
-const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
+const EMAIL_RE = /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 const BD_PHONE_RE = /^(?:(?:\+?88)?0)?(1[3-9]\d{8})$/;
 
 export const PASSWORD_MIN = 8;

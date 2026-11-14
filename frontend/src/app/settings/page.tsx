@@ -51,7 +51,11 @@ export default async function SettingsPage({
   if (result.status === 'transient_error') {
     return (
       <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
-        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center outline-none"
+        >
           <div className="flex flex-col gap-5 rounded-xl border border-border-default bg-surface-raised p-6 shadow-md sm:p-8">
             <h1 className="text-heading-lg text-text-primary">
               সার্ভিস সাময়িকভাবে অনুপলব্ধ (Service Temporarily Unavailable)
@@ -131,7 +135,11 @@ export default async function SettingsPage({
         }
       />
 
-      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="mx-auto w-full max-w-3xl px-4 py-8 outline-none sm:py-12"
+      >
         <h1 className="text-heading-xl text-text-primary">
           অ্যাকাউন্ট ও সেটিংস (Account &amp; Settings)
         </h1>

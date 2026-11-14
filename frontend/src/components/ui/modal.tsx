@@ -45,7 +45,12 @@ function ModalInner({
 
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    const first = panel.current?.querySelector<HTMLElement>('input,textarea') ?? panel.current?.querySelector<HTMLElement>(FOCUSABLE);
+    const first =
+      panel.current?.querySelector<HTMLElement>(
+        'input:not([disabled]),textarea:not([disabled])',
+      ) ??
+      panel.current?.querySelector<HTMLElement>(FOCUSABLE) ??
+      panel.current;
     first?.focus();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -63,13 +68,20 @@ function ModalInner({
     }
     if (e.key !== 'Tab' || !panel.current) return;
     const nodes = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-    if (!nodes.length) return;
+    if (!nodes.length) {
+      e.preventDefault();
+      panel.current.focus();
+      return;
+    }
     const first = nodes[0];
     const last = nodes[nodes.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
+    const active = document.activeElement;
+    const onPanelOrOutside =
+      active === panel.current || !panel.current.contains(active);
+    if (e.shiftKey && (active === first || onPanelOrOutside)) {
       e.preventDefault();
       last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
+    } else if (!e.shiftKey && (active === last || onPanelOrOutside)) {
       e.preventDefault();
       first.focus();
     }
@@ -87,11 +99,12 @@ function ModalInner({
       <div
         ref={panel}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby={`${uid}-title`}
         aria-describedby={description ? `${uid}-desc` : undefined}
         onKeyDown={onKey}
-        className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl bg-surface-raised p-6 text-text-primary shadow-xl sm:max-w-md sm:rounded-xl"
+        className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl bg-surface-raised p-6 text-text-primary shadow-xl outline-none sm:max-w-md sm:rounded-xl"
       >
         <h2 id={`${uid}-title`} className="text-heading-md" dir="auto">{title}</h2>
         {description && <p id={`${uid}-desc`} className="text-body text-text-secondary" dir="auto">{description}</p>}

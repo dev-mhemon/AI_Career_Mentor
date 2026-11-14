@@ -11,11 +11,13 @@ export function AuthAlert({
   result,
   message,
   action,
+  resetKey,
 }: {
   result?: ActionErrorLike | null;
   /** Override copy (e.g. 401 login). */
   message?: string;
   action?: { label: string; href?: string; onClick?: () => void };
+  resetKey?: unknown;
 }) {
   const mapped = mapActionResult(result);
   if (!mapped) return null;
@@ -23,10 +25,10 @@ export function AuthAlert({
   const variant = mapped.tone === "error" && !hasWait ? "error_retryable" : "warning";
   return (
     <Alert
-      key={`${mapped.message}-${mapped.retryAfterSeconds ?? 0}`}
       variant={variant}
-      role="alert"
+      role={hasWait ? "status" : "alert"}
       retryAfterSeconds={mapped.retryAfterSeconds}
+      resetKey={resetKey ?? result}
       action={action}
     >
       {message ?? mapped.message}

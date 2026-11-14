@@ -594,7 +594,10 @@ export function ProfileSetupForm({
             aria-disabled={isPending || undefined}
             tabIndex={isPending ? -1 : undefined}
             value={values.experience_level}
-            onChange={(e) => updateField('experience_level', e.target.value)}
+            onChange={(e) => {
+              if (isPending) return;
+              updateField('experience_level', e.target.value);
+            }}
             aria-invalid={Boolean(fieldErrors.experience_level)}
             aria-describedby={
               fieldErrors.experience_level

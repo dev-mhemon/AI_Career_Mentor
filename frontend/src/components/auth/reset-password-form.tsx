@@ -137,6 +137,21 @@ export function ResetPasswordForm() {
           if (Object.keys(errors).length) {
             e.preventDefault();
             setClientErrors(errors);
+            const firstField = (
+              [
+                "identifier",
+                "code",
+                "new_password",
+                "confirm_new_password",
+              ] as const
+            ).find((key) => Boolean(errors[key]));
+            if (firstField) {
+              form
+                .querySelector<HTMLElement>(
+                  `#${firstField}, [name="${firstField}"]:not([type="hidden"])`,
+                )
+                ?.focus();
+            }
             return;
           }
           setClientErrors({});

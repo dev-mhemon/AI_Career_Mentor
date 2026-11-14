@@ -443,6 +443,8 @@ function VerifyFormContent() {
         onSubmit={(e) => {
           const form = e.currentTarget;
           let invalid = false;
+          let invalidIdentifier = false;
+          let invalidCode = false;
           if (!draft) {
             const check =
               channelParam === 'email'
@@ -454,6 +456,7 @@ function VerifyFormContent() {
               }
               setIdentifierError(check.error);
               invalid = true;
+              invalidIdentifier = true;
             } else {
               setIdentifierError(undefined);
               if (channelParam === 'email') {
@@ -468,10 +471,21 @@ function VerifyFormContent() {
           if (!code.ok) {
             setCodeError(code.error);
             invalid = true;
+            invalidCode = true;
           } else {
             setCodeError(undefined);
           }
-          if (invalid) e.preventDefault();
+          if (invalid) {
+            e.preventDefault();
+            const targetSelector = invalidIdentifier
+              ? '#identifier, [name="identifier"]:not([type="hidden"])'
+              : invalidCode
+                ? '#token, [name="token"]:not([type="hidden"])'
+                : null;
+            if (targetSelector) {
+              form.querySelector<HTMLElement>(targetSelector)?.focus();
+            }
+          }
         }}
         className="flex flex-col gap-4"
       >

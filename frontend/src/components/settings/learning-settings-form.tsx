@@ -232,6 +232,7 @@ export function LearningSettingsForm({
           }
           role="alert"
           retryAfterSeconds={activeState.retryAfterSeconds}
+          resetKey={activeState}
           className="mt-4"
         >
           {activeState.error}

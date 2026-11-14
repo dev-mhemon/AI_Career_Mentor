@@ -108,6 +108,8 @@ export function AddContactForm({
     );
   }
 
+  const visibleState = dismissedServerState === state ? null : state;
+
   return (
     <section
       aria-labelledby="add-contact-heading"
@@ -130,6 +132,7 @@ export function AddContactForm({
             setActiveTab('email');
             setContact('');
             setContactError(undefined);
+            setDismissedServerState(state);
             phoneBlurredRef.current = false;
           }}
           className={`flex min-h-11 flex-1 items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
@@ -148,6 +151,7 @@ export function AddContactForm({
             setActiveTab('phone');
             setContact('');
             setContactError(undefined);
+            setDismissedServerState(state);
             phoneBlurredRef.current = false;
           }}
           className={`flex min-h-11 flex-1 items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
@@ -161,7 +165,7 @@ export function AddContactForm({
         </button>
       </div>
 
-      <AuthAlert result={state} />
+      <AuthAlert result={visibleState} />
 
       <form
         action={formAction}
@@ -210,13 +214,14 @@ export function AddContactForm({
           readOnly={isPending}
           value={contact}
           error={
-            contactError ??
-            (dismissedServerState === state ? undefined : state?.fieldErrors?.contact)
+            contactError ?? visibleState?.fieldErrors?.contact
           }
           onChange={(e) => {
             const v = e.target.value;
             setContact(v);
-            if (state?.fieldErrors?.contact) setDismissedServerState(state);
+            if (state?.error || state?.fieldErrors?.contact) {
+              setDismissedServerState(state);
+            }
             if (activeTab === 'email') {
               const check = validateEmailLive(v);
               setContactError(check.ok ? undefined : check.error);
