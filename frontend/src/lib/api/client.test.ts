@@ -742,4 +742,43 @@ describe('EP-P01 getProfile, EP-P02 updateProfile, and EP-P04 updateLearningSett
     callerController.abort();
     await expect(pending).rejects.toThrow(NetworkError);
   });
+
+  it('does not apply a client timeout to requestAccountDeletion during slow deletion cascades', async () => {
+    vi.useFakeTimers();
+    const mockDeletionResponse = {
+      id: 'del-uuid-slow',
+      status: 'completed' as const,
+      requested_at: '2026-11-10T12:00:00.000Z',
+      completed_at: '2026-11-10T12:01:00.000Z',
+      provider_deletion_requested: true,
+      deletion_receipt: 'mock-receipt-slow',
+      receipt_expires_at: '2026-11-11T12:00:00.000Z',
+    };
+    try {
+      mockFetch.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                ok: true,
+                status: 202,
+                json: () => Promise.resolve({ success: true, data: mockDeletionResponse }),
+              });
+            }, 60_000);
+          }),
+      );
+
+      const pending = requestAccountDeletion(MOCK_TOKEN, {
+        confirmation: 'DELETE',
+        password: 'ValidPass123!',
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      await expect(pending).resolves.toEqual(mockDeletionResponse);
+      const fetchInit = mockFetch.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(fetchInit?.signal).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

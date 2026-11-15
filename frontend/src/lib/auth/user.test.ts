@@ -442,42 +442,74 @@ describe('frontend user session resolver (user.ts) - read-only Server Component 
   it('absorbs late fetcher rejection cleanly when remaining deadline hits 0ms boundary', async () => {
     vi.useFakeTimers();
     try {
+      const startTime = 1_000_000;
+      vi.setSystemTime(startTime);
       const actualClient =
         await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
       let rejectLateFetcher!: (err: unknown) => void;
-      mockGetSession.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            setTimeout(() => {
-              resolve({
-                data: {
-                  session: {
-                    access_token: 'valid-token',
-                    refresh_token: 'valid-refresh',
-                  },
-                },
-              });
-            }, actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS);
-          }),
-      );
-      vi.mocked(getCurrentUserState).mockImplementationOnce(
-        () =>
-          new Promise((_resolve, reject) => {
-            rejectLateFetcher = reject;
-          }),
-      );
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            refresh_token: 'valid-refresh',
+          },
+        },
+      });
+      vi.mocked(getCurrentUserState).mockImplementationOnce(() => {
+        vi.setSystemTime(startTime + actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS);
+        return new Promise((_resolve, reject) => {
+          rejectLateFetcher = reject;
+        });
+      });
 
-      const statePromise = getAppSessionStateResult();
-      await vi.advanceTimersByTimeAsync(
-        actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS,
-      );
-
-      const result = await statePromise;
+      const result = await getAppSessionStateResult();
       expect(result.status).toBe('transient_error');
       expect((result.error as DOMException).name).toBe('TimeoutError');
 
       rejectLateFetcher(new actualClient.NetworkError('Late network failure'));
       await Promise.resolve();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns transient_error when fulfillment is processed after deadline expiry before timer callback fires', async () => {
+    vi.useFakeTimers();
+    try {
+      const startTime = 1_000_000;
+      vi.setSystemTime(startTime);
+      const actualClient =
+        await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+      let resolveFetcher!: (state: typeof mockSessionState) => void;
+
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            refresh_token: 'valid-refresh',
+          },
+        },
+      });
+      vi.mocked(getCurrentUserState).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFetcher = resolve;
+          }),
+      );
+
+      const statePromise = getAppSessionStateResult();
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
+      expect(resolveFetcher).toBeTypeOf('function');
+
+      vi.setSystemTime(startTime + actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS + 1);
+      resolveFetcher(mockSessionState);
+
+      const result = await statePromise;
+      expect(result.status).toBe('transient_error');
+      expect(result.data).toBeNull();
+      expect((result.error as DOMException).name).toBe('TimeoutError');
     } finally {
       vi.useRealTimers();
     }

@@ -29,6 +29,7 @@ import {
 } from "@/lib/auth/verification-draft";
 import {
   clearRememberedLogin,
+  clearRememberedLoginCookie,
   getRememberedLoginServerSnapshot,
   getRememberedLoginSnapshot,
   loadRememberedLogin,
@@ -148,13 +149,22 @@ export function LoginForm({
 
   useEffect(() => {
     const syncClearState = () => {
-      setStorageCleared(!parseRememberedLoginHint(getRememberedLoginSnapshot()));
+      const cleared = !parseRememberedLoginHint(getRememberedLoginSnapshot());
+      setStorageCleared(cleared);
+      if (cleared) {
+        setKeepSignedInOverride(false);
+        clearRememberedLoginCookie();
+      }
     };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === null || e.key === REMEMBERED_LOGIN_STORAGE_KEY) {
-        setStorageCleared(
-          e.newValue === null || !parseRememberedLoginHint(e.newValue),
-        );
+        const cleared =
+          e.newValue === null || !parseRememberedLoginHint(e.newValue);
+        setStorageCleared(cleared);
+        if (cleared) {
+          setKeepSignedInOverride(false);
+          clearRememberedLoginCookie();
+        }
       }
     };
     const unsubscribe = subscribeRememberedLogin(syncClearState);

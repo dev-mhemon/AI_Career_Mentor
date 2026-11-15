@@ -70,10 +70,11 @@ export function isSessionExpired(session: {
  */
 function withTimeout<T>(
   value: PromiseLike<T> | T,
-  timeoutMs: number,
+  deadline: number,
   message = 'Operation timed out',
 ): Promise<T> {
   const settled = Promise.resolve(value);
+  const timeoutMs = deadline - Date.now();
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     settled.catch(() => undefined);
     return Promise.reject(new DOMException(message, 'TimeoutError'));
@@ -85,6 +86,10 @@ function withTimeout<T>(
     settled.then(
       (resolved) => {
         clearTimeout(timer);
+        if (Date.now() >= deadline) {
+          reject(new DOMException(message, 'TimeoutError'));
+          return;
+        }
         resolve(resolved);
       },
       (err) => {
@@ -99,19 +104,18 @@ async function fetchReadOnlySession<T>(
   fetcher: (accessToken: string) => Promise<T>,
 ): Promise<ReadOnlySessionResult<T>> {
   const deadline = Date.now() + DEFAULT_AUTH_STATE_TIMEOUT_MS;
-  const remainingMs = () => deadline - Date.now();
 
   try {
     const supabase = await withTimeout(
       createSupabaseServerClient({ readOnly: true }),
-      remainingMs(),
+      deadline,
       'Supabase client setup timed out',
     );
     const {
       data: { session },
     } = await withTimeout(
       supabase.auth.getSession(),
-      remainingMs(),
+      deadline,
       'Supabase session lookup timed out',
     );
 
@@ -126,7 +130,7 @@ async function fetchReadOnlySession<T>(
     try {
       const data = await withTimeout(
         fetcher(session.access_token),
-        remainingMs(),
+        deadline,
         'Auth state request timed out',
       );
       return { status: 'authenticated', data };
@@ -186,16 +190,15 @@ export async function getAppUser(): Promise<UserResponse | null> {
  */
 export async function getSupabaseAuthUser() {
   const deadline = Date.now() + DEFAULT_AUTH_STATE_TIMEOUT_MS;
-  const remainingMs = () => deadline - Date.now();
   try {
     const supabase = await withTimeout(
       createSupabaseServerClient({ readOnly: true }),
-      remainingMs(),
+      deadline,
       'Supabase client setup timed out',
     );
     const { data, error } = await withTimeout(
       supabase.auth.getUser(),
-      remainingMs(),
+      deadline,
       'Supabase user lookup timed out',
     );
     if (error || !data?.user) {

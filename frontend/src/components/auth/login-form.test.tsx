@@ -530,7 +530,8 @@ describe("LoginForm", () => {
     ).toEqual(storedHint);
   });
 
-  it("clears remembered state on storage-clear event without falling back to initialRememberedLogin", () => {
+  it("clears remembered state and expires hint cookie on storage-clear event without falling back to initialRememberedLogin", () => {
+    document.cookie = "mentor_login_hint=stale; path=/";
     render(
       <LoginForm
         initialRememberedLogin={{
@@ -556,6 +557,45 @@ describe("LoginForm", () => {
     expect(
       screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
     ).not.toBeChecked();
+    expect(document.cookie).not.toContain("mentor_login_hint=");
+  });
+
+  it("unchecks Keep Signed In override and expires cookie on external removal after failed submit while preserving typed email", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "Invalid credentials.",
+      status: 401,
+    });
+    document.cookie = "mentor_login_hint=stale; path=/";
+
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const checkbox = screen.getByRole("checkbox", { name: /^Keep Signed In$/ });
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "WrongPass1!" } });
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    await act(async () => {
+      fireEvent.submit(emailInput.closest("form")!);
+    });
+    expect(checkbox).toBeChecked();
+
+    act(() => {
+      window.localStorage.removeItem("mentor_remembered_login");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: null,
+        }),
+      );
+    });
+
+    expect(checkbox).not.toBeChecked();
+    expect(emailInput).toHaveValue("user@example.com");
+    expect(document.cookie).not.toContain("mentor_login_hint=");
   });
 
   it("keeps previously dismissed server fieldErrors.email dismissed when switching to Phone tab and back", async () => {

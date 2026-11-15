@@ -136,6 +136,15 @@ export function loadRememberedLogin(): RememberedLoginHint | null {
   return parseRememberedLoginHint(getRememberedLoginSnapshot());
 }
 
+export function clearRememberedLoginCookie(): void {
+  if (typeof document === 'undefined') return;
+  try {
+    document.cookie = `${LOGIN_HINT_COOKIE}=; Max-Age=0; path=/; SameSite=Lax`;
+  } catch {
+    // Ignore document cookie write errors
+  }
+}
+
 export function clearRememberedLogin(): void {
   if (typeof window === 'undefined') return;
   try {
@@ -143,10 +152,6 @@ export function clearRememberedLogin(): void {
   } catch {
     // Ignore storage access errors
   }
-  try {
-    document.cookie = `${LOGIN_HINT_COOKIE}=; Max-Age=0; path=/; SameSite=Lax`;
-  } catch {
-    // Ignore document cookie write errors
-  }
+  clearRememberedLoginCookie();
   notifyRememberedLoginListeners();
 }

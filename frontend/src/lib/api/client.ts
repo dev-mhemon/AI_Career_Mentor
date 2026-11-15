@@ -129,7 +129,6 @@ export interface VerifyPhoneBody {
 // ─── Core Fetch Wrapper ──────────────────────────────────────
 
 export const DEFAULT_AUTH_STATE_TIMEOUT_MS = 4000;
-const DEFAULT_API_TIMEOUT_MS = 10_000;
 
 export interface ApiFetchOptions extends RequestInit {
   timeoutMs?: number;
@@ -179,13 +178,14 @@ async function apiFetch<T>(
   options: ApiFetchOptions = {},
 ): Promise<T> {
   const url = `${getApiBaseUrl()}${path}`;
-  const {
-    timeoutMs = DEFAULT_API_TIMEOUT_MS,
-    signal: callerSignal,
-    ...fetchOptions
-  } = options;
+  const { timeoutMs, signal: callerSignal, ...fetchOptions } = options;
 
-  const { signal, cleanup } = createTimedAbortSignal(timeoutMs, callerSignal);
+  const timedAbort =
+    (timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0) ||
+    callerSignal
+      ? createTimedAbortSignal(timeoutMs ?? 0, callerSignal)
+      : null;
+  const signal = timedAbort?.signal;
 
   let response: Response;
   let body;
@@ -194,7 +194,7 @@ async function apiFetch<T>(
       response = await fetch(url, {
         cache: 'no-store',
         ...fetchOptions,
-        signal,
+        ...(signal ? { signal } : {}),
         headers: {
           'Content-Type': 'application/json',
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -203,7 +203,7 @@ async function apiFetch<T>(
       });
     } catch {
       throw new NetworkError(
-        signal.aborted
+        signal?.aborted
           ? 'Request timed out or was aborted. Please try again.'
           : 'Unable to reach the server. Please try again.',
       );
@@ -212,13 +212,13 @@ async function apiFetch<T>(
     try {
       body = await response.json();
     } catch {
-      if (signal.aborted) {
+      if (signal?.aborted) {
         throw new NetworkError('Request timed out or was aborted. Please try again.');
       }
       body = null;
     }
   } finally {
-    cleanup();
+    timedAbort?.cleanup();
   }
   if (!response.ok) {
     const error = body?.error;
