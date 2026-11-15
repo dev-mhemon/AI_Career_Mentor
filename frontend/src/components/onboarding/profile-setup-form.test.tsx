@@ -31,7 +31,46 @@ const EMPTY_PROFILE: ProfileResponse = {
   updated_at: '2026-11-01T00:00:00.000Z',
 };
 
-describe('ProfileSetupForm (M01-09 Screen 07)', () => {
+const EMAIL_CONTACT = {
+  email: 'alice@example.com',
+  emailVerified: true,
+  phone: '',
+  phoneVerified: false,
+};
+
+const PHONE_CONTACT = {
+  email: '',
+  emailVerified: false,
+  phone: '+8801712345678',
+  phoneVerified: true,
+};
+
+function fillValidFields({
+  fullName = 'Alice Rahman',
+  role = 'Frontend Developer',
+  level = 'mid',
+  hours = '2',
+}: {
+  fullName?: string;
+  role?: string;
+  level?: string;
+  hours?: string;
+} = {}) {
+  fireEvent.change(screen.getByLabelText(/full name/i), {
+    target: { value: fullName },
+  });
+  fireEvent.change(screen.getByLabelText(/current role \/ profession/i), {
+    target: { value: role },
+  });
+  fireEvent.change(screen.getByLabelText(/experience level/i), {
+    target: { value: level },
+  });
+  fireEvent.change(screen.getByLabelText(/preferred daily hours/i), {
+    target: { value: hours },
+  });
+}
+
+describe('ProfileSetupForm (Screen 07)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
@@ -41,8 +80,13 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders Step 1 of 5 progressbar, accessible labels, optional education, and no forced Junior fallback', () => {
-    render(<ProfileSetupForm initialProfile={EMPTY_PROFILE} />);
+  it('renders modern 5-step header, Education above 2x2 grid, hidden auto-detected timezone, redesigned Complete Beginner switch, and clean footer without M05 note', () => {
+    const { container } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+      />,
+    );
 
     const progressbar = screen.getByRole('progressbar', {
       name: /step 1 of 5/i,
@@ -50,33 +94,321 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     expect(progressbar).toHaveAttribute('aria-valuenow', '1');
     expect(progressbar).toHaveAttribute('aria-valuemin', '1');
     expect(progressbar).toHaveAttribute('aria-valuemax', '5');
+    expect(screen.getByText('Profile Setup')).toBeInTheDocument();
+    expect(screen.getByText('Step 1 of 5')).toBeInTheDocument();
+    expect(screen.getByText('20% Complete')).toBeInTheDocument();
+    expect(screen.getByText('1. Profile')).toBeInTheDocument();
+    expect(screen.getByText('2. Skills')).toBeInTheDocument();
+    expect(screen.getByText('3. Preferences')).toBeInTheDocument();
+    expect(screen.getByText('4. Career Goal')).toBeInTheDocument();
+    expect(screen.getByText('5. Confirm Level')).toBeInTheDocument();
+
+    const fullNameInput = screen.getByLabelText(/full name/i);
+    expect(fullNameInput).toBeRequired();
+    expect(fullNameInput).toHaveAttribute('aria-describedby', 'full_name-hint');
+    expect(screen.getByText('Min 2 – Max 100 characters')).toBeInTheDocument();
+
+    const educationInput = screen.getByLabelText(/education \(optional\)/i);
+    expect(educationInput).not.toBeRequired();
+    expect(educationInput).toHaveValue('');
+    expect(screen.getByText('Max 200 characters')).toBeInTheDocument();
 
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
     expect(roleInput).toBeRequired();
     expect(roleInput).toHaveValue('');
+    expect(screen.getByText('Min 2 – Max 120 characters')).toBeInTheDocument();
 
-    const educationInput = screen.getByLabelText(/education — optional/i);
-    expect(educationInput).not.toBeRequired();
-    expect(educationInput).toHaveValue('');
+    // Education appears BEFORE Current Role / Profession in DOM order
+    expect(
+      educationInput.compareDocumentPosition(roleInput) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     const levelSelect = screen.getByLabelText(/experience level/i);
     expect(levelSelect).toBeRequired();
-    // Must not default to 'junior' when profile.experience_level is null
     expect(levelSelect).toHaveValue('');
+    expect(levelSelect).toHaveClass('appearance-none', 'pr-10', 'truncate');
+    const selectWrapper = levelSelect.closest('.group.relative');
+    expect(selectWrapper).not.toBeNull();
+    expect(selectWrapper?.querySelector('svg')).not.toBeNull();
 
+    // Visible Timezone input is removed; auto-detected hidden input carries timezone
+    expect(
+      screen.queryByRole('textbox', { name: /timezone/i }),
+    ).not.toBeInTheDocument();
+    const hiddenTz = container.querySelector(
+      'input[type="hidden"][name="timezone"]',
+    ) as HTMLInputElement;
+    expect(hiddenTz).not.toBeNull();
+    expect(hiddenTz.value).toBeTruthy();
+
+    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
+    expect(hoursInput).toBeRequired();
+
+    expect(screen.getByText('Skill Baseline')).toBeInTheDocument();
     const noneSwitch = screen.getByRole('switch', {
-      name: /none — complete beginner/i,
+      name: /complete beginner/i,
     });
     expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
+    expect(noneSwitch).toBeDisabled();
+    expect(noneSwitch).not.toHaveAttribute('aria-describedby');
+    expect(noneSwitch.closest('div')).toHaveClass('min-h-11', 'rounded-md');
+    expect(noneSwitch.closest('div')).not.toHaveClass('rounded-xl');
+    expect(
+      screen.queryByText(/starting from zero/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/only available for beginner level/i),
+    ).not.toBeInTheDocument();
 
-    const skipLink = screen.getByRole('link', { name: /skip to dashboard/i });
-    expect(skipLink).toHaveAttribute('href', '/dashboard');
+    // 4 core controls sit inside the 2x2 md:grid-cols-2 grid
+    const coreGrid = container.querySelector('.md\\:grid-cols-2');
+    expect(coreGrid).not.toBeNull();
+    expect(coreGrid).toContainElement(roleInput);
+    expect(coreGrid).toContainElement(levelSelect);
+    expect(coreGrid).toContainElement(noneSwitch);
+    expect(coreGrid).toContainElement(hoursInput);
+    expect(coreGrid).not.toContainElement(educationInput);
 
-    const nextM05Button = screen.getByRole('button', {
-      name: /next: skills — m05/i,
+    const dashboardLink = screen.getByRole('link', { name: /go to dashboard/i });
+    expect(dashboardLink).toHaveAttribute('href', '/dashboard');
+    expect(dashboardLink).toHaveClass(
+      'border',
+      'border-slate-300',
+      'rounded-lg',
+    );
+
+    const nextSkillsButton = screen.getByRole('button', {
+      name: /next: skills/i,
     });
-    expect(nextM05Button).toBeDisabled();
-    expect(nextM05Button).toHaveAttribute('aria-disabled', 'true');
+    expect(nextSkillsButton).toBeDisabled();
+    expect(nextSkillsButton).toHaveAttribute('aria-disabled', 'true');
+    expect(nextSkillsButton).not.toHaveAttribute('aria-describedby');
+
+    expect(screen.queryByText(/milestone m05/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/you can visit your dashboard anytime/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('validates Full Name on blur and submit (empty, too short, digit-only, whitespace collapse)', async () => {
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+      />,
+    );
+
+    const fullNameInput = screen.getByLabelText(/full name/i);
+    const submitBtn = screen.getByRole('button', { name: /save profile/i });
+
+    // Submit empty -> blocked client-side, error shown, aria-describedby points to error
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+    expect(saveProfileSetupAction).not.toHaveBeenCalled();
+    expect(fullNameInput).toHaveAttribute('aria-invalid', 'true');
+    expect(fullNameInput).toHaveAttribute('aria-describedby', 'full_name-error');
+    expect(screen.getByText('Enter your full name.')).toBeInTheDocument();
+
+    // Too short
+    fireEvent.change(fullNameInput, { target: { value: 'A' } });
+    fireEvent.blur(fullNameInput);
+    expect(
+      screen.getByText('Full name must be at least 2 characters.'),
+    ).toBeInTheDocument();
+
+    // Digit-only
+    fireEvent.change(fullNameInput, { target: { value: '12345' } });
+    fireEvent.blur(fullNameInput);
+    expect(
+      screen.getByText('Full name cannot contain only digits.'),
+    ).toBeInTheDocument();
+
+    // Valid name collapses extra internal whitespace on blur and clears error
+    fireEvent.change(fullNameInput, { target: { value: '  Alice   Rahman  ' } });
+    fireEvent.blur(fullNameInput);
+    expect(fullNameInput).toHaveValue('Alice Rahman');
+    expect(fullNameInput).not.toHaveAttribute('aria-invalid', 'true');
+    expect(fullNameInput).toHaveAttribute('aria-describedby', 'full_name-hint');
+  });
+
+  it('auto-prefills Verified readOnly Email for email-signup users and validates optional Phone', () => {
+    const { container } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+      />,
+    );
+
+    const emailInput = screen.getByLabelText(/email address/i);
+    expect(emailInput).toHaveValue('alice@example.com');
+    expect(emailInput).toHaveAttribute('readonly');
+    expect(screen.getByText('Verified')).toBeInTheDocument();
+
+    const phoneInput = screen.getByLabelText(/phone number/i);
+    expect(phoneInput).not.toHaveAttribute('readonly');
+    expect(phoneInput).toHaveAttribute('placeholder', '01XXXXXXXXX');
+    expect(screen.getByText('+88')).toBeInTheDocument();
+
+    // Invalid BD prefix shows error
+    fireEvent.change(phoneInput, { target: { value: '01234' } });
+    expect(
+      screen.getByText(/bangladesh mobile prefix must be 013/i),
+    ).toBeInTheDocument();
+
+    // Valid BD number clears error and submits canonical +8801XXXXXXXXX in hidden input
+    fireEvent.change(phoneInput, { target: { value: '01712345678' } });
+    fireEvent.blur(phoneInput);
+    expect(phoneInput).not.toHaveAttribute('aria-invalid', 'true');
+    const hiddenPhone = container.querySelector(
+      'input[type="hidden"][name="phone"]',
+    ) as HTMLInputElement;
+    expect(hiddenPhone.value).toBe('+8801712345678');
+  });
+
+  it('auto-prefills Verified readOnly Phone (+88 + 01XXXXXXXXX) for phone-signup users and validates optional Email', () => {
+    const { container } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={PHONE_CONTACT}
+      />,
+    );
+
+    const phoneInput = screen.getByLabelText(/phone number/i);
+    expect(phoneInput).toHaveValue('01712345678');
+    expect(phoneInput).toHaveAttribute('readonly');
+    const bdPrefix = screen.getByText('+88').parentElement;
+    expect(bdPrefix).toHaveClass(
+      'self-stretch',
+      'bg-slate-200/75',
+      'border-slate-300/90',
+      'text-slate-700',
+      'font-semibold',
+    );
+    expect(bdPrefix?.className).not.toMatch(/rounded-l-/);
+    expect(bdPrefix?.parentElement).toHaveClass(
+      'overflow-hidden',
+      'p-0',
+      'rounded-md',
+      'min-h-11',
+    );
+    expect(screen.getByText('Verified')).toBeInTheDocument();
+
+    const hiddenPhone = container.querySelector(
+      'input[type="hidden"][name="phone"]',
+    ) as HTMLInputElement;
+    expect(hiddenPhone.value).toBe('+8801712345678');
+
+    const emailInput = screen.getByLabelText(/email address/i);
+    expect(emailInput).not.toHaveAttribute('readonly');
+    fireEvent.change(emailInput, { target: { value: 'not-valid' } });
+    fireEvent.blur(emailInput);
+    expect(screen.getByText('Enter a valid email address.')).toBeInTheDocument();
+
+    fireEvent.change(emailInput, { target: { value: '  Alt@Example.COM ' } });
+    fireEvent.blur(emailInput);
+    expect(emailInput).toHaveValue('alt@example.com');
+    expect(emailInput).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('automatically turns OFF and disables Complete Beginner when changing experience level away from beginner', () => {
+    const { container } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+      />,
+    );
+
+    const levelSelect = screen.getByLabelText(/experience level/i);
+    const noneSwitch = screen.getByRole('switch', {
+      name: /complete beginner/i,
+    });
+    const hiddenSkillsNone = container.querySelector(
+      'input[name="existing_skills_none"]',
+    ) as HTMLInputElement;
+
+    const noneLabel = screen.getByText('Complete Beginner');
+    expect(noneLabel).toHaveClass('text-slate-600', 'font-normal');
+
+    // Select beginner and turn ON
+    fireEvent.change(levelSelect, { target: { value: 'beginner' } });
+    expect(noneSwitch).not.toBeDisabled();
+    fireEvent.click(noneSwitch);
+    expect(noneSwitch).toHaveAttribute('aria-checked', 'true');
+    expect(hiddenSkillsNone.value).toBe('true');
+    expect(noneLabel).toHaveClass('text-teal-700', 'font-medium');
+
+    // Switch to junior -> auto-resets OFF and disables
+    fireEvent.change(levelSelect, { target: { value: 'junior' } });
+    expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
+    expect(noneSwitch).toBeDisabled();
+    expect(hiddenSkillsNone.value).toBe('false');
+    expect(noneLabel).toHaveClass('text-slate-600', 'font-normal');
+
+    // Switching back to beginner re-enables switch (stays OFF until user chooses)
+    fireEvent.change(levelSelect, { target: { value: 'beginner' } });
+    expect(noneSwitch).not.toBeDisabled();
+    expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('rejects non-0.5 daily hours and >200 char education on blur and submit, falling back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
+    const tzSpy = vi
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({
+        timeZone: 'Invalid/Zone',
+      } as Intl.ResolvedDateTimeFormatOptions);
+
+    try {
+      const { container } = render(
+        <ProfileSetupForm
+          initialProfile={{ ...EMPTY_PROFILE, timezone: null }}
+          initialContact={EMAIL_CONTACT}
+        />,
+      );
+
+      const hiddenTz = container.querySelector(
+        'input[type="hidden"][name="timezone"]',
+      ) as HTMLInputElement;
+      expect(hiddenTz.value).toBe('Asia/Dhaka');
+
+      fillValidFields({
+        hours: '1.3',
+      });
+
+      const hoursInput = screen.getByLabelText(/preferred daily hours/i);
+      const educationInput = screen.getByLabelText(/education \(optional\)/i);
+
+      fireEvent.change(educationInput, { target: { value: 'x'.repeat(201) } });
+      fireEvent.blur(educationInput);
+      expect(
+        screen.getByText('Education must be 200 characters or fewer.'),
+      ).toBeInTheDocument();
+
+      fireEvent.blur(hoursInput);
+      expect(
+        screen.getByText(
+          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
+        ),
+      ).toBeInTheDocument();
+
+      const submitBtn = screen.getByRole('button', { name: /save profile/i });
+      await act(async () => {
+        fireEvent.click(submitBtn);
+      });
+      expect(saveProfileSetupAction).not.toHaveBeenCalled();
+
+      // Non-0.5 out-of-range step 12.5 also rejected
+      fireEvent.change(hoursInput, { target: { value: '12.5' } });
+      fireEvent.blur(hoursInput);
+      expect(
+        screen.getByText(
+          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
+        ),
+      ).toBeInTheDocument();
+    } finally {
+      tzSpy.mockRestore();
+    }
   });
 
   it('populates stored profile values and displays preserved skills when present', () => {
@@ -99,40 +431,99 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
       timezone: 'Asia/Dhaka',
     };
 
-    render(<ProfileSetupForm initialProfile={storedProfile} />);
+    const { container } = render(
+      <ProfileSetupForm
+        initialProfile={storedProfile}
+        initialContact={EMAIL_CONTACT}
+        initialFullName="Alice Rahman"
+      />,
+    );
 
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('Alice Rahman');
     expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
       'Frontend Developer',
     );
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue(
+    expect(screen.getByLabelText(/education \(optional\)/i)).toHaveValue(
       'BSc in CSE',
     );
     expect(screen.getByLabelText(/experience level/i)).toHaveValue('junior');
-    expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('Asia/Dhaka');
+    const hiddenTz = container.querySelector(
+      'input[type="hidden"][name="timezone"]',
+    ) as HTMLInputElement;
+    expect(hiddenTz.value).toBe('Asia/Dhaka');
     expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(2.5);
     expect(screen.getByText(/React/)).toBeInTheDocument();
   });
 
+  it('never overwrites verified email or phone from server props with empty/stale draft values', () => {
+    window.sessionStorage.setItem(
+      'mentor_onboarding_profile_draft:user-verified-prec',
+      JSON.stringify({
+        user_id: 'user-verified-prec',
+        values: {
+          full_name: 'Alice Updated Draft',
+          email: '',
+          phone: '',
+          current_role: 'Cloud Engineer',
+          education: '',
+          experience_level: 'mid',
+          existing_skills_none: false,
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2',
+        },
+      }),
+    );
+
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: 'verified@example.com',
+          emailVerified: true,
+          phone: '+8801712345678',
+          phoneVerified: true,
+        }}
+        userId="user-verified-prec"
+      />,
+    );
+
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('Alice Updated Draft');
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('Cloud Engineer');
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('verified@example.com');
+    expect(screen.getByLabelText(/phone number/i)).toHaveValue('01712345678');
+  });
+
   it('toggles explicit beginner None switch and persists unsaved draft in sessionStorage', () => {
-    render(<ProfileSetupForm initialProfile={EMPTY_PROFILE} />);
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+        userId="user-draft"
+      />,
+    );
 
-    const roleInput = screen.getByLabelText(/current role \/ profession/i);
-    fireEvent.change(roleInput, { target: { value: 'CS Student' } });
-
-    const levelSelect = screen.getByLabelText(/experience level/i);
-    fireEvent.change(levelSelect, { target: { value: 'beginner' } });
+    fireEvent.change(screen.getByLabelText(/full name/i), {
+      target: { value: 'CS Student Name' },
+    });
+    fireEvent.change(screen.getByLabelText(/current role \/ profession/i), {
+      target: { value: 'CS Student' },
+    });
+    fireEvent.change(screen.getByLabelText(/experience level/i), {
+      target: { value: 'beginner' },
+    });
 
     const noneSwitch = screen.getByRole('switch', {
-      name: /none — complete beginner/i,
+      name: /complete beginner/i,
     });
     fireEvent.click(noneSwitch);
     expect(noneSwitch).toHaveAttribute('aria-checked', 'true');
 
     const rawDraft = window.sessionStorage.getItem(
-      'mentor_onboarding_profile_draft',
+      'mentor_onboarding_profile_draft:user-draft',
     );
     expect(rawDraft).not.toBeNull();
     const parsedDraft = JSON.parse(rawDraft!);
+    expect(parsedDraft.full_name).toBe('CS Student Name');
     expect(parsedDraft.current_role).toBe('CS Student');
     expect(parsedDraft.experience_level).toBe('beginner');
     expect(parsedDraft.existing_skills_none).toBe(true);
@@ -142,6 +533,7 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     window.sessionStorage.setItem(
       'mentor_onboarding_profile_draft',
       JSON.stringify({
+        full_name: 'Self Learner',
         current_role: 'Self-Taught Learner',
         education: '',
         experience_level: 'beginner',
@@ -154,6 +546,7 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     render(
       <ProfileSetupForm
         initialProfile={null}
+        initialContact={EMAIL_CONTACT}
         loadError="Unable to reach the server. You can still enter your details below."
       />,
     );
@@ -166,7 +559,7 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     );
     expect(screen.getByLabelText(/experience level/i)).toHaveValue('beginner');
     expect(
-      screen.getByRole('switch', { name: /none — complete beginner/i }),
+      screen.getByRole('switch', { name: /complete beginner/i }),
     ).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -183,6 +576,7 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
         JSON.stringify({
           user_id: 'user-42',
           values: {
+            full_name: 'Cloud User',
             current_role: 'Cloud Architect',
             education: 'MSc in CS',
             experience_level: 'senior',
@@ -193,130 +587,120 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
         }),
       );
 
-      render(
+      const { container } = render(
         <ProfileSetupForm
           initialProfile={{ ...EMPTY_PROFILE, timezone: null }}
+          initialContact={EMAIL_CONTACT}
           userId="user-42"
         />,
       );
 
-      // After mount effect runs, restored draft values and detected timezone are applied
-      expect(screen.getByRole('status')).toHaveTextContent(/ড্রাফট সংরক্ষিত/i);
+      expect(screen.getByRole('status')).toHaveTextContent(/draft restored/i);
+      expect(screen.getByLabelText(/full name/i)).toHaveValue('Cloud User');
       expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
         'Cloud Architect',
       );
-      expect(screen.getByLabelText(/education — optional/i)).toHaveValue('MSc in CS');
+      expect(screen.getByLabelText(/education \(optional\)/i)).toHaveValue(
+        'MSc in CS',
+      );
       expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
-      expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('Europe/London');
+      const hiddenTz = container.querySelector(
+        'input[type="hidden"][name="timezone"]',
+      ) as HTMLInputElement;
+      expect(hiddenTz.value).toBe('Europe/London');
       expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3);
     } finally {
       tzSpy.mockRestore();
     }
   });
 
-  it('preserves skillsNoneTouched across reload when draft existing_skills_none differs from initialProfile', () => {
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-99',
-      JSON.stringify({
-        user_id: 'user-99',
-        values: {
-          current_role: 'Junior QA',
-          education: '',
-          experience_level: 'beginner',
-          existing_skills_none: true,
-          timezone: 'Asia/Dhaka',
-          preferred_daily_hours: '2',
-        },
-        skills_none_touched: true,
-      }),
-    );
-
-    const { container } = render(
-      <ProfileSetupForm
-        initialProfile={{ ...EMPTY_PROFILE, existing_skills_none: false }}
-        userId="user-99"
-      />,
-    );
-
-    const noneSwitch = screen.getByRole('switch', {
-      name: /none — complete beginner/i,
-    });
-    expect(noneSwitch).toHaveAttribute('aria-checked', 'true');
-
-    // Confirm hidden input existing_skills_none_touched is true
-    const touchedInput = container.querySelector(
-      'input[name="existing_skills_none_touched"]',
-    ) as HTMLInputElement;
-    expect(touchedInput).not.toBeNull();
-    expect(touchedInput.value).toBe('true');
-  });
-
-  it('immediately dismisses form-level alert, field errors, and aria-invalid upon user edit and restores them on subsequent failed submit', async () => {
+  it('dismisses server error alert banner immediately on focus and edit, and re-shows on subsequent failure', async () => {
     vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
       error: 'Validation failed. Please correct the highlighted errors.',
       fieldErrors: {
-        current_role: 'বর্তমান পেশা বা ভূমিকা আবশ্যক (Current role is required).',
+        current_role: 'Server rejected role.',
       },
     });
 
-    render(<ProfileSetupForm initialProfile={EMPTY_PROFILE} />);
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+      />,
+    );
 
-    const submitBtn = screen.getByRole('button', {
-      name: /প্রোফাইল সংরক্ষণ করুন/i,
-    });
+    fillValidFields();
 
-    // 1. Submit form to trigger action error
+    const submitBtn = screen.getByRole('button', { name: /save profile/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
 
-    const initialAlerts = screen.getAllByRole('alert');
-    expect(initialAlerts.length).toBe(2);
-    expect(screen.getByText(/validation failed/i)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/validation failed/i);
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
     expect(roleInput).toHaveAttribute('aria-invalid', 'true');
-    expect(
-      screen.getByText(/বর্তমান পেশা বা ভূমিকা আবশ্যক/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Server rejected role.')).toBeInTheDocument();
 
-    // 2. User edits the field -> stale error and aria-invalid must be dismissed immediately
-    fireEvent.change(roleInput, { target: { value: 'Frontend Developer' } });
-
+    // Focus any field immediately dismisses server alert banner
+    const fullNameInput = screen.getByLabelText(/full name/i);
+    fireEvent.focus(fullNameInput);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(roleInput).toHaveAttribute('aria-invalid', 'false');
-    expect(
-      screen.queryByText(/বর্তমান পেশা বা ভূমিকা আবশ্যক/i),
-    ).not.toBeInTheDocument();
 
-    // 3. User submits again and server returns another error
+    // Edit the errored field clears its server field error & aria-invalid
+    fireEvent.change(roleInput, { target: { value: 'Staff Engineer' } });
+    expect(roleInput).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.queryByText('Server rejected role.')).not.toBeInTheDocument();
+
+    // Next submission failure re-shows alert banner
     vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
-      error: 'Please select an experience level.',
-      fieldErrors: {
-        experience_level: 'অভিজ্ঞতার স্তর নির্বাচন আবশ্যক (Experience level is required).',
-      },
+      error: 'Another server error occurred.',
     });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /another server error occurred/i,
+    );
+  });
 
+  it('disables submit button while submission is in flight (double-submit guard)', async () => {
+    let resolveSubmit!: (val: { success: boolean; message: string }) => void;
+    vi.mocked(saveProfileSetupAction).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+      />,
+    );
+    fillValidFields();
+
+    const submitBtn = screen.getByRole('button', { name: /save profile/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
 
-    const secondAlerts = screen.getAllByRole('alert');
-    expect(secondAlerts.length).toBe(2);
-    expect(screen.getByText(/please select an experience level/i)).toBeInTheDocument();
-    const levelSelect = screen.getByLabelText(/experience level/i);
-    expect(levelSelect).toHaveAttribute('aria-invalid', 'true');
-    expect(
-      screen.getByText(/অভিজ্ঞতার স্তর নির্বাচন আবশ্যক/i),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /saving profile/i })).toBeDisabled();
+
+    await act(async () => {
+      resolveSubmit({ success: true, message: 'Profile saved successfully.' });
+    });
+
+    expect(screen.getByRole('button', { name: /save profile/i })).not.toBeDisabled();
   });
 
   it('rejects and clears a sessionStorage draft belonging to a different user_id (account isolation)', () => {
-    // Draft belonging to user-A
     window.sessionStorage.setItem(
       'mentor_onboarding_profile_draft:user-B',
       JSON.stringify({
         user_id: 'user-A',
         values: {
+          full_name: 'Account A Name',
           current_role: 'Account A Leaked Role',
           education: 'Secret College',
           experience_level: 'senior',
@@ -335,14 +719,16 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     );
 
     render(
-      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-B" />,
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+        userId="user-B"
+      />,
     );
 
-    // Account B must not see Account A's draft
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('');
     expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
-
-    // Stale drafts should be removed from sessionStorage
     expect(
       window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-B'),
     ).toBeNull();
@@ -351,53 +737,8 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     ).toBeNull();
   });
 
-  it('unconditionally removes malformed legacy un-scoped draft and restores valid user-scoped draft without blocking', () => {
-    // Malformed JSON in legacy un-scoped key
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft',
-      '{ invalid json corrupt draft',
-    );
-
-    // Valid user-scoped draft
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-valid',
-      JSON.stringify({
-        user_id: 'user-valid',
-        values: {
-          current_role: 'Security Engineer',
-          education: 'BSc in Software Engineering',
-          experience_level: 'mid',
-          existing_skills_none: false,
-          timezone: 'Asia/Dhaka',
-          preferred_daily_hours: '3',
-        },
-      }),
-    );
-
-    render(
-      <ProfileSetupForm
-        initialProfile={EMPTY_PROFILE}
-        userId="user-valid"
-      />,
-    );
-
-    // Corrupt legacy un-scoped draft must be cleaned up
-    expect(
-      window.sessionStorage.getItem('mentor_onboarding_profile_draft'),
-    ).toBeNull();
-
-    // Valid user-scoped draft must be restored properly
-    expect(screen.getByRole('status')).toHaveTextContent(/ড্রাফট সংরক্ষিত/i);
-    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
-      'Security Engineer',
-    );
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue(
-      'BSc in Software Engineering',
-    );
-    expect(screen.getByLabelText(/experience level/i)).toHaveValue('mid');
-  });
-
-  it('cleans up malformed JSON in scoped draft key without throwing', () => {
+  it('cleans up malformed JSON in legacy or scoped draft keys without throwing', () => {
+    window.sessionStorage.setItem('mentor_onboarding_profile_draft', '{ bad');
     window.sessionStorage.setItem(
       'mentor_onboarding_profile_draft:user-corrupt',
       '{ corrupt json',
@@ -406,17 +747,21 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     render(
       <ProfileSetupForm
         initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
         userId="user-corrupt"
       />,
     );
 
     expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
     expect(
+      window.sessionStorage.getItem('mentor_onboarding_profile_draft'),
+    ).toBeNull();
+    expect(
       window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-corrupt'),
     ).toBeNull();
   });
 
-  it('does not auto-detect browser timezone when loadError is present and initialProfile is null with no saved draft', () => {
+  it('auto-detects browser timezone in hidden input even when loadError is present and initialProfile is null', () => {
     const tzSpy = vi
       .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
       .mockReturnValue({
@@ -424,30 +769,38 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
       } as Intl.ResolvedDateTimeFormatOptions);
 
     try {
-      render(
+      const { container } = render(
         <ProfileSetupForm
           initialProfile={null}
+          initialContact={EMAIL_CONTACT}
           loadError="Unable to reach the server. Please enter your details below."
           userId="user-load-err"
         />,
       );
 
-      expect(screen.getByRole('alert')).toHaveTextContent(/unable to reach the server/i);
-      // Timezone input must remain blank instead of auto-detecting Asia/Tokyo
-      expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('');
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /unable to reach the server/i,
+      );
+      const hiddenTz = container.querySelector(
+        'input[type="hidden"][name="timezone"]',
+      ) as HTMLInputElement;
+      expect(hiddenTz.value).toBe('Asia/Tokyo');
     } finally {
       tzSpy.mockRestore();
     }
   });
 
-  it('persists new draft in sessionStorage when editing a field after a successful save without being wiped', async () => {
+  it('persists new draft in sessionStorage when editing or toggling beginner None after a successful save', async () => {
     vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
       success: true,
-      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      message: 'Profile saved successfully.',
       values: {
+        full_name: 'Alice Rahman',
+        email: 'alice@example.com',
+        phone: '',
         current_role: 'Full Stack Engineer',
         education: 'BSc in CSE',
-        experience_level: 'mid',
+        experience_level: 'beginner',
         existing_skills_none: false,
         timezone: 'Asia/Dhaka',
         preferred_daily_hours: '2',
@@ -455,47 +808,51 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     });
 
     render(
-      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-edit-after-save" />,
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+        userId="user-edit-after-save"
+      />,
     );
 
-    const submitBtn = screen.getByRole('button', {
-      name: /প্রোফাইল সংরক্ষণ করুন/i,
-    });
+    fillValidFields({ role: 'Full Stack Engineer', level: 'beginner' });
 
-    // 1. Submit and succeed
+    const submitBtn = screen.getByRole('button', { name: /save profile/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
 
-    expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+    expect(screen.getByText(/profile saved successfully/i)).toBeInTheDocument();
     expect(
-      window.sessionStorage.getItem('mentor_onboarding_profile_draft:user-edit-after-save'),
+      window.sessionStorage.getItem(
+        'mentor_onboarding_profile_draft:user-edit-after-save',
+      ),
     ).toBeNull();
 
-    // 2. User edits a field after success -> stale success message is immediately dismissed and new draft is saved
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
     fireEvent.change(roleInput, { target: { value: 'Lead Architect' } });
 
     expect(
-      screen.queryByText(/প্রোফাইল সংরক্ষিত হয়েছে/i),
+      screen.queryByText(/profile saved successfully/i),
     ).not.toBeInTheDocument();
 
-    // Draft must now be saved in sessionStorage and NOT wiped by the success effect
     const savedDraft = window.sessionStorage.getItem(
       'mentor_onboarding_profile_draft:user-edit-after-save',
     );
     expect(savedDraft).not.toBeNull();
-    const parsed = JSON.parse(savedDraft!);
-    expect(parsed.values.current_role).toBe('Lead Architect');
+    expect(JSON.parse(savedDraft!).values.current_role).toBe('Lead Architect');
 
-    // 3. Subsequent save succeeds -> success message re-appears
+    // Subsequent save succeeds -> success message re-appears; beginner switch dismisses it
     vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
       success: true,
-      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      message: 'Profile saved successfully.',
       values: {
+        full_name: 'Alice Rahman',
+        email: 'alice@example.com',
+        phone: '',
         current_role: 'Lead Architect',
         education: 'BSc in CSE',
-        experience_level: 'mid',
+        experience_level: 'beginner',
         existing_skills_none: false,
         timezone: 'Asia/Dhaka',
         preferred_daily_hours: '2',
@@ -505,16 +862,14 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     await act(async () => {
       fireEvent.click(submitBtn);
     });
+    expect(screen.getByText(/profile saved successfully/i)).toBeInTheDocument();
 
-    expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
-
-    // 4. Toggling existing_skills_none also immediately dismisses the success message
     const noneSwitch = screen.getByRole('switch', {
-      name: /none — complete beginner/i,
+      name: /complete beginner/i,
     });
     fireEvent.click(noneSwitch);
     expect(
-      screen.queryByText(/প্রোফাইল সংরক্ষিত হয়েছে/i),
+      screen.queryByText(/profile saved successfully/i),
     ).not.toBeInTheDocument();
   });
 
@@ -535,26 +890,20 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
         ],
         existing_skills_none: false,
       },
-      values: {
-        current_role: 'Platform Engineer',
-        education: '',
-        experience_level: 'mid',
-        existing_skills_none: false,
-        timezone: 'Asia/Dhaka',
-        preferred_daily_hours: '2',
-      },
     });
 
     render(
-      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-partial-profile" />,
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+        userId="user-partial-profile"
+      />,
     );
 
     expect(screen.queryByText(/TypeScript/)).not.toBeInTheDocument();
+    fillValidFields({ role: 'Platform Engineer' });
 
-    const submitBtn = screen.getByRole('button', {
-      name: /প্রোফাইল সংরক্ষণ করুন/i,
-    });
-
+    const submitBtn = screen.getByRole('button', { name: /save profile/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
@@ -565,13 +914,28 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     expect(screen.getByText(/TypeScript/)).toBeInTheDocument();
   });
 
-  it('reconciles controlled form inputs with state.values upon successful save', async () => {
+  it('reconciles controlled form inputs with state.values upon successful save and cleared education', async () => {
+    const profileWithEducation: ProfileResponse = {
+      ...EMPTY_PROFILE,
+      current_role: 'Full Stack Engineer',
+      education: 'BSc in CSE',
+      experience_level: 'mid',
+      preferred_daily_hours: 2,
+    };
+
     vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
       success: true,
-      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      message: 'Profile saved successfully.',
+      profile: {
+        ...profileWithEducation,
+        education: null,
+      },
       values: {
+        full_name: 'Senior Alice',
+        email: 'alice@example.com',
+        phone: '+8801712345678',
         current_role: 'Senior Staff Engineer',
-        education: 'MSc in Software Engineering',
+        education: '',
         experience_level: 'senior',
         existing_skills_none: false,
         timezone: 'UTC',
@@ -579,101 +943,58 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
       },
     });
 
-    render(
-      <ProfileSetupForm initialProfile={EMPTY_PROFILE} userId="user-reconcile" />,
-    );
-
-    const submitBtn = screen.getByRole('button', {
-      name: /প্রোফাইল সংরক্ষণ করুন/i,
-    });
-
-    await act(async () => {
-      fireEvent.click(submitBtn);
-    });
-
-    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
-      'Senior Staff Engineer',
-    );
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue(
-      'MSc in Software Engineering',
-    );
-    expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
-    expect(screen.getByLabelText(/iana timezone/i)).toHaveValue('UTC');
-    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4);
-  });
-
-  it('reconciles cleared education (null -> "") when saving empty education', async () => {
-    const profileWithEducation: ProfileResponse = {
-      ...EMPTY_PROFILE,
-      current_role: 'Full Stack Engineer',
-      education: 'BSc in CSE',
-      experience_level: 'mid',
-    };
-
-    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
-      success: true,
-      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
-      profile: {
-        ...profileWithEducation,
-        education: null,
-      },
-      values: {
-        current_role: 'Full Stack Engineer',
-        education: '',
-        experience_level: 'mid',
-        existing_skills_none: false,
-        timezone: 'Asia/Dhaka',
-        preferred_daily_hours: '2',
-      },
-    });
-
-    render(
+    const { container } = render(
       <ProfileSetupForm
         initialProfile={profileWithEducation}
-        userId="user-clear-edu"
+        initialContact={EMAIL_CONTACT}
+        initialFullName="Alice"
+        userId="user-reconcile"
       />,
     );
 
-    const educationInput = screen.getByLabelText(/education — optional/i);
+    const educationInput = screen.getByLabelText(/education \(optional\)/i);
     expect(educationInput).toHaveValue('BSc in CSE');
-
-    // User clears the field
     fireEvent.change(educationInput, { target: { value: '' } });
-    expect(educationInput).toHaveValue('');
-
-    const submitBtn = screen.getByRole('button', {
-      name: /প্রোফাইল সংরক্ষণ করুন/i,
-    });
 
     await act(async () => {
-      fireEvent.click(submitBtn);
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
     });
 
-    // Reconciles to "" and resets education_touched to "false"
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('Senior Alice');
+    expect(screen.getByLabelText(/phone number/i)).toHaveValue('01712345678');
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
+      'Senior Staff Engineer',
+    );
     expect(educationInput).toHaveValue('');
-    expect(screen.getByText(/প্রোফাইল সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/experience level/i)).toHaveValue('senior');
+    const hiddenTz = container.querySelector(
+      'input[type="hidden"][name="timezone"]',
+    ) as HTMLInputElement;
+    expect(hiddenTz.value).toBe('UTC');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4);
   });
 
-  it('tracks education_touched across edits and reload without overwriting server education from an untouched blank draft', () => {
+  it('preserves skillsNoneTouched and education_touched across reload without overwriting server education from an untouched blank draft', () => {
     const profileWithEducation: ProfileResponse = {
       ...EMPTY_PROFILE,
       current_role: 'Backend Engineer',
       education: 'BSc in Software Engineering',
-      experience_level: 'mid',
+      experience_level: 'beginner',
+      existing_skills_none: false,
     };
 
-    // 1. Untouched draft saved during a previous loadError (education: '', education_touched: false)
     window.sessionStorage.setItem(
       'mentor_onboarding_profile_draft:user-edu-touched',
       JSON.stringify({
         user_id: 'user-edu-touched',
-        skills_none_touched: false,
+        skills_none_touched: true,
         education_touched: false,
         values: {
+          full_name: 'Backend Alice',
           current_role: 'Senior Backend Engineer',
           education: '',
-          experience_level: 'senior',
-          existing_skills_none: false,
+          experience_level: 'beginner',
+          existing_skills_none: true,
           timezone: 'Asia/Dhaka',
           preferred_daily_hours: '2.5',
         },
@@ -683,166 +1004,323 @@ describe('ProfileSetupForm (M01-09 Screen 07)', () => {
     const { container, unmount } = render(
       <ProfileSetupForm
         initialProfile={profileWithEducation}
+        initialContact={EMAIL_CONTACT}
         userId="user-edu-touched"
       />,
     );
 
-    const educationInput = screen.getByLabelText(/education — optional/i);
-    const getTouchedInput = (root: HTMLElement) =>
+    const educationInput = screen.getByLabelText(/education \(optional\)/i);
+    const getEduTouched = (root: HTMLElement) =>
       root.querySelector('input[name="education_touched"]') as HTMLInputElement;
+    const getSkillsTouched = (root: HTMLElement) =>
+      root.querySelector(
+        'input[name="existing_skills_none_touched"]',
+      ) as HTMLInputElement;
 
-    // Must keep server education ('BSc in Software Engineering') instead of overwriting with untouched blank draft
     expect(educationInput).toHaveValue('BSc in Software Engineering');
-    expect(getTouchedInput(container)).toHaveValue('false');
+    expect(getEduTouched(container)).toHaveValue('false');
+    expect(getSkillsTouched(container)).toHaveValue('true');
+    expect(
+      screen.getByRole('switch', { name: /complete beginner/i }),
+    ).toHaveAttribute('aria-checked', 'true');
 
-    // 2. User explicitly clears education -> education_touched becomes 'true' and persists in sessionStorage
+    // Explicit clear marks education_touched = true and persists across remount
     fireEvent.change(educationInput, { target: { value: '' } });
-    expect(educationInput).toHaveValue('');
-    expect(getTouchedInput(container)).toHaveValue('true');
-
-    // Editing another field preserves education_touched = true in draft
-    fireEvent.change(screen.getByLabelText(/current role \/ profession/i), {
-      target: { value: 'Staff Backend Engineer' },
-    });
+    expect(getEduTouched(container)).toHaveValue('true');
 
     unmount();
 
-    // 3. Remounting restores cleared education ('') and education_touched = 'true'
     const { container: remountContainer } = render(
       <ProfileSetupForm
         initialProfile={profileWithEducation}
+        initialContact={EMAIL_CONTACT}
         userId="user-edu-touched"
       />,
     );
 
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('');
-    expect(getTouchedInput(remountContainer)).toHaveValue('true');
+    expect(
+      screen.getByLabelText(/education \(optional\)/i),
+    ).toHaveValue('');
+    expect(getEduTouched(remountContainer)).toHaveValue('true');
   });
 
-  it('correctly handles legacy draft education inference based on server baseline availability', () => {
-    const getTouchedInput = (root: HTMLElement) =>
-      root.querySelector('input[name="education_touched"]') as HTMLInputElement;
-
-    // Case 1: When server baseline is unavailable (initialProfile={null}), do NOT infer edit from legacy draft
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-legacy-no-baseline',
-      JSON.stringify({
-        user_id: 'user-legacy-no-baseline',
-        values: {
-          current_role: 'Software Engineer',
-          education_level: 'Diploma in CSE',
-          experience_level: 'junior',
-          existing_skills_none: false,
-          timezone: 'Asia/Dhaka',
-          preferred_daily_hours: '2',
-        },
-      }),
-    );
-
-    const { container: container1, unmount: unmount1 } = render(
+  it('requires at least one contact when neither email nor phone is verified', async () => {
+    render(
       <ProfileSetupForm
-        initialProfile={null}
-        loadError="Network timeout fetching profile."
-        userId="user-legacy-no-baseline"
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: '',
+          emailVerified: false,
+          phone: '',
+          phoneVerified: false,
+        }}
       />,
     );
 
-    // Without a server baseline or explicit touch metadata, do not infer touch
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('');
-    expect(getTouchedInput(container1)).toHaveValue('false');
+    fillValidFields();
 
-    unmount1();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+    });
 
-    // Case 2: An empty legacy draft without touch metadata is an untouched default (e.g. from failed load),
-    // and must NOT be inferred as an intentional clear or overwrite server education
-    const profileWithEducation: ProfileResponse = {
-      ...EMPTY_PROFILE,
-      current_role: 'Lead Architect',
-      education: 'BSc in Computer Science',
-      experience_level: 'senior',
+    expect(saveProfileSetupAction).not.toHaveBeenCalled();
+    expect(
+      screen.getByText('Enter a valid email address or phone number.'),
+    ).toBeInTheDocument();
+
+    // Entering a valid phone clears the missing-contact error
+    const phoneInput = screen.getByLabelText(/phone number/i);
+    fireEvent.change(phoneInput, { target: { value: '01712345678' } });
+    expect(
+      screen.queryByText('Enter a valid email address or phone number.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('resets form values and clears errors cleanly when userId prop changes', () => {
+    const { rerender } = render(
+      <ProfileSetupForm
+        initialProfile={{ ...EMPTY_PROFILE, current_role: 'User A Role' }}
+        initialContact={{
+          email: 'a@example.com',
+          emailVerified: true,
+          phone: '',
+          phoneVerified: false,
+        }}
+        initialFullName="User A"
+        userId="user-A"
+      />,
+    );
+
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('User A');
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('a@example.com');
+
+    rerender(
+      <ProfileSetupForm
+        initialProfile={{ ...EMPTY_PROFILE, current_role: 'User B Role' }}
+        initialContact={{
+          email: '',
+          emailVerified: false,
+          phone: '+8801712345678',
+          phoneVerified: true,
+        }}
+        initialFullName="User B"
+        userId="user-B"
+      />,
+    );
+
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('User B');
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('User B Role');
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('');
+    expect(screen.getByLabelText(/phone number/i)).toHaveValue('01712345678');
+  });
+
+  it('preserves explicit empty string in draft for cleared unverified phone and email across remount', () => {
+    const emailPrimaryWithPhoneContact = {
+      email: 'alice@example.com',
+      emailVerified: true,
+      phone: '+8801712345678',
+      phoneVerified: false,
     };
 
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-legacy-untouched-default',
-      JSON.stringify({
-        user_id: 'user-legacy-untouched-default',
-        values: {
-          current_role: 'Lead Architect',
-          education_level: '',
-          experience_level: 'senior',
-          existing_skills_none: false,
-          timezone: 'Asia/Dhaka',
-          preferred_daily_hours: '2',
-        },
-      }),
-    );
-
-    const { container: container2, unmount: unmount2 } = render(
+    const { unmount } = render(
       <ProfileSetupForm
-        initialProfile={profileWithEducation}
-        userId="user-legacy-untouched-default"
+        initialProfile={EMPTY_PROFILE}
+        initialContact={emailPrimaryWithPhoneContact}
+        initialFullName="Alice"
+        userId="user-clear-phone"
       />,
     );
 
-    // Empty legacy draft without explicit touch metadata must not overwrite server baseline
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('BSc in Computer Science');
-    expect(getTouchedInput(container2)).toHaveValue('false');
+    const phoneInput = screen.getByLabelText(/phone number/i);
+    expect(phoneInput).toHaveValue('01712345678');
+    fireEvent.change(phoneInput, { target: { value: '' } });
+    expect(phoneInput).toHaveValue('');
 
-    unmount2();
+    unmount();
 
-    // Case 3: Explicit touch metadata (education_touched: true) is required to treat an empty draft as an intentional clear
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-explicit-intentional-clear',
-      JSON.stringify({
-        user_id: 'user-explicit-intentional-clear',
-        education_touched: true,
-        values: {
-          current_role: 'Lead Architect',
-          education_level: '',
-          experience_level: 'senior',
-          existing_skills_none: false,
-          timezone: 'Asia/Dhaka',
-          preferred_daily_hours: '2',
-        },
-      }),
-    );
-
-    const { container: container3, unmount: unmount3 } = render(
+    const { unmount: unmountRemount } = render(
       <ProfileSetupForm
-        initialProfile={profileWithEducation}
-        userId="user-explicit-intentional-clear"
+        initialProfile={EMPTY_PROFILE}
+        initialContact={emailPrimaryWithPhoneContact}
+        initialFullName="Alice"
+        userId="user-clear-phone"
       />,
     );
 
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('');
-    expect(getTouchedInput(container3)).toHaveValue('true');
+    expect(screen.getByLabelText(/phone number/i)).toHaveValue('');
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('alice@example.com');
+    unmountRemount();
 
-    unmount3();
+    // Also verify clearing an unverified secondary email stays empty across remount
+    const phonePrimaryWithEmailContact = {
+      email: 'secondary@example.com',
+      emailVerified: false,
+      phone: '+8801812345678',
+      phoneVerified: true,
+    };
 
-    // Case 4: Non-empty legacy draft differing from server baseline is preserved as touched
-    window.sessionStorage.setItem(
-      'mentor_onboarding_profile_draft:user-legacy-nonempty-edit',
-      JSON.stringify({
-        user_id: 'user-legacy-nonempty-edit',
-        values: {
-          current_role: 'Lead Architect',
-          education_level: 'MSc in Software Engineering',
-          experience_level: 'senior',
-          existing_skills_none: false,
-          timezone: 'Asia/Dhaka',
-          preferred_daily_hours: '2',
-        },
-      }),
-    );
-
-    const { container: container4 } = render(
+    const secondMount = render(
       <ProfileSetupForm
-        initialProfile={profileWithEducation}
-        userId="user-legacy-nonempty-edit"
+        initialProfile={EMPTY_PROFILE}
+        initialContact={phonePrimaryWithEmailContact}
+        initialFullName="Bob"
+        userId="user-clear-email"
       />,
     );
 
-    expect(screen.getByLabelText(/education — optional/i)).toHaveValue('MSc in Software Engineering');
-    expect(getTouchedInput(container4)).toHaveValue('true');
+    const emailInput = secondMount.getByLabelText(/email address/i);
+    expect(emailInput).toHaveValue('secondary@example.com');
+    fireEvent.change(emailInput, { target: { value: '' } });
+    secondMount.unmount();
+
+    const thirdMount = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={phonePrimaryWithEmailContact}
+        initialFullName="Bob"
+        userId="user-clear-email"
+      />,
+    );
+    expect(thirdMount.getByLabelText(/email address/i)).toHaveValue('');
+    expect(thirdMount.getByLabelText(/phone number/i)).toHaveValue('01812345678');
+  });
+
+  it('processes each successful save result once so later prop updates do not wipe unsaved edits', async () => {
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      message: 'Profile saved successfully.',
+      profile: {
+        ...EMPTY_PROFILE,
+        current_role: 'Saved Role',
+      },
+      values: {
+        full_name: 'Saved Alice',
+        email: 'alice@example.com',
+        phone: '',
+        current_role: 'Saved Role',
+        education: 'BSc',
+        experience_level: 'mid',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '2',
+      },
+    });
+
+    const { rerender } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={EMAIL_CONTACT}
+        initialFullName="Alice"
+        userId="user-reconcile-once"
+      />,
+    );
+
+    fillValidFields({ fullName: 'Saved Alice', role: 'Saved Role' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+    });
+    expect(screen.getByText(/profile saved successfully/i)).toBeInTheDocument();
+
+    // User makes subsequent unsaved edits
+    const roleInput = screen.getByLabelText(/current role \/ profession/i);
+    const fullNameInput = screen.getByLabelText(/full name/i);
+    fireEvent.change(roleInput, { target: { value: 'Unsaved Staff Role' } });
+    fireEvent.change(fullNameInput, { target: { value: 'Unsaved Alice Edit' } });
+
+    const draftKey = 'mentor_onboarding_profile_draft:user-reconcile-once';
+    expect(window.sessionStorage.getItem(draftKey)).not.toBeNull();
+
+    // Later prop update arrives without a new action submission
+    rerender(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          ...EMAIL_CONTACT,
+          phone: '+8801712345678',
+          phoneVerified: true,
+        }}
+        initialFullName="Alice Server Refresh"
+        userId="user-reconcile-once"
+      />,
+    );
+
+    // Unsaved edits and session draft survive; newly verified contact updates cleanly
+    expect(roleInput).toHaveValue('Unsaved Staff Role');
+    expect(fullNameInput).toHaveValue('Unsaved Alice Edit');
+    expect(screen.getByLabelText(/phone number/i)).toHaveValue('01712345678');
+    expect(window.sessionStorage.getItem(draftKey)).not.toBeNull();
+  });
+
+  it('resets previous user saved useActionState and stored skills when userId changes', async () => {
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      message: 'User A saved.',
+      profile: {
+        ...EMPTY_PROFILE,
+        current_role: 'User A Saved Role',
+        existing_skills: [
+          {
+            skill_id: 'skill-a',
+            name: 'GoLang',
+            alias_resolved: true,
+            learning_state: 'learning',
+            source: 'self_reported',
+          },
+        ],
+      },
+      values: {
+        full_name: 'User A Saved',
+        email: 'a@example.com',
+        phone: '',
+        current_role: 'User A Saved Role',
+        education: '',
+        experience_level: 'mid',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '2',
+      },
+    });
+
+    const { rerender } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: 'a@example.com',
+          emailVerified: true,
+          phone: '',
+          phoneVerified: false,
+        }}
+        initialFullName="User A"
+        userId="user-key-A"
+      />,
+    );
+
+    fillValidFields({ fullName: 'User A Saved', role: 'User A Saved Role' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+    });
+    expect(screen.getByText(/user a saved\./i)).toBeInTheDocument();
+    expect(screen.getByText(/GoLang/)).toBeInTheDocument();
+
+    // Switching userId unmounts User A's keyed inner form, discarding prior useActionState
+    rerender(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: 'b@example.com',
+          emailVerified: true,
+          phone: '',
+          phoneVerified: false,
+        }}
+        initialFullName="User B"
+        userId="user-key-B"
+      />,
+    );
+
+    expect(screen.queryByText(/user a saved\./i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/GoLang/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('User B');
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('b@example.com');
   });
 });

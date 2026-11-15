@@ -12,13 +12,40 @@ import {
   type ExperienceLevel,
   type ProfileResponse,
   type UpdateProfileBody,
-  type UpdateLearningSettingsBody,
 } from '@/lib/api/client';
+import { normalizeBdPhone, normalizeEmail } from '@/lib/validation/auth-schemas';
+import {
+  isNonSyntheticEmail,
+  isValidIanaTimezone,
+  normalizeFullName,
+  parseValidDailyHours,
+  validateCurrentRole,
+  validateDailyHours,
+  validateEducation,
+  validateExperienceLevel,
+  validateFullName,
+  validateIanaTimezone,
+  validateOptionalBdPhone,
+  validateOptionalEmail,
+} from '@/lib/validation/profile-schemas';
+
+/**
+ * Contact prefill and verification state passed into Screen 07 Profile Setup.
+ */
+export interface ProfileContactInfo {
+  email: string;
+  emailVerified: boolean;
+  phone: string;
+  phoneVerified: boolean;
+}
 
 /**
  * Supported form field keys on Screen 07 (`/onboarding/profile`).
  */
 export type ProfileSetupFieldKey =
+  | 'full_name'
+  | 'email'
+  | 'phone'
   | 'current_role'
   | 'education'
   | 'experience_level'
@@ -36,6 +63,9 @@ export type LearningSettingsFieldKey = 'timezone' | 'preferred_daily_hours';
  * Preserved form input values for Screen 07 (`/onboarding/profile`).
  */
 export interface ProfileSetupFormValues {
+  full_name: string;
+  email: string;
+  phone: string;
   current_role: string;
   education: string;
   experience_level: string;
@@ -84,32 +114,41 @@ export interface LearningSettingsActionState {
   redirectTo?: string;
 }
 
-const VALID_EXPERIENCE_LEVELS: readonly ExperienceLevel[] = [
-  'beginner',
-  'junior',
-  'mid',
-  'senior',
-];
-
-/**
- * Checks whether a string is a valid C05 `experience_level` enum value.
- */
-function isValidExperienceLevel(value: string): value is ExperienceLevel {
-  return (VALID_EXPERIENCE_LEVELS as readonly string[]).includes(value);
+function readFormString(formData: FormData, key: string): string {
+  const entry = formData.get(key);
+  return typeof entry === 'string' ? entry : '';
 }
 
-/**
- * Validates whether a string is a non-empty recognized IANA time zone identifier.
- */
-function isValidIanaTimezone(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone: trimmed });
-    return true;
-  } catch {
-    return false;
+function extractUserProfileMeta(meta: unknown): {
+  fullName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+} {
+  if (!meta || typeof meta !== 'object') {
+    return {};
   }
+  const record = meta as Record<string, unknown>;
+  const rawName =
+    typeof record.full_name === 'string' && record.full_name.trim()
+      ? normalizeFullName(record.full_name)
+      : typeof record.name === 'string' && record.name.trim()
+        ? normalizeFullName(record.name)
+        : undefined;
+  const contactEmail =
+    typeof record.contact_email === 'string' &&
+    isNonSyntheticEmail(record.contact_email)
+      ? normalizeEmail(record.contact_email)
+      : undefined;
+  const contactPhone =
+    typeof record.contact_phone === 'string' && record.contact_phone.trim()
+      ? (normalizeBdPhone(record.contact_phone) ?? record.contact_phone.trim())
+      : undefined;
+
+  return {
+    ...(rawName !== undefined ? { fullName: rawName } : {}),
+    ...(contactEmail !== undefined ? { contactEmail } : {}),
+    ...(contactPhone !== undefined ? { contactPhone } : {}),
+  };
 }
 
 /**
@@ -146,10 +185,20 @@ function isUnauthorizedError(err: unknown): boolean {
 export async function loadProfileForSetup(): Promise<{
   profile: ProfileResponse | null;
   userId?: string;
+  fullName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
   loadError?: string;
   unauthorized?: boolean;
   suspended?: boolean;
 }> {
+  let sessionUserId: string | undefined;
+  let sessionMeta: {
+    fullName?: string;
+    contactEmail?: string;
+    contactPhone?: string;
+  } = {};
+
   try {
     const supabase = await createSupabaseServerClient({ readOnly: true });
     const {
@@ -160,19 +209,28 @@ export async function loadProfileForSetup(): Promise<{
       return { profile: null, unauthorized: true };
     }
 
+    sessionUserId = session.user?.id;
+    sessionMeta = extractUserProfileMeta(session.user?.user_metadata);
+
+    if (typeof supabase.auth.getUser === 'function') {
+      try {
+        const userResult = await supabase.auth.getUser();
+        const liveUser = userResult?.data?.user;
+        if (liveUser) {
+          sessionMeta = extractUserProfileMeta(liveUser.user_metadata);
+        }
+      } catch {
+        // Ignore non-fatal metadata lookup failures and keep session metadata
+      }
+    }
+
     const profile = await getProfile(session.access_token);
 
-    const result: {
-      profile: ProfileResponse | null;
-      userId?: string;
-      loadError?: string;
-      unauthorized?: boolean;
-      suspended?: boolean;
-    } = { profile };
-    if (session.user?.id) {
-      result.userId = session.user.id;
-    }
-    return result;
+    return {
+      profile,
+      ...(sessionUserId ? { userId: sessionUserId } : {}),
+      ...sessionMeta,
+    };
   } catch (err) {
     if (isUnauthorizedError(err)) {
       return { profile: null, unauthorized: true };
@@ -183,45 +241,59 @@ export async function loadProfileForSetup(): Promise<{
       }
       return {
         profile: null,
+        ...(sessionUserId ? { userId: sessionUserId } : {}),
+        ...sessionMeta,
         loadError: err.message || 'Unable to load saved profile details. Please retry before saving.',
       };
     }
     if (err instanceof NetworkError) {
       return {
         profile: null,
+        ...(sessionUserId ? { userId: sessionUserId } : {}),
+        ...sessionMeta,
         loadError: 'Unable to reach the server to load learning settings. Please retry before saving.',
       };
     }
     return {
       profile: null,
+      ...(sessionUserId ? { userId: sessionUserId } : {}),
+      ...sessionMeta,
       loadError: 'Unable to load saved profile details. Please retry before saving.',
     };
   }
 }
 
 /**
- * Server action for Screen 07 (`/onboarding/profile`) that validates and saves profile background (EP-P02) and learning settings (EP-P04).
+ * Server action for Screen 07 (`/onboarding/profile`) that validates and saves profile background (EP-P02), learning settings (EP-P04), and user metadata.
  */
 export async function saveProfileSetupAction(
   _prevState: ProfileSetupActionState,
   formData: FormData,
 ): Promise<ProfileSetupActionState> {
-  const currentRoleRaw = (formData.get('current_role') as string | null) ?? '';
+  const fullNameRaw = readFormString(formData, 'full_name');
+  const emailRaw = readFormString(formData, 'email');
+  const phoneRaw = readFormString(formData, 'phone');
+  const currentRoleRaw = readFormString(formData, 'current_role');
   const educationRaw =
-    (formData.get('education') as string | null) ??
-    (formData.get('education_level') as string | null) ??
-    '';
-  const experienceLevelRaw = (formData.get('experience_level') as string | null) ?? '';
-  const existingSkillsNoneRaw = (formData.get('existing_skills_none') as string | null) ?? 'false';
+    readFormString(formData, 'education') ||
+    readFormString(formData, 'education_level');
+  const experienceLevelRaw = readFormString(formData, 'experience_level');
+  const existingSkillsNoneRaw =
+    readFormString(formData, 'existing_skills_none') || 'false';
   const existingSkillsNoneTouched =
-    (formData.get('existing_skills_none_touched') as string | null) === 'true';
-  const timezoneRaw = (formData.get('timezone') as string | null) ?? '';
-  const hoursRaw = (formData.get('preferred_daily_hours') as string | null) ?? '';
+    readFormString(formData, 'existing_skills_none_touched') === 'true';
+  const timezoneRaw = readFormString(formData, 'timezone');
+  const hoursRaw = readFormString(formData, 'preferred_daily_hours');
 
+  const full_name = normalizeFullName(fullNameRaw);
+  const emailCheck = validateOptionalEmail(emailRaw);
+  const phoneCheck = validateOptionalBdPhone(phoneRaw);
+  const email = emailCheck.ok ? emailCheck.value : normalizeEmail(emailRaw);
+  const phone = phoneCheck.ok ? phoneCheck.value : phoneRaw.trim();
   const current_role = currentRoleRaw.trim();
   const education = educationRaw.trim();
   const educationTouched = formData.has('education_touched')
-    ? (formData.get('education_touched') as string | null) === 'true'
+    ? readFormString(formData, 'education_touched') === 'true'
     : education.length > 0;
   const experience_level = experienceLevelRaw.trim();
   const existing_skills_none =
@@ -230,6 +302,9 @@ export async function saveProfileSetupAction(
   const preferred_daily_hours = hoursRaw.trim();
 
   const values: ProfileSetupFormValues = {
+    full_name,
+    email,
+    phone,
     current_role,
     education,
     experience_level,
@@ -240,41 +315,54 @@ export async function saveProfileSetupAction(
 
   const fieldErrors: Partial<Record<ProfileSetupFieldKey, string>> = {};
 
-  if (!current_role) {
-    fieldErrors.current_role = 'Current role or profession is required.';
-  } else if (current_role.length > 120) {
-    fieldErrors.current_role = 'Current role must be 120 characters or fewer.';
+  const fullNameRes = validateFullName(fullNameRaw);
+  if (!fullNameRes.ok) {
+    fieldErrors.full_name = fullNameRes.error;
   }
 
-  if (education.length > 200) {
-    fieldErrors.education = 'Education must be 200 characters or fewer.';
+  if (!emailCheck.ok) {
+    fieldErrors.email = emailCheck.error;
+  }
+  if (!phoneCheck.ok) {
+    fieldErrors.phone = phoneCheck.error;
+  }
+  if (emailCheck.ok && phoneCheck.ok && !email && !phone) {
+    fieldErrors.email = 'Enter a valid email address or phone number.';
   }
 
-  if (!experience_level || !isValidExperienceLevel(experience_level)) {
-    fieldErrors.experience_level =
-      'Please select your experience level (Beginner, Junior, Mid, or Senior).';
+  const currentRoleRes = validateCurrentRole(currentRoleRaw);
+  if (!currentRoleRes.ok) {
+    fieldErrors.current_role = currentRoleRes.error;
   }
 
-  let parsedHours: number | undefined;
-  if (preferred_daily_hours !== '') {
-    const num = Number(preferred_daily_hours);
-    if (
-      !Number.isFinite(num) ||
-      num < 0.5 ||
-      num > 12 ||
-      !Number.isInteger(num * 2)
-    ) {
-      fieldErrors.preferred_daily_hours =
-        'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.';
-    } else {
-      parsedHours = num;
-    }
+  const educationRes = validateEducation(educationRaw);
+  if (!educationRes.ok) {
+    fieldErrors.education = educationRes.error;
+  }
+
+  const experienceRes = validateExperienceLevel(experienceLevelRaw);
+  if (!experienceRes.ok) {
+    fieldErrors.experience_level = experienceRes.error;
+  } else if (existing_skills_none && experienceRes.value !== 'beginner') {
+    fieldErrors.existing_skills_none =
+      'Complete Beginner mode is only available when Experience Level is Beginner.';
+  }
+
+  const timezoneRes = validateIanaTimezone(timezoneRaw);
+  if (!timezoneRes.ok) {
+    fieldErrors.timezone = timezoneRes.error;
+  }
+
+  const dailyHoursRes = validateDailyHours(hoursRaw);
+  if (!dailyHoursRes.ok) {
+    fieldErrors.preferred_daily_hours = dailyHoursRes.error;
   }
 
   let committedProfile: ProfileResponse | null | undefined = _prevState.profile;
 
   if (Object.keys(fieldErrors).length > 0) {
-    const firstMessage = Object.values(fieldErrors)[0] ?? 'Please fix the highlighted fields.';
+    const firstMessage =
+      Object.values(fieldErrors)[0] ?? 'Please fix the highlighted fields.';
     return {
       error: firstMessage,
       code: 'VALIDATION_FAILED',
@@ -299,30 +387,28 @@ export async function saveProfileSetupAction(
       };
     }
 
-    const learningBody: UpdateLearningSettingsBody = {};
-    if (timezone.length > 0) {
-      learningBody.timezone = timezone;
-    }
-    if (parsedHours !== undefined) {
-      learningBody.preferred_daily_hours = parsedHours;
-    }
-
-    if (Object.keys(learningBody).length > 0) {
+    if (timezoneRes.ok && dailyHoursRes.ok) {
       committedProfile = await withSingleSessionRefresh(
         supabase,
         session,
-        (accessToken) => updateLearningSettings(accessToken, learningBody),
+        (accessToken) =>
+          updateLearningSettings(accessToken, {
+            timezone: timezoneRes.value,
+            preferred_daily_hours: dailyHoursRes.value,
+          }),
       );
     }
 
     const profileBody: UpdateProfileBody = {
-      current_role,
-      experience_level: experience_level as ExperienceLevel,
+      current_role: currentRoleRes.ok ? currentRoleRes.value : current_role,
+      experience_level: (experienceRes.ok
+        ? experienceRes.value
+        : experience_level) as ExperienceLevel,
     };
 
     if (educationTouched) {
-      profileBody.education = education;
-      profileBody.education_level = education;
+      profileBody.education = educationRes.ok ? educationRes.value : education;
+      profileBody.education_level = profileBody.education;
     }
 
     if (existing_skills_none) {
@@ -338,11 +424,40 @@ export async function saveProfileSetupAction(
     );
     committedProfile = updatedProfile;
 
+    if (typeof supabase.auth.updateUser === 'function') {
+      const primaryEmail = isNonSyntheticEmail(session.user?.email)
+        ? normalizeEmail(session.user!.email!)
+        : '';
+      const primaryPhone = session.user?.phone
+        ? (normalizeBdPhone(session.user.phone) ?? session.user.phone.trim())
+        : '';
+
+      const { error: metaError } = await supabase.auth.updateUser({
+        data: {
+          full_name: fullNameRes.ok ? fullNameRes.value : full_name,
+          contact_email: email && email !== primaryEmail ? email : null,
+          contact_phone: phone && phone !== primaryPhone ? phone : null,
+        },
+      });
+      if (metaError) {
+        return {
+          error:
+            'Your role and study schedule were saved, but we could not save your name or contact details. Please try again.',
+          retryable: true,
+          profile: updatedProfile,
+          values,
+        };
+      }
+    }
+
     return {
       success: true,
-      message: 'প্রোফাইল সংরক্ষিত হয়েছে (Profile saved successfully).',
+      message: 'Profile saved successfully.',
       profile: updatedProfile,
       values: {
+        full_name: fullNameRes.ok ? fullNameRes.value : full_name,
+        email,
+        phone,
         current_role: updatedProfile.current_role ?? current_role,
         education: updatedProfile.education ?? '',
         experience_level: updatedProfile.experience_level ?? experience_level,
@@ -430,22 +545,12 @@ export async function updateLearningSettingsAction(
   }
 
   let parsedHours = NaN;
-  if (!preferred_daily_hours) {
+  const parsedValid = parseValidDailyHours(preferred_daily_hours);
+  if (parsedValid === null) {
     fieldErrors.preferred_daily_hours =
       'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.';
   } else {
-    const num = Number(preferred_daily_hours);
-    if (
-      !Number.isFinite(num) ||
-      num < 0.5 ||
-      num > 12 ||
-      !Number.isInteger(num * 2)
-    ) {
-      fieldErrors.preferred_daily_hours =
-        'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.';
-    } else {
-      parsedHours = num;
-    }
+    parsedHours = parsedValid;
   }
 
   if (Object.keys(fieldErrors).length > 0) {

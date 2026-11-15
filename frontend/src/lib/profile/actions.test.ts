@@ -15,11 +15,15 @@ import {
 } from '@/lib/api/client';
 
 const mockGetSession = vi.fn();
+const mockGetUser = vi.fn();
+const mockUpdateUser = vi.fn();
 const mockSetSession = vi.fn();
 const mockSignOut = vi.fn().mockResolvedValue({ error: null });
 const mockCreateSupabaseServerClient = vi.fn().mockImplementation(() => ({
   auth: {
     getSession: mockGetSession,
+    getUser: mockGetUser,
+    updateUser: mockUpdateUser,
     setSession: mockSetSession,
     signOut: mockSignOut,
   },
@@ -96,6 +100,8 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
     mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'valid-token' } },
     });
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    mockUpdateUser.mockResolvedValue({ data: { user: {} }, error: null });
   });
 
   describe('loadProfileForSetup', () => {
@@ -140,6 +146,113 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result).toEqual({ profile: MOCK_PROFILE, userId: 'user-xyz' });
     });
 
+    it('extracts normalized fullName and optional secondary contacts from Supabase user_metadata', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            user: {
+              id: 'user-meta',
+              user_metadata: {
+                name: '  OAuth   Fallback  ',
+              },
+            },
+          },
+        },
+      });
+      mockGetUser.mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'user-meta',
+            user_metadata: {
+              full_name: '  Jane   Doe  ',
+              contact_email: '  Jane.Alt@Example.COM ',
+              contact_phone: '01712345678',
+            },
+          },
+        },
+        error: null,
+      });
+      vi.mocked(getProfile).mockResolvedValueOnce(MOCK_PROFILE);
+
+      const result = await loadProfileForSetup();
+      expect(result).toEqual({
+        profile: MOCK_PROFILE,
+        userId: 'user-meta',
+        fullName: 'Jane Doe',
+        contactEmail: 'jane.alt@example.com',
+        contactPhone: '+8801712345678',
+      });
+    });
+
+    it('replaces session metadata completely when live getUser() returns a user with cleared contacts', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            user: {
+              id: 'user-live-replace',
+              user_metadata: {
+                full_name: 'Stale Name',
+                contact_email: 'stale@example.com',
+                contact_phone: '+8801712345678',
+              },
+            },
+          },
+        },
+      });
+      mockGetUser.mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'user-live-replace',
+            user_metadata: {
+              full_name: 'Fresh Name',
+              contact_email: null,
+              contact_phone: '',
+            },
+          },
+        },
+        error: null,
+      });
+      vi.mocked(getProfile).mockResolvedValueOnce(MOCK_PROFILE);
+
+      const result = await loadProfileForSetup();
+      expect(result).toEqual({
+        profile: MOCK_PROFILE,
+        userId: 'user-live-replace',
+        fullName: 'Fresh Name',
+      });
+      expect(result.contactEmail).toBeUndefined();
+      expect(result.contactPhone).toBeUndefined();
+    });
+
+    it('falls back to session metadata when live getUser() returns null or throws', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            user: {
+              id: 'user-fallback',
+              user_metadata: {
+                full_name: 'Session Name',
+                contact_phone: '01812345678',
+              },
+            },
+          },
+        },
+      });
+      mockGetUser.mockRejectedValueOnce(new Error('transient supabase lookup failure'));
+      vi.mocked(getProfile).mockResolvedValueOnce(MOCK_PROFILE);
+
+      const result = await loadProfileForSetup();
+      expect(result).toEqual({
+        profile: MOCK_PROFILE,
+        userId: 'user-fallback',
+        fullName: 'Session Name',
+        contactPhone: '+8801812345678',
+      });
+    });
+
     it('returns unauthorized on 401 ApiError without calling refreshSession', async () => {
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -180,11 +293,22 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
   });
 
   describe('saveProfileSetupAction', () => {
-    it('saves beginner profile with optional blank education and explicit None without fabricating skills', async () => {
+    it('saves beginner profile with optional blank education, explicit None, and metadata without fabricating skills', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            user: { id: 'u1', email: 'student@example.com' },
+          },
+        },
+      });
       vi.mocked(updateProfile).mockResolvedValueOnce(MOCK_PROFILE);
       vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
 
       const formData = new FormData();
+      formData.set('full_name', '  Alice   Rahman  ');
+      formData.set('email', 'student@example.com');
+      formData.set('phone', '01712345678');
       formData.set('current_role', '  Student  ');
       formData.set('education', '   ');
       formData.set('education_touched', 'false');
@@ -213,6 +337,14 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         preferred_daily_hours: 2,
       });
 
+      expect(mockUpdateUser).toHaveBeenCalledWith({
+        data: {
+          full_name: 'Alice Rahman',
+          contact_email: null,
+          contact_phone: '+8801712345678',
+        },
+      });
+
       const learningOrder =
         vi.mocked(updateLearningSettings).mock.invocationCallOrder[0] ?? 0;
       const profileOrder =
@@ -227,15 +359,18 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         experience_level: 'junior',
         existing_skills_none: false,
       });
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
 
       const formData = new FormData();
+      formData.set('full_name', 'Frontend Learner');
+      formData.set('email', 'frontend@example.com');
       formData.set('current_role', 'Frontend Developer');
       formData.set('education', 'BSc CSE');
       formData.set('experience_level', 'junior');
       formData.set('existing_skills_none', 'false');
       formData.set('existing_skills_none_touched', 'false');
-      formData.set('timezone', '');
-      formData.set('preferred_daily_hours', '');
+      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('preferred_daily_hours', '2');
 
       const result = await saveProfileSetupAction({}, formData);
 
@@ -246,11 +381,11 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         education_level: 'BSc CSE',
         experience_level: 'junior',
       });
-      expect(updateLearningSettings).not.toHaveBeenCalled();
     });
 
     it('omits education when blank and education_touched is false, and sends education_level: "" when education_touched is true', async () => {
       // 1. Untouched blank education (e.g. after profile load failure) omits education from PATCH /profile
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
       vi.mocked(updateProfile).mockResolvedValueOnce({
         ...MOCK_PROFILE,
         current_role: 'Lead Architect',
@@ -259,14 +394,16 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       });
 
       const untouchedFormData = new FormData();
+      untouchedFormData.set('full_name', 'Lead User');
+      untouchedFormData.set('email', 'lead@example.com');
       untouchedFormData.set('current_role', 'Lead Architect');
       untouchedFormData.set('education', '   ');
       untouchedFormData.set('education_touched', 'false');
       untouchedFormData.set('experience_level', 'senior');
       untouchedFormData.set('existing_skills_none', 'false');
       untouchedFormData.set('existing_skills_none_touched', 'false');
-      untouchedFormData.set('timezone', '');
-      untouchedFormData.set('preferred_daily_hours', '');
+      untouchedFormData.set('timezone', 'Asia/Dhaka');
+      untouchedFormData.set('preferred_daily_hours', '2');
 
       const untouchedResult = await saveProfileSetupAction({}, untouchedFormData);
 
@@ -279,6 +416,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
 
       // 2. Touched blank education explicitly sends education: "" and education_level: "" to clear DB field
       vi.mocked(updateProfile).mockClear();
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
       vi.mocked(updateProfile).mockResolvedValueOnce({
         ...MOCK_PROFILE,
         current_role: 'Lead Architect',
@@ -287,14 +425,16 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       });
 
       const touchedFormData = new FormData();
+      touchedFormData.set('full_name', 'Lead User');
+      touchedFormData.set('email', 'lead@example.com');
       touchedFormData.set('current_role', 'Lead Architect');
       touchedFormData.set('education', '   ');
       touchedFormData.set('education_touched', 'true');
       touchedFormData.set('experience_level', 'senior');
       touchedFormData.set('existing_skills_none', 'false');
       touchedFormData.set('existing_skills_none_touched', 'false');
-      touchedFormData.set('timezone', '');
-      touchedFormData.set('preferred_daily_hours', '');
+      touchedFormData.set('timezone', 'Asia/Dhaka');
+      touchedFormData.set('preferred_daily_hours', '2');
 
       const touchedResult = await saveProfileSetupAction({}, touchedFormData);
 
@@ -310,6 +450,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
 
       // 3. Populated education with education_touched = false omits education from PATCH /profile so server data is not overwritten
       vi.mocked(updateProfile).mockClear();
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
       vi.mocked(updateProfile).mockResolvedValueOnce({
         ...MOCK_PROFILE,
         current_role: 'Lead Architect',
@@ -318,10 +459,14 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       });
 
       const populatedUntouchedFormData = new FormData();
+      populatedUntouchedFormData.set('full_name', 'Lead User');
+      populatedUntouchedFormData.set('email', 'lead@example.com');
       populatedUntouchedFormData.set('current_role', 'Lead Architect');
       populatedUntouchedFormData.set('education', 'BSc CSE');
       populatedUntouchedFormData.set('education_touched', 'false');
       populatedUntouchedFormData.set('experience_level', 'senior');
+      populatedUntouchedFormData.set('timezone', 'Asia/Dhaka');
+      populatedUntouchedFormData.set('preferred_daily_hours', '2');
 
       const populatedResult = await saveProfileSetupAction({}, populatedUntouchedFormData);
 
@@ -332,31 +477,60 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       });
     });
 
-    it('rejects missing current_role, invalid experience_level, and non-half-hour daily hours while preserving user inputs', async () => {
+    it('rejects invalid full_name, contacts, current_role, education, experience_level, non-beginner noTechSkills, timezone, and daily hours while preserving user inputs', async () => {
       const formData = new FormData();
+      formData.set('full_name', '12345');
+      formData.set('email', 'bad-email');
+      formData.set('phone', '01234');
       formData.set('current_role', '   ');
-      formData.set('education', 'BSc CSE');
-      formData.set('experience_level', '');
+      formData.set('education', 'x'.repeat(201));
+      formData.set('experience_level', 'mid');
       formData.set('existing_skills_none', 'true');
-      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('timezone', 'Invalid/Zone');
       formData.set('preferred_daily_hours', '1.3');
 
       const result = await saveProfileSetupAction({}, formData);
 
       expect(result.error).toBeDefined();
       expect(result.code).toBe('VALIDATION_FAILED');
-      expect(result.fieldErrors?.current_role).toBeDefined();
-      expect(result.fieldErrors?.experience_level).toBeDefined();
-      expect(result.fieldErrors?.preferred_daily_hours).toBeDefined();
+      expect(result.fieldErrors?.full_name).toBe('Full name cannot contain only digits.');
+      expect(result.fieldErrors?.email).toBe('Enter a valid email address.');
+      expect(result.fieldErrors?.phone).toContain('Bangladesh mobile number');
+      expect(result.fieldErrors?.current_role).toBe('Enter your current role or profession.');
+      expect(result.fieldErrors?.education).toBe('Education must be 200 characters or fewer.');
+      expect(result.fieldErrors?.existing_skills_none).toContain('Experience Level is Beginner');
+      expect(result.fieldErrors?.timezone).toBe('Enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).');
+      expect(result.fieldErrors?.preferred_daily_hours).toBe(
+        'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
+      );
       expect(result.values).toEqual({
+        full_name: '12345',
+        email: 'bad-email',
+        phone: '01234',
         current_role: '',
-        education: 'BSc CSE',
-        experience_level: '',
+        education: 'x'.repeat(201),
+        experience_level: 'mid',
         existing_skills_none: true,
-        timezone: 'Asia/Dhaka',
+        timezone: 'Invalid/Zone',
         preferred_daily_hours: '1.3',
       });
       expect(updateProfile).not.toHaveBeenCalled();
+      expect(updateLearningSettings).not.toHaveBeenCalled();
+      expect(mockUpdateUser).not.toHaveBeenCalled();
+    });
+
+    it('requires at least one contact when both email and phone are omitted', async () => {
+      const formData = new FormData();
+      formData.set('full_name', 'Alice Rahman');
+      formData.set('current_role', 'Student');
+      formData.set('experience_level', 'beginner');
+      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('preferred_daily_hours', '2');
+
+      const result = await saveProfileSetupAction({}, formData);
+
+      expect(result.code).toBe('VALIDATION_FAILED');
+      expect(result.fieldErrors?.email).toBe('Enter a valid email address or phone number.');
       expect(updateLearningSettings).not.toHaveBeenCalled();
     });
 
@@ -372,12 +546,14 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       );
 
       const formData = new FormData();
+      formData.set('full_name', 'Backend Learner');
+      formData.set('email', 'learner@example.com');
       formData.set('current_role', 'Backend Learner');
       formData.set('education', '');
       formData.set('experience_level', 'beginner');
       formData.set('existing_skills_none', 'true');
       formData.set('existing_skills_none_touched', 'true');
-      formData.set('timezone', 'Invalid/Zone');
+      formData.set('timezone', 'UTC');
       formData.set('preferred_daily_hours', '1.5');
 
       const result = await saveProfileSetupAction({}, formData);
@@ -385,7 +561,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result.error).toBe('Invalid IANA timezone');
       expect(result.fieldErrors?.timezone).toBe('Invalid IANA timezone');
       expect(result.values?.current_role).toBe('Backend Learner');
-      expect(result.values?.timezone).toBe('Invalid/Zone');
+      expect(result.values?.timezone).toBe('UTC');
       expect(result.values?.preferred_daily_hours).toBe('1.5');
       expect(updateProfile).not.toHaveBeenCalled();
     });
@@ -404,6 +580,8 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       );
 
       const formData = new FormData();
+      formData.set('full_name', 'Platform Engineer');
+      formData.set('email', 'platform@example.com');
       formData.set('current_role', 'Platform Engineer');
       formData.set('education', 'BSc CS');
       formData.set('experience_level', 'mid');
@@ -421,11 +599,14 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
     });
 
     it('preserves user inputs and retry metadata on 429 RATE_LIMITED and 503 SERVICE_UNAVAILABLE', async () => {
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
       vi.mocked(updateProfile).mockRejectedValueOnce(
         new ApiError(429, 'Too many requests', 'RATE_LIMITED', 'req-429', [], true, 15),
       );
 
       const formData = new FormData();
+      formData.set('full_name', 'QA Engineer');
+      formData.set('email', 'qa@example.com');
       formData.set('current_role', 'QA Engineer');
       formData.set('education', 'Diploma');
       formData.set('experience_level', 'mid');
@@ -437,6 +618,9 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(rateLimited.retryable).toBe(true);
       expect(rateLimited.retryAfterSeconds).toBe(15);
       expect(rateLimited.values).toEqual({
+        full_name: 'QA Engineer',
+        email: 'qa@example.com',
+        phone: '',
         current_role: 'QA Engineer',
         education: 'Diploma',
         experience_level: 'mid',
@@ -445,6 +629,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         preferred_daily_hours: '2.5',
       });
 
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
       vi.mocked(updateProfile).mockRejectedValueOnce(
         new NetworkError('Network down'),
       );
@@ -454,12 +639,37 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(networkFailed.values?.education).toBe('Diploma');
     });
 
+    it('preserves committedProfile if Supabase metadata updateUser returns an error', async () => {
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce(MOCK_PROFILE);
+      vi.mocked(updateProfile).mockResolvedValueOnce(MOCK_PROFILE);
+      mockUpdateUser.mockResolvedValueOnce({
+        data: { user: null },
+        error: { message: 'Metadata write failed' },
+      });
+
+      const formData = new FormData();
+      formData.set('full_name', 'Alice Rahman');
+      formData.set('phone', '01712345678');
+      formData.set('current_role', 'Student');
+      formData.set('experience_level', 'beginner');
+      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('preferred_daily_hours', '2');
+
+      const result = await saveProfileSetupAction({}, formData);
+      expect(result.success).toBeUndefined();
+      expect(result.retryable).toBe(true);
+      expect(result.profile).toEqual(MOCK_PROFILE);
+      expect(result.values?.full_name).toBe('Alice Rahman');
+      expect(result.values?.phone).toBe('+8801712345678');
+    });
+
     it('propagates rotated tokens across sequential calls when the first call triggers a 401 refresh', async () => {
       mockGetSession.mockResolvedValueOnce({
         data: {
           session: {
             access_token: 'expired-token',
             refresh_token: 'valid-refresh-token',
+            user: { id: 'user-1', email: 'user@example.com' },
           },
         },
       });
@@ -496,6 +706,8 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       });
 
       const formData = new FormData();
+      formData.set('full_name', 'Engineer User');
+      formData.set('email', 'user@example.com');
       formData.set('current_role', 'Engineer');
       formData.set('experience_level', 'junior');
       formData.set('timezone', 'Asia/Dhaka');

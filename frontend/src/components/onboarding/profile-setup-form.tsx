@@ -1,45 +1,133 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import {
+  type SyntheticEvent,
+  useActionState,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import Link from 'next/link';
 import {
   saveProfileSetupAction,
+  type ProfileContactInfo,
   type ProfileSetupActionState,
+  type ProfileSetupFieldKey,
   type ProfileSetupFormValues,
 } from '@/lib/profile/actions';
 import type { ProfileResponse } from '@/lib/api/client';
-import { mapActionResult } from '@/lib/api/error-mapper';
+import { AuthAlert, useDismissedActionState } from '@/components/auth/auth-alert';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { AlertCircleIcon } from '@/components/ui/icons';
+import { FieldShell, Input } from '@/components/ui/input';
+import { AlertCircleIcon, CheckCircleIcon } from '@/components/ui/icons';
 import { cn } from '@/components/ui/cn';
+import {
+  normalizeBdPhone,
+  normalizeEmail,
+  validateBdPhoneOnChange,
+} from '@/lib/validation/auth-schemas';
+import {
+  CURRENT_ROLE_MAX,
+  EDUCATION_MAX,
+  FULL_NAME_MAX,
+  validateCurrentRole,
+  validateDailyHours,
+  validateEducation,
+  validateExperienceLevel,
+  validateFullName,
+  validateIanaTimezone,
+  validateOptionalBdPhone,
+  validateOptionalEmail,
+} from '@/lib/validation/profile-schemas';
 
-const CONTROL_BASE_CLASS =
-  'min-h-11 w-full rounded-md border bg-surface-default px-3 py-2 text-body text-text-primary placeholder:text-text-muted transition-colors duration-(--duration-fast) ease-standard read-only:bg-surface-subtle';
+const SELECT_BASE_CLASS =
+  'min-h-11 w-full appearance-none truncate rounded-md border bg-surface-default py-2 pl-3 pr-10 text-body text-text-primary transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled';
 
-function fieldBorderClass(hasError: boolean): string {
+function selectBorderClass(hasError: boolean): string {
   return hasError
-    ? 'border-border-danger border-2'
-    : 'border-border-default hover:border-border-strong focus:border-border-focus';
+    ? 'border-border-danger border-2 focus:outline-none focus:ring-2 focus:ring-border-danger'
+    : 'border-border-default hover:border-border-strong focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-focus-ring';
 }
 
 const DRAFT_STORAGE_KEY = 'mentor_onboarding_profile_draft';
 
 const ONBOARDING_STEPS = [
-  '1. প্রোফাইল (Profile)',
-  '2. স্কিলস (Skills)',
-  '3. পছন্দ (Preferences)',
-  '4. লক্ষ্য (Career Goal)',
-  '5. নিশ্চিতকরণ (Confirm Level)',
+  { number: 1, label: '1. Profile' },
+  { number: 2, label: '2. Skills' },
+  { number: 3, label: '3. Preferences' },
+  { number: 4, label: '4. Career Goal' },
+  { number: 5, label: '5. Confirm Level' },
+] as const;
+
+const FIELD_ORDER: readonly ProfileSetupFieldKey[] = [
+  'full_name',
+  'email',
+  'phone',
+  'education',
+  'current_role',
+  'experience_level',
+  'existing_skills_none',
+  'preferred_daily_hours',
 ];
+
+const EMPTY_CONTACT: ProfileContactInfo = {
+  email: '',
+  emailVerified: false,
+  phone: '',
+  phoneVerified: false,
+};
+
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className={className}
+    >
+      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+function VerifiedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-feedback-success-border bg-feedback-success-background px-2 py-0.5 text-caption font-medium text-feedback-success-text">
+      <CheckCircleIcon className="h-3 w-3 shrink-0 text-feedback-success-icon" />
+      <span>Verified</span>
+    </span>
+  );
+}
 
 /**
  * Props for the `ProfileSetupForm` component on Screen 07 (`/onboarding/profile`).
  */
 export interface ProfileSetupFormProps {
   initialProfile: ProfileResponse | null;
+  initialContact?: ProfileContactInfo;
+  initialFullName?: string;
   loadError?: string;
   userId?: string;
+}
+
+/**
+ * Returns a valid IANA timezone string or `undefined` if empty/invalid.
+ */
+function sanitizeIanaTimezone(candidate: unknown): string | undefined {
+  if (typeof candidate !== 'string') {
+    return undefined;
+  }
+  const check = validateIanaTimezone(candidate);
+  return check.ok ? check.value : undefined;
 }
 
 /**
@@ -48,9 +136,7 @@ export interface ProfileSetupFormProps {
 function detectBrowserTimezone(): string {
   try {
     const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return typeof resolved === 'string' && resolved.trim().length > 0
-      ? resolved
-      : 'Asia/Dhaka';
+    return sanitizeIanaTimezone(resolved) ?? 'Asia/Dhaka';
   } catch {
     return 'Asia/Dhaka';
   }
@@ -110,18 +196,27 @@ function clearDraft(userId?: string): void {
 }
 
 /**
- * Builds server-deterministic initial controlled form state using ONLY initialProfile props.
+ * Builds server-deterministic initial controlled form state using ONLY initial props.
  * Avoids hydration mismatch by not reading window, sessionStorage, or browser Intl during initial render.
  */
 function buildInitialState(
   profile: ProfileResponse | null,
+  contact: ProfileContactInfo,
+  fullName: string,
 ): ProfileSetupFormValues {
+  const experienceLevel = profile?.experience_level ?? '';
   return {
+    full_name: fullName,
+    email: contact.email,
+    phone: contact.phone,
     current_role: profile?.current_role ?? '',
     education: profile?.education ?? profile?.education_level ?? '',
-    experience_level: profile?.experience_level ?? '',
-    existing_skills_none: profile?.existing_skills_none ?? false,
-    timezone: profile?.timezone ?? '',
+    experience_level: experienceLevel,
+    existing_skills_none:
+      experienceLevel === 'beginner'
+        ? Boolean(profile?.existing_skills_none)
+        : false,
+    timezone: sanitizeIanaTimezone(profile?.timezone) ?? 'Asia/Dhaka',
     preferred_daily_hours:
       profile?.preferred_daily_hours !== null &&
       profile?.preferred_daily_hours !== undefined
@@ -131,12 +226,27 @@ function buildInitialState(
 }
 
 /**
- * Screen 07 (`/onboarding/profile`) client form component consuming EP-P01, EP-P02, and EP-P04.
- * Preserves optional education, explicit beginner `None`, and user inputs across failed loads/saves.
- * Enforces account-scoped draft isolation and SSR hydration safety.
+ * Screen 07 (`/onboarding/profile`) client form component consuming EP-P01, EP-P02, EP-P04, and Supabase user metadata.
+ * Keys the inner stateful form by `userId` so `useActionState`, pending flags, and ephemeral validation reset cleanly on account change.
  */
-export function ProfileSetupForm({
+export function ProfileSetupForm(props: ProfileSetupFormProps) {
+  return (
+    <ProfileSetupFormInner
+      key={props.userId ?? 'anonymous'}
+      {...props}
+    />
+  );
+}
+
+/**
+ * Inner stateful form for Screen 07 (`/onboarding/profile`).
+ * Enforces client + server validation, verified contact prefill, optional education, explicit beginner `None`,
+ * auto-reset of invalid beginner-only states, account-scoped draft isolation, and SSR hydration safety.
+ */
+function ProfileSetupFormInner({
   initialProfile,
+  initialContact = EMPTY_CONTACT,
+  initialFullName = '',
   loadError,
   userId,
 }: ProfileSetupFormProps) {
@@ -151,33 +261,57 @@ export function ProfileSetupForm({
     skillsNoneTouched: boolean;
     educationTouched: boolean;
   }>(() => ({
-    values: buildInitialState(initialProfile),
+    values: buildInitialState(initialProfile, initialContact, initialFullName),
     hasDraft: false,
     skillsNoneTouched: false,
     educationTouched: false,
   }));
 
-  const [dismissedActionState, setDismissedActionState] =
+  const [clientErrors, setClientErrors] = useState<
+    Partial<Record<ProfileSetupFieldKey, string>>
+  >({});
+  const [dismissedServer, setDismissedServer] = useState<{
+    ref: ProfileSetupActionState;
+    fields: Set<ProfileSetupFieldKey>;
+  } | null>(null);
+  const [dismissedSuccessState, setDismissedSuccessState] =
     useState<ProfileSetupActionState | null>(null);
+
+  const phoneBlurredRef = useRef(false);
+  const hydratedRef = useRef(false);
+  const processedResultRef = useRef<ProfileSetupActionState | null>(null);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
 
   const { values, hasDraft, skillsNoneTouched, educationTouched } = formState;
   const effectiveProfile = state.profile ?? initialProfile;
+  const emailVerified = Boolean(initialContact.emailVerified && initialContact.email);
+  const phoneVerified = Boolean(initialContact.phoneVerified && initialContact.phone);
+  const contactEmailProp = initialContact.email;
+  const contactPhoneProp = initialContact.phone;
+  const displayedEmail = emailVerified ? contactEmailProp : values.email;
+  const displayedPhone = phoneVerified ? contactPhoneProp : values.phone;
+  const isBeginner = values.experience_level === 'beginner';
 
-  // Mount effect: safely restores draft from sessionStorage, detects timezone, and initializes skillsNoneTouched
+  const {
+    visibleState: visibleAlertState,
+    dismiss: dismissAlert,
+    onFormActivity,
+  } = useDismissedActionState(state);
+
+  // Mount effect (per keyed userId instance): restores userId-scoped draft once,
+  // enforces verified server contact precedence, and detects browser timezone when unset.
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || hydratedRef.current) {
       return;
     }
+    hydratedRef.current = true;
 
     const detectedTz = detectBrowserTimezone();
-    const fallbackTz = loadError ? '' : detectedTz;
     const storageKey = getDraftStorageKey(userId);
-    let restoredValues: Partial<ProfileSetupFormValues> | null = null;
+    let restoredValues: Record<string, unknown> | null = null;
     let storedTouched: boolean | undefined = undefined;
     let storedEducationTouched: boolean | undefined = undefined;
 
-    // 1. Unconditionally clean up legacy un-scoped draft when userId is present
     if (userId) {
       try {
         window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -186,7 +320,6 @@ export function ProfileSetupForm({
       }
     }
 
-    // 2. Read and parse account-scoped draft
     try {
       const rawDraft = window.sessionStorage.getItem(storageKey);
       if (rawDraft) {
@@ -208,7 +341,6 @@ export function ProfileSetupForm({
           const draftUserId =
             typeof draftObj.user_id === 'string' ? draftObj.user_id : undefined;
 
-          // Account-scoped isolation: reject and clear draft belonging to another user
           if (userId && draftUserId && draftUserId !== userId) {
             window.sessionStorage.removeItem(storageKey);
           } else {
@@ -218,7 +350,7 @@ export function ProfileSetupForm({
                 : (parsed as Record<string, unknown>);
 
             if (payloadValues && typeof payloadValues === 'object') {
-              restoredValues = payloadValues as Partial<ProfileSetupFormValues>;
+              restoredValues = payloadValues;
               storedTouched =
                 typeof draftObj.skills_none_touched === 'boolean'
                   ? draftObj.skills_none_touched
@@ -243,37 +375,53 @@ export function ProfileSetupForm({
       // Ignore sessionStorage read errors
     }
 
-    const serverTz = initialProfile?.timezone;
+    const contactSnapshot: ProfileContactInfo = {
+      email: contactEmailProp,
+      emailVerified,
+      phone: contactPhoneProp,
+      phoneVerified,
+    };
+    const baseline = buildInitialState(
+      initialProfile,
+      contactSnapshot,
+      initialFullName,
+    );
+    const serverTz = sanitizeIanaTimezone(initialProfile?.timezone);
     const serverSkillsNone = Boolean(initialProfile?.existing_skills_none);
     const serverEducation =
       initialProfile?.education ?? initialProfile?.education_level ?? '';
     const hasServerBaseline = Boolean(initialProfile) && !loadError;
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFormState((prev) => {
+    setFormState(() => {
       if (restoredValues) {
         const draftTz =
-          typeof restoredValues.timezone === 'string' &&
-          restoredValues.timezone.length > 0
-            ? restoredValues.timezone
-            : serverTz || fallbackTz;
+          sanitizeIanaTimezone(restoredValues.timezone) ??
+          serverTz ??
+          detectedTz;
 
-        const draftSkillsNone =
+        const restoredLevel =
+          typeof restoredValues.experience_level === 'string'
+            ? restoredValues.experience_level
+            : baseline.experience_level;
+
+        const rawDraftSkillsNone =
           typeof restoredValues.existing_skills_none === 'boolean'
             ? restoredValues.existing_skills_none
             : serverSkillsNone;
 
+        const restoredSkillsNone =
+          restoredLevel === 'beginner' ? rawDraftSkillsNone : false;
+
         const isTouched =
           storedTouched !== undefined
             ? storedTouched
-            : draftSkillsNone !== serverSkillsNone;
+            : restoredSkillsNone !== serverSkillsNone;
 
         const rawDraftEducation =
           typeof restoredValues.education === 'string'
             ? restoredValues.education
-            : typeof (restoredValues as { education_level?: unknown })
-                  .education_level === 'string'
-              ? (restoredValues as { education_level: string }).education_level
+            : typeof restoredValues.education_level === 'string'
+              ? restoredValues.education_level
               : undefined;
 
         const restoredEducationTouched =
@@ -284,171 +432,452 @@ export function ProfileSetupForm({
               rawDraftEducation.trim().length > 0 &&
               rawDraftEducation !== serverEducation;
 
+        // Verified server contacts always take precedence over any local draft entry;
+        // explicit "" in a draft for an unverified contact is treated as an intentional removal.
+        const resolvedEmail = emailVerified
+          ? contactEmailProp
+          : typeof restoredValues.email === 'string'
+            ? restoredValues.email
+            : baseline.email;
+        const resolvedPhone = phoneVerified
+          ? contactPhoneProp
+          : typeof restoredValues.phone === 'string'
+            ? restoredValues.phone
+            : baseline.phone;
+
         return {
           hasDraft: true,
           skillsNoneTouched: isTouched,
           educationTouched: restoredEducationTouched,
           values: {
+            full_name:
+              typeof restoredValues.full_name === 'string'
+                ? restoredValues.full_name
+                : baseline.full_name,
+            email: resolvedEmail,
+            phone: resolvedPhone,
             current_role:
-              typeof restoredValues?.current_role === 'string'
+              typeof restoredValues.current_role === 'string'
                 ? restoredValues.current_role
-                : prev.values.current_role,
+                : baseline.current_role,
             education:
               restoredEducationTouched && typeof rawDraftEducation === 'string'
                 ? rawDraftEducation
                 : serverEducation,
-            experience_level:
-              typeof restoredValues?.experience_level === 'string'
-                ? restoredValues.experience_level
-                : prev.values.experience_level,
-            existing_skills_none:
-              typeof restoredValues?.existing_skills_none === 'boolean'
-                ? restoredValues.existing_skills_none
-                : prev.values.existing_skills_none,
+            experience_level: restoredLevel,
+            existing_skills_none: restoredSkillsNone,
             timezone: draftTz,
             preferred_daily_hours:
-              typeof restoredValues?.preferred_daily_hours === 'string'
+              typeof restoredValues.preferred_daily_hours === 'string'
                 ? restoredValues.preferred_daily_hours
-                : prev.values.preferred_daily_hours,
+                : baseline.preferred_daily_hours,
           },
         };
       }
 
-      if (!serverTz && !loadError) {
-        return {
-          ...prev,
-          values: {
-            ...prev.values,
-            timezone: prev.values.timezone || detectedTz,
-          },
-        };
-      }
-
-      return prev;
+      return {
+        hasDraft: false,
+        skillsNoneTouched: false,
+        educationTouched: false,
+        values: {
+          ...baseline,
+          timezone: serverTz ?? detectedTz,
+        },
+      };
     });
-  }, [initialProfile, loadError, userId]);
+  }, [
+    initialProfile,
+    contactEmailProp,
+    contactPhoneProp,
+    emailVerified,
+    phoneVerified,
+    initialFullName,
+    loadError,
+    userId,
+  ]);
 
-  const isActionStateDismissed = state === dismissedActionState;
-  const isErrorDismissed = isActionStateDismissed;
-  const isSuccessVisible = Boolean(state.success) && !isActionStateDismissed;
+  const isSuccessVisible =
+    Boolean(state.success) && dismissedSuccessState !== state;
 
-  // Effect 1: Success handling - clears draft and reconciles values when save succeeds
+  // Effect 1: Success handling - processes each useActionState result at most once,
+  // and reconciles later verified contact prop updates without wiping unsaved edits.
   useEffect(() => {
-    if (state.success) {
+    const isNewSuccess =
+      Boolean(state.success) && processedResultRef.current !== state;
+    if (isNewSuccess) {
+      processedResultRef.current = state;
       clearDraft(userId);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setFormState((prev) => {
+    }
+
+    if (!isNewSuccess && !emailVerified && !phoneVerified) {
+      return;
+    }
+
+    setFormState((prev) => {
+      if (isNewSuccess) {
         if (!state.values) {
           return prev.hasDraft ? { ...prev, hasDraft: false } : prev;
         }
+        const reconciledLevel =
+          state.values.experience_level ?? prev.values.experience_level;
+        const reconciledSkillsNone =
+          reconciledLevel === 'beginner'
+            ? typeof state.values.existing_skills_none === 'boolean'
+              ? state.values.existing_skills_none
+              : prev.values.existing_skills_none
+            : false;
 
         return {
           hasDraft: false,
           skillsNoneTouched: false,
           educationTouched: false,
           values: {
+            full_name: state.values.full_name ?? prev.values.full_name,
+            email: emailVerified
+              ? contactEmailProp
+              : (state.values.email ?? prev.values.email),
+            phone: phoneVerified
+              ? contactPhoneProp
+              : (state.values.phone ?? prev.values.phone),
             current_role: state.values.current_role ?? prev.values.current_role,
             education: state.values.education ?? prev.values.education,
-            experience_level:
-              state.values.experience_level ?? prev.values.experience_level,
-            existing_skills_none:
-              typeof state.values.existing_skills_none === 'boolean'
-                ? state.values.existing_skills_none
-                : prev.values.existing_skills_none,
-            timezone: state.values.timezone ?? prev.values.timezone,
+            experience_level: reconciledLevel,
+            existing_skills_none: reconciledSkillsNone,
+            timezone:
+              sanitizeIanaTimezone(state.values.timezone) ??
+              sanitizeIanaTimezone(prev.values.timezone) ??
+              'Asia/Dhaka',
             preferred_daily_hours:
               state.values.preferred_daily_hours ??
               prev.values.preferred_daily_hours,
           },
         };
-      });
-    }
-  }, [state, userId]);
+      }
 
-  // Effect 2: Error alert focus - focuses alert when error occurs and is not dismissed
+      const nextEmail = emailVerified ? contactEmailProp : prev.values.email;
+      const nextPhone = phoneVerified ? contactPhoneProp : prev.values.phone;
+      if (nextEmail === prev.values.email && nextPhone === prev.values.phone) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        values: {
+          ...prev.values,
+          email: nextEmail,
+          phone: nextPhone,
+        },
+      };
+    });
+  }, [
+    state,
+    userId,
+    emailVerified,
+    phoneVerified,
+    contactEmailProp,
+    contactPhoneProp,
+  ]);
+
+  // Effect 2: Error alert focus - focuses visible server alert when error occurs
   useEffect(() => {
-    if (state.error && !isErrorDismissed && errorAlertRef.current) {
+    if (visibleAlertState?.error && errorAlertRef.current) {
       errorAlertRef.current.focus();
     }
-  }, [state, isErrorDismissed]);
+  }, [visibleAlertState]);
 
-  /**
-   * Updates a controlled field value, dismisses stale action errors/success banners, and persists the local draft in sessionStorage.
-   */
-  const updateField = <K extends keyof ProfileSetupFormValues>(
-    key: K,
-    nextValue: ProfileSetupFormValues[K],
-    overrideTouched?: boolean,
-  ) => {
-    setDismissedActionState(state);
-    const nextTouched = overrideTouched ?? skillsNoneTouched;
-    const nextEducationTouched =
-      key === 'education' ? true : educationTouched;
-    const updatedValues: ProfileSetupFormValues = { ...values, [key]: nextValue };
-    setFormState((prev) => ({
-      ...prev,
-      values: updatedValues,
-      skillsNoneTouched: nextTouched,
-      educationTouched: nextEducationTouched,
-    }));
-    saveDraft(userId, updatedValues, nextTouched, nextEducationTouched);
+  const setFieldError = (field: ProfileSetupFieldKey, error?: string) => {
+    setClientErrors((prev) => {
+      if (!error) {
+        if (!prev[field]) return prev;
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      }
+      if (prev[field] === error) return prev;
+      return { ...prev, [field]: error };
+    });
+  };
+
+  const dismissServerField = (field: ProfileSetupFieldKey) => {
+    setDismissedServer((prev) => {
+      if (!state?.fieldErrors?.[field]) return prev;
+      if (prev?.ref === state && prev.fields.has(field)) return prev;
+      const fields = new Set(prev?.ref === state ? prev.fields : []);
+      fields.add(field);
+      return { ref: state, fields };
+    });
+  };
+
+  const getFieldError = (field: ProfileSetupFieldKey): string | undefined => {
+    if (clientErrors[field]) return clientErrors[field];
+    if (
+      dismissedServer?.ref === state &&
+      dismissedServer.fields.has(field)
+    ) {
+      return undefined;
+    }
+    return state?.fieldErrors?.[field];
   };
 
   /**
-   * Toggles the explicit beginner `None` (`existing_skills_none`) switch and persists touched state.
+   * Updates controlled field values, dismisses stale errors/success banners, and persists account-scoped draft.
    */
+  const commitFieldPatch = (
+    patch: Partial<ProfileSetupFormValues>,
+    options?: {
+      skillsNoneTouched?: boolean;
+      educationTouched?: boolean;
+    },
+  ) => {
+    dismissAlert();
+    if (state.success) {
+      setDismissedSuccessState(state);
+    }
+    const nextSkillsNoneTouched =
+      options?.skillsNoneTouched ?? skillsNoneTouched;
+    const nextEducationTouched =
+      options?.educationTouched ?? educationTouched;
+    const updatedValues: ProfileSetupFormValues = {
+      ...values,
+      ...patch,
+      email: emailVerified ? initialContact.email : (patch.email ?? values.email),
+      phone: phoneVerified ? initialContact.phone : (patch.phone ?? values.phone),
+    };
+    setFormState((prev) => ({
+      ...prev,
+      values: updatedValues,
+      skillsNoneTouched: nextSkillsNoneTouched,
+      educationTouched: nextEducationTouched,
+    }));
+    saveDraft(
+      userId,
+      updatedValues,
+      nextSkillsNoneTouched,
+      nextEducationTouched,
+    );
+  };
+
+  const handleFormActivity = (e: SyntheticEvent<HTMLFormElement>) => {
+    onFormActivity(e);
+  };
+
   const handleToggleSkillsNone = () => {
-    const nextSkillsNone = !values.existing_skills_none;
-    updateField('existing_skills_none', nextSkillsNone, true);
+    if (isPending || !isBeginner) {
+      return;
+    }
+    dismissServerField('existing_skills_none');
+    setFieldError('existing_skills_none', undefined);
+    commitFieldPatch(
+      { existing_skills_none: !values.existing_skills_none },
+      { skillsNoneTouched: true },
+    );
+  };
+
+  const handleExperienceLevelChange = (nextLevel: string) => {
+    if (isPending) {
+      return;
+    }
+    dismissServerField('experience_level');
+    if (getFieldError('experience_level')) {
+      const check = validateExperienceLevel(nextLevel);
+      setFieldError('experience_level', check.ok ? undefined : check.error);
+    }
+
+    if (nextLevel !== 'beginner') {
+      dismissServerField('existing_skills_none');
+      setFieldError('existing_skills_none', undefined);
+      const mustClearBaseline =
+        Boolean(effectiveProfile?.existing_skills_none) ||
+        values.existing_skills_none;
+      commitFieldPatch(
+        {
+          experience_level: nextLevel,
+          existing_skills_none: false,
+        },
+        mustClearBaseline ? { skillsNoneTouched: true } : undefined,
+      );
+      return;
+    }
+
+    commitFieldPatch({ experience_level: nextLevel });
+  };
+
+  const handleSubmit = (e: SyntheticEvent<HTMLFormElement>) => {
+    if (isPending) {
+      e.preventDefault();
+      return;
+    }
+
+    const errors: Partial<Record<ProfileSetupFieldKey, string>> = {};
+
+    const fullNameCheck = validateFullName(values.full_name);
+    if (!fullNameCheck.ok) {
+      errors.full_name = fullNameCheck.error;
+    }
+
+    const emailCheck = emailVerified
+      ? { ok: true as const, value: normalizeEmail(initialContact.email) }
+      : validateOptionalEmail(displayedEmail);
+    if (!emailCheck.ok) {
+      errors.email = emailCheck.error;
+    }
+
+    const phoneCheck = phoneVerified
+      ? {
+          ok: true as const,
+          value:
+            normalizeBdPhone(initialContact.phone) ??
+            initialContact.phone.trim(),
+        }
+      : validateOptionalBdPhone(displayedPhone);
+    if (!phoneCheck.ok) {
+      errors.phone = phoneCheck.error;
+      if (displayedPhone.trim()) {
+        phoneBlurredRef.current = true;
+      }
+    }
+
+    if (
+      emailCheck.ok &&
+      phoneCheck.ok &&
+      !emailCheck.value &&
+      !phoneCheck.value
+    ) {
+      errors.email = 'Enter a valid email address or phone number.';
+    }
+
+    const roleCheck = validateCurrentRole(values.current_role);
+    if (!roleCheck.ok) {
+      errors.current_role = roleCheck.error;
+    }
+
+    const eduCheck = validateEducation(values.education);
+    if (!eduCheck.ok) {
+      errors.education = eduCheck.error;
+    }
+
+    const levelCheck = validateExperienceLevel(values.experience_level);
+    if (!levelCheck.ok) {
+      errors.experience_level = levelCheck.error;
+    } else if (values.existing_skills_none && levelCheck.value !== 'beginner') {
+      errors.existing_skills_none =
+        'Complete Beginner mode is only available when Experience Level is Beginner.';
+    }
+
+    const resolvedSubmitTimezone =
+      sanitizeIanaTimezone(values.timezone) ?? detectBrowserTimezone();
+    const tzCheck = validateIanaTimezone(resolvedSubmitTimezone);
+    if (!tzCheck.ok) {
+      errors.timezone = tzCheck.error;
+    }
+
+    const hoursCheck = validateDailyHours(values.preferred_daily_hours);
+    if (!hoursCheck.ok) {
+      errors.preferred_daily_hours = hoursCheck.error;
+    }
+
+    if (Object.keys(errors).length > 0) {
+      e.preventDefault();
+      dismissAlert();
+      setClientErrors(errors);
+      const firstInvalidKey = FIELD_ORDER.find((key) => Boolean(errors[key]));
+      if (firstInvalidKey && typeof document !== 'undefined') {
+        const elId =
+          firstInvalidKey === 'existing_skills_none'
+            ? 'existing_skills_none_toggle'
+            : firstInvalidKey;
+        document.getElementById(elId)?.focus();
+      }
+      return;
+    }
+
+    setClientErrors({});
+    if (state.success) {
+      setDismissedSuccessState(state);
+    }
   };
 
   const baselineSkillsNone = Boolean(effectiveProfile?.existing_skills_none);
   const effectiveSkillsNoneTouched =
     skillsNoneTouched || values.existing_skills_none !== baselineSkillsNone;
-  const fieldErrors = isErrorDismissed ? {} : (state.fieldErrors ?? {});
   const storedSkills = effectiveProfile?.existing_skills ?? [];
   const showDraftRestored = hasDraft && !isSuccessVisible;
-  const mappedError =
-    state.error && !isErrorDismissed
-      ? mapActionResult({
-          error: state.error,
-          code: state.code,
-          retryAfterSeconds: state.retryAfterSeconds ?? undefined,
-          fieldErrors: state.fieldErrors,
-        })
-      : null;
+
+  const fullNameError = getFieldError('full_name');
+  const emailError = getFieldError('email');
+  const phoneError = getFieldError('phone');
+  const currentRoleError = getFieldError('current_role');
+  const educationError = getFieldError('education');
+  const experienceLevelError = getFieldError('experience_level');
+  const skillsError =
+    getFieldError('existing_skills') ?? getFieldError('existing_skills_none');
+  const dailyHoursError = getFieldError('preferred_daily_hours');
+  const resolvedTimezone = sanitizeIanaTimezone(values.timezone) ?? 'Asia/Dhaka';
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Step 1 of 5 Progress Indicator (C09 Component 04) */}
+      {/* Step 1 of 5 Modern Multi-Step Header */}
       <div
         role="progressbar"
         aria-valuenow={1}
         aria-valuemin={1}
         aria-valuemax={5}
         aria-label="Onboarding progress: Step 1 of 5"
-        className="flex flex-col gap-2.5 rounded-lg border border-border-subtle bg-surface-subtle p-4"
+        className="flex flex-col gap-4 rounded-xl border border-border-subtle bg-surface-subtle p-4 sm:p-5"
       >
-        <div className="flex items-center justify-between text-caption font-medium text-text-secondary">
-          <span>ধাপ ১ / ৫ (Step 1 of 5): প্রোফাইল সেটআপ (Profile Setup)</span>
-          <span className="font-mono tabular-nums text-text-primary">20%</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <span className="text-label-lg font-semibold text-text-primary">
+              Profile Setup
+            </span>
+            <span className="inline-flex items-center rounded-full border border-border-default bg-surface-default px-2.5 py-0.5 text-caption font-medium text-text-secondary">
+              Step 1 of 5
+            </span>
+          </div>
+          <span className="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 font-mono text-caption font-semibold tabular-nums text-teal-700 dark:text-teal-300">
+            20% Complete
+          </span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-sunken">
-          <div className="h-full w-1/5 rounded-full bg-action-primary-background transition-all duration-(--duration-normal) ease-standard" />
-        </div>
-        <ol className="hidden gap-2 text-caption sm:grid sm:grid-cols-5">
-          {ONBOARDING_STEPS.map((label, idx) => (
-            <li
-              key={label}
-              className={
-                idx === 0
-                  ? 'font-semibold text-text-brand'
-                  : 'text-text-muted'
-              }
-            >
-              {label}
-            </li>
-          ))}
+
+        <ol className="grid grid-cols-5 items-start">
+          {ONBOARDING_STEPS.map((step, idx) => {
+            const isActive = idx === 0;
+            const isLast = idx === ONBOARDING_STEPS.length - 1;
+            return (
+              <li
+                key={step.label}
+                className="relative flex flex-col items-center px-1 text-center"
+              >
+                {!isLast && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
+                  />
+                )}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all',
+                    isActive
+                      ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
+                      : 'border border-border-default bg-surface-default font-medium text-text-muted',
+                  )}
+                >
+                  {step.number}
+                </span>
+                <span
+                  className={cn(
+                    'sr-only mt-2 text-caption leading-tight sm:not-sr-only',
+                    isActive
+                      ? 'font-semibold text-text-brand'
+                      : 'text-text-muted',
+                  )}
+                >
+                  {step.label}
+                </span>
+              </li>
+            );
+          })}
         </ol>
       </div>
 
@@ -457,7 +886,7 @@ export function ProfileSetupForm({
         <Alert
           variant="warning"
           role="alert"
-          title="প্রোফাইল লোড করা যায়নি (Profile load warning)"
+          title="Could not load saved profile"
         >
           {loadError}
         </Alert>
@@ -469,363 +898,495 @@ export function ProfileSetupForm({
           aria-live="polite"
           className="text-caption text-text-muted"
         >
-          ড্রাফট সংরক্ষিত (Saved locally — unsaved changes restored).
+          Draft restored — your unsaved edits are loaded for this session.
         </p>
       )}
 
-      {mappedError && (
+      {visibleAlertState?.error && (
         <div ref={errorAlertRef} tabIndex={-1} className="focus:outline-none">
-          <Alert
-            variant={
-              mappedError.tone !== 'error' ||
-              (mappedError.retryAfterSeconds ?? 0) > 0
-                ? 'warning'
-                : 'error_retryable'
-            }
-            role="alert"
-            retryAfterSeconds={mappedError.retryAfterSeconds}
-          >
-            {mappedError.message}
-          </Alert>
+          <AuthAlert
+            result={{
+              ...visibleAlertState,
+              retryAfterSeconds: visibleAlertState.retryAfterSeconds ?? undefined,
+            }}
+          />
         </div>
       )}
 
       {isSuccessVisible && state.message && (
         <Alert variant="success" role="status" title={state.message}>
-          আপনি এখন ড্যাশবোর্ডে যেতে পারেন। পরবর্তী ধাপগুলো (Skills, Preferences, Career Goal) M05-এ যুক্ত হবে।
+          Your profile details and study preferences are saved. Next onboarding steps (Skills, Preferences, Career Goal) arrive in M05.
         </Alert>
       )}
 
-      <form action={formAction} noValidate className="flex flex-col gap-5">
-        {/* Current Role / Profession (Required, <= 120 chars) */}
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="current_role"
-            className="text-label-lg text-text-primary"
-          >
-            বর্তমান পেশা বা ভূমিকা (Current Role / Profession) <span aria-hidden="true">*</span>
-          </label>
-          <input
-            id="current_role"
-            name="current_role"
-            type="text"
-            required
-            maxLength={120}
-            readOnly={isPending}
-            value={values.current_role}
-            onChange={(e) => updateField('current_role', e.target.value)}
-            aria-invalid={Boolean(fieldErrors.current_role)}
-            aria-describedby={
-              fieldErrors.current_role ? 'current_role-error' : 'current_role-hint'
+      <form
+        action={formAction}
+        noValidate
+        onFocusCapture={handleFormActivity}
+        onChangeCapture={handleFormActivity}
+        onSubmit={handleSubmit}
+        className="flex flex-col gap-5"
+      >
+        {/* Full Name (Required, 2-100 chars) */}
+        <Input
+          id="full_name"
+          name="full_name"
+          variant="text"
+          label="Full Name"
+          required
+          maxLength={FULL_NAME_MAX}
+          autoComplete="name"
+          readOnly={isPending}
+          value={values.full_name}
+          error={fullNameError}
+          placeholder="Enter your full name"
+          hint="Min 2 – Max 100 characters"
+          onChange={(e) => {
+            const v = e.target.value;
+            dismissServerField('full_name');
+            if (/[\u0000-\u001F\u007F]/.test(v)) {
+              setFieldError('full_name', 'Full name cannot contain control characters.');
+            } else if (clientErrors.full_name) {
+              const check = validateFullName(v);
+              setFieldError('full_name', check.ok ? undefined : check.error);
             }
-            placeholder="যেমন: Student, Frontend Developer, QA Engineer"
-            className={cn(CONTROL_BASE_CLASS, fieldBorderClass(Boolean(fieldErrors.current_role)))}
+            commitFieldPatch({ full_name: v });
+          }}
+          onBlur={(e) => {
+            const check = validateFullName(e.target.value);
+            if (!check.ok) {
+              setFieldError('full_name', check.error);
+              return;
+            }
+            setFieldError('full_name', undefined);
+            if (check.value !== values.full_name) {
+              commitFieldPatch({ full_name: check.value });
+            }
+          }}
+        />
+
+        {/* Email & Phone Contacts (Prefilled Verified Contact = readOnly) */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input
+            id="email"
+            name="email"
+            variant="email"
+            label="Email Address"
+            required={!emailVerified && !phoneVerified && !displayedPhone.trim()}
+            readOnly={emailVerified || isPending}
+            labelBadge={emailVerified ? <VerifiedBadge /> : undefined}
+            value={displayedEmail}
+            error={emailError}
+            placeholder="you@example.com"
+            hint={
+              emailVerified
+                ? 'Verified primary email. Manage contacts in Settings.'
+                : phoneVerified
+                  ? 'Optional secondary email address.'
+                  : 'Enter an email or Bangladesh mobile number.'
+            }
+            onChange={(e) => {
+              if (emailVerified) return;
+              const v = e.target.value;
+              dismissServerField('email');
+              if (!v.trim()) {
+                setFieldError('email', undefined);
+              } else if (clientErrors.email) {
+                const check = validateOptionalEmail(v);
+                setFieldError('email', check.ok ? undefined : check.error);
+              }
+              commitFieldPatch({ email: v });
+            }}
+            onBlur={(e) => {
+              if (emailVerified) return;
+              if (!e.target.value.trim()) {
+                setFieldError('email', undefined);
+                return;
+              }
+              const check = validateOptionalEmail(e.target.value);
+              if (!check.ok) {
+                setFieldError('email', check.error);
+                return;
+              }
+              setFieldError('email', undefined);
+              if (check.value !== values.email) {
+                commitFieldPatch({ email: check.value });
+              }
+            }}
           />
-          <p id="current_role-hint" className="text-caption text-text-muted">
-            সর্বোচ্চ ১২০ অক্ষর (Maximum 120 characters).
-          </p>
-          {fieldErrors.current_role && (
-            <p
-              id="current_role-error"
-              role="alert"
-              className="flex items-start gap-1 text-caption text-text-danger"
-            >
-              <AlertCircleIcon className="mt-0.5 shrink-0" />
-              <span>{fieldErrors.current_role}</span>
-            </p>
-          )}
+
+          <Input
+            id="phone"
+            name="phone"
+            variant="phone_bd"
+            label="Phone Number"
+            required={!emailVerified && !phoneVerified && !displayedEmail.trim()}
+            readOnly={phoneVerified || isPending}
+            labelBadge={phoneVerified ? <VerifiedBadge /> : undefined}
+            value={displayedPhone}
+            error={phoneError}
+            placeholder="01XXXXXXXXX"
+            hint={
+              phoneVerified
+                ? 'Verified primary phone. Manage contacts in Settings.'
+                : 'Optional Bangladesh mobile, e.g. 01XXXXXXXXX'
+            }
+            onChange={(e) => {
+              if (phoneVerified) return;
+              const v = e.target.value;
+              dismissServerField('phone');
+              const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
+              if (check.resetBlurred) phoneBlurredRef.current = false;
+              setFieldError('phone', check.error);
+              if (!emailVerified && clientErrors.email && !displayedEmail.trim() && check.ok && v.trim()) {
+                setFieldError('email', undefined);
+              }
+              commitFieldPatch({ phone: v });
+            }}
+            onBlur={(e) => {
+              if (phoneVerified) return;
+              if (!e.target.value.trim()) {
+                phoneBlurredRef.current = false;
+                setFieldError('phone', undefined);
+                return;
+              }
+              phoneBlurredRef.current = true;
+              const check = validateOptionalBdPhone(e.target.value);
+              setFieldError('phone', check.ok ? undefined : check.error);
+            }}
+          />
         </div>
 
         {/* Education (Optional, <= 200 chars) */}
-        <div className="flex flex-col gap-1.5">
+        <div>
           <input
             type="hidden"
             name="education_touched"
             value={educationTouched ? 'true' : 'false'}
           />
-          <label
-            htmlFor="education"
-            className="text-label-lg text-text-primary"
-          >
-            শিক্ষাগত যোগ্যতা — ঐচ্ছিক (Education — Optional)
-          </label>
           <input
+            type="hidden"
+            id="timezone"
+            name="timezone"
+            value={resolvedTimezone}
+          />
+          <Input
             id="education"
             name="education"
-            type="text"
-            maxLength={200}
+            variant="text"
+            label="Education (Optional)"
+            maxLength={EDUCATION_MAX}
             readOnly={isPending}
             value={values.education}
-            onChange={(e) => updateField('education', e.target.value)}
-            aria-invalid={Boolean(fieldErrors.education)}
-            aria-describedby={
-              fieldErrors.education ? 'education-error' : 'education-hint'
-            }
-            placeholder="যেমন: BSc in CSE, Diploma in Engineering (ঐচ্ছিক / Optional)"
-            className={cn(CONTROL_BASE_CLASS, fieldBorderClass(Boolean(fieldErrors.education)))}
-          />
-          <p id="education-hint" className="text-caption text-text-muted">
-            এই তথ্যটি ঐচ্ছিক — ফাঁকা রাখা যাবে (Optional field — not required for profile completion).
-          </p>
-          {fieldErrors.education && (
-            <p
-              id="education-error"
-              role="alert"
-              className="flex items-start gap-1 text-caption text-text-danger"
-            >
-              <AlertCircleIcon className="mt-0.5 shrink-0" />
-              <span>{fieldErrors.education}</span>
-            </p>
-          )}
-        </div>
-
-        {/* Experience Level (Required, beginner | junior | mid | senior — no forced junior fallback) */}
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="experience_level"
-            className="text-label-lg text-text-primary"
-          >
-            অভিজ্ঞতার স্তর (Experience Level) <span aria-hidden="true">*</span>
-          </label>
-          <select
-            id="experience_level"
-            name="experience_level"
-            required
-            aria-disabled={isPending || undefined}
-            tabIndex={isPending ? -1 : undefined}
-            value={values.experience_level}
+            error={educationError}
+            placeholder="e.g. BSc in CSE, Diploma in Engineering"
+            hint={`Max ${EDUCATION_MAX} characters`}
             onChange={(e) => {
-              if (isPending) return;
-              updateField('experience_level', e.target.value);
+              const v = e.target.value;
+              dismissServerField('education');
+              if (
+                /[\u0000-\u001F\u007F]/.test(v) ||
+                v.trim().length > EDUCATION_MAX ||
+                clientErrors.education
+              ) {
+                const check = validateEducation(v);
+                setFieldError('education', check.ok ? undefined : check.error);
+              }
+              commitFieldPatch({ education: v }, { educationTouched: true });
             }}
-            aria-invalid={Boolean(fieldErrors.experience_level)}
-            aria-describedby={
-              fieldErrors.experience_level
-                ? 'experience_level-error'
-                : 'experience_level-hint'
-            }
-            className={cn(
-              CONTROL_BASE_CLASS,
-              fieldBorderClass(Boolean(fieldErrors.experience_level)),
-              isPending && 'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
-            )}
-          >
-            <option value="">
-              অভিজ্ঞতার স্তর নির্বাচন করুন (Select experience level)
-            </option>
-            <option value="beginner">
-              Beginner — সম্পূর্ণ নতুন / শিক্ষার্থী (Complete Beginner)
-            </option>
-            <option value="junior">
-              Junior — প্রাথমিক পেশাদার অভিজ্ঞতা (Junior)
-            </option>
-            <option value="mid">
-              Mid-Level — মধ্যম পর্যায়ের অভিজ্ঞতা (Mid-Level)
-            </option>
-            <option value="senior">
-              Senior — অভিজ্ঞ পেশাদার (Senior)
-            </option>
-          </select>
-          <p id="experience_level-hint" className="text-caption text-text-muted">
-            নতুনদের জন্য Beginner নির্বাচন করুন (Choose Beginner if starting from zero).
-          </p>
-          {fieldErrors.experience_level && (
-            <p
-              id="experience_level-error"
-              role="alert"
-              className="flex items-start gap-1 text-caption text-text-danger"
-            >
-              <AlertCircleIcon className="mt-0.5 shrink-0" />
-              <span>{fieldErrors.experience_level}</span>
-            </p>
-          )}
+            onBlur={(e) => {
+              const check = validateEducation(e.target.value);
+              setFieldError('education', check.ok ? undefined : check.error);
+            }}
+          />
         </div>
 
-        {/* Explicit Beginner "None" Skills Toggle (C01 §14 / C05 EP-P02 / C09 Component 08) */}
-        <div className="flex flex-col gap-2 rounded-lg border border-border-default bg-surface-subtle p-4">
-          <input
-            type="hidden"
-            name="existing_skills_none"
-            value={values.existing_skills_none ? 'true' : 'false'}
+        {/* Core Profile 2x2 Responsive Grid */}
+        <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2">
+          {/* Grid Cell 1 (Top-Left): Current Role / Profession (Required, 2-120 chars) */}
+          <Input
+            id="current_role"
+            name="current_role"
+            variant="text"
+            label="Current Role / Profession"
+            required
+            maxLength={CURRENT_ROLE_MAX}
+            readOnly={isPending}
+            value={values.current_role}
+            error={currentRoleError}
+            placeholder="e.g. Student, Frontend Developer, QA Engineer"
+            hint="Min 2 – Max 120 characters"
+            onChange={(e) => {
+              const v = e.target.value;
+              dismissServerField('current_role');
+              if (/[\u0000-\u001F\u007F]/.test(v)) {
+                setFieldError(
+                  'current_role',
+                  'Current role cannot contain control characters.',
+                );
+              } else if (
+                clientErrors.current_role ||
+                v.trim().length > CURRENT_ROLE_MAX
+              ) {
+                const check = validateCurrentRole(v);
+                setFieldError('current_role', check.ok ? undefined : check.error);
+              }
+              commitFieldPatch({ current_role: v });
+            }}
+            onBlur={(e) => {
+              const check = validateCurrentRole(e.target.value);
+              if (!check.ok) {
+                setFieldError('current_role', check.error);
+                return;
+              }
+              setFieldError('current_role', undefined);
+              if (check.value !== values.current_role) {
+                commitFieldPatch({ current_role: check.value });
+              }
+            }}
           />
-          <input
-            type="hidden"
-            name="existing_skills_none_touched"
-            value={effectiveSkillsNoneTouched ? 'true' : 'false'}
-          />
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
+
+          {/* Grid Cell 2 (Top-Right): Experience Level (Required, beginner | junior | mid | senior) */}
+          <FieldShell
+            id="experience_level"
+            label="Experience Level"
+            required
+            error={experienceLevelError}
+            hint="Choose Beginner if you are starting from scratch."
+          >
+            <div className="group relative">
+              <select
+                id="experience_level"
+                name="experience_level"
+                required
+                aria-disabled={isPending || undefined}
+                tabIndex={isPending ? -1 : undefined}
+                value={values.experience_level}
+                onChange={(e) => handleExperienceLevelChange(e.target.value)}
+                onBlur={(e) => {
+                  const check = validateExperienceLevel(e.target.value);
+                  setFieldError(
+                    'experience_level',
+                    check.ok ? undefined : check.error,
+                  );
+                }}
+                aria-invalid={experienceLevelError ? 'true' : undefined}
+                aria-describedby={
+                  experienceLevelError
+                    ? 'experience_level-error'
+                    : 'experience_level-hint'
+                }
+                className={cn(
+                  SELECT_BASE_CLASS,
+                  selectBorderClass(Boolean(experienceLevelError)),
+                  isPending &&
+                    'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
+                )}
+              >
+                <option value="">Select your experience level</option>
+                <option value="beginner">
+                  Beginner — Complete newcomer or student
+                </option>
+                <option value="junior">
+                  Junior — Early-career developer (0–2 years)
+                </option>
+                <option value="mid">
+                  Mid-Level — Solid hands-on experience (2–5 years)
+                </option>
+                <option value="senior">
+                  Senior — Experienced engineer or lead (5+ years)
+                </option>
+              </select>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 transition-colors duration-200 group-hover:text-slate-600 group-focus-within:text-teal-500 dark:group-hover:text-slate-200"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  focusable="false"
+                  className="transition-transform duration-200 ease-out group-hover:translate-y-0.5 group-focus-within:rotate-180"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </span>
+            </div>
+          </FieldShell>
+
+          {/* Grid Cell 3 (Bottom-Left): Complete Beginner interactive switch */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-label-lg text-text-primary">
+                Skill Baseline
+              </span>
+            </div>
+            <div
+              className={cn(
+                'flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors duration-(--duration-fast) ease-standard',
+                isBeginner && values.existing_skills_none
+                  ? 'border-teal-500/50 bg-teal-500/5'
+                  : 'border-border-default bg-surface-subtle hover:border-border-strong',
+                !isBeginner &&
+                  'cursor-not-allowed opacity-60 hover:border-border-default',
+              )}
+            >
+              <input
+                type="hidden"
+                name="existing_skills_none"
+                value={
+                  isBeginner && values.existing_skills_none ? 'true' : 'false'
+                }
+              />
+              <input
+                type="hidden"
+                name="existing_skills_none_touched"
+                value={effectiveSkillsNoneTouched ? 'true' : 'false'}
+              />
               <span
                 id="existing_skills_none_label"
-                className="text-label-lg text-text-primary"
+                className={cn(
+                  'truncate text-body transition-colors',
+                  isBeginner && values.existing_skills_none
+                    ? 'font-medium text-teal-700 dark:text-teal-300'
+                    : 'font-normal text-slate-600 dark:text-slate-300',
+                )}
               >
-                আমার এখনো কোনো টেক স্কিল নেই (None — Complete Beginner)
+                Complete Beginner
               </span>
-              <span
-                id="existing_skills_none_hint"
-                className="text-caption text-text-muted"
+              <button
+                type="button"
+                id="existing_skills_none_toggle"
+                role="switch"
+                aria-checked={isBeginner ? values.existing_skills_none : false}
+                aria-labelledby="existing_skills_none_label"
+                aria-invalid={skillsError ? 'true' : undefined}
+                aria-describedby={
+                  skillsError ? 'existing_skills_none-error' : undefined
+                }
+                disabled={isPending || !isBeginner}
+                onClick={handleToggleSkillsNone}
+                className={cn(
+                  'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-(--duration-fast) ease-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed',
+                  isBeginner && values.existing_skills_none
+                    ? 'bg-teal-500'
+                    : 'bg-neutral-300 dark:bg-slate-700',
+                )}
               >
-                নতুনদের জন্য বৈধ — কোনো কৃত্রিম স্কিল তৈরি করা হবে না (Valid for beginners; creates no fabricated skills).
-              </span>
+                <span className="sr-only">
+                  {isBeginner && values.existing_skills_none
+                    ? 'Complete Beginner: On'
+                    : 'Complete Beginner: Off'}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-xs transition-transform duration-(--duration-fast) ease-standard',
+                    isBeginner && values.existing_skills_none
+                      ? 'translate-x-5'
+                      : 'translate-x-0.5',
+                  )}
+                />
+              </button>
             </div>
+
+            {storedSkills.length > 0 &&
+              !(isBeginner && values.existing_skills_none) && (
+                <p className="text-caption text-text-secondary">
+                  <span>Stored skills preserved: </span>
+                  <span className="font-medium text-text-primary">
+                    {storedSkills.map((s) => s.name).join(', ')}
+                  </span>
+                </p>
+              )}
+
+            {skillsError && (
+              <p
+                id="existing_skills_none-error"
+                className="flex items-center gap-1.5 text-caption leading-snug text-text-danger"
+              >
+                <AlertCircleIcon className="h-3.5 w-3.5 shrink-0" />
+                <span>{skillsError}</span>
+              </p>
+            )}
+          </div>
+
+          {/* Grid Cell 4 (Bottom-Right): Preferred Daily Hours (Required) */}
+          <Input
+            id="preferred_daily_hours"
+            name="preferred_daily_hours"
+            variant="number"
+            label="Preferred Daily Hours"
+            required
+            min={0.5}
+            max={12}
+            step={0.5}
+            readOnly={isPending}
+            value={values.preferred_daily_hours}
+            error={dailyHoursError}
+            placeholder="2"
+            hint="0.5 to 12 hours per day, in 0.5 increments."
+            onChange={(e) => {
+              const v = e.target.value;
+              dismissServerField('preferred_daily_hours');
+              if (clientErrors.preferred_daily_hours) {
+                const check = validateDailyHours(v);
+                setFieldError(
+                  'preferred_daily_hours',
+                  check.ok ? undefined : check.error,
+                );
+              }
+              commitFieldPatch({ preferred_daily_hours: v });
+            }}
+            onBlur={(e) => {
+              const check = validateDailyHours(e.target.value);
+              setFieldError(
+                'preferred_daily_hours',
+                check.ok ? undefined : check.error,
+              );
+            }}
+          />
+        </div>
+
+        {/* Footer Actions Bar */}
+        <div className="mt-8 flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800/80">
+          <Link
+            href="/dashboard"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-transparent px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/70"
+          >
+            Go to Dashboard
+          </Link>
+
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
             <button
               type="button"
-              id="existing_skills_none_toggle"
-              role="switch"
-              aria-checked={values.existing_skills_none}
-              aria-labelledby="existing_skills_none_label"
-              aria-describedby="existing_skills_none_hint"
-              disabled={isPending}
-              onClick={handleToggleSkillsNone}
-              className={cn(
-                'relative inline-flex h-11 min-w-[84px] shrink-0 items-center justify-center rounded-full border px-3 text-caption font-semibold transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)',
-                values.existing_skills_none
-                  ? 'border-action-primary-background bg-action-primary-background text-action-primary-foreground'
-                  : 'border-border-default bg-surface-default text-text-primary hover:border-border-strong',
-              )}
-            >
-              {values.existing_skills_none ? 'None: ON' : 'None: OFF'}
-            </button>
-          </div>
-
-          {storedSkills.length > 0 && !values.existing_skills_none && (
-            <div className="mt-1 text-caption text-text-secondary">
-              <span>সংরক্ষিত স্কিল (Stored skills preserved): </span>
-              <span className="font-medium text-text-primary">
-                {storedSkills.map((s) => s.name).join(', ')}
-              </span>
-            </div>
-          )}
-
-          {(fieldErrors.existing_skills || fieldErrors.existing_skills_none) && (
-            <p role="alert" className="flex items-start gap-1 text-caption text-text-danger">
-              <AlertCircleIcon className="mt-0.5 shrink-0" />
-              <span>{fieldErrors.existing_skills || fieldErrors.existing_skills_none}</span>
-            </p>
-          )}
-        </div>
-
-        {/* IANA Timezone & Preferred Daily Hours (EP-P04) */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="timezone"
-              className="text-label-lg text-text-primary"
-            >
-              টাইমজোন (IANA Timezone)
-            </label>
-            <input
-              id="timezone"
-              name="timezone"
-              type="text"
-              readOnly={isPending}
-              value={values.timezone}
-              onChange={(e) => updateField('timezone', e.target.value)}
-              aria-invalid={Boolean(fieldErrors.timezone)}
-              aria-describedby={
-                fieldErrors.timezone ? 'timezone-error' : 'timezone-hint'
-              }
-              placeholder="Asia/Dhaka"
-              className={cn(CONTROL_BASE_CLASS, fieldBorderClass(Boolean(fieldErrors.timezone)))}
-            />
-            <p id="timezone-hint" className="text-caption text-text-muted">
-              উদাহরণ: Asia/Dhaka, UTC
-            </p>
-            {fieldErrors.timezone && (
-              <p
-                id="timezone-error"
-                role="alert"
-                className="flex items-start gap-1 text-caption text-text-danger"
-              >
-                <AlertCircleIcon className="mt-0.5 shrink-0" />
-                <span>{fieldErrors.timezone}</span>
-              </p>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="preferred_daily_hours"
-              className="text-label-lg text-text-primary"
-            >
-              দৈনিক শেখার সময় — ঘণ্টা (Preferred Daily Hours)
-            </label>
-            <input
-              id="preferred_daily_hours"
-              name="preferred_daily_hours"
-              type="number"
-              min="0.5"
-              max="12"
-              step="0.5"
-              readOnly={isPending}
-              value={values.preferred_daily_hours}
-              onChange={(e) =>
-                updateField('preferred_daily_hours', e.target.value)
-              }
-              aria-invalid={Boolean(fieldErrors.preferred_daily_hours)}
-              aria-describedby={
-                fieldErrors.preferred_daily_hours
-                  ? 'preferred_daily_hours-error'
-                  : 'preferred_daily_hours-hint'
-              }
-              placeholder="2"
-              className={cn(
-                CONTROL_BASE_CLASS,
-                fieldBorderClass(Boolean(fieldErrors.preferred_daily_hours)),
-              )}
-            />
-            <p id="preferred_daily_hours-hint" className="text-caption text-text-muted">
-              ০.৫ থেকে ১২ ঘণ্টা, ০.৫ ধাপে (0.5 to 12 hours in 0.5 steps).
-            </p>
-            {fieldErrors.preferred_daily_hours && (
-              <p
-                id="preferred_daily_hours-error"
-                role="alert"
-                className="flex items-start gap-1 text-caption text-text-danger"
-              >
-                <AlertCircleIcon className="mt-0.5 shrink-0" />
-                <span>{fieldErrors.preferred_daily_hours}</span>
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Action Buttons: Save Profile, Disabled M05 Next Step, and Working Skip to Dashboard */}
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Button
-            type="submit"
-            variant="primary"
-            size="lg"
-            isLoading={isPending}
-            loadingText="সংরক্ষণ হচ্ছে... (Saving...)"
-          >
-            প্রোফাইল সংরক্ষণ করুন (Save Profile)
-          </Button>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button
-              type="button"
-              variant="secondary"
-              size="md"
               disabled
               aria-disabled="true"
-              aria-describedby="m05-step-note"
+              className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-1.5 rounded-full border border-border-subtle bg-surface-subtle px-4 text-label-lg font-medium text-text-disabled"
             >
-              পরবর্তী: স্কিলস (Next: Skills — M05)
-            </Button>
+              <LockIcon className="h-3.5 w-3.5 shrink-0" />
+              <span>Next: Skills</span>
+            </button>
 
-            <Link
-              href="/dashboard"
-              className="inline-flex h-10 min-h-11 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-4 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active"
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={isPending}
+              disabled={isPending}
+              loadingText="Saving profile..."
+              className="min-w-[160px]"
             >
-              ড্যাশবোর্ডে যান (Skip to Dashboard)
-            </Link>
+              Save Profile
+            </Button>
           </div>
         </div>
-
-        <p id="m05-step-note" className="text-caption text-text-muted">
-          দ্রষ্টব্য: প্রোফাইল সম্পূর্ণ না হলেও আপনি যেকোনো সময় ড্যাশবোর্ড ব্যবহার করতে পারবেন (Profile completion is only required before roadmap generation; Steps 2–5 are scheduled for Milestone M05).
-        </p>
       </form>
     </div>
   );
