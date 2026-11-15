@@ -131,22 +131,46 @@ describe('AppShell, Sidebar, and Header', () => {
 
     const mobileTrigger = screen.getByRole('button', { name: 'Open sidebar' });
     const sidebar = screen.getByRole('complementary', { name: 'Primary sidebar' });
+    const firstDrawerControl = within(sidebar).getByRole('link', {
+      name: /AI Career Mentor/i,
+    });
+    const lastDrawerControl = within(sidebar).getByRole('link', {
+      name: 'Settings',
+    });
 
     expect(mobileTrigger).toHaveAttribute('aria-expanded', 'false');
     expect(sidebar.className).toContain('-translate-x-full');
 
-    // Open and close via backdrop click
+    // Open -> moves focus into drawer, traps Tab/Shift+Tab, and backdrop click restores focus to trigger
     fireEvent.click(mobileTrigger);
     expect(mobileTrigger).toHaveAttribute('aria-expanded', 'true');
     expect(sidebar.className).toContain('translate-x-0');
+    expect(document.activeElement).toBe(firstDrawerControl);
+
+    // Shift+Tab on first focusable control wraps to last control inside drawer
+    fireEvent.keyDown(firstDrawerControl, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(lastDrawerControl);
+
+    // Tab on last focusable control wraps back to first control inside drawer
+    fireEvent.keyDown(lastDrawerControl, { key: 'Tab' });
+    expect(document.activeElement).toBe(firstDrawerControl);
 
     const backdrop = screen.getByTestId('sidebar-backdrop');
     fireEvent.click(backdrop);
     expect(mobileTrigger).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(mobileTrigger);
+
+    // Open and close via drawer Close sidebar button restoring focus to trigger
+    fireEvent.click(mobileTrigger);
+    expect(document.activeElement).toBe(firstDrawerControl);
+    fireEvent.click(within(sidebar).getByRole('button', { name: 'Close sidebar' }));
+    expect(mobileTrigger).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(mobileTrigger);
 
     // Open and close via Escape key returning focus to trigger
     fireEvent.click(mobileTrigger);
     expect(mobileTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(document.activeElement).toBe(firstDrawerControl);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(mobileTrigger).toHaveAttribute('aria-expanded', 'false');
     expect(document.activeElement).toBe(mobileTrigger);
@@ -195,6 +219,7 @@ describe('AppShell, Sidebar, and Header', () => {
     );
 
     const trigger = screen.getByRole('button', { name: /Mehedi Hasan/i });
+    expect(trigger).toHaveAttribute('aria-label', 'User menu (Mehedi Hasan)');
     expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(trigger).toHaveTextContent('MH');

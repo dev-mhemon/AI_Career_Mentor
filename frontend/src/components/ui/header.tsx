@@ -294,7 +294,7 @@ export function Header({
       {includeSkipLink && <SkipLink />}
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-slate-200/80 bg-white/95 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:px-8">
         {/* Left Area: Mobile drawer trigger + Quick Search pill */}
-        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial sm:gap-3">
           {onOpenMobileMenu && (
             <button
               ref={mobileTriggerRef}
@@ -309,8 +309,11 @@ export function Header({
             </button>
           )}
 
-          <div ref={searchContainerRef} className="relative">
-            <div className="flex w-56 items-center gap-2 rounded-full border border-slate-200/80 bg-slate-100/80 px-4 py-1.5 text-sm transition-colors focus-within:border-teal-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/20 dark:border-slate-700/70 dark:bg-slate-800/80 dark:focus-within:bg-slate-900 sm:w-72">
+          <div
+            ref={searchContainerRef}
+            className="relative flex min-w-0 flex-1 sm:flex-initial"
+          >
+            <div className="flex min-w-0 flex-1 max-w-[10.5rem] items-center gap-2 rounded-full border border-slate-200/80 bg-slate-100/80 px-4 py-1.5 text-sm transition-colors focus-within:border-teal-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/20 dark:border-slate-700/70 dark:bg-slate-800/80 dark:focus-within:bg-slate-900 sm:max-w-none sm:w-60 md:w-72">
               <SearchIcon className="h-4 w-4 shrink-0 text-slate-400" />
               <input
                 ref={searchInputRef}
@@ -412,6 +415,7 @@ export function Header({
             <button
               ref={userTriggerRef}
               type="button"
+              aria-label={`User menu (${displayName})`}
               aria-expanded={isUserMenuOpen}
               aria-haspopup="menu"
               aria-controls={userMenuId}

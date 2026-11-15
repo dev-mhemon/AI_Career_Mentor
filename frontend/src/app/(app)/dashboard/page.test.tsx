@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
-import type { AppSessionStateResult } from '@/lib/auth/user';
-import type { LoadProfileResult } from '@/lib/profile/actions';
+import type { getAppSessionStateResult } from '@/lib/auth/user';
+import type { loadProfileForSetup } from '@/lib/profile/actions';
+
+type SessionStateResult = Awaited<ReturnType<typeof getAppSessionStateResult>>;
+type ProfileSetupResult = Awaited<ReturnType<typeof loadProfileForSetup>>;
 
 const {
   mockRedirect,
@@ -13,8 +16,8 @@ const {
   mockRedirect: vi.fn((path: string): never => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
-  mockGetAppSessionStateResult: vi.fn<() => Promise<AppSessionStateResult>>(),
-  mockLoadProfileForSetup: vi.fn<() => Promise<LoadProfileResult>>(),
+  mockGetAppSessionStateResult: vi.fn<() => Promise<SessionStateResult>>(),
+  mockLoadProfileForSetup: vi.fn<() => Promise<ProfileSetupResult>>(),
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
 }));
@@ -60,14 +63,21 @@ describe('DashboardPage', () => {
   });
 
   it('redirects unauthenticated users to /login', async () => {
-    mockGetAppSessionStateResult.mockResolvedValue({ status: 'unauthenticated' });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'unauthenticated',
+      data: null,
+    });
 
     await expect(DashboardPage()).rejects.toThrow('NEXT_REDIRECT:/login');
     expect(mockRedirect).toHaveBeenCalledWith('/login');
   });
 
   it('hides workspace sidebar on transient_error recovery shell via AppShellSync disabled', async () => {
-    mockGetAppSessionStateResult.mockResolvedValue({ status: 'transient_error' });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'transient_error',
+      data: null,
+      error: new Error('Service unavailable'),
+    });
 
     const page = await DashboardPage();
     render(
@@ -159,9 +169,24 @@ describe('DashboardPage', () => {
         current_role: 'Senior Full-Stack Engineer',
         education: 'BSc in Computer Science',
         experience_level: 'mid',
-        existing_skills: ['TypeScript', 'Next.js'],
+        existing_skills: [
+          {
+            skill_id: 'skill-1',
+            name: 'TypeScript',
+            alias_resolved: false,
+            learning_state: 'proficient',
+            source: 'self_reported',
+          },
+          {
+            skill_id: 'skill-2',
+            name: 'Next.js',
+            alias_resolved: false,
+            learning_state: 'practicing',
+            source: 'self_reported',
+          },
+        ],
         existing_skills_none: false,
-        learning_preference: 'projects',
+        learning_preference: 'hands_on',
         preferred_daily_hours: 4,
         timezone: 'Asia/Dhaka',
         timezone_detected: true,

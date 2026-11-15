@@ -8,6 +8,35 @@ import { logoutAction } from '@/lib/auth/actions';
 import type { ShellUserInfo } from '@/lib/auth/user-display';
 import { useSafePathname } from '@/lib/navigation/use-safe-pathname';
 
+const DRAWER_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function getFocusableDrawerElements(
+  container: HTMLElement | null,
+): HTMLElement[] {
+  if (!container) return [];
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE_SELECTOR),
+  ).filter((el) => {
+    if (
+      el.hasAttribute('disabled') ||
+      el.getAttribute('aria-hidden') === 'true'
+    ) {
+      return false;
+    }
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.getComputedStyle === 'function'
+    ) {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 export interface AppShellProps {
   children: ReactNode;
   variant?: 'authenticated' | 'admin';
@@ -49,9 +78,21 @@ export function AppShell({
 
   const sidebarRef = useRef<HTMLElement>(null);
   const mobileTriggerRef = useRef<HTMLButtonElement>(null);
+  const wasMobileOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!isMobileOpen) return;
+    const wasOpen = wasMobileOpenRef.current;
+    wasMobileOpenRef.current = isMobileOpen;
+
+    if (!isMobileOpen) {
+      if (wasOpen) {
+        mobileTriggerRef.current?.focus();
+      }
+      return;
+    }
+
+    const initialFocusable = getFocusableDrawerElements(sidebarRef.current);
+    initialFocusable[0]?.focus();
 
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node | null;
@@ -67,7 +108,36 @@ export function AppShell({
       if (event.key === 'Escape') {
         event.preventDefault();
         setIsMobileOpen(false);
-        mobileTriggerRef.current?.focus();
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        const items = getFocusableDrawerElements(sidebarRef.current);
+        if (items.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = items[0];
+        const last = items[items.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+
+        if (event.shiftKey) {
+          if (
+            !active ||
+            active === first ||
+            !sidebarRef.current?.contains(active)
+          ) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (
+          !active ||
+          active === last ||
+          !sidebarRef.current?.contains(active)
+        ) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     }
 
