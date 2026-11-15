@@ -427,4 +427,66 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       spy.mockRestore();
     }
   });
+
+  it('clears the top-level timezone global alert on Auto-detect using real action error ordering while preserving hours error', async () => {
+    const originalDateTimeFormat = Intl.DateTimeFormat;
+    const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((...args) => {
+      const instance = new originalDateTimeFormat(...args);
+      return {
+        ...instance,
+        resolvedOptions: () => ({ ...instance.resolvedOptions(), timeZone: 'Asia/Dhaka' }),
+      } as Intl.DateTimeFormat;
+    });
+
+    try {
+      vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
+        error: 'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).',
+        code: 'VALIDATION_FAILED',
+        fieldErrors: {
+          timezone: 'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).',
+          preferred_daily_hours:
+            'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.',
+        },
+        values: {
+          timezone: 'Invalid/Zone',
+          preferred_daily_hours: '1.3',
+        },
+      });
+
+      render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByText(/Please enter a valid IANA timezone/i),
+        ).toHaveLength(2);
+        expect(
+          screen.getByText(
+            /Preferred daily hours must be between 0\.5 and 12 in 0\.5-hour increments/i,
+          ),
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /^auto-detect$/i }));
+
+      expect(
+        screen.queryByText(/Please enter a valid IANA timezone/i),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /Preferred daily hours must be between 0\.5 and 12 in 0\.5-hour increments/i,
+        ),
+      ).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText(/preferred daily hours/i), {
+        target: { value: '2.5' },
+      });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

@@ -194,6 +194,7 @@ export function LearningSettingsForm({
   }, [values.timezone, state]);
 
   const activeState = state === dismissedState ? {} : state;
+  const isTimezoneErrorCleared = clearedTimezoneErrorState === state;
 
   const handleAutoDetect = () => {
     const detected = detectBrowserTimezone();
@@ -245,10 +246,19 @@ export function LearningSettingsForm({
     );
   }
 
-  const timezoneError =
-    clearedTimezoneErrorState === state
-      ? undefined
-      : activeState.fieldErrors?.timezone;
+  const timezoneError = isTimezoneErrorCleared
+    ? undefined
+    : activeState.fieldErrors?.timezone;
+
+  const globalError =
+    activeState.error &&
+    !(
+      isTimezoneErrorCleared &&
+      state.fieldErrors?.timezone &&
+      activeState.error === state.fieldErrors.timezone
+    )
+      ? activeState.error
+      : undefined;
 
   const timezoneOptions = (() => {
     const seen = new Set<string>(COMMON_TIMEZONES);
@@ -306,7 +316,7 @@ export function LearningSettingsForm({
         </Alert>
       )}
 
-      {activeState.error && (
+      {globalError && (
         <Alert
           variant={
             activeState.retryAfterSeconds && activeState.retryAfterSeconds > 0
@@ -318,7 +328,7 @@ export function LearningSettingsForm({
           resetKey={activeState}
           className="mt-4"
         >
-          {activeState.error}
+          {globalError}
         </Alert>
       )}
 

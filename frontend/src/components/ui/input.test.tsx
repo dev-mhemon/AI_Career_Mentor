@@ -263,8 +263,8 @@ describe('Input component (phone_bd & otp_6)', () => {
     for (const el of [textInput, phoneInput, areaInput]) {
       expect(el).toHaveClass(
         'placeholder:font-light',
-        'placeholder:text-slate-400/65',
-        'dark:placeholder:text-slate-500/70',
+        'placeholder:text-slate-500',
+        'dark:placeholder:text-slate-400',
       );
     }
     expect(toggleBtn).toHaveClass('cursor-pointer', 'disabled:cursor-not-allowed');

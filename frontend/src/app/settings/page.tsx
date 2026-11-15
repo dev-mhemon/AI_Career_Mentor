@@ -129,6 +129,71 @@ function extractMetadataProfile(meta: unknown): ExtractedUserMetadata {
   };
 }
 
+interface ChannelConfirmationUser {
+  email?: string | null;
+  phone?: string | null;
+  email_confirmed_at?: string | null;
+  phone_confirmed_at?: string | null;
+  email_verified?: boolean | null;
+  phone_verified?: boolean | null;
+}
+
+/**
+ * Normalizes a Bangladesh/E.164 phone number so stored and auth values compare consistently.
+ */
+function normalizeComparablePhone(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  return normalizeBdPhone(trimmed) ?? trimmed;
+}
+
+/**
+ * Resolves the normalized email address explicitly confirmed for this account, or empty string.
+ */
+function resolveConfirmedEmail(
+  user: ChannelConfirmationUser,
+  liveAuthUser: ChannelConfirmationUser | null,
+): string {
+  if (liveAuthUser) {
+    return liveAuthUser.email_confirmed_at &&
+      isNonSyntheticEmail(liveAuthUser.email)
+      ? normalizeEmail(liveAuthUser.email)
+      : '';
+  }
+  const userEmail = isNonSyntheticEmail(user.email)
+    ? normalizeEmail(user.email)
+    : '';
+  if (
+    userEmail &&
+    (user.email_verified === true || Boolean(user.email_confirmed_at))
+  ) {
+    return userEmail;
+  }
+  return '';
+}
+
+/**
+ * Resolves the normalized phone number explicitly confirmed for this account, or empty string.
+ */
+function resolveConfirmedPhone(
+  user: ChannelConfirmationUser,
+  liveAuthUser: ChannelConfirmationUser | null,
+): string {
+  if (liveAuthUser) {
+    const livePhone = normalizeComparablePhone(liveAuthUser.phone);
+    return liveAuthUser.phone_confirmed_at && livePhone ? livePhone : '';
+  }
+  const userPhone = normalizeComparablePhone(user.phone);
+  if (
+    userPhone &&
+    (user.phone_verified === true || Boolean(user.phone_confirmed_at))
+  ) {
+    return userPhone;
+  }
+  return '';
+}
+
 /**
  * Formats a canonical `+8801XXXXXXXXX` phone number as `+880 1XXX-XXXXXX` for clean display.
  */
@@ -301,33 +366,42 @@ export default async function SettingsPage({
     : isNonSyntheticEmail(liveAuthUser?.email)
       ? normalizeEmail(liveAuthUser.email)
       : '';
-  const hasVerifiedEmail =
-    Boolean(primaryAuthEmail) &&
-    (Boolean(user.verified_contact) ||
-      Boolean(user.linked_providers?.includes('email')) ||
-      Boolean(liveAuthUser?.email_confirmed_at));
   const profileContactEmail =
     meta.contactEmail ??
     (isNonSyntheticEmail(profileSnapshot.contactEmail)
       ? normalizeEmail(profileSnapshot.contactEmail)
       : '');
   const displayedEmail = primaryAuthEmail || profileContactEmail || null;
-  const showVerifiedEmailBadge = Boolean(primaryAuthEmail && hasVerifiedEmail);
+  const confirmedEmail = resolveConfirmedEmail(
+    user as ChannelConfirmationUser,
+    liveAuthUser,
+  );
+  const hasVerifiedEmail = Boolean(
+    displayedEmail &&
+      confirmedEmail &&
+      normalizeEmail(displayedEmail) === confirmedEmail,
+  );
+  const showVerifiedEmailBadge = hasVerifiedEmail;
 
   const primaryAuthPhoneRaw =
     user.phone?.trim() || liveAuthUser?.phone?.trim() || '';
-  const hasVerifiedPhone =
-    Boolean(primaryAuthPhoneRaw) &&
-    (Boolean(user.verified_contact) ||
-      Boolean(user.linked_providers?.includes('phone')) ||
-      Boolean(liveAuthUser?.phone_confirmed_at));
   const profileContactPhoneRaw =
     meta.contactPhone ?? profileSnapshot.contactPhone?.trim() ?? '';
   const rawDisplayedPhone = primaryAuthPhoneRaw || profileContactPhoneRaw;
   const displayedPhone = rawDisplayedPhone
     ? formatPhoneDisplay(rawDisplayedPhone)
     : null;
-  const showVerifiedPhoneBadge = Boolean(primaryAuthPhoneRaw && hasVerifiedPhone);
+  const normalizedDisplayedPhone = normalizeComparablePhone(rawDisplayedPhone);
+  const confirmedPhone = resolveConfirmedPhone(
+    user as ChannelConfirmationUser,
+    liveAuthUser,
+  );
+  const hasVerifiedPhone = Boolean(
+    normalizedDisplayedPhone &&
+      confirmedPhone &&
+      normalizedDisplayedPhone === confirmedPhone,
+  );
+  const showVerifiedPhoneBadge = hasVerifiedPhone;
 
   const backendProfile = profileSnapshot.profile;
   const mergedCurrentRole =
@@ -462,9 +536,11 @@ export default async function SettingsPage({
             <AddContactForm
               isSuspended={isSuspended}
               alreadyVerified={user.verified_contact}
-              verifiedEmail={hasVerifiedEmail ? primaryAuthEmail : null}
+              verifiedEmail={hasVerifiedEmail ? displayedEmail : null}
               verifiedPhone={
-                hasVerifiedPhone ? formatPhoneDisplay(primaryAuthPhoneRaw) : null
+                hasVerifiedPhone && rawDisplayedPhone
+                  ? formatPhoneDisplay(rawDisplayedPhone)
+                  : null
               }
             />
           )}

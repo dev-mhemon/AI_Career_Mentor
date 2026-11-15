@@ -450,4 +450,90 @@ describe('SettingsPage Server Component', () => {
       screen.getByRole('button', { name: /delete account/i }),
     ).toBeInTheDocument();
   });
+
+  it('does not mark email as Verified when email_confirmed_at is null even if linked_providers includes email', async () => {
+    vi.mocked(getAppSessionStateResult).mockResolvedValueOnce(
+      createMockSessionState({
+        user: {
+          id: '11111111-1111-4111-8111-111111111111',
+          email: 'unverified@example.com',
+          phone: null,
+          status: 'active',
+          role: 'USER',
+          verified_contact: false,
+          linked_providers: ['email'],
+        },
+      }),
+    );
+    mockGetUser.mockResolvedValueOnce({
+      data: {
+        user: {
+          id: '11111111-1111-4111-8111-111111111111',
+          email: 'unverified@example.com',
+          email_confirmed_at: null,
+          phone: null,
+          phone_confirmed_at: null,
+        },
+      },
+      error: null,
+    });
+
+    const page = await SettingsPage({});
+    render(page);
+
+    const emailTerm = screen.getByText('Email', { selector: 'dt' });
+    const emailValue = emailTerm.nextElementSibling as HTMLElement;
+    expect(emailValue).toHaveTextContent('unverified@example.com');
+    expect(emailValue).not.toHaveTextContent('Verified');
+    expect(screen.queryByText('Verified')).not.toBeInTheDocument();
+    expect(screen.getByText(/verified contact required/i)).toBeInTheDocument();
+  });
+
+  it('marks only the confirmed channel Verified when phone is confirmed and email is unconfirmed', async () => {
+    vi.mocked(getAppSessionStateResult).mockResolvedValueOnce(
+      createMockSessionState({
+        user: {
+          id: '11111111-1111-4111-8111-111111111111',
+          email: 'unconfirmed@example.com',
+          phone: '+8801712345678',
+          status: 'active',
+          role: 'USER',
+          verified_contact: true,
+          linked_providers: ['phone', 'email'],
+        },
+      }),
+    );
+    mockGetUser.mockResolvedValueOnce({
+      data: {
+        user: {
+          id: '11111111-1111-4111-8111-111111111111',
+          email: 'unconfirmed@example.com',
+          email_confirmed_at: null,
+          phone: '+8801712345678',
+          phone_confirmed_at: '2026-11-01T00:00:00.000Z',
+        },
+      },
+      error: null,
+    });
+
+    const page = await SettingsPage({});
+    render(page);
+
+    const emailTerm = screen.getByText('Email', { selector: 'dt' });
+    const emailValue = emailTerm.nextElementSibling as HTMLElement;
+    expect(emailValue).toHaveTextContent('unconfirmed@example.com');
+    expect(emailValue).not.toHaveTextContent('Verified');
+
+    const phoneTerm = screen.getByText('Phone');
+    const phoneValue = phoneTerm.nextElementSibling as HTMLElement;
+    expect(phoneValue).toHaveTextContent('+880 1712-345678');
+    expect(phoneValue).toHaveTextContent('Verified');
+
+    const contactChannelsHeading = screen.getByRole('heading', {
+      name: /contact channels/i,
+    });
+    const contactChannelsCard = contactChannelsHeading.closest('section') as HTMLElement;
+    expect(contactChannelsCard).toHaveTextContent('+880 1712-345678');
+    expect(contactChannelsCard).not.toHaveTextContent('unconfirmed@example.com');
+  });
 });
