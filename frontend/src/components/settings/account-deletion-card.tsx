@@ -168,19 +168,19 @@ export function AccountDeletionCard({
             id="danger-zone-heading"
             className="text-heading-sm text-text-danger"
           >
-            অ্যাকাউন্ট মুছে ফেলা (Account Deletion)
+            Account Deletion
           </h2>
         </div>
 
         <p className="text-body-sm text-text-secondary">
-          আপনার অ্যাকাউন্ট মুছে ফেললে প্রোফাইল, লার্নিং রোডম্যাপ, অনুশীলনের অগ্রগতি এবং সংরক্ষিত
-          ডেটা স্থায়ীভাবে মুছে যাবে। কাঁচা টেক্সট ও বার্তার ক্ষেত্রে ৯০-দিনের ধারণসীমা এবং এআই
-          অপারেশনাল লগ ৩০ দিনের মধ্যে স্বয়ংক্রিয়ভাবে মুছে ফেলা হবে (PRD §52)।
+          Permanently delete your account, profile, learning roadmaps, and practice history. Raw
+          text and messages are retained for up to 90 days for safety compliance, and AI operational
+          logs are automatically purged within 30 days. This action cannot be undone.
         </p>
 
         {isSuspended && (
           <p className="text-caption font-medium text-text-warning">
-            স্থগিত অ্যাকাউন্টের ক্ষেত্রেও অ্যাকাউন্ট মুছে ফেলার পূর্ণ অধিকার প্রযোজ্য (AZ-SUSP)।
+            Account deletion remains available while your account is suspended.
           </p>
         )}
 
@@ -192,7 +192,7 @@ export function AccountDeletionCard({
             onClick={handleOpenModal}
             disabled={!canDeleteAccount}
           >
-            অ্যাকাউন্ট মুছে ফেলুন (Delete Account)
+            Delete Account
           </Button>
         </div>
       </div>
@@ -216,13 +216,13 @@ export function AccountDeletionCard({
               id="delete-account-modal-title"
               className="text-heading-md text-text-danger"
             >
-              আপনি কি নিশ্চিত? (Are you absolutely sure?)
+              Are you sure?
             </h3>
 
             <p id="delete-account-modal-desc" className="text-body-sm text-text-secondary">
-              এই প্রক্রিয়াটি অপরিবর্তনীয়। নিশ্চিত করার জন্য নিচের বক্সে হুবহু{' '}
-              <strong className="font-semibold text-text-primary">DELETE</strong> লিখুন
-              {hasPasswordAuth ? ' এবং আপনার অ্যাকাউন্টের পাসওয়ার্ড দিন।' : '।'}
+              This action cannot be undone. Type{' '}
+              <strong className="font-semibold text-text-primary">DELETE</strong> below
+              {hasPasswordAuth ? ' and enter your account password to confirm.' : ' to confirm.'}
             </p>
 
             {(state.error || pollError) && (
@@ -233,7 +233,7 @@ export function AccountDeletionCard({
 
             {isPolling && (
               <Alert variant="info" role="status">
-                অ্যাকাউন্ট ডিলিট প্রক্রিয়া সম্পন্ন হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন... (Processing deletion...)
+                Processing account deletion, please wait...
               </Alert>
             )}
 
@@ -242,7 +242,7 @@ export function AccountDeletionCard({
                 id="confirmation-input"
                 name="confirmation"
                 variant="text"
-                label="কনফার্মেশন কোড (Type DELETE to confirm)"
+                label="Type DELETE to confirm"
                 required
                 value={confirmationInput}
                 onChange={(e) => setConfirmationInput(e.target.value)}
@@ -256,7 +256,7 @@ export function AccountDeletionCard({
                   id="password-input"
                   name="password"
                   variant="password"
-                  label="পাসওয়ার্ড (Account Password)"
+                  label="Account Password"
                   required
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
@@ -267,8 +267,8 @@ export function AccountDeletionCard({
                 />
               ) : (
                 <div className="rounded-lg border border-border-subtle bg-surface-subtle p-3 text-caption text-text-secondary">
-                  সংযুক্ত প্রোভাইডার ({linkedProviders.join(', ')}) দ্বারা আপনার পরিচয় যাচাই করা
-                  হবে।
+                  Your identity will be verified through your active sign-in session
+                  {linkedProviders.length > 0 ? ` (${linkedProviders.join(', ')})` : ''}.
                 </div>
               )}
 
@@ -280,17 +280,17 @@ export function AccountDeletionCard({
                   onClick={handleCloseModal}
                   disabled={isPending || isPolling}
                 >
-                  বাতিল (Cancel)
+                  Cancel
                 </Button>
                 <Button
                   type="submit"
                   variant="destructive"
                   size="md"
                   isLoading={isPending || isPolling}
-                  loadingText="মুছে ফেলা হচ্ছে..."
+                  loadingText="Deleting..."
                   disabled={isSubmitDisabled}
                 >
-                  স্থায়ীভাবে মুছে ফেলুন (Permanently Delete)
+                  Confirm Permanent Deletion
                 </Button>
               </div>
             </form>

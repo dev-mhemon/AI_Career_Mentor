@@ -90,7 +90,7 @@ export function Tabs({ items, variant = 'underline', value, defaultValue, onValu
               disabled={disabled || t.disabled}
               onClick={() => select(t.id)}
               className={cn(
-                'inline-flex min-h-11 items-center px-4 text-label-lg transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:text-text-disabled',
+                'inline-flex min-h-11 cursor-pointer items-center px-4 text-label-lg transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:text-text-disabled',
                 pill
                   ? cn('flex-1 justify-center rounded-full text-center', sel ? 'bg-surface-default text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary')
                   : cn('-mb-px border-b-2', sel ? 'border-action-primary-background text-text-brand' : 'border-transparent text-text-secondary hover:text-text-primary'),

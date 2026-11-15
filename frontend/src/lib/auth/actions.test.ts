@@ -2668,5 +2668,54 @@ describe('Auth Actions', () => {
       const res2 = await pollAccountDeletionStatusAction('   ');
       expect(res2.error).toMatch(/Valid deletion receipt token is required/);
     });
+
+    it('deletes account for phone-registered user with profile metadata using password-only re-auth', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'phone-user-token',
+            user: {
+              id: 'phone-user-1',
+              phone: '+8801629795421',
+              email: '',
+              user_metadata: {
+                full_name: 'Phone User',
+                contact_email: 'profile-only@example.com',
+              },
+            },
+          },
+        },
+      });
+
+      vi.mocked(requestAccountDeletion).mockResolvedValueOnce({
+        id: 'del-phone-1',
+        user_id: 'phone-user-1',
+        status: 'completed',
+        requested_at: '2026-11-15T12:00:00.000Z',
+        completed_at: '2026-11-15T12:00:01.000Z',
+        provider_deletion_requested: false,
+        deletion_receipt: 'phone-receipt-token',
+        receipt_expires_at: '2026-11-16T12:00:00.000Z',
+      });
+
+      const formData = new FormData();
+      formData.append('confirmation', 'DELETE');
+      formData.append('password', 'PhonePass123!');
+
+      const res = await requestAccountDeletionAction({}, formData);
+      expect(res).toEqual({
+        success: true,
+        status: 'completed',
+        requestId: 'del-phone-1',
+        deletionReceipt: 'phone-receipt-token',
+        receiptExpiresAt: '2026-11-16T12:00:00.000Z',
+      });
+      expect(requestAccountDeletion).toHaveBeenCalledWith('phone-user-token', {
+        confirmation: 'DELETE',
+        password: 'PhonePass123!',
+        reauth_token: undefined,
+      });
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+    });
   });
 });

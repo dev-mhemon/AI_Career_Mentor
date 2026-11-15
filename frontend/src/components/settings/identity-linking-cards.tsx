@@ -25,7 +25,7 @@ export interface IdentityLinkingCardsProps {
 interface ProviderMeta {
   id: 'google' | 'facebook';
   name: string;
-  bengaliName: string;
+  description: string;
   icon: (className?: string) => React.ReactNode;
 }
 
@@ -33,7 +33,7 @@ const PROVIDERS: ProviderMeta[] = [
   {
     id: 'google',
     name: 'Google',
-    bengaliName: 'গুগল',
+    description: 'Sign in with Google',
     icon: (className = 'h-5 w-5') => (
       <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
         <path
@@ -58,7 +58,7 @@ const PROVIDERS: ProviderMeta[] = [
   {
     id: 'facebook',
     name: 'Facebook',
-    bengaliName: 'ফেসবুক',
+    description: 'Sign in with Facebook',
     icon: (className = 'h-5 w-5') => (
       <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
         <path
@@ -117,12 +117,12 @@ export function IdentityLinkingCards({
     setSuccess(null);
 
     if (isSuspended) {
-      setError('স্থগিত অ্যাকাউন্ট থেকে সোশ্যাল অ্যাকাউন্ট লিঙ্ক করা সম্ভব নয় (Cannot link accounts while suspended).');
+      setError('Cannot link social accounts while your account is suspended.');
       return;
     }
 
     if (!verifiedContact) {
-      setError('সোশ্যাল অ্যাকাউন্ট যুক্ত করার জন্য একটি যাচাইকৃত ইমেইল বা ফোন নম্বর প্রয়োজন (Verified contact required).');
+      setError('A verified email or phone number is required before linking a social account.');
       return;
     }
 
@@ -140,13 +140,13 @@ export function IdentityLinkingCards({
             return base.includes(provider) ? base : [...base, provider];
           });
         }
-        setSuccess(`${provider === 'google' ? 'Google' : 'Facebook'} অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।`);
+        setSuccess(`${provider === 'google' ? 'Google' : 'Facebook'} account linked successfully.`);
       }
     } catch (err) {
       if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
         return;
       }
-      setError('সোশ্যাল অ্যাকাউন্ট লিঙ্ক করতে ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+      setError('Failed to link social account. Please try again.');
     } finally {
       setPendingProvider(null);
     }
@@ -159,10 +159,10 @@ export function IdentityLinkingCards({
     >
       <div>
         <h3 id="identity-linking-heading" className="text-heading-sm text-text-primary">
-          সোশ্যাল অ্যাকাউন্ট সংযোগ (Linked Identities)
+          Linked Identities
         </h3>
         <p className="mt-1 text-body-sm text-text-secondary">
-          আপনার অ্যাকাউন্টে Google বা Facebook যুক্ত করুন যাতে সহজে লগইন করা যায়।
+          Connect Google or Facebook to your account for faster sign-in.
         </p>
       </div>
 
@@ -185,7 +185,7 @@ export function IdentityLinkingCards({
         >
           <WarningIcon className="mt-0.5 shrink-0 text-feedback-warning-icon" />
           <span>
-            সোশ্যাল অ্যাকাউন্ট যুক্ত করতে আপনার অ্যাকাউন্টে একটি যাচাইকৃত যোগাযোগ তথ্য (ইমেইল বা ফোন) থাকতে হবে।
+            Your account must have a verified contact method (email or phone) to link a social account.
           </span>
         </div>
       )}
@@ -204,14 +204,14 @@ export function IdentityLinkingCards({
                 {prov.icon()}
                 <div>
                   <p className="text-label-lg text-text-primary">{prov.name}</p>
-                  <p className="text-caption text-text-muted">{prov.bengaliName}</p>
+                  <p className="text-caption text-text-muted">{prov.description}</p>
                 </div>
               </div>
 
               {isLinked ? (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-3 py-1 text-caption font-medium text-feedback-success-text">
                   <CheckCircleIcon className="h-3.5 w-3.5 text-feedback-success-icon" />
-                  সংযুক্ত
+                  Connected
                 </span>
               ) : (
                 <Button
@@ -219,12 +219,12 @@ export function IdentityLinkingCards({
                   variant="secondary"
                   size="sm"
                   isLoading={isPending}
-                  loadingText="সংযোগ হচ্ছে..."
+                  loadingText="Connecting..."
                   disabled={isSuspended || !verifiedContact}
                   onClick={() => handleLink(prov.id)}
-                  aria-label={`Link ${prov.name} account`}
+                  aria-label={`Connect ${prov.name} account`}
                 >
-                  যুক্ত করুন
+                  Connect
                 </Button>
               )}
             </div>

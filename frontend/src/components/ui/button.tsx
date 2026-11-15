@@ -62,7 +62,7 @@ export function Button({
       className={cn(
         'relative inline-flex items-center justify-center gap-2 rounded-md font-medium',
         'transition-colors duration-(--duration-fast) ease-standard',
-        'disabled:cursor-not-allowed',
+        'cursor-pointer disabled:cursor-not-allowed',
         // 44x44 min touch target for controls under 44px
         size !== 'lg' &&
           !isLink &&

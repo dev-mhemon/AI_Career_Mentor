@@ -31,27 +31,28 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     render(<AccountDeletionCard canDeleteAccount={true} />);
 
     expect(screen.getByRole('status')).toHaveTextContent('Danger Zone');
-    expect(screen.getByRole('heading', { name: /অ্যাকাউন্ট মুছে ফেলা/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /account deletion/i })).toBeInTheDocument();
     expect(
-      screen.getByText(/৯০-দিনের ধারণসীমা এবং এআই অপারেশনাল লগ ৩০ দিনের মধ্যে/i),
+      screen.getByText(
+        /Permanently delete your account, profile, learning roadmaps, and practice history\. Raw text and messages are retained for up to 90 days for safety compliance, and AI operational logs are automatically purged within 30 days\. This action cannot be undone\./i,
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i })).toBeInTheDocument();
+    expect(screen.queryByText(/PRD\s*\u00A7\s*52/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /delete account/i })).toBeInTheDocument();
   });
 
-  it('renders AZ-SUSP notice when user account is suspended', () => {
+  it('renders suspended deletion notice when user account is suspended', () => {
     render(<AccountDeletionCard canDeleteAccount={true} isSuspended={true} />);
 
     expect(
-      screen.getByText(
-        /স্থগিত অ্যাকাউন্টের ক্ষেত্রেও অ্যাকাউন্ট মুছে ফেলার পূর্ণ অধিকার প্রযোজ্য \(AZ-SUSP\)/i,
-      ),
+      screen.getByText(/Account deletion remains available while your account is suspended/i),
     ).toBeInTheDocument();
   });
 
   it('disables deletion button when canDeleteAccount is false', () => {
     render(<AccountDeletionCard canDeleteAccount={false} />);
 
-    expect(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /delete account/i })).toBeDisabled();
   });
 
   it('opens confirmation modal dialog when delete button is clicked', () => {
@@ -59,26 +60,26 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    const openBtn = screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i });
+    const openBtn = screen.getByRole('button', { name: /delete account/i });
     fireEvent.click(openBtn);
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /আপনি কি নিশ্চিত\?/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/কনফার্মেশন কোড/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/পাসওয়ার্ড/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /are you sure\?/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/type delete to confirm/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/account password/i)).toBeInTheDocument();
   });
 
   it('keeps submit button disabled until literal "DELETE" and password are typed', () => {
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
 
-    const submitBtn = screen.getByRole('button', { name: /স্থায়ীভাবে মুছে ফেলুন/i });
+    const submitBtn = screen.getByRole('button', { name: /confirm permanent deletion/i });
     expect(submitBtn).toBeDisabled();
 
-    const confirmInput = screen.getByLabelText(/কনফার্মেশন কোড/i);
-    const passwordInput = screen.getByLabelText(/পাসওয়ার্ড/i);
+    const confirmInput = screen.getByLabelText(/type delete to confirm/i);
+    const passwordInput = screen.getByLabelText(/account password/i);
     expect(passwordInput).toHaveAttribute('placeholder', 'Password');
 
     // Case-sensitive check: "delete" should not enable submit
@@ -94,16 +95,16 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
   it('closes modal when cancel button is clicked', () => {
     render(<AccountDeletionCard canDeleteAccount={true} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-    const cancelBtn = screen.getByRole('button', { name: /বাতিল/i });
+    const cancelBtn = screen.getByRole('button', { name: /cancel/i });
     fireEvent.click(cancelBtn);
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('enables submit button for social-only accounts without requiring password', () => {
+  it('enables submit button for non-password accounts without requiring password', () => {
     render(
       <AccountDeletionCard
         canDeleteAccount={true}
@@ -112,13 +113,13 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
 
-    expect(screen.queryByLabelText(/পাসওয়ার্ড/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/সংযুক্ত প্রোভাইডার \(google\)/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/account password/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/active sign-in session \(google\)/i)).toBeInTheDocument();
 
-    const confirmInput = screen.getByLabelText(/কনফার্মেশন কোড/i);
-    const submitBtn = screen.getByRole('button', { name: /স্থায়ীভাবে মুছে ফেলুন/i });
+    const confirmInput = screen.getByLabelText(/type delete to confirm/i);
+    const submitBtn = screen.getByRole('button', { name: /confirm permanent deletion/i });
     expect(submitBtn).toBeDisabled();
 
     fireEvent.change(confirmInput, { target: { value: 'DELETE' } });
@@ -135,20 +136,20 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
 
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }));
-    fireEvent.change(screen.getByLabelText(/কনফার্মেশন কোড/i), {
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type delete to confirm/i), {
       target: { value: 'DELETE' },
     });
-    fireEvent.change(screen.getByLabelText(/পাসওয়ার্ড/i), {
+    fireEvent.change(screen.getByLabelText(/account password/i), {
       target: { value: 'ValidPass123!' },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /স্থায়ীভাবে মুছে ফেলুন/i }));
+      fireEvent.click(screen.getByRole('button', { name: /confirm permanent deletion/i }));
     });
 
-    expect(screen.getByText(/অ্যাকাউন্ট ডিলিট প্রক্রিয়া সম্পন্ন হচ্ছে/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/কনফার্মেশন কোড/i)).toBeDisabled();
+    expect(screen.getByText(/processing account deletion, please wait/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/type delete to confirm/i)).toBeDisabled();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -171,16 +172,16 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
 
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }));
-    fireEvent.change(screen.getByLabelText(/কনফার্মেশন কোড/i), {
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type delete to confirm/i), {
       target: { value: 'DELETE' },
     });
-    fireEvent.change(screen.getByLabelText(/পাসওয়ার্ড/i), {
+    fireEvent.change(screen.getByLabelText(/account password/i), {
       target: { value: 'ValidPass123!' },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /স্থায়ীভাবে মুছে ফেলুন/i }));
+      fireEvent.click(screen.getByRole('button', { name: /confirm permanent deletion/i }));
     });
 
     await act(async () => {
@@ -203,16 +204,16 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
 
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /অ্যাকাউন্ট মুছে ফেলুন/i }));
-    fireEvent.change(screen.getByLabelText(/কনফার্মেশন কোড/i), {
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type delete to confirm/i), {
       target: { value: 'DELETE' },
     });
-    fireEvent.change(screen.getByLabelText(/পাসওয়ার্ড/i), {
+    fireEvent.change(screen.getByLabelText(/account password/i), {
       target: { value: 'ValidPass123!' },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /স্থায়ীভাবে মুছে ফেলুন/i }));
+      fireEvent.click(screen.getByRole('button', { name: /confirm permanent deletion/i }));
     });
 
     await act(async () => {
@@ -223,7 +224,7 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
       /Failed to verify deletion status with provider/i,
     );
 
-    const cancelBtn = screen.getByRole('button', { name: /বাতিল/i });
+    const cancelBtn = screen.getByRole('button', { name: /cancel/i });
     expect(cancelBtn).not.toBeDisabled();
     fireEvent.click(cancelBtn);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

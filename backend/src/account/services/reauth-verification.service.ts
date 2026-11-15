@@ -8,6 +8,21 @@ export interface ReauthCredentials {
   reauth_token?: string;
 }
 
+const SYNTHETIC_EMAIL_DOMAINS = ['@synthetic.mentor', '@phone.invalid'];
+
+function isNonSyntheticEmail(
+  value: string | null | undefined,
+): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.length > 0 &&
+    !SYNTHETIC_EMAIL_DOMAINS.some((domain) => normalized.endsWith(domain))
+  );
+}
+
 /**
  * Service enforcing live re-authentication on account deletion (`EP-X01`).
  *
@@ -66,14 +81,17 @@ export class ReauthVerificationService {
       let channel: 'email' | 'phone' | undefined;
       let identifier: string | undefined;
 
-      if (user?.email) {
+      if (isNonSyntheticEmail(user?.email)) {
         channel = 'email';
-        identifier = user.email;
-      } else if (user?.phone) {
+        identifier = user.email.trim();
+      } else if (
+        typeof user?.phone === 'string' &&
+        user.phone.trim().length > 0
+      ) {
         channel = 'phone';
-        identifier = user.phone;
+        identifier = user.phone.trim();
       } else {
-        // Fallback: check user_auth_providers for email or phone
+        // Fallback: check user_auth_providers for non-synthetic email or phone
         const providerRows = await runner.query<
           Array<{ provider: string; contact_value: string | null }>
         >(
@@ -82,18 +100,25 @@ export class ReauthVerificationService {
             WHERE user_id = $1::uuid
               AND provider IN ('email', 'phone')
             ORDER BY is_primary DESC, linked_at ASC
-            LIMIT 1`,
+            LIMIT 5`,
           [userId],
         );
         const providerRow = Array.isArray(providerRows)
-          ? providerRows[0]
+          ? providerRows.find(
+              (row) =>
+                (row.provider === 'email' &&
+                  isNonSyntheticEmail(row.contact_value)) ||
+                (row.provider === 'phone' &&
+                  typeof row.contact_value === 'string' &&
+                  row.contact_value.trim().length > 0),
+            )
           : undefined;
         if (
           providerRow?.contact_value &&
           (providerRow.provider === 'email' || providerRow.provider === 'phone')
         ) {
           channel = providerRow.provider;
-          identifier = providerRow.contact_value;
+          identifier = providerRow.contact_value.trim();
         }
       }
 
@@ -127,15 +152,38 @@ export class ReauthVerificationService {
         fail(503, 'SERVICE_UNAVAILABLE', 'Authentication service unavailable');
       }
 
-      if (response.status === 400 || response.status === 401) {
-        fail(
-          401,
-          'REAUTH_REQUIRED',
-          'Invalid credentials for re-authentication',
-        );
-      }
-
       if (!response.ok) {
+        const errorBody = (
+          typeof response.json === 'function'
+            ? await response.json().catch(() => null)
+            : null
+        ) as { code?: string | number; error_code?: string } | null;
+
+        // When GoTrue SMS/Twilio is disabled (local/TextBee OTP setups), fall back
+        // to bcrypt comparison against auth.users just like AuthService.loginPhoneWhenProviderDisabled.
+        const isPhoneProviderDisabled =
+          channel === 'phone' &&
+          (response.status === 400 || response.status === 422) &&
+          (errorBody?.error_code === 'phone_provider_disabled' ||
+            errorBody?.code === 'phone_provider_disabled');
+
+        if (isPhoneProviderDisabled) {
+          await this.verifyPhonePasswordFromDatabase(runner, userId, password);
+          return;
+        }
+
+        if (
+          response.status === 400 ||
+          response.status === 401 ||
+          (response.status === 422 && channel === 'phone')
+        ) {
+          fail(
+            401,
+            'REAUTH_REQUIRED',
+            'Invalid credentials for re-authentication',
+          );
+        }
+
         fail(503, 'SERVICE_UNAVAILABLE', 'Authentication service unavailable');
       }
 
@@ -196,6 +244,57 @@ export class ReauthVerificationService {
       }
 
       return;
+    }
+  }
+
+  /**
+   * Verifies a phone-registered user's password directly against `auth.users` when
+   * GoTrue SMS password logins are disabled (`phone_provider_disabled`).
+   */
+  private async verifyPhonePasswordFromDatabase(
+    runner: { query: DatabaseService['query'] },
+    userId: string,
+    password: string,
+  ): Promise<void> {
+    let rows: Array<{
+      id: string;
+      phone_confirmed_at: string | Date | null;
+      password_matches: boolean;
+    }>;
+
+    try {
+      rows = await runner.query<
+        Array<{
+          id: string;
+          phone_confirmed_at: string | Date | null;
+          password_matches: boolean;
+        }>
+      >(
+        `SELECT u.id,
+                u.phone_confirmed_at,
+                CASE
+                  WHEN u.encrypted_password IS NOT NULL
+                   AND u.encrypted_password LIKE '$2%'
+                  THEN (u.encrypted_password = extensions.crypt($2, u.encrypted_password))
+                  ELSE false
+                END AS password_matches
+           FROM auth.users u
+          WHERE u.id = $1::uuid
+            AND u.deleted_at IS NULL
+          LIMIT 1`,
+        [userId, password],
+      );
+    } catch (error) {
+      this.logger.error(
+        'Database fallback for phone password re-authentication failed',
+        error,
+      );
+      fail(503, 'SERVICE_UNAVAILABLE', 'Authentication service unavailable');
+    }
+
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (!row || !row.phone_confirmed_at || row.password_matches !== true) {
+      fail(401, 'REAUTH_REQUIRED', 'Invalid credentials for re-authentication');
     }
   }
 }
