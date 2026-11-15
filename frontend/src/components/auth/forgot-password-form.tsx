@@ -231,7 +231,7 @@ export function ForgotPasswordForm() {
                 const res = validateBdPhone(e.target.value);
                 setClientError(res.ok ? undefined : res.error);
               }}
-              placeholder="01712-345678"
+              placeholder="01XXXXXXXXX"
             />
           )}
 

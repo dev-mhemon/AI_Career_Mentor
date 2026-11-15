@@ -838,6 +838,8 @@ describe('VerifyForm', () => {
     render(<VerifyForm />);
 
     const phoneInput = await screen.findByLabelText(/phone number/i) as HTMLInputElement;
+    expect(screen.getByText('+88')).toBeInTheDocument();
+    expect(phoneInput).toHaveAttribute('placeholder', '01XXXXXXXXX');
     fireEvent.change(phoneInput, { target: { value: '012' } });
     expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
 

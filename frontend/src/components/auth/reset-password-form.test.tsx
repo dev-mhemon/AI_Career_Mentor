@@ -42,14 +42,21 @@ describe("ResetPasswordForm", () => {
   it("renders identifier re-entry input when draft is absent", () => {
     render(<ResetPasswordForm />);
 
-    expect(screen.getByLabelText(/email or phone/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/email or phone/i)).toHaveAttribute(
+      "placeholder",
+      "you@example.com or 01XXXXXXXXX",
+    );
     expect(
       screen.getByLabelText(/6-digit verification code/i),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText(/^new password$/i)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/confirm new password/i),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^new password$/i)).toHaveAttribute(
+      "placeholder",
+      "New password",
+    );
+    expect(screen.getByLabelText(/confirm new password/i)).toHaveAttribute(
+      "placeholder",
+      "Confirm new password",
+    );
     expect(
       screen.getByRole("button", { name: /set new password/i }),
     ).toBeInTheDocument();

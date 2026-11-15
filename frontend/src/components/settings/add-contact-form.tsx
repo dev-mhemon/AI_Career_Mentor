@@ -247,10 +247,10 @@ export function AddContactForm({
               setContactError(undefined);
             }
           }}
-          placeholder={activeTab === 'email' ? 'you@example.com' : '01712-345678'}
+          placeholder={activeTab === 'email' ? 'you@example.com' : '01XXXXXXXXX'}
           hint={
             activeTab === 'phone'
-              ? 'শুধুমাত্র বাংলাদেশি মোবাইল নম্বর সমর্থিত (যেমন 01712-345678 বা +8801712345678)।'
+              ? 'শুধুমাত্র বাংলাদেশি মোবাইল নম্বর সমর্থিত (যেমন 01XXXXXXXXX)।'
               : undefined
           }
         />

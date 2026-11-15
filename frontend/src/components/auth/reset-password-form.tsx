@@ -336,7 +336,7 @@ export function ResetPasswordForm() {
                 setFieldError("identifier", undefined);
               }
             }}
-            placeholder="you@example.com or +8801712345678"
+            placeholder="you@example.com or 01XXXXXXXXX"
           />
         )}
 
@@ -388,7 +388,7 @@ export function ResetPasswordForm() {
               const pw = validatePassword(e.target.value);
               setFieldError("new_password", pw.ok ? undefined : pw.error);
             }}
-            placeholder="At least 8 characters"
+            placeholder="New password"
           />
           {password && (
             <p aria-live="polite" className="text-caption text-text-secondary">
@@ -418,7 +418,7 @@ export function ResetPasswordForm() {
             dismissServerField("confirm_new_password");
             setFieldError("confirm_new_password", undefined);
           }}
-          placeholder="Repeat new password"
+          placeholder="Confirm new password"
         />
 
         <AuthAlert result={visibleAlertState} />

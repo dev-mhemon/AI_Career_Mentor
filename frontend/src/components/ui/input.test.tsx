@@ -21,6 +21,9 @@ describe('Input component (phone_bd & otp_6)', () => {
 
     const visibleInput = screen.getByLabelText(/phone number/i) as HTMLInputElement;
     expect(visibleInput).not.toHaveAttribute('name');
+    expect(screen.getByText('+88')).toBeInTheDocument();
+    expect(screen.queryByText('+880')).not.toBeInTheDocument();
+    expect(visibleInput).toHaveAttribute('placeholder', '01XXXXXXXXX');
 
     fireEvent.change(visibleInput, { target: { value: '01712345678' } });
     fireEvent.blur(visibleInput);
@@ -226,8 +229,10 @@ describe('Input component (phone_bd & otp_6)', () => {
     expect(new FormData(form).get('code')).toBe('123456');
   });
 
-  it('renders EyeOffIcon with an inner pupil circle when toggling password visibility', () => {
+  it('renders EyeOffIcon with an inner pupil circle and defaults password placeholder to Password', () => {
     render(<Input id="pw" name="password" variant="password" label="Password" />);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    expect(passwordInput).toHaveAttribute('placeholder', 'Password');
     const toggle = screen.getByRole('button', { name: /show password/i });
     fireEvent.click(toggle);
 

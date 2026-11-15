@@ -79,6 +79,7 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
 
     const confirmInput = screen.getByLabelText(/কনফার্মেশন কোড/i);
     const passwordInput = screen.getByLabelText(/পাসওয়ার্ড/i);
+    expect(passwordInput).toHaveAttribute('placeholder', 'Password');
 
     // Case-sensitive check: "delete" should not enable submit
     fireEvent.change(confirmInput, { target: { value: 'delete' } });

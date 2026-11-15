@@ -226,8 +226,8 @@ export function RegisterForm() {
                 const res = validateBdPhone(e.target.value);
                 setFieldError("identifier", res.ok ? undefined : res.error);
               }}
-              hint="Bangladesh mobile, e.g. 01712-345678"
-              placeholder="01712-345678"
+              hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
+              placeholder="01XXXXXXXXX"
             />
           )}
 
@@ -259,7 +259,7 @@ export function RegisterForm() {
                 const pw = validatePassword(e.target.value);
                 setFieldError("password", pw.ok ? undefined : pw.error);
               }}
-              placeholder="••••••••"
+              placeholder="Password"
             />
             <p aria-live="polite" className="text-caption text-text-secondary">
               Use 8–128 characters; longer with mixed case, numbers and symbols is stronger.
@@ -289,7 +289,7 @@ export function RegisterForm() {
               dismissServerField("confirmPassword");
               setFieldError("confirmPassword", undefined);
             }}
-            placeholder="••••••••"
+            placeholder="Confirm password"
           />
 
           <Checkbox

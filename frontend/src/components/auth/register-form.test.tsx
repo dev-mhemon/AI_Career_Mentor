@@ -109,7 +109,16 @@ describe("RegisterForm", () => {
     fireEvent.click(phoneTab);
 
     expect(screen.getByLabelText(/^phone number$/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("01712-345678")).toBeInTheDocument();
+    expect(screen.getByText("+88")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("01XXXXXXXXX")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password$/i)).toHaveAttribute(
+      "placeholder",
+      "Password",
+    );
+    expect(screen.getByLabelText(/confirm password/i)).toHaveAttribute(
+      "placeholder",
+      "Confirm password",
+    );
 
     fireEvent.change(screen.getByLabelText(/^phone number$/i), {
       target: { value: "+8801712345678" },

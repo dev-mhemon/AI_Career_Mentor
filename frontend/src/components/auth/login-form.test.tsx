@@ -130,7 +130,7 @@ describe("LoginForm", () => {
     expect(mockClearVerificationDraft).not.toHaveBeenCalled();
   });
 
-  it("supports Phone tab with +880 prefix, local 017... display, and canonical +8801... FormData payload", async () => {
+  it("supports Phone tab with +88 prefix, local 017... display, and canonical +8801... FormData payload", async () => {
     vi.mocked(loginAction).mockResolvedValueOnce({});
 
     render(<LoginForm />);
@@ -139,12 +139,15 @@ describe("LoginForm", () => {
     const passwordInput = screen.getByLabelText(/^password$/i);
     expect(emailInput).toBeRequired();
     expect(passwordInput).toBeRequired();
+    expect(passwordInput).toHaveAttribute("placeholder", "Password");
 
     fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
 
     const phoneInput = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
     expect(phoneInput).toBeRequired();
-    expect(screen.getByText("+880")).toBeInTheDocument();
+    expect(screen.getByText("+88")).toBeInTheDocument();
+    expect(screen.queryByText("+880")).not.toBeInTheDocument();
+    expect(phoneInput).toHaveAttribute("placeholder", "01XXXXXXXXX");
 
     fireEvent.change(phoneInput, { target: { value: "01712345678" } });
     fireEvent.change(passwordInput, { target: { value: "secret123" } });
