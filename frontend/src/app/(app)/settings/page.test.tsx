@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { redirect } from 'next/navigation';
 import SettingsPage from './page';
 import { getAppSessionStateResult } from '@/lib/auth/user';
@@ -35,6 +35,7 @@ vi.mock('@/lib/profile/actions', () => ({
 
 vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
+  usePathname: () => '/settings',
   useRouter: () => ({
     push: vi.fn(),
     replace: vi.fn(),
@@ -172,6 +173,11 @@ describe('SettingsPage Server Component', () => {
     const page = await SettingsPage({});
     render(page);
 
+    const overview = screen
+      .getByRole('heading', { name: /account overview/i })
+      .closest('section');
+    expect(overview).toHaveTextContent('Mehedi Hasan');
+    expect(overview).toHaveTextContent('Backend Developer');
     expect(screen.getByText('Mehedi Hasan')).toBeInTheDocument();
     expect(screen.getByText('mehedi@example.com')).toBeInTheDocument();
     expect(screen.queryByText(/synthetic\.mentor/i)).not.toBeInTheDocument();
@@ -189,6 +195,12 @@ describe('SettingsPage Server Component', () => {
     expect(screen.getByText('Quiz Practice')).toBeInTheDocument();
     expect(screen.getByText('AI Mentor')).toBeInTheDocument();
     expect(screen.queryByText(/roadmap_generator: enabled/i)).not.toBeInTheDocument();
+    expect(
+      within(overview as HTMLElement).queryByRole('button', { name: /sign out/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(overview as HTMLElement).getByRole('link', { name: /edit profile/i }),
+    ).toHaveAttribute('href', '/onboarding/profile');
 
     expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
     expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3.5);
@@ -222,6 +234,11 @@ describe('SettingsPage Server Component', () => {
     const page = await SettingsPage({});
     render(page);
 
+    const overview = screen
+      .getByRole('heading', { name: /account overview/i })
+      .closest('section');
+    expect(overview).toHaveTextContent('Fallback User');
+    expect(overview).toHaveTextContent('QA Engineer');
     expect(screen.getByText('Fallback User')).toBeInTheDocument();
     expect(screen.getByText('QA Engineer')).toBeInTheDocument();
     expect(screen.getByText('Mid-Level')).toBeInTheDocument();

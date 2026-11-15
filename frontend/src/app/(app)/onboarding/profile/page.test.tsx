@@ -6,6 +6,20 @@ import { getAppUser } from '@/lib/auth/user';
 import { loadProfileForSetup } from '@/lib/profile/actions';
 import type { ProfileSetupFormProps } from '@/components/onboarding/profile-setup-form';
 
+const { mockGetUser, mockGetSession } = vi.hoisted(() => ({
+  mockGetUser: vi.fn(),
+  mockGetSession: vi.fn(),
+}));
+
+vi.mock('@/lib/supabase/server', () => ({
+  createSupabaseServerClient: vi.fn().mockImplementation(async () => ({
+    auth: {
+      getUser: mockGetUser,
+      getSession: mockGetSession,
+    },
+  })),
+}));
+
 vi.mock('@/lib/auth/user', () => ({
   getAppUser: vi.fn(),
 }));
@@ -20,6 +34,7 @@ vi.mock('@/lib/profile/actions', () => ({
 
 vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
+  usePathname: () => '/onboarding/profile',
 }));
 
 vi.mock('next/link', () => ({
@@ -42,6 +57,8 @@ vi.mock('@/components/onboarding/profile-setup-form', () => ({
 describe('OnboardingProfilePage Server Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   });
 
   it('redirects unauthenticated users to /login', async () => {
@@ -84,6 +101,18 @@ describe('OnboardingProfilePage Server Component', () => {
       phone: null,
       linked_providers: ['email'],
     });
+    mockGetUser.mockResolvedValueOnce({
+      data: {
+        user: {
+          id: 'user-email-1',
+          email: 'alice@example.com',
+          email_confirmed_at: '2026-11-01T00:00:00.000Z',
+          phone: null,
+          phone_confirmed_at: null,
+        },
+      },
+      error: null,
+    });
     vi.mocked(loadProfileForSetup).mockResolvedValue({
       profile: null,
       userId: 'user-email-1',
@@ -119,6 +148,18 @@ describe('OnboardingProfilePage Server Component', () => {
       phone: '+8801812345678',
       linked_providers: ['phone'],
     });
+    mockGetUser.mockResolvedValueOnce({
+      data: {
+        user: {
+          id: 'user-phone-1',
+          email: 'phone-1@synthetic.mentor',
+          email_confirmed_at: null,
+          phone: '+8801812345678',
+          phone_confirmed_at: '2026-11-01T00:00:00.000Z',
+        },
+      },
+      error: null,
+    });
     vi.mocked(loadProfileForSetup).mockResolvedValue({
       profile: null,
       userId: 'user-phone-1',
@@ -137,6 +178,80 @@ describe('OnboardingProfilePage Server Component', () => {
           emailVerified: false,
           phone: '+8801812345678',
           phoneVerified: true,
+        },
+      }),
+    );
+  });
+
+  it('keeps unconfirmed email editable even when verified_contact is true and linked_providers includes email', async () => {
+    vi.mocked(getAppUser).mockResolvedValue({
+      id: 'user-mixed-1',
+      status: 'active',
+      role: 'USER',
+      verified_contact: true,
+      email: 'unconfirmed@example.com',
+      phone: '+8801712345678',
+      linked_providers: ['phone', 'email'],
+    });
+    mockGetUser.mockResolvedValueOnce({
+      data: {
+        user: {
+          id: 'user-mixed-1',
+          email: 'unconfirmed@example.com',
+          email_confirmed_at: null,
+          phone: '+8801712345678',
+          phone_confirmed_at: '2026-11-01T00:00:00.000Z',
+        },
+      },
+      error: null,
+    });
+    vi.mocked(loadProfileForSetup).mockResolvedValue({
+      profile: null,
+      userId: 'user-mixed-1',
+      fullName: 'Mixed User',
+    });
+
+    const jsx = await OnboardingProfilePage();
+    render(jsx);
+
+    expect(mockProfileSetupForm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-mixed-1',
+        initialContact: {
+          email: 'unconfirmed@example.com',
+          emailVerified: false,
+          phone: '+8801712345678',
+          phoneVerified: true,
+        },
+      }),
+    );
+  });
+
+  it('does not infer channel verification from verified_contact or linked_providers when live confirmation is absent', async () => {
+    vi.mocked(getAppUser).mockResolvedValue({
+      id: 'user-fallback-1',
+      status: 'active',
+      role: 'USER',
+      verified_contact: true,
+      email: 'unconfirmed@example.com',
+      phone: '+8801812345678',
+      linked_providers: ['email', 'phone'],
+    });
+    vi.mocked(loadProfileForSetup).mockResolvedValue({
+      profile: null,
+      userId: 'user-fallback-1',
+    });
+
+    const jsx = await OnboardingProfilePage();
+    render(jsx);
+
+    expect(mockProfileSetupForm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialContact: {
+          email: 'unconfirmed@example.com',
+          emailVerified: false,
+          phone: '+8801812345678',
+          phoneVerified: false,
         },
       }),
     );

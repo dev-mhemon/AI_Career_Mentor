@@ -3,12 +3,17 @@ import Link from 'next/link';
 import { getAppUser } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
 import {
+  readLiveAuthUser,
+  resolveContactChannels,
+  type ChannelConfirmationUser,
+} from '@/lib/auth/workspace-profile';
+import {
   loadProfileForSetup,
   type ProfileContactInfo,
 } from '@/lib/profile/actions';
-import { isNonSyntheticEmail } from '@/lib/validation/profile-schemas';
+import { extractMetadataProfile } from '@/lib/profile/metadata';
 import { ProfileSetupForm } from '@/components/onboarding/profile-setup-form';
-import { Header } from '@/components/ui/header';
+import { AppShellSync } from '@/components/ui/app-shell-context';
 import { Button } from '@/components/ui/button';
 
 const primaryLinkClass =
@@ -19,12 +24,10 @@ const secondaryLinkClass =
 
 function SuspendedAccountShell() {
   return (
-    <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
-      <main
-        id="main-content"
-        tabIndex={-1}
-        className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center outline-none"
-      >
+    <>
+      <AppShellSync disabled />
+      <div className="flex flex-1 flex-col bg-surface-canvas px-4 py-12 text-text-primary">
+        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center">
         <div className="flex flex-col gap-5 rounded-xl border border-feedback-warning-border bg-surface-raised p-6 shadow-md sm:p-8">
           <h1 className="text-heading-lg text-text-primary">
             আপনার অ্যাকাউন্ট স্থগিত আছে
@@ -48,6 +51,7 @@ function SuspendedAccountShell() {
         </div>
       </main>
     </div>
+    </>
   );
 }
 
@@ -86,42 +90,35 @@ export default async function OnboardingProfilePage() {
     return <SuspendedAccountShell />;
   }
 
-  const cleanUserEmail = isNonSyntheticEmail(user.email) ? user.email.trim() : '';
-  const hasVerifiedEmail =
-    Boolean(cleanUserEmail) &&
-    (Boolean(user.verified_contact) ||
-      Boolean(user.linked_providers?.includes('email')));
-  const cleanUserPhone = user.phone?.trim() ?? '';
-  const hasVerifiedPhone =
-    Boolean(cleanUserPhone) &&
-    (Boolean(user.verified_contact) ||
-      Boolean(user.linked_providers?.includes('phone')));
+  const liveAuthUser = await readLiveAuthUser();
+  const meta = extractMetadataProfile(liveAuthUser?.user_metadata);
+  const resolvedFullName = meta.fullName ?? fullName ?? null;
+  const contactChannels = resolveContactChannels({
+    user: user as ChannelConfirmationUser,
+    liveAuthUser,
+    profileContactEmail: meta.contactEmail ?? contactEmail,
+    profileContactPhone: meta.contactPhone ?? contactPhone,
+  });
 
   const initialContact: ProfileContactInfo = {
-    email: cleanUserEmail || contactEmail || '',
-    emailVerified: hasVerifiedEmail,
-    phone: cleanUserPhone || contactPhone || '',
-    phoneVerified: hasVerifiedPhone,
+    email: contactChannels.displayedEmail ?? '',
+    emailVerified: contactChannels.emailVerified,
+    phone: contactChannels.rawDisplayedPhone ?? '',
+    phoneVerified: contactChannels.phoneVerified,
   };
 
   return (
-    <div className="flex flex-1 flex-col bg-surface-canvas text-text-primary">
-      <Header
-        variant="authenticated"
-        actions={
-          <form action={logoutAction}>
-            <Button type="submit" variant="secondary" size="sm">
-              Sign Out
-            </Button>
-          </form>
-        }
+    <>
+      <AppShellSync
+        variant={user.role === 'ADMIN' ? 'admin' : 'authenticated'}
+        user={{
+          fullName: resolvedFullName,
+          currentRole: profile?.current_role ?? null,
+          email: contactChannels.displayedEmail,
+          phone: contactChannels.displayedPhone,
+        }}
       />
-
-      <main
-        id="main-content"
-        tabIndex={-1}
-        className="mx-auto w-full max-w-3xl px-4 py-8 outline-none sm:py-12"
-      >
+      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:py-12">
         <div className="mb-6">
           <h1 className="text-heading-xl text-text-primary">
             Complete Your Profile
@@ -135,12 +132,12 @@ export default async function OnboardingProfilePage() {
           <ProfileSetupForm
             initialProfile={profile}
             initialContact={initialContact}
-            initialFullName={fullName ?? ''}
+            initialFullName={resolvedFullName ?? ''}
             loadError={loadError}
             userId={userId ?? user.id}
           />
         </div>
       </main>
-    </div>
+    </>
   );
 }

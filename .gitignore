@@ -9,3 +9,4 @@ supabase/.branches/
 
 **/signing_keys.json
 **/*.private.log
+**/.vite/

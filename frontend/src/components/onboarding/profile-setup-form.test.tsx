@@ -91,32 +91,54 @@ describe('ProfileSetupForm (Screen 07)', () => {
     const progressbar = screen.getByRole('progressbar', {
       name: /step 1 of 5/i,
     });
+    expect(progressbar).toHaveClass('px-6', 'py-5');
     expect(progressbar).toHaveAttribute('aria-valuenow', '1');
     expect(progressbar).toHaveAttribute('aria-valuemin', '1');
     expect(progressbar).toHaveAttribute('aria-valuemax', '5');
     expect(screen.getByText('Profile Setup')).toBeInTheDocument();
     expect(screen.getByText('Step 1 of 5')).toBeInTheDocument();
     expect(screen.getByText('20% Complete')).toBeInTheDocument();
-    expect(screen.getByText('1. Profile')).toBeInTheDocument();
-    expect(screen.getByText('2. Skills')).toBeInTheDocument();
+    expect(screen.getByText('1. Profile')).toHaveClass('mt-2.5');
+    expect(screen.getByText('2. Skills')).toHaveClass('mt-2.5');
     expect(screen.getByText('3. Preferences')).toBeInTheDocument();
     expect(screen.getByText('4. Career Goal')).toBeInTheDocument();
     expect(screen.getByText('5. Confirm Level')).toBeInTheDocument();
 
     const fullNameInput = screen.getByLabelText(/full name/i);
     expect(fullNameInput).toBeRequired();
-    expect(fullNameInput).toHaveAttribute('aria-describedby', 'full_name-hint');
-    expect(screen.getByText('Min 2 – Max 100 characters')).toBeInTheDocument();
+    expect(fullNameInput).not.toHaveAttribute('aria-describedby');
+    expect(
+      screen.queryByText('Min 2 – Max 100 characters'),
+    ).not.toBeInTheDocument();
+
+    const emailInput = screen.getByLabelText(/email address/i);
+    expect(emailInput).not.toHaveAttribute('aria-describedby');
+    expect(
+      screen.queryByText(/verified primary email/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/optional secondary email/i),
+    ).not.toBeInTheDocument();
+
+    const phoneInput = screen.getByLabelText(/phone number/i);
+    expect(phoneInput).not.toHaveAttribute('aria-describedby');
+    expect(
+      screen.queryByText(/optional bangladesh mobile/i),
+    ).not.toBeInTheDocument();
 
     const educationInput = screen.getByLabelText(/education \(optional\)/i);
     expect(educationInput).not.toBeRequired();
+    expect(educationInput).not.toHaveAttribute('aria-describedby');
     expect(educationInput).toHaveValue('');
-    expect(screen.getByText('Max 200 characters')).toBeInTheDocument();
+    expect(screen.queryByText('Max 200 characters')).not.toBeInTheDocument();
 
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
     expect(roleInput).toBeRequired();
+    expect(roleInput).not.toHaveAttribute('aria-describedby');
     expect(roleInput).toHaveValue('');
-    expect(screen.getByText('Min 2 – Max 120 characters')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Min 2 – Max 120 characters'),
+    ).not.toBeInTheDocument();
 
     // Education appears BEFORE Current Role / Profession in DOM order
     expect(
@@ -127,6 +149,10 @@ describe('ProfileSetupForm (Screen 07)', () => {
     const levelSelect = screen.getByLabelText(/experience level/i);
     expect(levelSelect).toBeRequired();
     expect(levelSelect).toHaveValue('');
+    expect(levelSelect).not.toHaveAttribute('aria-describedby');
+    expect(
+      screen.queryByText('Choose Beginner if you are starting from scratch.'),
+    ).not.toBeInTheDocument();
     expect(levelSelect).toHaveClass('appearance-none', 'pr-10', 'truncate');
     const selectWrapper = levelSelect.closest('.group.relative');
     expect(selectWrapper).not.toBeNull();
@@ -230,7 +256,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     fireEvent.blur(fullNameInput);
     expect(fullNameInput).toHaveValue('Alice Rahman');
     expect(fullNameInput).not.toHaveAttribute('aria-invalid', 'true');
-    expect(fullNameInput).toHaveAttribute('aria-describedby', 'full_name-hint');
+    expect(fullNameInput).not.toHaveAttribute('aria-describedby');
   });
 
   it('auto-prefills Verified readOnly Email for email-signup users and validates optional Phone', () => {

@@ -823,7 +823,7 @@ function ProfileSetupFormInner({
         aria-valuemin={1}
         aria-valuemax={5}
         aria-label="Onboarding progress: Step 1 of 5"
-        className="flex flex-col gap-4 rounded-xl border border-border-subtle bg-surface-subtle p-4 sm:p-5"
+        className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
@@ -867,7 +867,7 @@ function ProfileSetupFormInner({
                 </span>
                 <span
                   className={cn(
-                    'sr-only mt-2 text-caption leading-tight sm:not-sr-only',
+                    'sr-only mt-2.5 text-caption leading-tight sm:not-sr-only',
                     isActive
                       ? 'font-semibold text-text-brand'
                       : 'text-text-muted',
@@ -940,7 +940,6 @@ function ProfileSetupFormInner({
           value={values.full_name}
           error={fullNameError}
           placeholder="Enter your full name"
-          hint="Min 2 – Max 100 characters"
           onChange={(e) => {
             const v = e.target.value;
             dismissServerField('full_name');
@@ -978,13 +977,6 @@ function ProfileSetupFormInner({
             value={displayedEmail}
             error={emailError}
             placeholder="you@example.com"
-            hint={
-              emailVerified
-                ? 'Verified primary email. Manage contacts in Settings.'
-                : phoneVerified
-                  ? 'Optional secondary email address.'
-                  : 'Enter an email or Bangladesh mobile number.'
-            }
             onChange={(e) => {
               if (emailVerified) return;
               const v = e.target.value;
@@ -1026,11 +1018,6 @@ function ProfileSetupFormInner({
             value={displayedPhone}
             error={phoneError}
             placeholder="01XXXXXXXXX"
-            hint={
-              phoneVerified
-                ? 'Verified primary phone. Manage contacts in Settings.'
-                : 'Optional Bangladesh mobile, e.g. 01XXXXXXXXX'
-            }
             onChange={(e) => {
               if (phoneVerified) return;
               const v = e.target.value;
@@ -1080,7 +1067,6 @@ function ProfileSetupFormInner({
             value={values.education}
             error={educationError}
             placeholder="e.g. BSc in CSE, Diploma in Engineering"
-            hint={`Max ${EDUCATION_MAX} characters`}
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('education');
@@ -1115,7 +1101,6 @@ function ProfileSetupFormInner({
             value={values.current_role}
             error={currentRoleError}
             placeholder="e.g. Student, Frontend Developer, QA Engineer"
-            hint="Min 2 – Max 120 characters"
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('current_role');
@@ -1152,7 +1137,6 @@ function ProfileSetupFormInner({
             label="Experience Level"
             required
             error={experienceLevelError}
-            hint="Choose Beginner if you are starting from scratch."
           >
             <div className="group relative">
               <select
@@ -1172,9 +1156,7 @@ function ProfileSetupFormInner({
                 }}
                 aria-invalid={experienceLevelError ? 'true' : undefined}
                 aria-describedby={
-                  experienceLevelError
-                    ? 'experience_level-error'
-                    : 'experience_level-hint'
+                  experienceLevelError ? 'experience_level-error' : undefined
                 }
                 className={cn(
                   SELECT_BASE_CLASS,
