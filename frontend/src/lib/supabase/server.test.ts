@@ -12,12 +12,23 @@ type CookieAdapter = {
 };
 
 let capturedCookiesAdapter: CookieAdapter | null = null;
+let capturedGlobalFetch: typeof fetch | undefined;
 
 vi.mock('@supabase/ssr', () => ({
-  createServerClient: vi.fn((_url: string, _key: string, config: { cookies: CookieAdapter }) => {
-    capturedCookiesAdapter = config.cookies;
-    return { auth: {} };
-  }),
+  createServerClient: vi.fn(
+    (
+      _url: string,
+      _key: string,
+      config: {
+        cookies: CookieAdapter;
+        global?: { fetch?: typeof fetch };
+      },
+    ) => {
+      capturedCookiesAdapter = config.cookies;
+      capturedGlobalFetch = config.global?.fetch;
+      return { auth: {} };
+    },
+  ),
 }));
 
 const mockCookieStore = {
@@ -36,6 +47,7 @@ describe('createSupabaseServerClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedCookiesAdapter = null;
+    capturedGlobalFetch = undefined;
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';
   });
@@ -252,5 +264,47 @@ describe('createSupabaseServerClient', () => {
     expect(
       mockCookieStore.set.mock.calls.some((c) => c[0] === 'mentor_remember_me'),
     ).toBe(false);
+  });
+
+  it('aborts read-only fetch when headers arrive immediately but response body stalls', async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      const { DEFAULT_AUTH_STATE_TIMEOUT_MS } = await import('@/lib/api/client');
+      let capturedSignal: AbortSignal | null | undefined;
+      const stalledStream = new ReadableStream({
+        start() {},
+      });
+      const mockFetch = vi.fn(
+        async (_input: RequestInfo | URL, init?: RequestInit) => {
+          capturedSignal = init?.signal;
+          return new Response(stalledStream, { status: 200 });
+        },
+      );
+      vi.stubGlobal('fetch', mockFetch);
+
+      await createSupabaseServerClient({ readOnly: true });
+      expect(capturedGlobalFetch).toBeTypeOf('function');
+
+      let rejectedError: unknown;
+      const pending = capturedGlobalFetch!(
+        'https://example.supabase.co/auth/v1/user',
+      ).catch((err) => {
+        rejectedError = err;
+      });
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_AUTH_STATE_TIMEOUT_MS - 1);
+      expect(rejectedError).toBeUndefined();
+      expect(capturedSignal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(rejectedError).toBeInstanceOf(DOMException);
+      expect((rejectedError as DOMException).name).toBe('TimeoutError');
+    } finally {
+      vi.useRealTimers();
+      vi.stubGlobal('fetch', originalFetch);
+    }
   });
 });

@@ -365,4 +365,22 @@ describe("ForgotPasswordForm", () => {
       screen.queryByText(/no account found with this phone number\./i),
     ).not.toBeInTheDocument();
   });
+
+  it("clears empty email error on blur outside while preserving submit validation", () => {
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i);
+    const form = input.closest("form")!;
+
+    fireEvent.submit(form);
+    expect(screen.getByText(/enter your email address\./i)).toBeInTheDocument();
+
+    fireEvent.blur(input);
+    expect(
+      screen.queryByText(/enter your email address\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.submit(form);
+    expect(screen.getByText(/enter your email address\./i)).toBeInTheDocument();
+  });
 });

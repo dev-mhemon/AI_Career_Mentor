@@ -1,27 +1,37 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getAppUser } from "@/lib/auth/user";
+import { hasAuthenticatedAppSession } from "@/lib/auth/user";
+import {
+  LOGIN_HINT_COOKIE,
+  parseRememberedLoginHint,
+} from "@/lib/auth/remember-login";
 import { LoginForm } from "@/components/auth/login-form";
 
 /**
  * Screen 02: Login page — Server Component enforcing route access.
- * Authenticated users redirect to /dashboard; unauthenticated users display the login shell.
+ * Authenticated users redirect immediately to /dashboard unless displaying an auth error or account deletion notice; unauthenticated or recovery-needed users display the login shell.
  */
 export default async function LoginPage({
   searchParams,
 }: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const user = await getAppUser();
-
-  if (user) {
-    redirect("/dashboard");
-  }
-
   const awaitedSearchParams = await searchParams;
   const errorCode = awaitedSearchParams?.error;
+  const hasErrorParam =
+    typeof errorCode === "string"
+      ? errorCode.trim().length > 0
+      : Array.isArray(errorCode) &&
+        errorCode.some((value) => value.trim().length > 0);
   const resetSuccess = awaitedSearchParams?.reset === "success";
   const isDeleted = awaitedSearchParams?.deleted === "true";
   const isVerified = awaitedSearchParams?.verified === "true";
+
+  if (!hasErrorParam && !isDeleted) {
+    if (await hasAuthenticatedAppSession()) {
+      redirect("/dashboard");
+    }
+  }
   let initialError: string | undefined;
 
   if (errorCode === "oauth_failed") {
@@ -38,6 +48,18 @@ export default async function LoginPage({
     ? "Email verified successfully. Please sign in."
     : undefined;
 
+  let initialRememberedLogin = null;
+  if (!isDeleted) {
+    try {
+      const cookieStore = await cookies();
+      initialRememberedLogin = parseRememberedLoginHint(
+        cookieStore.get(LOGIN_HINT_COOKIE)?.value,
+      );
+    } catch {
+      initialRememberedLogin = null;
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -46,7 +68,12 @@ export default async function LoginPage({
           Welcome back. Continue your learning path.
         </p>
       </div>
-      <LoginForm initialError={initialError} successMessage={successMessage} />
+      <LoginForm
+        initialError={initialError}
+        successMessage={successMessage}
+        initialRememberedLogin={initialRememberedLogin}
+        clearSavedLogin={isDeleted}
+      />
     </div>
   );
 }

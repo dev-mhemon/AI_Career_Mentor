@@ -619,6 +619,19 @@ describe('Auth Actions', () => {
           path: '/',
         }),
       );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_login_hint',
+        JSON.stringify({
+          channel: 'email',
+          identifier: 'user@example.com',
+          rememberMe: true,
+        }),
+        expect.objectContaining({
+          httpOnly: false,
+          maxAge: 60 * 60 * 24 * 30,
+          path: '/',
+        }),
+      );
 
       mockCookieStore.set.mockClear();
       mockCookieStore.delete.mockClear();
@@ -641,6 +654,7 @@ describe('Auth Actions', () => {
       });
 
       await expect(loginAction({}, sessionFormData)).rejects.toThrow('NEXT_REDIRECT');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_login_hint');
       expect(mockCookieStore.set).toHaveBeenCalledWith(
         'mentor_remember_me',
         '0',
@@ -1596,6 +1610,7 @@ describe('Auth Actions', () => {
       expect(mockSignOut).toHaveBeenCalled();
       expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_remember_me');
       expect(mockCookieStore.delete).toHaveBeenCalledWith('auth_remember');
+      expect(mockCookieStore.delete).not.toHaveBeenCalledWith('mentor_login_hint');
       expect(redirect).toHaveBeenCalledWith('/login');
     });
 

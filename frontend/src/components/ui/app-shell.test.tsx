@@ -535,4 +535,19 @@ describe('AppShell, Sidebar, and Header', () => {
       within(nav).getByRole('link', { name: 'Create account' }),
     ).toHaveAttribute('href', '/register');
   });
+
+  it('keeps public Sign in / Create account labels when authenticated and routes to /dashboard', () => {
+    render(<Header variant="public" authenticated />);
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    expect(within(nav).getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/dashboard',
+    );
+    expect(
+      within(nav).getByRole('link', { name: 'Create account' }),
+    ).toHaveAttribute('href', '/dashboard');
+    expect(
+      within(nav).queryByRole('link', { name: 'Dashboard' }),
+    ).not.toBeInTheDocument();
+  });
 });

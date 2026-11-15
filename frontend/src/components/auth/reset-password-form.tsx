@@ -7,7 +7,11 @@ import {
   forgotPasswordAction,
   type AuthActionResult,
 } from "@/lib/auth/actions";
-import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import {
+  AuthAlert,
+  handleAuthBlur,
+  useDismissedActionState,
+} from "@/components/auth/auth-alert";
 import { Alert, formatCountdown } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -322,6 +326,8 @@ export function ResetPasswordForm() {
               if (!e.target.value.trim()) {
                 identifierBlurredRef.current = false;
                 setEnteredIdentifier("");
+                dismissServerField("identifier");
+                setFieldError("identifier", undefined);
                 return;
               }
               identifierBlurredRef.current = true;
@@ -353,11 +359,16 @@ export function ResetPasswordForm() {
             const res = validateOtpLive(e.target.value);
             setFieldError("code", res.ok ? undefined : res.error);
           }}
-          onBlur={(e) => {
-            if (!e.target.value.trim()) return;
-            const res = validateOtp(e.target.value);
-            setFieldError("code", res.ok ? undefined : res.error);
-          }}
+          onBlur={(e) =>
+            handleAuthBlur(e, {
+              clearError: () => {
+                dismissServerField("code");
+                setFieldError("code", undefined);
+              },
+              validate: validateOtp,
+              setError: (err) => setFieldError("code", err),
+            })
+          }
         />
 
         <div className="flex flex-col gap-2">
@@ -383,11 +394,17 @@ export function ResetPasswordForm() {
                 setFieldError("confirm_new_password", undefined);
               }
             }}
-            onBlur={(e) => {
-              if (!e.target.value) return;
-              const pw = validatePassword(e.target.value);
-              setFieldError("new_password", pw.ok ? undefined : pw.error);
-            }}
+            onBlur={(e) =>
+              handleAuthBlur(e, {
+                ignorePasswordToggle: true,
+                clearError: () => {
+                  dismissServerField("new_password");
+                  setFieldError("new_password", undefined);
+                },
+                validate: validatePassword,
+                setError: (err) => setFieldError("new_password", err),
+              })
+            }
             placeholder="New password"
           />
           {password && (
@@ -418,6 +435,15 @@ export function ResetPasswordForm() {
             dismissServerField("confirm_new_password");
             setFieldError("confirm_new_password", undefined);
           }}
+          onBlur={(e) =>
+            handleAuthBlur(e, {
+              ignorePasswordToggle: true,
+              clearError: () => {
+                dismissServerField("confirm_new_password");
+                setFieldError("confirm_new_password", undefined);
+              },
+            })
+          }
           placeholder="Confirm new password"
         />
 

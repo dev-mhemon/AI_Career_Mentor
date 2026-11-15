@@ -190,7 +190,10 @@ export function ForgotPasswordForm() {
                 setClientError(res.ok ? undefined : res.error);
               }}
               onBlur={(e) => {
-                if (!e.target.value.trim()) return;
+                if (!e.target.value.trim()) {
+                  setClientError(undefined);
+                  return;
+                }
                 const res = validateEmail(e.target.value);
                 if (!res.ok) setClientError(res.error);
                 else {
@@ -225,6 +228,7 @@ export function ForgotPasswordForm() {
               onBlur={(e) => {
                 if (!e.target.value.trim()) {
                   phoneBlurredRef.current = false;
+                  setClientError(undefined);
                   return;
                 }
                 phoneBlurredRef.current = true;

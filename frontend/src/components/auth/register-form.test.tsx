@@ -267,4 +267,32 @@ describe("RegisterForm", () => {
       screen.queryByText(/an account already exists with this contact\./i),
     ).not.toBeInTheDocument();
   });
+
+  it("clears empty-password error on blur outside wrapper while preserving eye-toggle blur and submit validation", () => {
+    render(<RegisterForm />);
+
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const showPasswordBtns = screen.getAllByRole("button", { name: /show password/i });
+    const form = passwordInput.closest("form")!;
+
+    fireEvent.submit(form);
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.blur(passwordInput, { relatedTarget: showPasswordBtns[0] });
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.blur(passwordInput);
+    expect(
+      screen.queryByText(/password must be at least 8 characters\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.submit(form);
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+  });
 });

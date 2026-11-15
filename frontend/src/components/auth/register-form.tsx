@@ -4,7 +4,11 @@ import { useActionState, useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import {
+  AuthAlert,
+  handleAuthBlur,
+  useDismissedActionState,
+} from "@/components/auth/auth-alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -188,7 +192,11 @@ export function RegisterForm() {
                 setFieldError("identifier", res.ok ? undefined : res.error);
               }}
               onBlur={(e) => {
-                if (!e.target.value.trim()) return;
+                if (!e.target.value.trim()) {
+                  dismissServerField("identifier");
+                  setFieldError("identifier", undefined);
+                  return;
+                }
                 const res = validateEmail(e.target.value);
                 if (!res.ok) setFieldError("identifier", res.error);
                 else {
@@ -220,6 +228,8 @@ export function RegisterForm() {
               onBlur={(e) => {
                 if (!e.target.value.trim()) {
                   phoneBlurredRef.current = false;
+                  dismissServerField("identifier");
+                  setFieldError("identifier", undefined);
                   return;
                 }
                 phoneBlurredRef.current = true;
@@ -254,11 +264,17 @@ export function RegisterForm() {
                   setFieldError("confirmPassword", undefined);
                 }
               }}
-              onBlur={(e) => {
-                if (!e.target.value) return;
-                const pw = validatePassword(e.target.value);
-                setFieldError("password", pw.ok ? undefined : pw.error);
-              }}
+              onBlur={(e) =>
+                handleAuthBlur(e, {
+                  ignorePasswordToggle: true,
+                  clearError: () => {
+                    dismissServerField("password");
+                    setFieldError("password", undefined);
+                  },
+                  validate: validatePassword,
+                  setError: (err) => setFieldError("password", err),
+                })
+              }
               placeholder="Password"
             />
             <p aria-live="polite" className="text-caption text-text-secondary">
@@ -289,6 +305,15 @@ export function RegisterForm() {
               dismissServerField("confirmPassword");
               setFieldError("confirmPassword", undefined);
             }}
+            onBlur={(e) =>
+              handleAuthBlur(e, {
+                ignorePasswordToggle: true,
+                clearError: () => {
+                  dismissServerField("confirmPassword");
+                  setFieldError("confirmPassword", undefined);
+                },
+              })
+            }
             placeholder="Confirm password"
           />
 

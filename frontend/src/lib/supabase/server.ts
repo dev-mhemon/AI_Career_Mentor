@@ -1,6 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import {
+  createTimedAbortSignal,
+  DEFAULT_AUTH_STATE_TIMEOUT_MS,
+} from "@/lib/api/client";
+import {
   applyRememberPreference,
   buildRememberMeCookie,
   REMEMBER_ME_COOKIE,
@@ -77,7 +81,7 @@ export async function createSupabaseServerClient(options?: {
       },
       global: {
         fetch: options?.readOnly
-          ? (input, init) => {
+          ? async (input, init) => {
               const urlStr =
                 typeof input === "string"
                   ? input
@@ -101,7 +105,56 @@ export async function createSupabaseServerClient(options?: {
                   ),
                 );
               }
-              return fetch(input, init);
+              const { signal, cleanup } = createTimedAbortSignal(
+                DEFAULT_AUTH_STATE_TIMEOUT_MS,
+                init?.signal,
+              );
+              try {
+                const response = await fetch(input, { ...init, signal });
+                if (
+                  response.body === null ||
+                  response.status === 204 ||
+                  response.status === 205 ||
+                  response.status === 304
+                ) {
+                  return response;
+                }
+                const bodyBuffer = await new Promise<ArrayBuffer>(
+                  (resolve, reject) => {
+                    if (signal.aborted) {
+                      void response.body
+                        ?.cancel(signal.reason)
+                        .catch(() => undefined);
+                      reject(signal.reason);
+                      return;
+                    }
+                    const onAbort = () => {
+                      void response.body
+                        ?.cancel(signal.reason)
+                        .catch(() => undefined);
+                      reject(signal.reason);
+                    };
+                    signal.addEventListener("abort", onAbort, { once: true });
+                    response.arrayBuffer().then(
+                      (buf) => {
+                        signal.removeEventListener("abort", onAbort);
+                        resolve(buf);
+                      },
+                      (err) => {
+                        signal.removeEventListener("abort", onAbort);
+                        reject(err);
+                      },
+                    );
+                  },
+                );
+                return new Response(bodyBuffer, {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers,
+                });
+              } finally {
+                cleanup();
+              }
             }
           : fetch,
       },

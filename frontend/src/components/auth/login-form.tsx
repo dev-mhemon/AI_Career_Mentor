@@ -1,11 +1,22 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import {
+  useActionState,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import {
+  AuthAlert,
+  handleAuthBlur,
+  useDismissedActionState,
+} from "@/components/auth/auth-alert";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,6 +28,18 @@ import {
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
 import {
+  clearRememberedLogin,
+  getRememberedLoginServerSnapshot,
+  getRememberedLoginSnapshot,
+  loadRememberedLogin,
+  parseRememberedLoginHint,
+  REMEMBERED_LOGIN_STORAGE_KEY,
+  saveRememberedLogin,
+  subscribeRememberedLogin,
+  type RememberedLoginHint,
+} from "@/lib/auth/remember-login";
+import {
+  sanitizeBdPhoneDisplay,
   validateBdPhone,
   validateBdPhoneOnChange,
   validateEmail,
@@ -28,20 +51,52 @@ type Channel = "email" | "phone";
 
 /**
  * Screen 02: Login form component using useActionState for pending and error states.
- * Supports Email and Bangladesh Phone (+880) tabs, preserves identifier on failure,
- * clears only password on error, and handles password recovery navigation.
+ * Supports Email and Bangladesh Phone (+880) tabs, preserves email/phone inputs across tab
+ * switches and failed logins, clears only password on error, restores remembered identifier/
+ * channel preference across logout when "Keep Signed In" was selected, and handles recovery.
  */
 export function LoginForm({
   initialError,
   successMessage,
+  initialRememberedLogin,
+  clearSavedLogin = false,
 }: {
   initialError?: string;
   successMessage?: string;
+  initialRememberedLogin?: RememberedLoginHint | null;
+  clearSavedLogin?: boolean;
 }) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<Channel>("email");
-  const [identifier, setIdentifier] = useState("");
+  const [storageCleared, setStorageCleared] = useState(false);
+  const storedHintRaw = useSyncExternalStore(
+    subscribeRememberedLogin,
+    getRememberedLoginSnapshot,
+    getRememberedLoginServerSnapshot,
+  );
+  const effectiveHint = useMemo(() => {
+    if (clearSavedLogin || storageCleared) return null;
+    return parseRememberedLoginHint(storedHintRaw) ?? initialRememberedLogin;
+  }, [clearSavedLogin, initialRememberedLogin, storageCleared, storedHintRaw]);
+
+  const [tabOverride, setTabOverride] = useState<Channel | null>(null);
+  const [emailOverride, setEmailOverride] = useState<string | null>(null);
+  const [phoneOverride, setPhoneOverride] = useState<string | null>(null);
+  const [keepSignedInOverride, setKeepSignedInOverride] = useState<
+    boolean | null
+  >(null);
   const [password, setPassword] = useState("");
+
+  const activeTab = tabOverride ?? effectiveHint?.channel ?? "email";
+  const emailValue =
+    emailOverride ??
+    (effectiveHint?.channel === "email" ? effectiveHint.identifier : "");
+  const phoneValue =
+    phoneOverride ??
+    (effectiveHint?.channel === "phone" ? effectiveHint.identifier : "");
+  const identifier = activeTab === "email" ? emailValue : phoneValue;
+  const keepSignedIn =
+    keepSignedInOverride ?? Boolean(effectiveHint?.rememberMe);
+
   const identifierRef = useRef(identifier);
   useEffect(() => {
     identifierRef.current = identifier;
@@ -73,6 +128,42 @@ export function LoginForm({
     dismiss: dismissAlert,
     onFormActivity,
   } = useDismissedActionState(state);
+
+  const didInitialSeedRef = useRef(false);
+  useEffect(() => {
+    if (clearSavedLogin) {
+      clearRememberedLogin();
+      return;
+    }
+    if (!didInitialSeedRef.current) {
+      didInitialSeedRef.current = true;
+      if (initialRememberedLogin && !loadRememberedLogin()) {
+        saveRememberedLogin(
+          initialRememberedLogin.channel,
+          initialRememberedLogin.identifier,
+        );
+      }
+    }
+  }, [clearSavedLogin, initialRememberedLogin]);
+
+  useEffect(() => {
+    const syncClearState = () => {
+      setStorageCleared(!parseRememberedLoginHint(getRememberedLoginSnapshot()));
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === REMEMBERED_LOGIN_STORAGE_KEY) {
+        setStorageCleared(
+          e.newValue === null || !parseRememberedLoginHint(e.newValue),
+        );
+      }
+    };
+    const unsubscribe = subscribeRememberedLogin(syncClearState);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
 
   useEffect(() => {
     if (successMessage) {
@@ -157,7 +248,8 @@ export function LoginForm({
   const identifierError =
     clientErrors.identifier ??
     serverFieldError("identifier") ??
-    serverFieldError("email");
+    serverFieldError("email") ??
+    serverFieldError("phone");
   const passwordError = clientErrors.password ?? serverFieldError("password");
 
   return (
@@ -172,9 +264,14 @@ export function LoginForm({
         disabled={isPending}
         value={activeTab}
         onValueChange={(id) => {
-          setActiveTab(id as Channel);
-          setIdentifier("");
+          setTabOverride(id as Channel);
           setClientErrors({});
+          if (state?.fieldErrors) {
+            setDismissedServer({
+              ref: state,
+              fields: new Set(Object.keys(state.fieldErrors)),
+            });
+          }
           phoneBlurredRef.current = false;
           dismissAlert();
         }}
@@ -194,6 +291,10 @@ export function LoginForm({
           noValidate
           onFocusCapture={onFormActivity}
           onChangeCapture={onFormActivity}
+          onReset={(e) => {
+            // Prevent React 19 form transitions from wiping controlled login state or unchecking Keep Signed In
+            e.preventDefault();
+          }}
           onSubmit={(e) => {
             const form = e.currentTarget;
             const errors: Record<string, string> = {};
@@ -215,6 +316,10 @@ export function LoginForm({
               return;
             }
             setClientErrors({});
+            setTabOverride(activeTab);
+            setEmailOverride(emailValue);
+            setPhoneOverride(phoneValue);
+            setKeepSignedInOverride(keepSignedIn);
             if (id.ok) {
               if (activeTab === "email") {
                 const emailEl = form.elements.namedItem(
@@ -223,6 +328,16 @@ export function LoginForm({
                 if (emailEl) emailEl.value = id.value;
               }
               submittedIdentifier.current = id.value;
+              if (keepSignedIn) {
+                saveRememberedLogin(
+                  activeTab,
+                  activeTab === "phone"
+                    ? sanitizeBdPhoneDisplay(phoneValue)
+                    : id.value,
+                );
+              } else {
+                clearRememberedLogin();
+              }
             }
           }}
           className="flex flex-col gap-4"
@@ -237,22 +352,27 @@ export function LoginForm({
               autoComplete="username"
               required
               readOnly={isPending}
-              value={identifier}
+              value={emailValue}
               error={identifierError}
               onChange={(e) => {
                 const v = e.target.value;
-                setIdentifier(v);
+                setEmailOverride(v);
                 dismissServerField("email");
+                dismissServerField("phone");
                 dismissServerField("identifier");
                 const res = validateEmailLive(v);
                 setFieldError("identifier", res.ok ? undefined : res.error);
               }}
               onBlur={(e) => {
-                if (!e.target.value.trim()) return;
+                if (!e.target.value.trim()) {
+                  dismissServerField("identifier");
+                  setFieldError("identifier", undefined);
+                  return;
+                }
                 const res = validateEmail(e.target.value);
                 if (!res.ok) setFieldError("identifier", res.error);
                 else {
-                  setIdentifier(res.value);
+                  setEmailOverride(res.value);
                   setFieldError("identifier", undefined);
                 }
               }}
@@ -265,15 +385,16 @@ export function LoginForm({
               name="identifier"
               variant="phone_bd"
               label="Phone Number"
-              autoComplete="tel"
+              autoComplete="username"
               required
               readOnly={isPending}
-              value={identifier}
+              value={phoneValue}
               error={identifierError}
               onChange={(e) => {
                 const v = e.target.value;
-                setIdentifier(v);
+                setPhoneOverride(v);
                 dismissServerField("email");
+                dismissServerField("phone");
                 dismissServerField("identifier");
                 const check = validateBdPhoneOnChange(
                   v,
@@ -285,6 +406,8 @@ export function LoginForm({
               onBlur={(e) => {
                 if (!e.target.value.trim()) {
                   phoneBlurredRef.current = false;
+                  dismissServerField("identifier");
+                  setFieldError("identifier", undefined);
                   return;
                 }
                 phoneBlurredRef.current = true;
@@ -314,20 +437,34 @@ export function LoginForm({
                 const pw = validateLoginPassword(v);
                 setFieldError("password", pw.ok ? undefined : pw.error);
               }}
-              onBlur={(e) => {
-                const raw = e.target.value;
-                if (!raw) return;
-                const pw = validateLoginPassword(raw);
-                setFieldError("password", pw.ok ? undefined : pw.error);
-              }}
+              onBlur={(e) =>
+                handleAuthBlur(e, {
+                  ignorePasswordToggle: true,
+                  clearError: () => {
+                    dismissServerField("password");
+                    setFieldError("password", undefined);
+                  },
+                  validate: validateLoginPassword,
+                  setError: (err) => setFieldError("password", err),
+                })
+              }
               placeholder="Password"
             />
             <div className="flex items-center justify-between gap-4">
               <Checkbox
                 name="rememberMe"
-                label="Keep me signed in"
-                defaultChecked={false}
-                disabled={isPending}
+                label="Keep Signed In"
+                checked={keepSignedIn}
+                onChange={(checked) => {
+                  setKeepSignedInOverride(checked);
+                  if (!checked) {
+                    setTabOverride(activeTab);
+                    setEmailOverride(emailValue);
+                    setPhoneOverride(phoneValue);
+                    clearRememberedLogin();
+                  }
+                }}
+                readOnly={isPending}
               />
               <Link
                 href="/forgot-password"

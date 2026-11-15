@@ -535,4 +535,32 @@ describe("ResetPasswordForm", () => {
       screen.getByRole("button", { name: /^resend code$/i }),
     ).toBeEnabled();
   });
+
+  it("clears empty-password error on blur outside wrapper while preserving eye-toggle blur and submit validation", () => {
+    render(<ResetPasswordForm />);
+
+    const newPasswordInput = screen.getByLabelText(/^new password$/i);
+    const showPasswordBtns = screen.getAllByRole("button", { name: /show password/i });
+    const form = newPasswordInput.closest("form")!;
+
+    fireEvent.submit(form);
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.blur(newPasswordInput, { relatedTarget: showPasswordBtns[0] });
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.blur(newPasswordInput);
+    expect(
+      screen.queryByText(/password must be at least 8 characters\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.submit(form);
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+  });
 });

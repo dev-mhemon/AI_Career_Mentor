@@ -13,6 +13,8 @@ import {
   linkSocialIdentity,
   addContact,
   getMe,
+  getCurrentUserState,
+  DEFAULT_AUTH_STATE_TIMEOUT_MS,
   getProfile,
   updateProfile,
   updateLearningSettings,
@@ -684,5 +686,60 @@ describe('EP-P01 getProfile, EP-P02 updateProfile, and EP-P04 updateLearningSett
         }),
       }),
     );
+  });
+
+  it('aborts getCurrentUserState with NetworkError when backend fetch stalls past DEFAULT_AUTH_STATE_TIMEOUT_MS', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetch.mockImplementationOnce(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const sig = init?.signal;
+            if (!sig) return;
+            if (sig.aborted) {
+              reject(sig.reason ?? new DOMException('Aborted', 'AbortError'));
+              return;
+            }
+            sig.addEventListener(
+              'abort',
+              () => reject(sig.reason ?? new DOMException('Aborted', 'AbortError')),
+              { once: true },
+            );
+          }),
+      );
+
+      const pending = getCurrentUserState(MOCK_TOKEN);
+      const rejection = expect(pending).rejects.toThrow(NetworkError);
+      await vi.advanceTimersByTimeAsync(DEFAULT_AUTH_STATE_TIMEOUT_MS);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('respects caller-supplied AbortSignal in getCurrentUserState', async () => {
+    const callerController = new AbortController();
+    mockFetch.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const sig = init?.signal;
+          if (!sig) return;
+          if (sig.aborted) {
+            reject(sig.reason ?? new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          sig.addEventListener(
+            'abort',
+            () => reject(sig.reason ?? new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+
+    const pending = getCurrentUserState(MOCK_TOKEN, {
+      signal: callerController.signal,
+    });
+    callerController.abort();
+    await expect(pending).rejects.toThrow(NetworkError);
   });
 });

@@ -35,6 +35,11 @@ import {
   UnauthorizedError,
 } from '@/lib/api/client';
 import type { VerificationDraftContext } from '@/lib/auth/verification-draft';
+import {
+  LOGIN_HINT_COOKIE,
+  serializeRememberedLoginHint,
+  type LoginChannel,
+} from '@/lib/auth/remember-login';
 
 /**
  * Server Actions for authentication flows.
@@ -143,6 +148,57 @@ function clearRememberMeCookies(cookieStore: {
     cookieStore.delete(LEGACY_REMEMBER_COOKIE);
   } catch {
     // Ignore cookie cleanup errors outside request context
+  }
+}
+
+function clearLoginHintCookie(cookieStore: {
+  delete: (name: string) => unknown;
+}): void {
+  try {
+    cookieStore.delete(LOGIN_HINT_COOKIE);
+  } catch {
+    // Ignore cookie cleanup errors outside request context
+  }
+}
+
+function persistRememberPreferenceCookies(
+  cookieStore: {
+    set: (name: string, value: string, options: Record<string, unknown>) => unknown;
+    delete: (name: string) => unknown;
+  },
+  rememberMe: boolean,
+  loginHint?: { channel: LoginChannel; identifier: string },
+): void {
+  cookieStore.delete(LEGACY_REMEMBER_COOKIE);
+  if (rememberMe) {
+    cookieStore.set(REMEMBER_ME_COOKIE, '1', {
+      httpOnly: false,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: REMEMBER_ME_MAX_AGE,
+    });
+    if (loginHint) {
+      cookieStore.set(
+        LOGIN_HINT_COOKIE,
+        serializeRememberedLoginHint(loginHint.channel, loginHint.identifier),
+        {
+          httpOnly: false,
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+          maxAge: REMEMBER_ME_MAX_AGE,
+        },
+      );
+    }
+  } else {
+    cookieStore.set(REMEMBER_ME_COOKIE, '0', {
+      httpOnly: false,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+    });
+    cookieStore.delete(LOGIN_HINT_COOKIE);
   }
 }
 
@@ -620,23 +676,10 @@ export async function loginAction(
     try {
       const cookieStore = await cookies();
       cookieStore.delete('account_deleted');
-      cookieStore.delete(LEGACY_REMEMBER_COOKIE);
-      if (rememberMe) {
-        cookieStore.set(REMEMBER_ME_COOKIE, '1', {
-          httpOnly: false,
-          sameSite: 'lax',
-          secure: process.env.NODE_ENV === 'production',
-          path: '/',
-          maxAge: REMEMBER_ME_MAX_AGE,
-        });
-      } else {
-        cookieStore.set(REMEMBER_ME_COOKIE, '0', {
-          httpOnly: false,
-          sameSite: 'lax',
-          secure: process.env.NODE_ENV === 'production',
-          path: '/',
-        });
-      }
+      persistRememberPreferenceCookies(cookieStore, rememberMe, {
+        channel: idCheck.value.kind,
+        identifier: rawIdentifier,
+      });
     } catch {
       // Best effort cookie cleanup on successful authentication
     }
@@ -684,13 +727,9 @@ export async function loginAction(
 
         try {
           const cookieStore = await cookies();
-          cookieStore.delete(LEGACY_REMEMBER_COOKIE);
-          cookieStore.set(REMEMBER_ME_COOKIE, rememberMe ? '1' : '0', {
-            httpOnly: false,
-            sameSite: 'lax',
-            secure: process.env.NODE_ENV === 'production',
-            path: '/',
-            ...(rememberMe ? { maxAge: REMEMBER_ME_MAX_AGE } : {}),
+          persistRememberPreferenceCookies(cookieStore, rememberMe, {
+            channel,
+            identifier: rawIdentifier,
           });
         } catch {
           // Best effort cookie persistence before verification redirect
@@ -1456,6 +1495,7 @@ export async function requestAccountDeletionAction(
       try {
         const cookieStore = await cookies();
         clearRememberMeCookies(cookieStore);
+        clearLoginHintCookie(cookieStore);
         cookieStore.set('account_deleted', 'true', {
           path: '/',
           maxAge: 15,
@@ -1531,6 +1571,7 @@ export async function pollAccountDeletionStatusAction(
       try {
         const cookieStore = await cookies();
         clearRememberMeCookies(cookieStore);
+        clearLoginHintCookie(cookieStore);
       } catch {
         // Best effort cookie cleanup
       }

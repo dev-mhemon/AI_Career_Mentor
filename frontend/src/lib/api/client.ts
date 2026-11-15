@@ -128,33 +128,97 @@ export interface VerifyPhoneBody {
 
 // ─── Core Fetch Wrapper ──────────────────────────────────────
 
+export const DEFAULT_AUTH_STATE_TIMEOUT_MS = 4000;
+const DEFAULT_API_TIMEOUT_MS = 10_000;
+
+export interface ApiFetchOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+/**
+ * Builds an AbortSignal that aborts after `timeoutMs` or when an optional `callerSignal` aborts.
+ * Always invoke the returned `cleanup()` in a `finally` block to prevent timer/listener leaks.
+ */
+export function createTimedAbortSignal(
+  timeoutMs: number,
+  callerSignal?: AbortSignal | null,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  let onCallerAbort: (() => void) | undefined;
+
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      controller.abort(callerSignal.reason);
+    } else {
+      onCallerAbort = () => controller.abort(callerSignal.reason);
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+  }
+
+  const timer =
+    Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? setTimeout(() => {
+          controller.abort(new DOMException('Request timed out', 'TimeoutError'));
+        }, timeoutMs)
+      : undefined;
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (callerSignal && onCallerAbort) {
+        callerSignal.removeEventListener('abort', onCallerAbort);
+      }
+    },
+  };
+}
+
 async function apiFetch<T>(
   path: string,
   accessToken: string | null,
-  options: RequestInit = {},
+  options: ApiFetchOptions = {},
 ): Promise<T> {
   const url = `${getApiBaseUrl()}${path}`;
+  const {
+    timeoutMs = DEFAULT_API_TIMEOUT_MS,
+    signal: callerSignal,
+    ...fetchOptions
+  } = options;
+
+  const { signal, cleanup } = createTimedAbortSignal(timeoutMs, callerSignal);
 
   let response: Response;
-  try {
-    response = await fetch(url, {
-      cache: 'no-store',
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...options.headers,
-      },
-    });
-  } catch {
-    throw new NetworkError('Unable to reach the server. Please try again.');
-  }
-
   let body;
   try {
-    body = await response.json();
-  } catch {
-    body = null;
+    try {
+      response = await fetch(url, {
+        cache: 'no-store',
+        ...fetchOptions,
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          ...fetchOptions.headers,
+        },
+      });
+    } catch {
+      throw new NetworkError(
+        signal.aborted
+          ? 'Request timed out or was aborted. Please try again.'
+          : 'Unable to reach the server. Please try again.',
+      );
+    }
+
+    try {
+      body = await response.json();
+    } catch {
+      if (signal.aborted) {
+        throw new NetworkError('Request timed out or was aborted. Please try again.');
+      }
+      body = null;
+    }
+  } finally {
+    cleanup();
   }
   if (!response.ok) {
     const error = body?.error;
@@ -374,12 +438,23 @@ export interface CurrentUserStateResponse {
   can_delete_account: boolean;
 }
 
+export interface AuthStateRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 /**
  * GET /auth/me
  * Returns the current application-level user (role, status).
  */
-export async function getMe(accessToken: string): Promise<UserResponse> {
-  const data = await apiFetch<{ user: UserResponse }>('/auth/me', accessToken);
+export async function getMe(
+  accessToken: string,
+  options?: AuthStateRequestOptions,
+): Promise<UserResponse> {
+  const data = await apiFetch<{ user: UserResponse }>('/auth/me', accessToken, {
+    timeoutMs: options?.timeoutMs ?? DEFAULT_AUTH_STATE_TIMEOUT_MS,
+    signal: options?.signal,
+  });
   return data.user;
 }
 
@@ -389,10 +464,15 @@ export async function getMe(accessToken: string): Promise<UserResponse> {
  */
 export async function getCurrentUserState(
   accessToken: string,
+  options?: AuthStateRequestOptions,
 ): Promise<CurrentUserStateResponse> {
   const data = await apiFetch< Partial<CurrentUserStateResponse> & { user: UserResponse } >(
     '/auth/me',
     accessToken,
+    {
+      timeoutMs: options?.timeoutMs ?? DEFAULT_AUTH_STATE_TIMEOUT_MS,
+      signal: options?.signal,
+    },
   );
   return {
     user: data.user,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type SyntheticEvent } from "react";
+import { useCallback, useState, type FocusEvent, type SyntheticEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { mapActionResult, type ActionErrorLike } from "@/lib/api/error-mapper";
 
@@ -71,4 +71,41 @@ export function AuthAlert({
       {message ?? mapped.message}
     </Alert>
   );
+}
+
+/**
+ * Returns true when blur moves focus onto the password visibility toggle
+ * button inside the same input wrapper so toggling visibility preserves field state.
+ */
+export function isPasswordToggleBlur(
+  e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>,
+): boolean {
+  const related = e.relatedTarget;
+  if (!(related instanceof Element)) return false;
+  const toggle = related.closest('[data-password-toggle="true"], button');
+  return Boolean(toggle && e.currentTarget.parentElement?.contains(toggle));
+}
+
+/**
+ * Clears transient inline validation errors when an empty field loses focus,
+ * validates non-empty values, and ignores focus transitions to the password toggle.
+ */
+export function handleAuthBlur(
+  e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>,
+  options: {
+    clearError: () => void;
+    validate?: (value: string) => { ok: boolean; error?: string };
+    setError?: (error: string | undefined) => void;
+    ignorePasswordToggle?: boolean;
+  },
+): void {
+  if (options.ignorePasswordToggle && isPasswordToggleBlur(e)) return;
+  if (!e.target.value.trim()) {
+    options.clearError();
+    return;
+  }
+  if (options.validate && options.setError) {
+    const res = options.validate(e.target.value);
+    options.setError(res.ok ? undefined : res.error);
+  }
 }
