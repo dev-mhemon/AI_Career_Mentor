@@ -36,18 +36,18 @@ describe('AddContactForm Component', () => {
   it('renders email and phone tabs and allows switching between them', () => {
     render(<AddContactForm alreadyVerified={false} />);
 
-    const emailTab = screen.getByRole('button', { name: /ইমেইল \(Email\)/i });
-    const phoneTab = screen.getByRole('button', { name: /ফোন নম্বর \(Phone\)/i });
+    const emailTab = screen.getByRole('button', { name: /^email$/i });
+    const phoneTab = screen.getByRole('button', { name: /^phone$/i });
 
     expect(emailTab).toBeInTheDocument();
     expect(phoneTab).toBeInTheDocument();
 
-    const emailInput = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    const emailInput = screen.getByLabelText(/email address/i);
     expect(emailInput).toHaveAttribute('type', 'email');
 
     fireEvent.click(phoneTab);
 
-    const phoneInput = screen.getByLabelText(/বাংলাদেশি মোবাইল নম্বর/i);
+    const phoneInput = screen.getByLabelText(/bangladesh mobile number/i);
     expect(phoneInput).toHaveAttribute('type', 'tel');
     expect(phoneInput).toHaveAttribute('placeholder', '01XXXXXXXXX');
     expect(screen.getByText('+88')).toBeInTheDocument();
@@ -57,26 +57,36 @@ describe('AddContactForm Component', () => {
     render(<AddContactForm isSuspended={true} />);
 
     expect(
-      screen.getByText('স্থগিত অ্যাকাউন্ট থেকে নতুন যোগাযোগ মাধ্যম যোগ করা সম্ভব নয়।'),
+      screen.getByText(
+        /Adding or verifying contact methods is unavailable while your account is suspended/i,
+      ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /যাচাইকরণ কোড পাঠান/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /send verification code/i })).not.toBeInTheDocument();
   });
 
-  it('renders verified contact status card and hides submission form when alreadyVerified is true', () => {
-    render(<AddContactForm alreadyVerified={true} />);
+  it('renders compact verified status row with Verified badge and hides submission form when alreadyVerified is true', () => {
+    render(
+      <AddContactForm
+        alreadyVerified={true}
+        verifiedEmail="verified@example.com"
+      />,
+    );
 
+    expect(screen.getByRole('heading', { name: /contact channels/i })).toBeInTheDocument();
+    expect(screen.getByText('verified@example.com')).toBeInTheDocument();
+    expect(screen.getByText('Verified')).toBeInTheDocument();
     expect(
-      screen.getByText(/যোগাযোগের মাধ্যম যাচাইকৃত \(Verified Contact Method\)/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/Verified Contact Method/i),
+    ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /যাচাইকরণ কোড পাঠান/i }),
+      screen.queryByRole('button', { name: /send verification code/i }),
     ).not.toBeInTheDocument();
   });
 
   it('pre-saves R18 verification draft with context secondary_contact on form submit', () => {
     render(<AddContactForm alreadyVerified={false} />);
 
-    const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    const input = screen.getByLabelText(/email address/i);
     fireEvent.change(input, { target: { value: 'secondary@example.com' } });
 
     const form = input.closest('form');
@@ -97,10 +107,10 @@ describe('AddContactForm Component', () => {
 
     render(<AddContactForm alreadyVerified={false} />);
 
-    const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    const input = screen.getByLabelText(/email address/i);
     fireEvent.change(input, { target: { value: 'taken@example.com' } });
 
-    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    const button = screen.getByRole('button', { name: /send verification code/i });
     await act(async () => {
       fireEvent.click(button);
     });
@@ -119,13 +129,13 @@ describe('AddContactForm Component', () => {
 
     render(<AddContactForm alreadyVerified={false} />);
 
-    const phoneTab = screen.getByRole('button', { name: /ফোন নম্বর \(Phone\)/i });
+    const phoneTab = screen.getByRole('button', { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
-    const input = screen.getByLabelText(/বাংলাদেশি মোবাইল নম্বর/i);
+    const input = screen.getByLabelText(/bangladesh mobile number/i);
     fireEvent.change(input, { target: { value: '+8801712345678' } });
 
-    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    const button = screen.getByRole('button', { name: /send verification code/i });
     await act(async () => {
       fireEvent.click(button);
     });
@@ -144,10 +154,10 @@ describe('AddContactForm Component', () => {
 
     render(<AddContactForm alreadyVerified={false} />);
 
-    const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    const input = screen.getByLabelText(/email address/i);
     fireEvent.change(input, { target: { value: 'verified@example.com' } });
 
-    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    const button = screen.getByRole('button', { name: /send verification code/i });
     await act(async () => {
       fireEvent.click(button);
     });
@@ -165,10 +175,10 @@ describe('AddContactForm Component', () => {
 
     const { rerender } = render(<AddContactForm alreadyVerified={false} />);
 
-    const input = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    const input = screen.getByLabelText(/email address/i);
     fireEvent.change(input, { target: { value: 'test@example.com' } });
 
-    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    const button = screen.getByRole('button', { name: /send verification code/i });
     await act(async () => {
       fireEvent.click(button);
     });
@@ -192,14 +202,14 @@ describe('AddContactForm Component', () => {
 
     render(<AddContactForm alreadyVerified={false} />);
 
-    const emailInput = screen.getByLabelText(/ইমেইল ঠিকানা/i);
+    const emailInput = screen.getByLabelText(/email address/i);
     fireEvent.change(emailInput, { target: { value: 'bad' } });
     expect(screen.getByText(/enter a valid email address/i)).toBeInTheDocument();
 
-    const phoneTab = screen.getByRole('button', { name: /ফোন নম্বর \(Phone\)/i });
+    const phoneTab = screen.getByRole('button', { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
-    const phoneInput = screen.getByLabelText(/বাংলাদেশি মোবাইল নম্বর/i) as HTMLInputElement;
+    const phoneInput = screen.getByLabelText(/bangladesh mobile number/i) as HTMLInputElement;
     fireEvent.change(phoneInput, { target: { value: '012' } });
     expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
 
@@ -208,7 +218,7 @@ describe('AddContactForm Component', () => {
     expect(phoneInput.value).toBe('01712345678');
     expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
 
-    const button = screen.getByRole('button', { name: /যাচাইকরণ কোড পাঠান/i });
+    const button = screen.getByRole('button', { name: /send verification code/i });
     await act(async () => {
       fireEvent.click(button);
     });

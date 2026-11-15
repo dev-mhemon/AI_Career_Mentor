@@ -342,6 +342,149 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
       );
     });
 
+    it('falls back to auth.users bcrypt verification when phone_provider_disabled (422) occurs and ignores synthetic emails', async () => {
+      mockQuery
+        .mockResolvedValueOnce([
+          {
+            email: 'phone-8801629795421@synthetic.mentor',
+            phone: '+8801629795421',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone_confirmed_at: '2026-11-10T10:00:00.000Z',
+            password_matches: true,
+          },
+        ]);
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          code: 422,
+          error_code: 'phone_provider_disabled',
+          msg: 'Phone logins are disabled',
+        }),
+      });
+
+      await expect(
+        reauthService.verifyReauthentication(TEST_USER_ID, {
+          password: 'ValidPassword!123',
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://supabase.test/auth/v1/token?grant_type=password',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            phone: '+8801629795421',
+            password: 'ValidPassword!123',
+          }),
+        }),
+      );
+      expect(mockQuery).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('extensions.crypt($2, u.encrypted_password)'),
+        [TEST_USER_ID, 'ValidPassword!123'],
+      );
+    });
+
+    it('falls back cleanly on 400 phone_provider_disabled when phone password matches', async () => {
+      mockQuery
+        .mockResolvedValueOnce([{ email: null, phone: '+8801629795421' }])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone_confirmed_at: '2026-11-10T10:00:00.000Z',
+            password_matches: true,
+          },
+        ]);
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ error_code: 'phone_provider_disabled' }),
+      });
+
+      await expect(
+        reauthService.verifyReauthentication(TEST_USER_ID, {
+          password: 'ValidPassword!123',
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects with 401 REAUTH_REQUIRED when phone_provider_disabled fallback password mismatches or phone is unconfirmed', async () => {
+      mockQuery
+        .mockResolvedValueOnce([{ email: null, phone: '+8801629795421' }])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone_confirmed_at: '2026-11-10T10:00:00.000Z',
+            password_matches: false,
+          },
+        ]);
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({ error_code: 'phone_provider_disabled' }),
+      });
+
+      await expect(
+        reauthService.verifyReauthentication(TEST_USER_ID, {
+          password: 'WrongPassword!',
+        }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: expect.objectContaining({ code: 'REAUTH_REQUIRED' }),
+      });
+    });
+
+    it('rejects with 401 REAUTH_REQUIRED when phone_provider_disabled fallback password matches but phone is unconfirmed', async () => {
+      mockQuery
+        .mockResolvedValueOnce([{ email: null, phone: '+8801629795421' }])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone_confirmed_at: null,
+            password_matches: true,
+          },
+        ]);
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({ error_code: 'phone_provider_disabled' }),
+      });
+
+      await expect(
+        reauthService.verifyReauthentication(TEST_USER_ID, {
+          password: 'ValidPassword!123',
+        }),
+      ).rejects.toMatchObject({
+        status: 401,
+        response: expect.objectContaining({ code: 'REAUTH_REQUIRED' }),
+      });
+    });
+
+    it('fails closed with 503 SERVICE_UNAVAILABLE when phone password database fallback throws', async () => {
+      mockQuery
+        .mockResolvedValueOnce([{ email: null, phone: '+8801629795421' }])
+        .mockRejectedValueOnce(new Error('DB connection error'));
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({ error_code: 'phone_provider_disabled' }),
+      });
+
+      await expect(
+        reauthService.verifyReauthentication(TEST_USER_ID, {
+          password: 'ValidPassword!123',
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: expect.objectContaining({ code: 'SERVICE_UNAVAILABLE' }),
+      });
+    });
+
     it('rejects invalid password with 401 REAUTH_REQUIRED when GoTrue returns 400/401', async () => {
       mockQuery.mockResolvedValueOnce([
         { email: 'user@example.com', phone: null },

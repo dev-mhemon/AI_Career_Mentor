@@ -17,3 +17,34 @@ body {
   outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: var(--focus-ring-offset-width, 2px);
 }
+
+@layer base {
+  input::placeholder,
+  textarea::placeholder {
+    font-weight: 300;
+  }
+
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not(:disabled):not([aria-disabled="true"]),
+  [role="switch"]:not(:disabled):not([aria-disabled="true"]),
+  [role="tab"]:not(:disabled):not([aria-disabled="true"]),
+  select:not(:disabled):not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  button[aria-disabled="true"],
+  [role="button"]:disabled,
+  [role="button"][aria-disabled="true"],
+  [role="switch"]:disabled,
+  [role="switch"][aria-disabled="true"],
+  [role="tab"]:disabled,
+  [role="tab"][aria-disabled="true"],
+  select:disabled,
+  select[aria-disabled="true"],
+  input:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
+  }
+}

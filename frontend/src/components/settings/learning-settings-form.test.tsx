@@ -42,46 +42,64 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders initial profile timezone and preferred_daily_hours values', () => {
+  it('renders initial profile timezone dropdown and preferred_daily_hours values without helper hint', () => {
     render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
 
-    const timezoneInput = screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i);
-    const hoursInput = screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i);
+    const timezoneSelect = screen.getByLabelText(/^timezone$/i);
+    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
 
-    expect(timezoneInput).toHaveValue('Asia/Dhaka');
+    expect(timezoneSelect.tagName).toBe('SELECT');
+    expect(timezoneSelect).toHaveValue('Asia/Dhaka');
     expect(hoursInput).toHaveValue(2.5);
     expect(
-      screen.getByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i }),
+      screen.queryByText(/0\.5 to 12 hours per day, in 0\.5 increments\./i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^save$/i }),
     ).toBeInTheDocument();
   });
 
   it('falls back to Asia/Dhaka and 2 hours when initialProfile is null', () => {
     render(<LearningSettingsForm initialProfile={null} />);
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue(
-      'Asia/Dhaka',
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Asia/Dhaka');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(2);
+  });
+
+  it('dynamically includes custom saved IANA timezone in dropdown options', () => {
+    render(
+      <LearningSettingsForm
+        initialProfile={{ ...MOCK_PROFILE, timezone: 'America/Sao_Paulo' }}
+      />,
     );
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(2);
+
+    const timezoneSelect = screen.getByLabelText(/^timezone$/i) as HTMLSelectElement;
+    expect(timezoneSelect.value).toBe('America/Sao_Paulo');
+    expect(
+      screen.getByRole('option', { name: 'America/Sao_Paulo' }),
+    ).toBeInTheDocument();
   });
 
   it('renders suspended notice and hides inputs when isSuspended is true', () => {
     render(<LearningSettingsForm initialProfile={MOCK_PROFILE} isSuspended={true} />);
 
     expect(
-      screen.getByText(/স্থগিত অ্যাকাউন্ট থেকে শেখার সেটিংস পরিবর্তন করা সম্ভব নয়/i),
+      screen.getByText(
+        /learning settings cannot be modified while your account is suspended/i,
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i }),
+      screen.queryByRole('button', { name: /^save$/i }),
     ).not.toBeInTheDocument();
   });
 
-  it('auto-detects browser timezone when Auto-detect button is clicked', () => {
+  it('auto-detects browser timezone, updates dropdown value without changing button text', () => {
     const originalDateTimeFormat = Intl.DateTimeFormat;
     const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((...args) => {
       const instance = new originalDateTimeFormat(...args);
       return {
         ...instance,
-        resolvedOptions: () => ({ ...instance.resolvedOptions(), timeZone: 'Asia/Tokyo' }),
+        resolvedOptions: () => ({ ...instance.resolvedOptions(), timeZone: 'Pacific/Honolulu' }),
       } as Intl.DateTimeFormat;
     });
 
@@ -89,23 +107,55 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       render(<LearningSettingsForm initialProfile={{ ...MOCK_PROFILE, timezone: 'UTC' }} />);
 
       const autoDetectBtn = screen.getByRole('button', {
-        name: /স্বয়ংক্রিয়ভাবে শনাক্ত করুন/i,
+        name: /^auto-detect$/i,
       });
+      expect(autoDetectBtn).toHaveClass(
+        'rounded-full',
+        'border',
+        'cursor-pointer',
+        'bg-teal-500/10',
+        'text-teal-700',
+      );
       fireEvent.click(autoDetectBtn);
 
-      const timezoneInput = screen.getByLabelText(
-        /টাইমজোন \(IANA Timezone\)/i,
-      ) as HTMLInputElement;
-      expect(timezoneInput.value).toBe('Asia/Tokyo');
+      const timezoneSelect = screen.getByLabelText(
+        /^timezone$/i,
+      ) as HTMLSelectElement;
+      expect(timezoneSelect.value).toBe('Pacific/Honolulu');
+      expect(screen.getByRole('button', { name: /^auto-detect$/i })).toBeInTheDocument();
+      expect(screen.queryByText(/detected:/i)).not.toBeInTheDocument();
     } finally {
       spy.mockRestore();
     }
   });
 
-  it('submits updated learning settings and renders localized success status banner', async () => {
+  it('includes all Intl supported timezones and falls back to common timezones when supportedValuesOf is unavailable', () => {
+    const supportedSpy = vi
+      .spyOn(Intl, 'supportedValuesOf')
+      .mockReturnValue(['America/Sao_Paulo', 'Africa/Nairobi']);
+
+    try {
+      const { unmount } = render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+      expect(screen.getByRole('option', { name: 'America/Sao_Paulo' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Africa/Nairobi' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Asia/Dhaka' })).toBeInTheDocument();
+      unmount();
+
+      supportedSpy.mockImplementation(() => {
+        throw new Error('unsupported');
+      });
+      render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+      expect(screen.getByRole('option', { name: 'Asia/Dhaka' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'UTC' })).toBeInTheDocument();
+    } finally {
+      supportedSpy.mockRestore();
+    }
+  });
+
+  it('submits updated learning settings and renders clean English success status banner', async () => {
     vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
       success: true,
-      message: 'শেখার সেটিংস সংরক্ষিত হয়েছে (Learning settings saved successfully).',
+      message: 'Saved (Learning settings saved successfully).',
       values: {
         timezone: 'Europe/London',
         preferred_daily_hours: '3.5',
@@ -114,14 +164,14 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
 
     render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
 
-    const timezoneInput = screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i);
-    const hoursInput = screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i);
+    const timezoneSelect = screen.getByLabelText(/^timezone$/i);
+    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
 
-    fireEvent.change(timezoneInput, { target: { value: 'Europe/London' } });
+    fireEvent.change(timezoneSelect, { target: { value: 'Europe/London' } });
     fireEvent.change(hoursInput, { target: { value: '3.5' } });
 
     const submitBtn = screen.getByRole('button', {
-      name: /সেটিংস সংরক্ষণ করুন/i,
+      name: /^save$/i,
     });
     await act(async () => {
       fireEvent.click(submitBtn);
@@ -129,7 +179,7 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/শেখার সেটিংস সংরক্ষিত হয়েছে/i),
+        screen.getByText(/learning settings saved successfully/i),
       ).toBeInTheDocument();
     });
 
@@ -149,10 +199,11 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     const loadAlert = screen.getByRole('alert');
     expect(loadAlert).toHaveTextContent(/Unable to reach the server/i);
     expect(
-      screen.getByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i }),
+      screen.getByRole('button', { name: /^save$/i }),
     ).toBeDisabled();
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toBeDisabled();
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toBeDisabled();
+    expect(screen.getByLabelText(/^timezone$/i)).toBeDisabled();
+    expect(screen.getByLabelText(/preferred daily hours/i)).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^auto-detect$/i })).toBeDisabled();
   });
 
   it('renders accessible retry button when loadError is present and triggers reload', () => {
@@ -166,7 +217,7 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     );
 
     const retryBtn = screen.getByRole('button', {
-      name: /পুনরায় চেষ্টা করুন \(Retry\)/i,
+      name: /^retry$/i,
     });
     expect(retryBtn).toBeInTheDocument();
     fireEvent.click(retryBtn);
@@ -180,7 +231,7 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       />,
     );
     const retryBtnDefault = screen.getByRole('button', {
-      name: /পুনরায় চেষ্টা করুন \(Retry\)/i,
+      name: /^retry$/i,
     });
     fireEvent.click(retryBtnDefault);
     expect(mockRefresh).toHaveBeenCalledTimes(1);
@@ -194,9 +245,9 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       />,
     );
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('Asia/Dhaka');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(2);
-    expect(screen.getByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i })).toBeDisabled();
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Asia/Dhaka');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(2);
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
 
     const loadedProfile: ProfileResponse = {
       ...MOCK_PROFILE,
@@ -211,9 +262,9 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       />,
     );
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('Europe/Berlin');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(4.5);
-    expect(screen.getByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i })).not.toBeDisabled();
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/Berlin');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4.5);
+    expect(screen.getByRole('button', { name: /^save$/i })).not.toBeDisabled();
   });
 
   it('preserves unsaved user edits when component rerenders with a new initialProfile object reference', () => {
@@ -221,13 +272,13 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       <LearningSettingsForm initialProfile={MOCK_PROFILE} />,
     );
 
-    const timezoneInput = screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i);
-    const hoursInput = screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i);
+    const timezoneSelect = screen.getByLabelText(/^timezone$/i);
+    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
 
-    fireEvent.change(timezoneInput, { target: { value: 'Asia/Tokyo' } });
+    fireEvent.change(timezoneSelect, { target: { value: 'Asia/Tokyo' } });
     fireEvent.change(hoursInput, { target: { value: '5' } });
 
-    expect(timezoneInput).toHaveValue('Asia/Tokyo');
+    expect(timezoneSelect).toHaveValue('Asia/Tokyo');
     expect(hoursInput).toHaveValue(5);
 
     const freshProfileRef: ProfileResponse = {
@@ -236,14 +287,14 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
 
     rerender(<LearningSettingsForm initialProfile={freshProfileRef} />);
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('Asia/Tokyo');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(5);
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Asia/Tokyo');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(5);
   });
 
   it('keeps saved values when component rerenders with the same initialProfile after a successful save', async () => {
     vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
       success: true,
-      message: 'শেখার সেটিংস সংরক্ষিত হয়েছে (Learning settings saved successfully).',
+      message: 'Learning settings saved successfully.',
       values: {
         timezone: 'Europe/London',
         preferred_daily_hours: '3.5',
@@ -251,34 +302,34 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     });
 
     const { rerender } = render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
-    const timezoneInput = screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i);
-    const hoursInput = screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i);
+    const timezoneSelect = screen.getByLabelText(/^timezone$/i);
+    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
 
-    fireEvent.change(timezoneInput, { target: { value: 'Europe/London' } });
+    fireEvent.change(timezoneSelect, { target: { value: 'Europe/London' } });
     fireEvent.change(hoursInput, { target: { value: '3.5' } });
 
-    const submitBtn = screen.getByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i });
+    const submitBtn = screen.getByRole('button', { name: /^save$/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/শেখার সেটিংস সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+      expect(screen.getByText(/learning settings saved successfully/i)).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('Europe/London');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(3.5);
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3.5);
 
     rerender(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('Europe/London');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(3.5);
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3.5);
   });
 
   it('synchronizes form values when component rerenders with a genuinely changed initialProfile after save', async () => {
     vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
       success: true,
-      message: 'শেখার সেটিংস সংরক্ষিত হয়েছে (Learning settings saved successfully).',
+      message: 'Learning settings saved successfully.',
       values: {
         timezone: 'Europe/London',
         preferred_daily_hours: '3.5',
@@ -286,23 +337,23 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     });
 
     const { rerender } = render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
-    const timezoneInput = screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i);
-    const hoursInput = screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i);
+    const timezoneSelect = screen.getByLabelText(/^timezone$/i);
+    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
 
-    fireEvent.change(timezoneInput, { target: { value: 'Europe/London' } });
+    fireEvent.change(timezoneSelect, { target: { value: 'Europe/London' } });
     fireEvent.change(hoursInput, { target: { value: '3.5' } });
 
-    const submitBtn = screen.getByRole('button', { name: /সেটিংস সংরক্ষণ করুন/i });
+    const submitBtn = screen.getByRole('button', { name: /^save$/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/শেখার সেটিংস সংরক্ষিত হয়েছে/i)).toBeInTheDocument();
+      expect(screen.getByText(/learning settings saved successfully/i)).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('Europe/London');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(3.5);
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3.5);
 
     // Rerender with genuinely changed initialProfile (e.g. external update or server revalidation)
     const updatedProfile: ProfileResponse = {
@@ -312,50 +363,130 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     };
     rerender(<LearningSettingsForm initialProfile={updatedProfile} />);
 
-    expect(screen.getByLabelText(/টাইমজোন \(IANA Timezone\)/i)).toHaveValue('America/New_York');
-    expect(screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i)).toHaveValue(4);
+    expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('America/New_York');
+    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4);
   });
 
-  it('renders field-level validation errors for invalid timezone or non-0.5-multiple daily hours and clears alert on edit', async () => {
-    vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
-      error: 'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.',
-      code: 'VALIDATION_FAILED',
-      fieldErrors: {
-        timezone: 'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).',
-        preferred_daily_hours:
-          'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.',
-      },
-      values: {
-        timezone: 'Invalid/Zone',
-        preferred_daily_hours: '1.3',
-      },
+  it('renders field-level validation errors and clears timezone error when Auto-detect is clicked', async () => {
+    const originalDateTimeFormat = Intl.DateTimeFormat;
+    const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((...args) => {
+      const instance = new originalDateTimeFormat(...args);
+      return {
+        ...instance,
+        resolvedOptions: () => ({ ...instance.resolvedOptions(), timeZone: 'Asia/Dhaka' }),
+      } as Intl.DateTimeFormat;
     });
 
-    render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+    try {
+      vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
+        error: 'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.',
+        code: 'VALIDATION_FAILED',
+        fieldErrors: {
+          timezone: 'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).',
+          preferred_daily_hours:
+            'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.',
+        },
+        values: {
+          timezone: 'Invalid/Zone',
+          preferred_daily_hours: '1.3',
+        },
+      });
 
-    const submitBtn = screen.getByRole('button', {
-      name: /সেটিংস সংরক্ষণ করুন/i,
-    });
-    await act(async () => {
-      fireEvent.click(submitBtn);
-    });
+      render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
 
-    await waitFor(() => {
+      const submitBtn = screen.getByRole('button', {
+        name: /^save$/i,
+      });
+      await act(async () => {
+        fireEvent.click(submitBtn);
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Please enter a valid IANA timezone/i),
+        ).toBeInTheDocument();
+        expect(
+          screen.getAllByText(
+            /Preferred daily hours must be between 0\.5 and 12 in 0\.5-hour increments/i,
+          ).length,
+        ).toBeGreaterThanOrEqual(1);
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /^auto-detect$/i }));
       expect(
-        screen.getByText(/Please enter a valid IANA timezone/i),
-      ).toBeInTheDocument();
+        screen.queryByText(/Please enter a valid IANA timezone/i),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Asia/Dhaka');
+      expect(screen.getByRole('button', { name: /^auto-detect$/i })).toBeInTheDocument();
+
+      const hoursInput = screen.getByLabelText(/preferred daily hours/i);
+      fireEvent.change(hoursInput, { target: { value: '2.0' } });
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('clears the top-level timezone global alert on Auto-detect using real action error ordering while preserving hours error', async () => {
+    const originalDateTimeFormat = Intl.DateTimeFormat;
+    const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((...args) => {
+      const instance = new originalDateTimeFormat(...args);
+      return {
+        ...instance,
+        resolvedOptions: () => ({ ...instance.resolvedOptions(), timeZone: 'Asia/Dhaka' }),
+      } as Intl.DateTimeFormat;
+    });
+
+    try {
+      vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
+        error: 'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).',
+        code: 'VALIDATION_FAILED',
+        fieldErrors: {
+          timezone: 'Please enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).',
+          preferred_daily_hours:
+            'Preferred daily hours must be between 0.5 and 12 in 0.5-hour increments.',
+        },
+        values: {
+          timezone: 'Invalid/Zone',
+          preferred_daily_hours: '1.3',
+        },
+      });
+
+      render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByText(/Please enter a valid IANA timezone/i),
+        ).toHaveLength(2);
+        expect(
+          screen.getByText(
+            /Preferred daily hours must be between 0\.5 and 12 in 0\.5-hour increments/i,
+          ),
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /^auto-detect$/i }));
+
       expect(
-        screen.getAllByText(
+        screen.queryByText(/Please enter a valid IANA timezone/i),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
           /Preferred daily hours must be between 0\.5 and 12 in 0\.5-hour increments/i,
-        ).length,
-      ).toBeGreaterThanOrEqual(1);
-    });
+        ),
+      ).toBeInTheDocument();
 
-    const hoursInput = screen.getByLabelText(/দৈনিক অধ্যয়নের সময়/i);
-    fireEvent.change(hoursInput, { target: { value: '2.0' } });
-
-    expect(
-      screen.queryByText(/Please enter a valid IANA timezone/i),
-    ).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/preferred daily hours/i), {
+        target: { value: '2.5' },
+      });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

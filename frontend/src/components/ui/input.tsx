@@ -48,7 +48,7 @@ export interface InputProps {
 }
 
 const control =
-  'w-full rounded-md border bg-surface-default text-body text-text-primary placeholder:text-text-muted ' +
+  'w-full rounded-md border bg-surface-default text-body text-text-primary placeholder:font-light placeholder:text-slate-500 dark:placeholder:text-slate-400 ' +
   'transition-colors duration-(--duration-fast) ease-standard ' +
   'disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled ' +
   'read-only:bg-surface-subtle';
@@ -648,7 +648,7 @@ function FieldInput({
           inputMode="numeric"
           autoComplete={autoComplete ?? 'tel'}
           className={cn(
-            'min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:outline-none disabled:cursor-not-allowed disabled:text-text-disabled',
+            'min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-body text-text-primary placeholder:font-light placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:outline-none disabled:cursor-not-allowed disabled:text-text-disabled',
             className,
           )}
         />

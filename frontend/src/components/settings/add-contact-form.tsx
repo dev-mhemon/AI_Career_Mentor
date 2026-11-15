@@ -26,16 +26,23 @@ export interface AddContactFormProps {
   isSuspended?: boolean;
   /** Whether the user already has a verified primary contact method. */
   alreadyVerified?: boolean;
+  /** Verified primary email address, if available for compact status display. */
+  verifiedEmail?: string | null;
+  /** Verified primary phone number, if available for compact status display. */
+  verifiedPhone?: string | null;
 }
 
 /**
- * Screen 22: Add Contact Form component.
- * Allows authenticated users to add and initiate verification for an email or Bangladesh phone contact per EP-A12.
+ * Screen 22: Contact Channels / Add Contact Form component (`EP-A12`).
+ * Shows a compact verified status row when a verified contact is present, or allows
+ * unverified active users to add and initiate verification for an email or Bangladesh phone contact.
  * Pre-saves R18 verification draft with context 'secondary_contact' and clears on submission errors.
  */
 export function AddContactForm({
   isSuspended = false,
   alreadyVerified = false,
+  verifiedEmail = null,
+  verifiedPhone = null,
 }: AddContactFormProps) {
   const [state, formAction, isPending] = useActionState<AuthActionResult, FormData>(
     addContactAction,
@@ -76,34 +83,45 @@ export function AddContactForm({
         aria-labelledby="add-contact-heading"
         className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
       >
-        <h3 id="add-contact-heading" className="text-heading-sm text-text-primary">
-          যোগাযোগ তথ্য যোগ করুন (Add Contact Method)
-        </h3>
+        <h2 id="add-contact-heading" className="text-heading-sm text-text-primary">
+          Contact Channels
+        </h2>
         <p className="mt-2 text-body-sm text-text-secondary">
-          স্থগিত অ্যাকাউন্ট থেকে নতুন যোগাযোগ মাধ্যম যোগ করা সম্ভব নয়।
+          Adding or verifying contact methods is unavailable while your account is suspended.
         </p>
       </section>
     );
   }
 
   if (alreadyVerified) {
+    const verifiedContacts = [verifiedEmail, verifiedPhone]
+      .map((item) => item?.trim())
+      .filter((item): item is string => Boolean(item));
+    const contactSummary =
+      verifiedContacts.length > 0
+        ? verifiedContacts.join(' · ')
+        : 'Primary contact method';
+
     return (
       <section
         aria-labelledby="add-contact-heading"
-        className="flex gap-3 rounded-xl border border-feedback-success-border bg-feedback-success-background p-6 shadow-xs"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-surface-raised px-6 py-4 shadow-xs"
       >
-        <CheckCircleIcon className="mt-0.5 shrink-0 text-feedback-success-icon" />
-        <div>
-          <h3
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+          <h2
             id="add-contact-heading"
-            className="text-heading-sm text-feedback-success-text"
+            className="text-heading-sm text-text-primary"
           >
-            যোগাযোগের মাধ্যম যাচাইকৃত (Verified Contact Method)
-          </h3>
-          <p className="mt-1 text-body-sm text-feedback-success-text">
-            আপনার অ্যাকাউন্টের প্রাথমিক যোগাযোগের মাধ্যম ইতিমধ্যে যাচাই করা হয়েছে (Your account already has a verified primary contact method).
-          </p>
+            Contact Channels
+          </h2>
+          <span className="truncate text-body-sm text-text-secondary">
+            {contactSummary}
+          </span>
         </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-2.5 py-0.5 text-caption font-medium text-feedback-success-text">
+          <CheckCircleIcon className="h-3.5 w-3.5 text-feedback-success-icon" />
+          Verified
+        </span>
       </section>
     );
   }
@@ -116,11 +134,11 @@ export function AddContactForm({
       className="flex flex-col gap-4 rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
     >
       <div>
-        <h3 id="add-contact-heading" className="text-heading-sm text-text-primary">
-          যোগাযোগ তথ্য যোগ করুন (Add Contact Method)
-        </h3>
+        <h2 id="add-contact-heading" className="text-heading-sm text-text-primary">
+          Contact Channels
+        </h2>
         <p className="mt-1 text-body-sm text-text-secondary">
-          আপনার অ্যাকাউন্ট সুরক্ষিত করতে এবং পরিচয়-সংবেদনশীল কাজের জন্য একটি যোগাযোগের তথ্য যোগ করুন।
+          Add and verify an email address or Bangladesh mobile number to secure your account.
         </p>
       </div>
 
@@ -135,14 +153,14 @@ export function AddContactForm({
             setDismissedServerState(state);
             phoneBlurredRef.current = false;
           }}
-          className={`flex min-h-11 flex-1 items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
+          className={`flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
             activeTab === 'email'
               ? 'bg-surface-default text-text-primary shadow-xs'
               : 'text-text-secondary hover:text-text-primary'
           }`}
           aria-pressed={activeTab === 'email'}
         >
-          ইমেইল (Email)
+          Email
         </button>
         <button
           type="button"
@@ -154,14 +172,14 @@ export function AddContactForm({
             setDismissedServerState(state);
             phoneBlurredRef.current = false;
           }}
-          className={`flex min-h-11 flex-1 items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
+          className={`flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
             activeTab === 'phone'
               ? 'bg-surface-default text-text-primary shadow-xs'
               : 'text-text-secondary hover:text-text-primary'
           }`}
           aria-pressed={activeTab === 'phone'}
         >
-          ফোন নম্বর (Phone)
+          Phone
         </button>
       </div>
 
@@ -206,8 +224,8 @@ export function AddContactForm({
           variant={activeTab === 'email' ? 'email' : 'phone_bd'}
           label={
             activeTab === 'email'
-              ? 'ইমেইল ঠিকানা (Email Address)'
-              : 'বাংলাদেশি মোবাইল নম্বর (BD Mobile Number)'
+              ? 'Email Address'
+              : 'Bangladesh Mobile Number'
           }
           autoComplete={activeTab === 'email' ? 'email' : 'tel'}
           required
@@ -250,7 +268,7 @@ export function AddContactForm({
           placeholder={activeTab === 'email' ? 'you@example.com' : '01XXXXXXXXX'}
           hint={
             activeTab === 'phone'
-              ? 'শুধুমাত্র বাংলাদেশি মোবাইল নম্বর সমর্থিত (যেমন 01XXXXXXXXX)।'
+              ? 'Bangladesh mobile numbers only (e.g. 01XXXXXXXXX).'
               : undefined
           }
         />
@@ -260,9 +278,9 @@ export function AddContactForm({
           variant="primary"
           size="lg"
           isLoading={isPending}
-          loadingText="কোড পাঠানো হচ্ছে..."
+          loadingText="Sending code..."
         >
-          যাচাইকরণ কোড পাঠান (Send Code)
+          Send Verification Code
         </Button>
       </form>
     </section>

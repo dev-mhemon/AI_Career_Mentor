@@ -377,6 +377,9 @@ describe('ProfileSetupForm (Screen 07)', () => {
       });
 
       const hoursInput = screen.getByLabelText(/preferred daily hours/i);
+      expect(
+        screen.queryByText(/0\.5 to 12 hours per day, in 0\.5 increments\./i),
+      ).not.toBeInTheDocument();
       const educationInput = screen.getByLabelText(/education \(optional\)/i);
 
       fireEvent.change(educationInput, { target: { value: 'x'.repeat(201) } });

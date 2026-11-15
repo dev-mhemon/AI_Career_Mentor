@@ -7,10 +7,8 @@ describe('VerifiedContactPrompt Component', () => {
     render(<VerifiedContactPrompt verifiedContact={false} />);
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(
-      screen.getByText('যাচাইকৃত যোগাযোগ মাধ্যম প্রয়োজন (Verified Contact Required)'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /যোগাযোগ যোগ করুন/i })).toHaveAttribute(
+    expect(screen.getByText('Verified Contact Required')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /add contact/i })).toHaveAttribute(
       'href',
       '#add-contact-heading',
     );
@@ -25,7 +23,7 @@ describe('VerifiedContactPrompt Component', () => {
     const onClick = vi.fn();
     render(<VerifiedContactPrompt verifiedContact={false} onAddContactClick={onClick} />);
 
-    const button = screen.getByRole('button', { name: /যোগাযোগ যোগ করুন/i });
+    const button = screen.getByRole('button', { name: /add contact/i });
     fireEvent.click(button);
 
     expect(onClick).toHaveBeenCalledTimes(1);
@@ -35,7 +33,7 @@ describe('VerifiedContactPrompt Component', () => {
     render(<VerifiedContactPrompt verifiedContact={false} isSuspended={true} />);
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /যোগাযোগ যোগ করুন/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /যোগাযোগ যোগ করুন/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /add contact/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add contact/i })).not.toBeInTheDocument();
   });
 });

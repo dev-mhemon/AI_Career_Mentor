@@ -26,8 +26,8 @@ describe('IdentityLinkingCards Component', () => {
 
     expect(screen.getByText('Google')).toBeInTheDocument();
     expect(screen.getByText('Facebook')).toBeInTheDocument();
-    expect(screen.getByText('সংযুক্ত')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /link facebook account/i })).toBeInTheDocument();
+    expect(screen.getByText('Connected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /connect facebook account/i })).toBeInTheDocument();
   });
 
   it('disables linking buttons and displays requirement notice when verifiedContact is false', () => {
@@ -38,10 +38,10 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     expect(googleBtn).toBeDisabled();
     expect(screen.getByRole('note')).toHaveTextContent(
-      'সোশ্যাল অ্যাকাউন্ট যুক্ত করতে আপনার অ্যাকাউন্টে একটি যাচাইকৃত যোগাযোগ তথ্য (ইমেইল বা ফোন) থাকতে হবে।',
+      'Your account must have a verified contact method (email or phone) to link a social account.',
     );
   });
 
@@ -54,8 +54,8 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const googleBtn = screen.getByRole('button', { name: /link google account/i });
-    const fbBtn = screen.getByRole('button', { name: /link facebook account/i });
+    const googleBtn = screen.getByRole('button', { name: /connect google account/i });
+    const fbBtn = screen.getByRole('button', { name: /connect facebook account/i });
     expect(googleBtn).toBeDisabled();
     expect(fbBtn).toBeDisabled();
   });
@@ -73,17 +73,17 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     fireEvent.click(googleBtn);
 
     await waitFor(() => {
       expect(linkIdentityAction).toHaveBeenCalledWith('google');
     });
     expect(
-      await screen.findByText('Google অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।'),
+      await screen.findByText('Google account linked successfully.'),
     ).toBeInTheDocument();
-    expect(await screen.findByText('সংযুক্ত')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
   });
 
   it('calls linkIdentityAction with facebook when Facebook link button is clicked', async () => {
@@ -99,17 +99,17 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const fbBtn = screen.getByRole('button', { name: /link facebook account/i });
+    const fbBtn = screen.getByRole('button', { name: /connect facebook account/i });
     fireEvent.click(fbBtn);
 
     await waitFor(() => {
       expect(linkIdentityAction).toHaveBeenCalledWith('facebook');
     });
     expect(
-      await screen.findByText('Facebook অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।'),
+      await screen.findByText('Facebook account linked successfully.'),
     ).toBeInTheDocument();
-    expect(await screen.findByText('সংযুক্ত')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /link facebook account/i })).not.toBeInTheDocument();
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect facebook account/i })).not.toBeInTheDocument();
   });
 
   it('displays error alert when linkIdentityAction returns error', async () => {
@@ -124,7 +124,7 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     fireEvent.click(googleBtn);
 
     const alert = await screen.findByRole('alert');
@@ -158,11 +158,11 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     fireEvent.click(googleBtn);
 
-    expect(await screen.findByText('Google অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+    expect(await screen.findByText('Google account linked successfully.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
 
     rerender(
       <IdentityLinkingCards
@@ -171,8 +171,8 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /link google account/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /link facebook account/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /connect google account/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect facebook account/i })).not.toBeInTheDocument();
   });
 
   it('preserves linkedOverride when parent passes newly allocated array with same provider contents', async () => {
@@ -188,11 +188,11 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    const googleBtn = screen.getByRole('button', { name: /link google account/i });
+    const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     fireEvent.click(googleBtn);
 
-    expect(await screen.findByText('Google অ্যাকাউন্ট সফলভাবে যুক্ত করা হয়েছে।')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+    expect(await screen.findByText('Google account linked successfully.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
 
     rerender(
       <IdentityLinkingCards
@@ -201,7 +201,7 @@ describe('IdentityLinkingCards Component', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: /link google account/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
     expect(screen.getByText('Google')).toBeInTheDocument();
   });
 });

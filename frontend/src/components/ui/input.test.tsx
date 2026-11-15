@@ -244,4 +244,29 @@ describe('Input component (phone_bd & otp_6)', () => {
     expect(pupil).toHaveAttribute('r', '3');
     expect(hideToggle.querySelector('svg path[d="M2 2l20 20"]')).toBeInTheDocument();
   });
+
+  it('applies soft placeholder utilities across text, phone_bd, and textarea inputs and pointer cursor on toggle button', () => {
+    render(
+      <div>
+        <Input id="soft-text" label="Role" placeholder="Backend Developer" />
+        <Input id="soft-phone" variant="phone_bd" label="Phone" />
+        <Input id="soft-pw" variant="password" label="Secret" />
+        <Input id="soft-area" variant="textarea" label="Notes" placeholder="Write notes" />
+      </div>,
+    );
+
+    const textInput = screen.getByLabelText(/^role$/i);
+    const phoneInput = screen.getByLabelText(/^phone$/i);
+    const areaInput = screen.getByLabelText(/^notes$/i);
+    const toggleBtn = screen.getByRole('button', { name: /show password/i });
+
+    for (const el of [textInput, phoneInput, areaInput]) {
+      expect(el).toHaveClass(
+        'placeholder:font-light',
+        'placeholder:text-slate-500',
+        'dark:placeholder:text-slate-400',
+      );
+    }
+    expect(toggleBtn).toHaveClass('cursor-pointer', 'disabled:cursor-not-allowed');
+  });
 });

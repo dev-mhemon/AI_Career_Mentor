@@ -42,7 +42,7 @@ import {
 } from '@/lib/validation/profile-schemas';
 
 const SELECT_BASE_CLASS =
-  'min-h-11 w-full appearance-none truncate rounded-md border bg-surface-default py-2 pl-3 pr-10 text-body text-text-primary transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled';
+  'min-h-11 w-full cursor-pointer appearance-none truncate rounded-md border bg-surface-default py-2 pl-3 pr-10 text-body text-text-primary transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled';
 
 function selectBorderClass(hasError: boolean): string {
   return hasError
@@ -1331,7 +1331,6 @@ function ProfileSetupFormInner({
             value={values.preferred_daily_hours}
             error={dailyHoursError}
             placeholder="2"
-            hint="0.5 to 12 hours per day, in 0.5 increments."
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('preferred_daily_hours');

@@ -33,7 +33,7 @@ export function IconButton({
       type={type}
       className={cn(
         'inline-flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-md',
-        'transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed',
+        'cursor-pointer transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed',
         variants[variant],
         className,
       )}
