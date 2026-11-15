@@ -30,6 +30,7 @@ export interface InputProps {
   /** Error text. Sets aria-invalid + danger icon + text. */
   error?: string;
   hint?: string;
+  labelBadge?: React.ReactNode;
   disabled?: boolean;
   /** Use during submission so FormData still includes the value. */
   readOnly?: boolean;
@@ -68,6 +69,7 @@ export interface FieldShellProps {
   label: string;
   error?: string;
   hint?: string;
+  labelBadge?: React.ReactNode;
   required?: boolean;
   children: React.ReactNode;
   counter?: React.ReactNode;
@@ -79,6 +81,7 @@ export function FieldShell({
   label,
   error,
   hint,
+  labelBadge,
   required,
   children,
   counter,
@@ -92,17 +95,20 @@ export function FieldShell({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline">
-        {labelFor ? (
-          <label id={`${id}-label`} htmlFor={id} className="text-label-lg text-text-primary">
-            {label}
-          </label>
-        ) : (
-          <span id={`${id}-label`} className="text-label-lg text-text-primary">
-            {label}
-          </span>
-        )}
-        {requiredMarker}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-baseline">
+          {labelFor ? (
+            <label id={`${id}-label`} htmlFor={id} className="text-label-lg text-text-primary">
+              {label}
+            </label>
+          ) : (
+            <span id={`${id}-label`} className="text-label-lg text-text-primary">
+              {label}
+            </span>
+          )}
+          {requiredMarker}
+        </div>
+        {labelBadge}
       </div>
       {children}
       {(error || hint || counter) && (
@@ -147,6 +153,7 @@ function OtpInput({
   label,
   error,
   hint,
+  labelBadge,
   disabled,
   readOnly,
   value,
@@ -361,7 +368,7 @@ function OtpInput({
       .join(' ') || undefined;
 
   return (
-    <FieldShell id={id} label={label} error={error} hint={hint} required={required}>
+    <FieldShell id={id} label={label} error={error} hint={hint} labelBadge={labelBadge} required={required}>
       <div ref={groupRef} className="relative w-full">
         <input
           ref={(el) => {
@@ -466,6 +473,7 @@ function FieldInput({
   onBlur,
   error,
   hint,
+  labelBadge,
   disabled,
   readOnly,
   required,
@@ -597,13 +605,21 @@ function FieldInput({
       value !== undefined ? sanitizeBdPhoneDisplay(String(value)) : phoneDisplay;
     const submittedPhone = normalizeBdPhone(visiblePhone) ?? visiblePhone;
     field = (
-      <div className="relative">
+      <div
+        className={cn(
+          'flex min-h-11 w-full items-stretch overflow-hidden rounded-md border bg-surface-default p-0 transition-colors duration-(--duration-fast) ease-standard',
+          borderFor(error),
+          readOnly && !disabled && 'bg-surface-subtle',
+          disabled && 'cursor-not-allowed border-border-disabled bg-surface-disabled',
+          'has-focus-visible:outline has-focus-visible:outline-2 has-focus-visible:outline-(--focus-ring) has-focus-visible:outline-offset-2',
+        )}
+      >
         <span
           aria-hidden="true"
           dir="ltr"
           className={cn(
-            'pointer-events-none absolute inset-y-[2px] left-[2px] flex select-none items-center gap-1.5 rounded-l-[calc(var(--radius-md)-2px)] border-r border-border-subtle bg-surface-subtle px-2.5 text-label-lg font-medium',
-            disabled ? 'text-text-disabled' : 'text-text-secondary',
+            'pointer-events-none flex shrink-0 self-stretch select-none items-center gap-1.5 border-r border-slate-300/90 bg-slate-200/75 px-3 text-body font-semibold dark:border-slate-700 dark:bg-slate-800/90',
+            disabled ? 'text-text-disabled' : 'text-slate-700 dark:text-slate-200',
           )}
         >
           <svg
@@ -631,7 +647,10 @@ function FieldInput({
           type="tel"
           inputMode="numeric"
           autoComplete={autoComplete ?? 'tel'}
-          className={cn(cls, 'pl-24')}
+          className={cn(
+            'min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:outline-none disabled:cursor-not-allowed disabled:text-text-disabled',
+            className,
+          )}
         />
         {name ? <input type="hidden" name={name} value={submittedPhone} disabled={disabled} /> : null}
       </div>
@@ -666,6 +685,7 @@ function FieldInput({
       label={label}
       error={error}
       hint={hint}
+      labelBadge={labelBadge}
       required={required}
       counter={counter}
     >

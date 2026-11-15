@@ -2,7 +2,11 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getAppUser } from '@/lib/auth/user';
 import { logoutAction } from '@/lib/auth/actions';
-import { loadProfileForSetup } from '@/lib/profile/actions';
+import {
+  loadProfileForSetup,
+  type ProfileContactInfo,
+} from '@/lib/profile/actions';
+import { isNonSyntheticEmail } from '@/lib/validation/profile-schemas';
 import { ProfileSetupForm } from '@/components/onboarding/profile-setup-form';
 import { Header } from '@/components/ui/header';
 import { Button } from '@/components/ui/button';
@@ -63,8 +67,16 @@ export default async function OnboardingProfilePage() {
     return <SuspendedAccountShell />;
   }
 
-  const { profile, loadError, unauthorized, suspended, userId } =
-    await loadProfileForSetup();
+  const {
+    profile,
+    loadError,
+    unauthorized,
+    suspended,
+    userId,
+    fullName,
+    contactEmail,
+    contactPhone,
+  } = await loadProfileForSetup();
 
   if (unauthorized) {
     redirect('/login');
@@ -73,6 +85,24 @@ export default async function OnboardingProfilePage() {
   if (suspended) {
     return <SuspendedAccountShell />;
   }
+
+  const cleanUserEmail = isNonSyntheticEmail(user.email) ? user.email.trim() : '';
+  const hasVerifiedEmail =
+    Boolean(cleanUserEmail) &&
+    (Boolean(user.verified_contact) ||
+      Boolean(user.linked_providers?.includes('email')));
+  const cleanUserPhone = user.phone?.trim() ?? '';
+  const hasVerifiedPhone =
+    Boolean(cleanUserPhone) &&
+    (Boolean(user.verified_contact) ||
+      Boolean(user.linked_providers?.includes('phone')));
+
+  const initialContact: ProfileContactInfo = {
+    email: cleanUserEmail || contactEmail || '',
+    emailVerified: hasVerifiedEmail,
+    phone: cleanUserPhone || contactPhone || '',
+    phoneVerified: hasVerifiedPhone,
+  };
 
   return (
     <div className="flex flex-1 flex-col bg-surface-canvas text-text-primary">
@@ -94,16 +124,18 @@ export default async function OnboardingProfilePage() {
       >
         <div className="mb-6">
           <h1 className="text-heading-xl text-text-primary">
-            প্রোফাইল সেটআপ (Profile Setup)
+            Complete Your Profile
           </h1>
           <p className="mt-2 text-body-sm text-text-secondary">
-            আপনার বর্তমান ভূমিকা, অভিজ্ঞতার স্তর এবং শেখার সময়সূচি দিন। শিক্ষাগত যোগ্যতা ঐচ্ছিক এবং প্রোফাইল সম্পূর্ণ না করেও ড্যাশবোর্ডে যাওয়া যাবে।
+            Tell us who you are, your current experience level, and your daily study schedule. Fields marked with <span aria-hidden="true" className="font-medium text-text-danger">*</span><span className="sr-only">an asterisk</span> are required.
           </p>
         </div>
 
         <div className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-md sm:p-8">
           <ProfileSetupForm
             initialProfile={profile}
+            initialContact={initialContact}
+            initialFullName={fullName ?? ''}
             loadError={loadError}
             userId={userId ?? user.id}
           />
