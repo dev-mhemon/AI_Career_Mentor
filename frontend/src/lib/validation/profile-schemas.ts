@@ -15,7 +15,7 @@ export const FULL_NAME_MIN = 2;
 export const FULL_NAME_MAX = 100;
 export const CURRENT_ROLE_MIN = 2;
 export const CURRENT_ROLE_MAX = 120;
-export const EDUCATION_MAX = 160;
+export const EDUCATION_MAX = 200;
 export const DAILY_HOURS_MIN = 0.5;
 export const DAILY_HOURS_MAX = 12;
 

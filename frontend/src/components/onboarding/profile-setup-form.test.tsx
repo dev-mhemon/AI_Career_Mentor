@@ -111,7 +111,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     const educationInput = screen.getByLabelText(/education \(optional\)/i);
     expect(educationInput).not.toBeRequired();
     expect(educationInput).toHaveValue('');
-    expect(screen.getByText('Max 160 characters')).toBeInTheDocument();
+    expect(screen.getByText('Max 200 characters')).toBeInTheDocument();
 
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
     expect(roleInput).toBeRequired();
@@ -352,7 +352,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
   });
 
-  it('rejects non-0.5 daily hours and >160 char education on blur and submit, falling back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
+  it('rejects non-0.5 daily hours and >200 char education on blur and submit, falling back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
     const tzSpy = vi
       .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
       .mockReturnValue({
@@ -379,10 +379,10 @@ describe('ProfileSetupForm (Screen 07)', () => {
       const hoursInput = screen.getByLabelText(/preferred daily hours/i);
       const educationInput = screen.getByLabelText(/education \(optional\)/i);
 
-      fireEvent.change(educationInput, { target: { value: 'x'.repeat(161) } });
+      fireEvent.change(educationInput, { target: { value: 'x'.repeat(201) } });
       fireEvent.blur(educationInput);
       expect(
-        screen.getByText('Education must be 160 characters or fewer.'),
+        screen.getByText('Education must be 200 characters or fewer.'),
       ).toBeInTheDocument();
 
       fireEvent.blur(hoursInput);

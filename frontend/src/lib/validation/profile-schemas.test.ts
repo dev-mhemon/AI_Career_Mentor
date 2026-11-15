@@ -90,15 +90,15 @@ describe('profile-schemas', () => {
   });
 
   describe('validateEducation', () => {
-    it('allows empty optional education and caps at 160 chars', () => {
+    it('allows empty optional education and caps at 200 chars', () => {
       expect(validateEducation('   ')).toEqual({ ok: true, value: '' });
-      expect(validateEducation('a'.repeat(160))).toEqual({
+      expect(validateEducation('a'.repeat(200))).toEqual({
         ok: true,
-        value: 'a'.repeat(160),
+        value: 'a'.repeat(200),
       });
-      expect(validateEducation('a'.repeat(161))).toEqual({
+      expect(validateEducation('a'.repeat(201))).toEqual({
         ok: false,
-        error: 'Education must be 160 characters or fewer.',
+        error: 'Education must be 200 characters or fewer.',
       });
       expect(validateEducation('BSc\x1bCSE')).toEqual({
         ok: false,

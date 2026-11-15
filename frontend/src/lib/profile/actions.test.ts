@@ -483,7 +483,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       formData.set('email', 'bad-email');
       formData.set('phone', '01234');
       formData.set('current_role', '   ');
-      formData.set('education', 'x'.repeat(161));
+      formData.set('education', 'x'.repeat(201));
       formData.set('experience_level', 'mid');
       formData.set('existing_skills_none', 'true');
       formData.set('timezone', 'Invalid/Zone');
@@ -497,7 +497,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
       expect(result.fieldErrors?.email).toBe('Enter a valid email address.');
       expect(result.fieldErrors?.phone).toContain('Bangladesh mobile number');
       expect(result.fieldErrors?.current_role).toBe('Enter your current role or profession.');
-      expect(result.fieldErrors?.education).toBe('Education must be 160 characters or fewer.');
+      expect(result.fieldErrors?.education).toBe('Education must be 200 characters or fewer.');
       expect(result.fieldErrors?.existing_skills_none).toContain('Experience Level is Beginner');
       expect(result.fieldErrors?.timezone).toBe('Enter a valid IANA timezone (e.g. Asia/Dhaka, UTC).');
       expect(result.fieldErrors?.preferred_daily_hours).toBe(
@@ -508,7 +508,7 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         email: 'bad-email',
         phone: '01234',
         current_role: '',
-        education: 'x'.repeat(161),
+        education: 'x'.repeat(201),
         experience_level: 'mid',
         existing_skills_none: true,
         timezone: 'Invalid/Zone',

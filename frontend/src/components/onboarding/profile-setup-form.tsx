@@ -1057,7 +1057,7 @@ function ProfileSetupFormInner({
           />
         </div>
 
-        {/* Education (Optional, <= 160 chars) */}
+        {/* Education (Optional, <= 200 chars) */}
         <div>
           <input
             type="hidden"
@@ -1080,7 +1080,7 @@ function ProfileSetupFormInner({
             value={values.education}
             error={educationError}
             placeholder="e.g. BSc in CSE, Diploma in Engineering"
-            hint="Max 160 characters"
+            hint={`Max ${EDUCATION_MAX} characters`}
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('education');
