@@ -58,8 +58,9 @@ describe("ForgotPasswordForm", () => {
     fireEvent.click(phoneTab);
 
     expect(screen.getByLabelText(/registered phone number/i)).toBeInTheDocument();
+    expect(screen.getByText("+88")).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("01712-345678"),
+      screen.getByPlaceholderText("01XXXXXXXXX"),
     ).toBeInTheDocument();
   });
 

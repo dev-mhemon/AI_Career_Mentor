@@ -577,6 +577,7 @@ function FieldInput({
           {...common}
           ref={ref as Ref<HTMLInputElement>}
           type={showPw ? 'text' : 'password'}
+          placeholder={placeholder ?? 'Password'}
           autoComplete={autoComplete ?? 'current-password'}
           className={cn(cls, 'pr-12')}
         />
@@ -615,13 +616,13 @@ function FieldInput({
             <rect width="20" height="12" fill="#006a4e" />
             <circle cx="9" cy="6" r="4" fill="#f42a41" />
           </svg>
-          <span className="tabular-nums">+880</span>
+          <span className="tabular-nums">+88</span>
         </span>
         <input
           {...controlProps}
           value={visiblePhone}
           dir="ltr"
-          placeholder={placeholder ?? '01712-345678'}
+          placeholder={placeholder ?? '01XXXXXXXXX'}
           ref={(el) => {
             phoneInputRef.current = el;
             if (typeof ref === 'function') ref(el);

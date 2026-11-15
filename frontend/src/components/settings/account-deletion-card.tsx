@@ -260,7 +260,7 @@ export function AccountDeletionCard({
                   required
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder="Password"
                   autoComplete="current-password"
                   readOnly={isPending}
                   disabled={isPolling}

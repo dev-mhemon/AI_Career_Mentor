@@ -49,6 +49,8 @@ describe('AddContactForm Component', () => {
 
     const phoneInput = screen.getByLabelText(/বাংলাদেশি মোবাইল নম্বর/i);
     expect(phoneInput).toHaveAttribute('type', 'tel');
+    expect(phoneInput).toHaveAttribute('placeholder', '01XXXXXXXXX');
+    expect(screen.getByText('+88')).toBeInTheDocument();
   });
 
   it('renders suspended notice and hides form when isSuspended is true', () => {

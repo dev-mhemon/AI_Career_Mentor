@@ -291,8 +291,8 @@ export function LoginForm({
                 const res = validateBdPhone(e.target.value);
                 setFieldError("identifier", res.ok ? undefined : res.error);
               }}
-              hint="Bangladesh mobile, e.g. 01712-345678"
-              placeholder="01712-345678"
+              hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
+              placeholder="01XXXXXXXXX"
             />
           )}
 
@@ -320,7 +320,7 @@ export function LoginForm({
                 const pw = validateLoginPassword(raw);
                 setFieldError("password", pw.ok ? undefined : pw.error);
               }}
-              placeholder="••••••••"
+              placeholder="Password"
             />
             <div className="flex items-center justify-between gap-4">
               <Checkbox
