@@ -2253,7 +2253,19 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
       });
     });
 
-    it('clears Redis contact rate-limit keys for freed email and phone after account deletion', async () => {
+    it('captures pre-commit Redis contact state and unwraps [rows, affected] tuples before race-safe cleanup', async () => {
+      const snapshot = {
+        entries: [
+          {
+            key: 'auth:v1:send:contact:abc',
+            kind: 'string' as const,
+            value: '2',
+            pexpiretime: 1794827507884,
+          },
+        ],
+      };
+      const captureContactsState = vi.fn().mockResolvedValue(snapshot);
+      const clearCapturedContactsState = vi.fn().mockResolvedValue(undefined);
       const clearContactsState = vi.fn().mockResolvedValue(undefined);
       const serviceWithAbuse = new AccountDeletionService(
         database,
@@ -2261,7 +2273,11 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         reauthService,
         providerCleanupService,
         privacyRetentionService,
-        { clearContactsState } as any,
+        {
+          captureContactsState,
+          clearCapturedContactsState,
+          clearContactsState,
+        } as any,
       );
 
       mockQuery
@@ -2294,11 +2310,14 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
+        // Simulate Postgres TypeORM driver [rows, affectedCount] tuple returns on DELETE ... RETURNING
         .mockResolvedValueOnce([
-          { email: 'freed@example.com', phone: '+8801629795421' },
+          [{ email: 'TuplePublic@example.com', phone: '+8801711111111' }],
+          1,
         ])
         .mockResolvedValueOnce([
-          { email: 'freed@example.com', phone: '8801629795421' },
+          [{ email: 'TupleAuth@example.com', phone: '8801822222222' }],
+          1,
         ])
         .mockResolvedValueOnce([
           {
@@ -2323,13 +2342,84 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
       });
 
       expect(res.status).toBe('completed');
-      expect(clearContactsState).toHaveBeenCalledWith(
+      expect(captureContactsState).toHaveBeenCalledWith(
         expect.arrayContaining([
           { channel: 'email', identifier: 'freed@example.com' },
           { channel: 'phone', identifier: '+8801629795421' },
+          { channel: 'email', identifier: 'tuplepublic@example.com' },
+          { channel: 'phone', identifier: '+8801711111111' },
+          { channel: 'email', identifier: 'tupleauth@example.com' },
+          { channel: 'phone', identifier: '+8801822222222' },
         ]),
-        [TEST_USER_ID],
       );
+      expect(clearCapturedContactsState).toHaveBeenCalledWith(snapshot, [
+        TEST_USER_ID,
+      ]);
+      expect(clearContactsState).not.toHaveBeenCalled();
+    });
+
+    it('never blind-deletes contact keys post-commit when captureContactsState returns undefined', async () => {
+      const captureContactsState = vi.fn().mockResolvedValue(undefined);
+      const clearCapturedContactsState = vi.fn().mockResolvedValue(undefined);
+      const clearContactsState = vi.fn().mockResolvedValue(undefined);
+      const serviceWithAbuse = new AccountDeletionService(
+        database,
+        receiptService,
+        reauthService,
+        providerCleanupService,
+        privacyRetentionService,
+        {
+          captureContactsState,
+          clearCapturedContactsState,
+          clearContactsState,
+        } as any,
+      );
+
+      mockQuery
+        .mockResolvedValueOnce([{ email: 'freed@example.com', phone: null }])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: TEST_USER_ID,
+            status: 'in_progress',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: null,
+            provider_deletion_requested: false,
+          },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: null,
+            status: 'completed',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: new Date('2026-11-10T08:01:00.000Z'),
+            provider_deletion_requested: false,
+          },
+        ]);
+
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: TEST_USER_ID } }),
+      });
+
+      const res = await serviceWithAbuse.requestDeletion(TEST_USER_ID, {
+        confirmation: 'DELETE',
+        password: 'S3cure!Password',
+      });
+
+      expect(res.status).toBe('completed');
+      expect(clearCapturedContactsState).toHaveBeenCalledWith(undefined, [
+        TEST_USER_ID,
+      ]);
+      expect(clearContactsState).not.toHaveBeenCalled();
     });
   });
 });

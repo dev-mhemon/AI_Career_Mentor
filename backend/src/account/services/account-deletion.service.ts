@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   AuthAbuseControl,
   type Contact,
+  type ContactAbuseSnapshot,
 } from '../../auth/abuse-control/abuse-control.service.js';
 import { DatabaseService } from '../../auth/services/database.service.js';
 import { fail } from '../../common/http.js';
@@ -273,15 +274,21 @@ export class AccountDeletionService {
         | {
             row: AccountDeletionRequestRow;
             receipt: { receipt: string; expiresAt: string };
+            abuseSnapshot?: ContactAbuseSnapshot;
           }
         | undefined;
 
       const collectContactRows = (
-        rows: unknown,
+        result: unknown,
         emailField = 'email',
         phoneField = 'phone',
       ) => {
-        if (!Array.isArray(rows)) return;
+        const rows =
+          Array.isArray(result) && Array.isArray(result[0])
+            ? result[0]
+            : Array.isArray(result)
+              ? result
+              : [];
         for (const r of rows as Array<Record<string, unknown>>) {
           const rawEmail = r?.[emailField];
           if (typeof rawEmail === 'string' && rawEmail.trim()) {
@@ -476,9 +483,17 @@ export class AccountDeletionService {
             );
           }
 
+          const abuseSnapshot =
+            typeof this.abuseControl?.captureContactsState === 'function'
+              ? await this.abuseControl
+                  .captureContactsState(deletedContacts)
+                  .catch(() => undefined)
+              : undefined;
+
           return {
             row: tombstoneRow,
             receipt: this.deletionReceiptService.mintReceipt(tombstoneRow.id),
+            abuseSnapshot,
           };
         });
       } catch (error) {
@@ -511,10 +526,22 @@ export class AccountDeletionService {
         // Non-fatal: PostgreSQL transaction already hard-deleted public.users and auth.users
       }
 
-      // 3g. Best-effort cleanup of per-contact Redis cooldown/quota/challenge state so freed email/phone can re-register cleanly.
-      await this.abuseControl
-        ?.clearContactsState?.(deletedContacts, [userId])
-        .catch(() => undefined);
+      // 3g. Race-safe post-commit cleanup: delete only unchanged pre-commit contact keys via
+      // capture-and-compare (preserving any concurrent registration started after commit),
+      // while always clearing UUID-scoped userId OTP secrets.
+      if (this.abuseControl) {
+        if (
+          typeof this.abuseControl.clearCapturedContactsState === 'function'
+        ) {
+          await this.abuseControl
+            .clearCapturedContactsState(inserted.abuseSnapshot, [userId])
+            .catch(() => undefined);
+        } else {
+          await this.abuseControl
+            .clearContactsState?.([], [userId])
+            .catch(() => undefined);
+        }
+      }
 
       const resultDto = this.mapRowToStatusDto(inserted.row, inserted.receipt);
 

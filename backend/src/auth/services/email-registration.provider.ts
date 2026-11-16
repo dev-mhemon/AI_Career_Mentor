@@ -7,7 +7,10 @@ import {
 } from '../../config.js';
 import type { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { DatabaseService } from './database.service.js';
-import { purgeOrphanedAuthByContact } from './orphaned-auth-cleanup.js';
+import {
+  ORPHAN_ABANDONMENT_WINDOW_MS,
+  purgeOrphanedAuthByContact,
+} from './orphaned-auth-cleanup.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 
 /** Only a trusted server adapter may return an identity. No public signup response is evidence. */
@@ -264,6 +267,7 @@ export class EmailRegistrationProvider {
       `SELECT u.id,
               COALESCE(p.contact_value, u.email) AS email,
               u.email_confirmed_at,
+              u.created_at,
               pu.verified_contact,
               p.verified_at AS provider_verified_at,
               (pu.id IS NOT NULL) AS has_app_user,
@@ -274,6 +278,7 @@ export class EmailRegistrationProvider {
            ON p.user_id = u.id AND p.provider = 'email'
         WHERE u.deleted_at IS NULL
           AND (lower(u.email) = $1 OR lower(p.contact_value) = $1)
+          AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')
         ORDER BY
           COALESCE(lower(p.contact_value) = $1, false) DESC,
           COALESCE(COALESCE(lower(p.contact_value), lower(u.email)) = $1, false) DESC,
@@ -287,9 +292,18 @@ export class EmailRegistrationProvider {
       return null;
     }
     const row = rows[0];
+    const createdAtMs =
+      row.created_at !== undefined && row.created_at !== null
+        ? row.created_at instanceof Date
+          ? row.created_at.getTime()
+          : Date.parse(String(row.created_at))
+        : NaN;
     if (
       row.is_deleted === true ||
-      (row.has_app_user === false && Boolean(row.email_confirmed_at))
+      (row.has_app_user === false &&
+        (Boolean(row.email_confirmed_at) ||
+          (Number.isFinite(createdAtMs) &&
+            Date.now() - createdAtMs >= ORPHAN_ABANDONMENT_WINDOW_MS)))
     ) {
       return null;
     }

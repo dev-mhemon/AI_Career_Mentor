@@ -181,6 +181,9 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       expect(normalizedSql).toContain(
         'WHERE u.deleted_at IS NULL AND (lower(u.email) = $1 OR lower(p.contact_value) = $1)',
       );
+      expect(normalizedSql).toContain(
+        "AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')",
+      );
       expect(normalizedSql).toContain('ORDER BY');
       expect(normalizedSql).toContain(
         'COALESCE(lower(p.contact_value) = $1, false) DESC',
@@ -216,6 +219,61 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       ]);
 
       await expect(provider.findByEmail(email)).resolves.toBeNull();
+    });
+
+    it('excludes unconfirmed 15m+ orphaned auth users with no public.users row while keeping recent (<15m) registrations blocked', async () => {
+      const oldCreatedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: oldCreatedAt,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toBeNull();
+
+      const recentCreatedAt = new Date(
+        Date.now() - 2 * 60 * 1000,
+      ).toISOString();
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: recentCreatedAt,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: false,
+      });
+
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: null,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: false,
+      });
     });
 
     it('returns the coalesced provider contact_value when u.email matched lookup but p.contact_value is different', async () => {

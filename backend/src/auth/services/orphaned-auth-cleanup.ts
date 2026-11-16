@@ -3,7 +3,7 @@ import type { DatabaseService } from './database.service.js';
 
 export const ORPHAN_ABANDONMENT_WINDOW_MS = 15 * 60 * 1000;
 
-const ABANDONMENT_CUTOFF_SQL = `u.created_at < NOW() - INTERVAL '15 minutes'`;
+const ABANDONMENT_CUTOFF_SQL = `COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'`;
 const ORPHANED_LOOKUP_CONDITION = `(u.deleted_at IS NOT NULL OR (pu.id IS NULL AND ${ABANDONMENT_CUTOFF_SQL}))`;
 
 export interface PurgeOrphanedAuthOptions {
@@ -69,7 +69,10 @@ function isAbandonedOrphanRow(
   if (row.has_app_user === true) {
     return false;
   }
-  if (row.created_at !== undefined && row.created_at !== null) {
+  if (row.created_at === null) {
+    return false;
+  }
+  if (row.created_at !== undefined) {
     const createdMs =
       row.created_at instanceof Date
         ? row.created_at.getTime()
@@ -176,8 +179,13 @@ export async function purgeOrphanedAuthByContact(
       : normalized,
   );
 
-  const collectDeletedContacts = (deletedRows: unknown) => {
-    if (!Array.isArray(deletedRows)) return;
+  const collectDeletedContacts = (deletedResult: unknown) => {
+    const deletedRows =
+      Array.isArray(deletedResult) && Array.isArray(deletedResult[0])
+        ? deletedResult[0]
+        : Array.isArray(deletedResult)
+          ? deletedResult
+          : [];
     for (const row of deletedRows as ContactRow[]) {
       if (typeof row?.email === 'string' && row.email.trim()) {
         addContact('email', row.email.trim().toLowerCase());

@@ -324,6 +324,88 @@ describe('TextBeeSmsProvider', () => {
       } as unknown as OtpSecretStore);
 
       await expect(provider.findByPhone(orphanedPhone)).resolves.toBeNull();
+      const sql = (
+        vi.mocked(database.query).mock.calls[0]?.[0] as string
+      ).replace(/\s+/g, ' ');
+      expect(sql).toContain(
+        "AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')",
+      );
+    });
+
+    it('findByPhone excludes unconfirmed 15m+ orphans while keeping recent (<15m) registrations blocked', async () => {
+      const orphanedPhone = '+8801629795421';
+      const oldCreatedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      const recentCreatedAt = new Date(
+        Date.now() - 2 * 60 * 1000,
+      ).toISOString();
+      const database = {
+        query: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: TEST_USER_ID,
+              phone: '8801629795421',
+              phone_confirmed_at: null,
+              created_at: oldCreatedAt,
+              verified_contact: false,
+              has_app_user: false,
+              is_deleted: false,
+            },
+          ])
+          .mockResolvedValueOnce([
+            {
+              id: TEST_USER_ID,
+              phone: '8801629795421',
+              phone_confirmed_at: null,
+              created_at: recentCreatedAt,
+              verified_contact: false,
+              has_app_user: false,
+              is_deleted: false,
+            },
+          ]),
+      } as unknown as DatabaseService;
+
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'TEXTBEE_API_KEY') return 'test_key';
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return '01234567890123456789012345678901';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'sb-service-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(config, database, {
+        generateOtp: vi.fn(),
+        storeOtp: vi.fn(),
+      } as unknown as OtpSecretStore);
+
+      await expect(provider.findByPhone(orphanedPhone)).resolves.toBeNull();
+      await expect(provider.findByPhone(orphanedPhone)).resolves.toEqual({
+        id: TEST_USER_ID,
+        subject: TEST_USER_ID,
+        phone: orphanedPhone,
+        verified: false,
+      });
+
+      vi.mocked(database.query).mockResolvedValueOnce([
+        {
+          id: TEST_USER_ID,
+          phone: '8801629795421',
+          phone_confirmed_at: null,
+          created_at: null,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByPhone(orphanedPhone)).resolves.toEqual({
+        id: TEST_USER_ID,
+        subject: TEST_USER_ID,
+        phone: orphanedPhone,
+        verified: false,
+      });
     });
 
     it('findByPhone normalizes digits-only phone identity from database to canonical E.164 with leading +', async () => {

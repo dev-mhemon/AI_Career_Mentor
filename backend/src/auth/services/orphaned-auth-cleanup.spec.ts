@@ -34,8 +34,34 @@ describe('purgeOrphanedAuthByContact', () => {
     expect(purged).toBe(false);
     expect(query).toHaveBeenCalledTimes(1);
     const lookupSql = query.mock.calls[0]?.[0] as string;
-    expect(lookupSql).toContain("u.created_at < NOW() - INTERVAL '15 minutes'");
+    expect(lookupSql).toContain(
+      "COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'",
+    );
     expect(lookupSql).toMatch(/u\.deleted_at IS NOT NULL\s+OR\s*\(/);
+  });
+
+  it('does not purge a row with NULL created_at (treated defensively as 0 minutes old)', async () => {
+    const query = vi.fn().mockResolvedValueOnce([
+      {
+        id: staleId,
+        deleted_at: null,
+        has_app_user: false,
+        created_at: null,
+      },
+    ]);
+    const database = { query } as unknown as DatabaseService;
+
+    const purged = await purgeOrphanedAuthByContact({
+      channel: 'email',
+      identifier: email,
+      database,
+      supabaseUrl: 'http://supabase.invalid',
+      serviceRoleKey: 'service-role-key',
+    });
+
+    expect(purged).toBe(false);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('does not purge a recently created (< 15 minutes old) auth user with no public.users row', async () => {
@@ -142,7 +168,9 @@ describe('purgeOrphanedAuthByContact', () => {
     );
     expect(txQuery).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("u.created_at < NOW() - INTERVAL '15 minutes'"),
+      expect.stringContaining(
+        "COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'",
+      ),
       [[staleId]],
     );
     expect(txQuery).toHaveBeenNthCalledWith(
@@ -152,14 +180,16 @@ describe('purgeOrphanedAuthByContact', () => {
     );
   });
 
-  it('explicitly deletes lingering public.users rows before auth.users for soft-deleted accounts and clears abuse state', async () => {
+  it('explicitly deletes lingering public.users rows before auth.users for soft-deleted accounts and unwraps [rows, affected] tuples', async () => {
     const txQuery = vi
       .fn()
       .mockResolvedValueOnce([
-        { email: 'Secondary@Example.INVALID', phone: '8801712345678' },
+        [{ email: 'Secondary@Example.INVALID', phone: '8801712345678' }],
+        1,
       ])
       .mockResolvedValueOnce([
-        { email: 'orphan@example.invalid', phone: null },
+        [{ email: 'orphan@example.invalid', phone: null }],
+        1,
       ]);
     const clearContactsState = vi.fn().mockResolvedValue(undefined);
     const database = {
