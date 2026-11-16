@@ -64,6 +64,7 @@ function harness() {
     checkDeliveryHealth: vi.fn().mockResolvedValue(undefined),
   };
   const abuse = {
+    enforceIpQuota: vi.fn().mockResolvedValue(undefined),
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
   };
   const queries = vi.fn(async (sql: string): Promise<any[]> => {
@@ -178,6 +179,25 @@ describe('A01/A04 email service with synthetic provider', () => {
     expect(provider.findByEmail).not.toHaveBeenCalled();
   });
 
+  it('enforces IP quota before contact lookup during register to prevent unauthenticated DB load', async () => {
+    const { service, provider, abuse } = harness();
+    abuse.enforceIpQuota.mockRejectedValueOnce(
+      new HttpException(
+        { code: 'OTP_LIMIT_EXCEEDED', retryAfterSeconds: 60 },
+        429,
+      ),
+    );
+
+    await rejection(
+      () => service.register(body, peer),
+      429,
+      'OTP_LIMIT_EXCEEDED',
+    );
+    expect(abuse.enforceIpQuota).toHaveBeenCalledWith('register', '192.0.2.4');
+    expect(provider.findByEmail).not.toHaveBeenCalled();
+    expect(abuse.reserveSend).not.toHaveBeenCalled();
+  });
+
   it('protects a verified contact and does not create or send', async () => {
     const { service, provider, database } = harness();
     provider.findByEmail.mockResolvedValue({ ...identity, verified: true });
@@ -242,12 +262,19 @@ describe('A01/A04 email service with synthetic provider', () => {
     expect(provider.sendChallenge).toHaveBeenCalledTimes(1);
   });
 
-  it('maps provider create and send failures to retryable 502 with retained reservations', async () => {
-    for (const method of [
-      'findByEmail',
-      'createPending',
-      'sendChallenge',
-    ] as const) {
+  it('checks contact availability before reserveSend and retains reservations when createPending or sendChallenge fails', async () => {
+    const findFail = harness();
+    findFail.provider.findByEmail.mockRejectedValue(
+      new Error('synthetic lookup failure'),
+    );
+    await rejection(
+      () => findFail.service.register(body, peer),
+      502,
+      'EMAIL_PROVIDER_ERROR',
+    );
+    expect(findFail.abuse.reserveSend).not.toHaveBeenCalled();
+
+    for (const method of ['createPending', 'sendChallenge'] as const) {
       const { service, provider, abuse } = harness();
       provider[method].mockRejectedValue(
         new Error('synthetic provider failure'),
@@ -259,6 +286,36 @@ describe('A01/A04 email service with synthetic provider', () => {
       );
       expect(abuse.reserveSend).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it('never consumes send rate-limit quota or cooldown when contact already exists (409)', async () => {
+    const { service, provider, abuse } = harness();
+    provider.findByEmail.mockResolvedValue({ ...identity, verified: true });
+
+    await rejection(
+      () => service.register(body, peer),
+      409,
+      'CONTACT_ALREADY_REGISTERED',
+    );
+    expect(abuse.reserveSend).not.toHaveBeenCalled();
+  });
+
+  it('preserves contact abuse state when a race hits 409 inside createPending', async () => {
+    const { service, provider, abuse } = harness();
+    const clearContactState = vi.fn().mockResolvedValue(undefined);
+    (abuse as { clearContactState?: unknown }).clearContactState =
+      clearContactState;
+    provider.createPending.mockRejectedValue(
+      new HttpException({ code: 'CONTACT_ALREADY_REGISTERED' }, 409),
+    );
+
+    await rejection(
+      () => service.register(body, peer),
+      409,
+      'CONTACT_ALREADY_REGISTERED',
+    );
+    expect(abuse.reserveSend).toHaveBeenCalledTimes(1);
+    expect(clearContactState).not.toHaveBeenCalled();
   });
 
   it('rejects a provider challenge without the contracted 600-second validity', async () => {
@@ -457,7 +514,7 @@ describe('A01/A04 email service with synthetic provider', () => {
     expect(provider.sendChallenge).not.toHaveBeenCalled();
   });
 
-  it('fails before any provider call when the shared Redis reservation fails', async () => {
+  it('fails before pending creation or challenge dispatch when the shared Redis reservation fails', async () => {
     const { service, provider, abuse } = harness();
     abuse.reserveSend.mockRejectedValue(
       new HttpException({ code: 'SERVICE_UNAVAILABLE' }, 503),
@@ -467,7 +524,8 @@ describe('A01/A04 email service with synthetic provider', () => {
       503,
       'SERVICE_UNAVAILABLE',
     );
-    expect(provider.findByEmail).not.toHaveBeenCalled();
+    expect(provider.createPending).not.toHaveBeenCalled();
+    expect(provider.sendChallenge).not.toHaveBeenCalled();
   });
 
   it('returns identical metadata for unknown and pending resend contacts', async () => {
@@ -669,6 +727,13 @@ describe('A01/A04 email service with synthetic provider', () => {
         expires_in_seconds: 600,
       });
       expect(smsProvider.ready).toHaveBeenCalled();
+      expect(abuse.enforceIpQuota).toHaveBeenCalledWith(
+        'register',
+        '192.0.2.4',
+      );
+      expect(abuse.enforceIpQuota.mock.invocationCallOrder[0]).toBeLessThan(
+        smsProvider.findByPhone.mock.invocationCallOrder[0],
+      );
       expect(abuse.reserveSend).toHaveBeenCalledWith(
         { channel: 'phone', identifier: phone },
         '192.0.2.4',
@@ -705,6 +770,28 @@ describe('A01/A04 email service with synthetic provider', () => {
         409,
         'CONTACT_ALREADY_REGISTERED',
       );
+    });
+
+    it('enforces IP quota before phone contact lookup during register', async () => {
+      const { service, smsProvider, abuse } = harness();
+      abuse.enforceIpQuota.mockRejectedValueOnce(
+        new HttpException(
+          { code: 'OTP_LIMIT_EXCEEDED', retryAfterSeconds: 60 },
+          429,
+        ),
+      );
+
+      await rejection(
+        () => service.register(phoneBody, peer),
+        429,
+        'OTP_LIMIT_EXCEEDED',
+      );
+      expect(abuse.enforceIpQuota).toHaveBeenCalledWith(
+        'register',
+        '192.0.2.4',
+      );
+      expect(smsProvider.findByPhone).not.toHaveBeenCalled();
+      expect(abuse.reserveSend).not.toHaveBeenCalled();
     });
 
     it('successfully resends OTP challenge for unverified phone contact', async () => {
@@ -875,6 +962,44 @@ describe('A01/A04 email service with synthetic provider', () => {
         503,
         'SERVICE_UNAVAILABLE',
       );
+    });
+
+    it('does not invoke pre-purge before reserveSend and does not clear abuse state on 409 conflict', async () => {
+      const { service, smsProvider, provider, abuse, queries } = harness();
+      const clearContactState = vi.fn().mockResolvedValue(undefined);
+      (abuse as { clearContactState?: unknown }).clearContactState =
+        clearContactState;
+      (smsProvider as any).purgeOrphanedByPhone = vi.fn();
+      (provider as any).purgeOrphanedByEmail = vi.fn();
+
+      smsProvider.findByPhone.mockResolvedValueOnce(null);
+      smsProvider.createPending.mockResolvedValueOnce(phoneIdentity);
+      queries.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.users WHERE')) {
+          return [{ id: 'other-user-id' }];
+        }
+        return [];
+      });
+
+      await rejection(
+        () => service.register(phoneBody, peer),
+        409,
+        'CONTACT_ALREADY_REGISTERED',
+      );
+      expect((smsProvider as any).purgeOrphanedByPhone).not.toHaveBeenCalled();
+      expect(clearContactState).not.toHaveBeenCalled();
+
+      provider.findByEmail.mockResolvedValueOnce({
+        ...identity,
+        verified: true,
+      });
+      await rejection(
+        () => service.register(body, peer),
+        409,
+        'CONTACT_ALREADY_REGISTERED',
+      );
+      expect((provider as any).purgeOrphanedByEmail).not.toHaveBeenCalled();
+      expect(clearContactState).not.toHaveBeenCalled();
     });
   });
 });

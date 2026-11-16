@@ -125,3 +125,50 @@ local n = redis.call('INCR', KEYS[1])
 if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
 return {0, 0}
 `;
+
+export const captureContactKeysScript = `
+local out = {}
+for i = 1, #KEYS do
+  local k = KEYS[i]
+  local t = redis.call('TYPE', k).ok
+  if t == 'string' then
+    table.insert(out, 'string')
+    table.insert(out, redis.call('GET', k) or '')
+    table.insert(out, tostring(redis.call('PEXPIRETIME', k)))
+  elseif t == 'hash' then
+    table.insert(out, 'hash')
+    table.insert(out, redis.call('HGET', k, 'generation') or '')
+    table.insert(out, tostring(redis.call('PEXPIRETIME', k)))
+  else
+    table.insert(out, 'none')
+    table.insert(out, '')
+    table.insert(out, '-2')
+  end
+end
+return out
+`;
+
+export const clearCapturedKeysScript = `
+local condCount = tonumber(ARGV[1])
+for i = 1, condCount do
+  local k = KEYS[i]
+  local kind = ARGV[1 + (i - 1) * 3 + 1]
+  local expectedVal = ARGV[1 + (i - 1) * 3 + 2]
+  local expectedPexpiretime = tonumber(ARGV[1 + (i - 1) * 3 + 3])
+  local t = redis.call('TYPE', k).ok
+  local curPexpiretime = redis.call('PEXPIRETIME', k)
+  if kind == 'hash' then
+    if t == 'hash' and (redis.call('HGET', k, 'generation') or '') == expectedVal and curPexpiretime >= 0 and curPexpiretime == expectedPexpiretime then
+      redis.call('DEL', k)
+    end
+  elseif kind == 'string' then
+    if t == 'string' and (redis.call('GET', k) or '') == expectedVal and curPexpiretime >= 0 and curPexpiretime == expectedPexpiretime then
+      redis.call('DEL', k)
+    end
+  end
+end
+for i = condCount + 1, #KEYS do
+  redis.call('DEL', KEYS[i])
+end
+return 1
+`;

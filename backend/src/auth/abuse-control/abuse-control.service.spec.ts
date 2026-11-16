@@ -1,7 +1,11 @@
 import { HttpException } from '@nestjs/common';
 import { AuthAbuseControl } from './abuse-control.service.js';
 import { readAbuseConfiguration } from './config.js';
-import { ipQuotaScript } from './scripts.js';
+import {
+  ipQuotaScript,
+  captureContactKeysScript,
+  clearCapturedKeysScript,
+} from './scripts.js';
 
 interface MockRedisCounter {
   count?: number;
@@ -272,6 +276,18 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
         1,
       ],
     );
+
+    await service.enforceIpQuota('register', '192.0.2.1');
+    expect(evaluateSpy).toHaveBeenLastCalledWith(
+      ipQuotaScript,
+      [expect.stringMatching(/^auth:v1:ip:register:/)],
+      [
+        config!.policy.AUTH_SEND_IP_LIMIT,
+        config!.policy.AUTH_SEND_WINDOW_SECONDS * 1000,
+        2,
+        1,
+      ],
+    );
     service.onModuleDestroy();
   });
 
@@ -390,6 +406,306 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
         code: 'OTP_LIMIT_EXCEEDED',
         retryAfterSeconds: 45,
       });
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('clearContactsState deletes contact send, cooldown, challenge, and OTP secret keys', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+    });
+    const service = new AuthAbuseControl(config);
+    const delMock = vi.fn().mockResolvedValue(1);
+    const withCommandOptionsMock = vi.fn().mockReturnValue({ del: delMock });
+    vi.spyOn(
+      service as unknown as { getConnectedClient: () => Promise<unknown> },
+      'getConnectedClient',
+    ).mockResolvedValue({
+      withCommandOptions: withCommandOptionsMock,
+    });
+
+    try {
+      await service.clearContactsState(
+        [
+          { channel: 'email', identifier: 'User@Example.Invalid' },
+          { channel: 'phone', identifier: '+8801629795421' },
+        ],
+        ['00000000-0000-4000-8000-000000000001'],
+      );
+      expect(delMock).toHaveBeenCalledTimes(1);
+      const deletedKeys = delMock.mock.calls[0][0] as string[];
+      expect(deletedKeys).toHaveLength(16);
+      expect(
+        deletedKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+      ).toBe(true);
+      expect(
+        deletedKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+      ).toBe(true);
+      expect(deletedKeys.some((k) => k.startsWith('auth:v1:challenge:'))).toBe(
+        true,
+      );
+      expect(deletedKeys).toContain(
+        'auth:v1:otp:secret:00000000-0000-4000-8000-000000000001',
+      );
+
+      // With preserveSendLimits: true (orphan purge self-healing), send:cooldown and send:contact stay untouched
+      await service.clearContactsState(
+        [
+          { channel: 'email', identifier: 'User@Example.Invalid' },
+          { channel: 'phone', identifier: '+8801629795421' },
+        ],
+        ['00000000-0000-4000-8000-000000000001'],
+        { preserveSendLimits: true },
+      );
+      expect(delMock).toHaveBeenCalledTimes(2);
+      const preservedModeKeys = delMock.mock.calls[1][0] as string[];
+      expect(preservedModeKeys).toHaveLength(12);
+      expect(
+        preservedModeKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+      ).toBe(false);
+      expect(
+        preservedModeKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+      ).toBe(false);
+      expect(
+        preservedModeKeys.some((k) => k.startsWith('auth:v1:challenge:')),
+      ).toBe(true);
+
+      await service.clearChallengeState(
+        [
+          { channel: 'email', identifier: 'User@Example.Invalid' },
+          { channel: 'phone', identifier: '+8801629795421' },
+        ],
+        ['00000000-0000-4000-8000-000000000001'],
+      );
+      expect(delMock).toHaveBeenCalledTimes(3);
+      const challengeOnlyKeys = delMock.mock.calls[2][0] as string[];
+      expect(challengeOnlyKeys).toEqual(preservedModeKeys);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('enforceIpQuota for register uses single unified KEYS[1] atomically and hits 429 across limit', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:1',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+      AUTH_SEND_IP_LIMIT: '3',
+    })!;
+    const service = new AuthAbuseControl(config);
+    const store = new Map<string, MockRedisCounter>();
+    const observedKeys: string[][] = [];
+
+    vi.spyOn(service as any, 'evaluate').mockImplementation(
+      async (script: unknown, keys: unknown, args: unknown) => {
+        const keyList = keys as string[];
+        observedKeys.push(keyList);
+        return executeIpQuotaLua(
+          script as string,
+          keyList,
+          args as (string | number)[],
+          store,
+        );
+      },
+    );
+
+    try {
+      await service.enforceIpQuota('register', '192.0.2.55');
+      await service.enforceIpQuota('register', '192.0.2.55');
+      await service.enforceIpQuota('register', '192.0.2.55');
+
+      expect(observedKeys.every((k) => k.length === 1)).toBe(true);
+      expect(new Set(observedKeys.map((k) => k[0])).size).toBe(1);
+      expect(observedKeys[0]?.[0]).toMatch(/^auth:v1:ip:register:/);
+
+      await expect(
+        service.enforceIpQuota('register', '192.0.2.55'),
+      ).rejects.toMatchObject({
+        status: 429,
+        response: expect.objectContaining({ code: 'OTP_LIMIT_EXCEEDED' }),
+      });
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('captureContactsState and clearCapturedContactsState only delete keys with matching PEXPIRETIME and preserve fresh concurrent registrations', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+    });
+    const service = new AuthAbuseControl(config);
+
+    type Entry =
+      | { kind: 'string'; val: string; pexpiretime: number }
+      | { kind: 'hash'; generation: string; pexpiretime: number };
+    const redisStore = new Map<string, Entry>();
+
+    const runLua = (script: string, keys: string[], argv: string[]) => {
+      if (script === captureContactKeysScript) {
+        const out: string[] = [];
+        for (const k of keys) {
+          const entry = redisStore.get(k);
+          if (!entry) {
+            out.push('none', '', '-2');
+          } else if (entry.kind === 'string') {
+            out.push('string', entry.val, String(entry.pexpiretime));
+          } else {
+            out.push('hash', entry.generation, String(entry.pexpiretime));
+          }
+        }
+        return out;
+      }
+      if (script === clearCapturedKeysScript) {
+        const condCount = Number(argv[0]);
+        for (let i = 0; i < condCount; i += 1) {
+          const k = keys[i];
+          const kind = argv[1 + i * 3];
+          const expectedVal = argv[2 + i * 3];
+          const expectedPexpiretime = Number(argv[3 + i * 3]);
+          const cur = redisStore.get(k);
+          if (!cur) continue;
+          if (kind === 'hash') {
+            if (
+              cur.kind === 'hash' &&
+              cur.generation === expectedVal &&
+              cur.pexpiretime >= 0 &&
+              cur.pexpiretime === expectedPexpiretime
+            ) {
+              redisStore.delete(k);
+            }
+          } else if (kind === 'string') {
+            if (
+              cur.kind === 'string' &&
+              cur.val === expectedVal &&
+              cur.pexpiretime >= 0 &&
+              cur.pexpiretime === expectedPexpiretime
+            ) {
+              redisStore.delete(k);
+            }
+          }
+        }
+        for (let i = condCount; i < keys.length; i += 1) {
+          redisStore.delete(keys[i]);
+        }
+        return 1;
+      }
+      throw new Error('Unexpected script');
+    };
+
+    const evalMock = vi.fn(
+      async (script: string, opts: { keys: string[]; arguments: string[] }) =>
+        runLua(script, opts.keys, opts.arguments),
+    );
+    vi.spyOn(
+      service as unknown as { getConnectedClient: () => Promise<unknown> },
+      'getConnectedClient',
+    ).mockResolvedValue({
+      withCommandOptions: vi.fn().mockReturnValue({ eval: evalMock }),
+    });
+
+    try {
+      const email = 'raced@example.invalid';
+      const contactKeys = (
+        service as unknown as {
+          buildContactClearKeys: (c: unknown[]) => string[];
+        }
+      ).buildContactClearKeys([{ channel: 'email', identifier: email }]);
+      const [
+        cooldownKey,
+        contactCountKey,
+        challengeKey,
+        verifyEmailChallengeKey,
+      ] = contactKeys;
+
+      const oldUserId = '00000000-0000-4000-8000-000000000010';
+      const newUserId = '00000000-0000-4000-8000-000000000020';
+      const baseExpiry = 1794827500000;
+
+      // Pre-commit Redis state before account deletion completes
+      redisStore.set(cooldownKey, {
+        kind: 'string',
+        val: '1',
+        pexpiretime: baseExpiry + 12000,
+      });
+      redisStore.set(contactCountKey, {
+        kind: 'string',
+        val: '2',
+        pexpiretime: baseExpiry + 800000,
+      });
+      redisStore.set(challengeKey, {
+        kind: 'hash',
+        generation: 'old-gen-uuid',
+        pexpiretime: baseExpiry + 500000,
+      });
+      redisStore.set(`auth:v1:otp:secret:${oldUserId}`, {
+        kind: 'string',
+        val: 'old-digest',
+        pexpiretime: baseExpiry + 500000,
+      });
+
+      const snapshot = await service.captureContactsState([
+        { channel: 'email', identifier: email },
+      ]);
+      expect(snapshot?.entries).toHaveLength(3);
+
+      // Simulate race: DB transaction committed, new user immediately signs up with same email!
+      // Cooldown gets overwritten with same string value '1' and a new absolute PEXPIRETIME
+      redisStore.set(cooldownKey, {
+        kind: 'string',
+        val: '1',
+        pexpiretime: baseExpiry + 60000,
+      });
+      redisStore.set(contactCountKey, {
+        kind: 'string',
+        val: '3',
+        pexpiretime: baseExpiry + 800000,
+      });
+      redisStore.set(challengeKey, {
+        kind: 'hash',
+        generation: 'new-gen-uuid',
+        pexpiretime: baseExpiry + 600000,
+      });
+      redisStore.set(verifyEmailChallengeKey, {
+        kind: 'hash',
+        generation: 'new-verify-gen',
+        pexpiretime: baseExpiry + 600000,
+      });
+      redisStore.set(`auth:v1:otp:secret:${newUserId}`, {
+        kind: 'string',
+        val: 'new-digest',
+        pexpiretime: baseExpiry + 600000,
+      });
+
+      await service.clearCapturedContactsState(snapshot, [oldUserId]);
+
+      expect(redisStore.has(`auth:v1:otp:secret:${oldUserId}`)).toBe(false);
+      expect(redisStore.get(cooldownKey)?.pexpiretime).toBe(baseExpiry + 60000);
+      expect(redisStore.get(contactCountKey)).toEqual({
+        kind: 'string',
+        val: '3',
+        pexpiretime: baseExpiry + 800000,
+      });
+      expect(redisStore.get(challengeKey)).toEqual({
+        kind: 'hash',
+        generation: 'new-gen-uuid',
+        pexpiretime: baseExpiry + 600000,
+      });
+      expect(redisStore.has(verifyEmailChallengeKey)).toBe(true);
+      expect(redisStore.has(`auth:v1:otp:secret:${newUserId}`)).toBe(true);
+
+      // Second scenario: NO concurrent signup — untouched PEXPIRETIME keys are cleanly deleted
+      const unchangedSnapshot = await service.captureContactsState([
+        { channel: 'email', identifier: email },
+      ]);
+      await service.clearCapturedContactsState(unchangedSnapshot, [newUserId]);
+
+      expect(redisStore.has(cooldownKey)).toBe(false);
+      expect(redisStore.has(contactCountKey)).toBe(false);
+      expect(redisStore.has(challengeKey)).toBe(false);
+      expect(redisStore.has(verifyEmailChallengeKey)).toBe(false);
+      expect(redisStore.has(`auth:v1:otp:secret:${newUserId}`)).toBe(false);
     } finally {
       service.onModuleDestroy();
     }

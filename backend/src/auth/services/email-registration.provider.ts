@@ -5,7 +5,12 @@ import {
   validateAuthEmailFrom,
   validateEmailWebhookUrl,
 } from '../../config.js';
+import type { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { DatabaseService } from './database.service.js';
+import {
+  ORPHAN_ABANDONMENT_WINDOW_MS,
+  purgeOrphanedAuthByContact,
+} from './orphaned-auth-cleanup.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 
 /** Only a trusted server adapter may return an identity. No public signup response is evidence. */
@@ -168,6 +173,7 @@ export class EmailRegistrationProvider {
     @Optional() private readonly config?: ConfigService,
     @Optional() private readonly database?: DatabaseService,
     @Optional() private readonly otpStore?: OtpSecretStore,
+    @Optional() private readonly abuse?: AuthAbuseControl,
   ) {
     if (this.config) {
       const configuredTransport = createEmailTransportFromConfig(this.config);
@@ -214,6 +220,42 @@ export class EmailRegistrationProvider {
    * Looks up an existing or pending email identity in `auth.users` or `public.user_auth_providers`
    * (supporting both direct email signups and unverified OAuth users who added a secondary email via EP-A12).
    */
+  private getSupabaseUrl(): string | undefined {
+    try {
+      return (
+        this.config?.get<string>('SUPABASE_URL') ??
+        this.config?.getOrThrow<string>('SUPABASE_URL')
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Purges any deleted or orphaned `auth.users` / `auth.identities` records holding `email`
+   * when no active `public.users` account owns it. Returns `true` if a stale record was purged.
+   */
+  async purgeOrphanedByEmail(
+    email: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    this.ready();
+    return purgeOrphanedAuthByContact({
+      channel: 'email',
+      identifier: email,
+      database: this.database,
+      supabaseUrl: this.getSupabaseUrl(),
+      serviceRoleKey: this.getServiceRoleKey(),
+      signal,
+      abuseControl: this.abuse,
+      preserveSendLimits: true,
+    });
+  }
+
+  /**
+   * Looks up existing registered email or pending identity from database when configured.
+   * Ignores soft-deleted rows and confirmed auth orphans with no active application account.
+   */
   async findByEmail(
     email: string,
     _signal?: AbortSignal,
@@ -226,13 +268,18 @@ export class EmailRegistrationProvider {
       `SELECT u.id,
               COALESCE(p.contact_value, u.email) AS email,
               u.email_confirmed_at,
+              u.created_at,
               pu.verified_contact,
-              p.verified_at AS provider_verified_at
+              p.verified_at AS provider_verified_at,
+              (pu.id IS NOT NULL) AS has_app_user,
+              (u.deleted_at IS NOT NULL) AS is_deleted
          FROM auth.users u
          LEFT JOIN public.users pu ON pu.id = u.id
          LEFT JOIN public.user_auth_providers p
            ON p.user_id = u.id AND p.provider = 'email'
-        WHERE lower(u.email) = $1 OR lower(p.contact_value) = $1
+        WHERE u.deleted_at IS NULL
+          AND (lower(u.email) = $1 OR lower(p.contact_value) = $1)
+          AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')
         ORDER BY
           COALESCE(lower(p.contact_value) = $1, false) DESC,
           COALESCE(COALESCE(lower(p.contact_value), lower(u.email)) = $1, false) DESC,
@@ -246,6 +293,21 @@ export class EmailRegistrationProvider {
       return null;
     }
     const row = rows[0];
+    const createdAtMs =
+      row.created_at !== undefined && row.created_at !== null
+        ? row.created_at instanceof Date
+          ? row.created_at.getTime()
+          : Date.parse(String(row.created_at))
+        : NaN;
+    if (
+      row.is_deleted === true ||
+      (row.has_app_user === false &&
+        (Boolean(row.email_confirmed_at) ||
+          (Number.isFinite(createdAtMs) &&
+            Date.now() - createdAtMs >= ORPHAN_ABANDONMENT_WINDOW_MS)))
+    ) {
+      return null;
+    }
     return {
       id: row.id,
       subject: row.id,
@@ -256,7 +318,8 @@ export class EmailRegistrationProvider {
   }
 
   /**
-   * Creates an unconfirmed GoTrue user via the Supabase Admin API (`email_confirm: false`).
+   * Creates an unconfirmed GoTrue user via the Supabase Admin API (`email_confirm: false`),
+   * self-healing any stale deleted/orphaned auth record on `422 email_exists`.
    */
   async createPending(
     email: string,
@@ -270,30 +333,55 @@ export class EmailRegistrationProvider {
     );
     const serviceRoleKey = this.getServiceRoleKey()!;
 
-    const response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email,
-        password,
-        email_confirm: false,
-      }),
-      signal,
-    });
+    let response!: Response;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+        method: 'POST',
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          email_confirm: false,
+        }),
+        signal,
+      });
 
-    if (response.status === 422) {
-      const err = (await response.json().catch(() => null)) as any;
-      if (
-        err?.error_code === 'email_exists' ||
-        err?.code === 'email_exists' ||
-        /exists|already/i.test(err?.msg || '')
-      ) {
-        fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+      if (response.status === 422) {
+        const err = (await response.json().catch(() => null)) as any;
+        if (
+          err?.error_code === 'email_exists' ||
+          err?.code === 'email_exists' ||
+          /exists|already/i.test(err?.msg || '')
+        ) {
+          if (
+            attempt === 0 &&
+            (await this.purgeOrphanedByEmail(email, signal))
+          ) {
+            continue;
+          }
+          fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+        }
       }
+      if (response.status === 429) {
+        const retryHeader = Number(response.headers?.get?.('retry-after'));
+        const retryAfter =
+          Number.isFinite(retryHeader) && retryHeader > 0
+            ? Math.ceil(retryHeader)
+            : 60;
+        fail(
+          429,
+          'OTP_LIMIT_EXCEEDED',
+          'Email delivery is temporarily rate-limited. Please try again later.',
+          [],
+          true,
+          retryAfter,
+        );
+      }
+      break;
     }
 
     if (!response.ok) {

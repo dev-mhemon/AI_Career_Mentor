@@ -497,6 +497,8 @@ function FieldInput({
   );
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const phoneInputRef = useRef<HTMLInputElement | null>(null);
+  const pwWrapperRef = useRef<HTMLDivElement | null>(null);
+  const pwInputRef = useRef<HTMLInputElement | null>(null);
 
   const grow = () => {
     const el = taRef.current;
@@ -540,6 +542,30 @@ function FieldInput({
     onBlur?.(e);
   };
 
+  const handlePasswordCompositeBlur = (
+    e: FocusEvent<HTMLInputElement | HTMLButtonElement>,
+  ) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && pwWrapperRef.current?.contains(related)) {
+      return;
+    }
+    if (!onBlur || !pwInputRef.current) return;
+    const inputEl = pwInputRef.current;
+    onBlur({
+      ...e,
+      nativeEvent: e.nativeEvent,
+      type: e.type,
+      relatedTarget: e.relatedTarget,
+      target: inputEl,
+      currentTarget: inputEl,
+      preventDefault: () => e.preventDefault(),
+      isDefaultPrevented: () => e.isDefaultPrevented(),
+      stopPropagation: () => e.stopPropagation(),
+      isPropagationStopped: () => e.isPropagationStopped(),
+      persist: () => e.persist(),
+    } as FocusEvent<HTMLInputElement>);
+  };
+
   const controlProps = {
     id,
     disabled,
@@ -580,10 +606,15 @@ function FieldInput({
     );
   } else if (variant === 'password') {
     field = (
-      <div className="relative">
+      <div ref={pwWrapperRef} className="relative">
         <input
           {...common}
-          ref={ref as Ref<HTMLInputElement>}
+          onBlur={handlePasswordCompositeBlur}
+          ref={(el) => {
+            pwInputRef.current = el;
+            if (typeof ref === 'function') ref(el);
+            else if (ref) ref.current = el;
+          }}
           type={showPw ? 'text' : 'password'}
           placeholder={placeholder ?? 'Password'}
           autoComplete={autoComplete ?? 'current-password'}
@@ -592,7 +623,9 @@ function FieldInput({
         <IconButton
           aria-label={showPw ? 'Hide password' : 'Show password'}
           aria-pressed={showPw}
+          data-password-toggle="true"
           onClick={() => setShowPw((s) => !s)}
+          onBlur={handlePasswordCompositeBlur}
           disabled={disabled}
           className="absolute right-0 top-0"
         >

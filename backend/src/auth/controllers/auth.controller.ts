@@ -1,4 +1,13 @@
-import { Body, Controller, Get, HttpCode, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from '../services/auth.service.js';
 import { Policy } from '../policy.js';
 import { OAuthSession } from '../../profile/profile.dto.js';
@@ -11,6 +20,7 @@ export class AuthController {
   ) {}
   @Post('register')
   @Policy({ public: true })
+  @UseGuards(ThrottlerGuard)
   register(@Req() req: any, @Body() body: unknown) {
     return this.registration.register(body, req);
   }

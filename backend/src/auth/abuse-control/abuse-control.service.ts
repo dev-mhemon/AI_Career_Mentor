@@ -12,6 +12,8 @@ import {
   loginScript,
   ipQuotaScript,
   policyGuard,
+  captureContactKeysScript,
+  clearCapturedKeysScript,
 } from './scripts.js';
 
 export const AUTH_ABUSE_CONFIGURATION = Symbol('AUTH_ABUSE_CONFIGURATION');
@@ -20,6 +22,17 @@ export interface Contact {
   channel: 'email' | 'phone';
   /** Validated, lower-cased email or normalized +880 phone, supplied by the caller. */
   identifier: string;
+}
+
+export interface ContactAbuseSnapshotEntry {
+  key: string;
+  kind: 'string' | 'hash';
+  value: string;
+  pexpiretime: number;
+}
+
+export interface ContactAbuseSnapshot {
+  entries: ContactAbuseSnapshotEntry[];
 }
 
 @Injectable()
@@ -256,23 +269,28 @@ export class AuthAbuseControl implements OnModuleDestroy {
 
   /** Enforce an atomic per-IP request budget before running database account lookups. */
   async enforceIpQuota(
-    scope: 'forgot-password' | 'login',
+    scope: 'forgot-password' | 'login' | 'register',
     ip: string,
   ): Promise<void> {
     if (!this.configuration) this.unavailable();
     const address = this.ipKey(ip);
     const p = this.configuration.policy;
     const isForgotPassword = scope === 'forgot-password';
+    const isRegister = scope === 'register';
     const keys = isForgotPassword
       ? [`auth:v1:ip:forgot-password:${address}`, `auth:v1:send:ip:${address}`]
-      : [`auth:v1:ip:login:${address}`];
-    const limit = isForgotPassword
-      ? p.AUTH_SEND_IP_LIMIT
-      : p.AUTH_SEND_IP_LIMIT * 2;
-    const windowMs = isForgotPassword
-      ? p.AUTH_SEND_WINDOW_SECONDS * 1000
-      : p.AUTH_LOGIN_WINDOW_SECONDS * 1000;
-    const rejectionCode = isForgotPassword ? 2 : 10;
+      : isRegister
+        ? [`auth:v1:ip:register:${address}`]
+        : [`auth:v1:ip:login:${address}`];
+    const limit =
+      isForgotPassword || isRegister
+        ? p.AUTH_SEND_IP_LIMIT
+        : p.AUTH_SEND_IP_LIMIT * 2;
+    const windowMs =
+      isForgotPassword || isRegister
+        ? p.AUTH_SEND_WINDOW_SECONDS * 1000
+        : p.AUTH_LOGIN_WINDOW_SECONDS * 1000;
+    const rejectionCode = isForgotPassword || isRegister ? 2 : 10;
     this.check(
       await this.evaluate(ipQuotaScript, keys, [
         limit,
@@ -518,6 +536,187 @@ export class AuthAbuseControl implements OnModuleDestroy {
     );
     if (!result.success) this.unavailable();
     return result.value;
+  }
+
+  private buildContactClearKeys(
+    contacts: ReadonlyArray<Contact>,
+    includeSendLimits = true,
+  ): string[] {
+    const keys = new Set<string>();
+    for (const contact of contacts) {
+      let id: string;
+      try {
+        const trimmed =
+          typeof contact.identifier === 'string'
+            ? contact.identifier.trim()
+            : '';
+        if (!trimmed) continue;
+        const canonical: Contact =
+          contact.channel === 'email'
+            ? { channel: 'email', identifier: trimmed.toLowerCase() }
+            : {
+                channel: 'phone',
+                identifier: trimmed.startsWith('+') ? trimmed : `+${trimmed}`,
+              };
+        id = this.contactKey(canonical);
+      } catch {
+        continue;
+      }
+      if (includeSendLimits) {
+        keys.add(`auth:v1:send:cooldown:${id}`);
+        keys.add(`auth:v1:send:contact:${id}`);
+      }
+      keys.add(`auth:v1:challenge:${id}`);
+      keys.add(`auth:v1:challenge:verify_email:${id}`);
+      keys.add(`auth:v1:challenge:verify_phone:${id}`);
+      keys.add(`auth:v1:challenge:reset_password:${id}`);
+    }
+    return [...keys];
+  }
+
+  private buildUserOtpKeys(userIds: ReadonlyArray<string>): string[] {
+    const keys = new Set<string>();
+    for (const userId of userIds) {
+      const normalizedId = typeof userId === 'string' ? userId.trim() : '';
+      if (!normalizedId) continue;
+      keys.add(`auth:v1:otp:secret:${normalizedId}`);
+      keys.add(`auth:v1:otp:secret:verify_email:${normalizedId}`);
+      keys.add(`auth:v1:otp:secret:verify_phone:${normalizedId}`);
+      keys.add(`auth:v1:otp:secret:reset_password:${normalizedId}`);
+    }
+    return [...keys];
+  }
+
+  /**
+   * Captures current per-contact Redis abuse-control values/generations and absolute `PEXPIRETIME`
+   * timestamps before account deletion commits so post-commit cleanup never erases a concurrent signup.
+   */
+  async captureContactsState(
+    contacts: ReadonlyArray<Contact>,
+  ): Promise<ContactAbuseSnapshot | undefined> {
+    if (!this.configuration || this.stopped) return undefined;
+    const keys = this.buildContactClearKeys(contacts);
+    if (keys.length === 0) return { entries: [] };
+
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    try {
+      const client = await this.getConnectedClient();
+      const raw = (await this.withDeadline(
+        client.withCommandOptions({ timeout }).eval(captureContactKeysScript, {
+          keys,
+          arguments: [],
+        }),
+        timeout,
+      )) as unknown[];
+      if (!Array.isArray(raw)) return undefined;
+      const entries: ContactAbuseSnapshotEntry[] = [];
+      for (let i = 0; i < keys.length; i += 1) {
+        const kind = raw[i * 3];
+        const value = raw[i * 3 + 1];
+        const pexpiretime = Number(raw[i * 3 + 2]);
+        if (
+          (kind === 'string' || kind === 'hash') &&
+          typeof value === 'string' &&
+          Number.isFinite(pexpiretime) &&
+          pexpiretime >= 0
+        ) {
+          entries.push({ key: keys[i], kind, value, pexpiretime });
+        }
+      }
+      return { entries };
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      return undefined;
+    }
+  }
+
+  /**
+   * Atomically deletes only pre-commit contact keys whose Redis type, value/generation, and
+   * absolute `PEXPIRETIME` match `captureContactsState` (leaving any concurrent signup untouched),
+   * while unconditionally clearing UUID-scoped `userIds` OTP secrets.
+   */
+  async clearCapturedContactsState(
+    snapshot: ContactAbuseSnapshot | undefined,
+    userIds: ReadonlyArray<string> = [],
+  ): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const condEntries = snapshot?.entries ?? [];
+    const condKeys = condEntries.map((e) => e.key);
+    const userOtpKeys = this.buildUserOtpKeys(userIds);
+    const allKeys = [...condKeys, ...userOtpKeys];
+    if (allKeys.length === 0) return;
+
+    const args = [String(condEntries.length)];
+    for (const entry of condEntries) {
+      args.push(entry.kind, entry.value, String(entry.pexpiretime));
+    }
+
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).eval(clearCapturedKeysScript, {
+          keys: allKeys,
+          arguments: args,
+        }),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /**
+   * Best-effort cleanup of per-contact challenge and per-user OTP secret keys after
+   * orphaned-account purge, explicitly preserving send-cooldown and send-contact quota keys.
+   */
+  async clearChallengeState(
+    contacts: ReadonlyArray<Contact>,
+    userIds: ReadonlyArray<string> = [],
+  ): Promise<void> {
+    await this.clearContactsState(contacts, userIds, {
+      preserveSendLimits: true,
+    });
+  }
+
+  /**
+   * Best-effort cleanup of per-contact rate-limit, cooldown, challenge, and OTP secret keys
+   * after account deletion or orphaned-account purge. Pass `preserveSendLimits: true` during
+   * registration orphan self-healing so caller send cooldown/contact quotas stay enforced.
+   */
+  async clearContactsState(
+    contacts: ReadonlyArray<Contact>,
+    userIds: ReadonlyArray<string> = [],
+    options?: { preserveSendLimits?: boolean },
+  ): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const includeSendLimits = !options?.preserveSendLimits;
+    const keys = Array.from(
+      new Set([
+        ...this.buildContactClearKeys(contacts, includeSendLimits),
+        ...this.buildUserOtpKeys(userIds),
+      ]),
+    );
+    if (keys.length === 0) return;
+
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).del(keys),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /** Clears per-contact abuse-control keys for a single contact identifier. */
+  async clearContactState(contact: Contact): Promise<void> {
+    await this.clearContactsState([contact]);
   }
 
   onModuleDestroy(): void {

@@ -1,7 +1,12 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { fail } from '../../common/http.js';
+import type { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { DatabaseService } from './database.service.js';
+import {
+  ORPHAN_ABANDONMENT_WINDOW_MS,
+  purgeOrphanedAuthByContact,
+} from './orphaned-auth-cleanup.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
 
 export interface PendingPhoneIdentity {
@@ -39,6 +44,7 @@ export class TextBeeSmsProvider {
     @Optional() private readonly config?: ConfigService,
     @Optional() private readonly database?: DatabaseService,
     @Optional() private readonly otpStore?: OtpSecretStore,
+    @Optional() private readonly abuse?: AuthAbuseControl,
   ) {}
 
   private getServiceRoleKey(): string | undefined {
@@ -97,6 +103,38 @@ export class TextBeeSmsProvider {
     return Number.isInteger(rawTimeout) && rawTimeout > 0 ? rawTimeout : 10000;
   }
 
+  private getSupabaseUrl(): string | undefined {
+    try {
+      return (
+        this.config?.get<string>('SUPABASE_URL') ??
+        this.config?.getOrThrow<string>('SUPABASE_URL')
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Purges any deleted or orphaned `auth.users` / `auth.identities` records holding `phone`
+   * when no active `public.users` account owns it. Returns `true` if a stale record was purged.
+   */
+  async purgeOrphanedByPhone(
+    phone: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    this.ready();
+    return purgeOrphanedAuthByContact({
+      channel: 'phone',
+      identifier: phone,
+      database: this.database,
+      supabaseUrl: this.getSupabaseUrl(),
+      serviceRoleKey: this.getServiceRoleKey(),
+      signal,
+      abuseControl: this.abuse,
+      preserveSendLimits: true,
+    });
+  }
+
   async findByPhone(
     phone: string,
     _signal?: AbortSignal,
@@ -109,13 +147,18 @@ export class TextBeeSmsProvider {
       `SELECT u.id,
               COALESCE(p.contact_value, u.phone) AS phone,
               u.phone_confirmed_at,
+              u.created_at,
               pu.verified_contact,
-              p.verified_at AS provider_verified_at
+              p.verified_at AS provider_verified_at,
+              (pu.id IS NOT NULL) AS has_app_user,
+              (u.deleted_at IS NOT NULL) AS is_deleted
          FROM auth.users u
          LEFT JOIN public.users pu ON pu.id = u.id
          LEFT JOIN public.user_auth_providers p
            ON p.user_id = u.id AND p.provider = 'phone'
-        WHERE u.phone IN ($1, ltrim($1, '+')) OR p.contact_value IN ($1, ltrim($1, '+'))
+        WHERE u.deleted_at IS NULL
+          AND (u.phone IN ($1, ltrim($1, '+')) OR p.contact_value IN ($1, ltrim($1, '+')))
+          AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')
         ORDER BY
           COALESCE(p.contact_value IN ($1, ltrim($1, '+')), false) DESC,
           COALESCE(COALESCE(p.contact_value, u.phone) IN ($1, ltrim($1, '+')), false) DESC,
@@ -129,6 +172,21 @@ export class TextBeeSmsProvider {
       return null;
     }
     const row = rows[0];
+    const createdAtMs =
+      row.created_at !== undefined && row.created_at !== null
+        ? row.created_at instanceof Date
+          ? row.created_at.getTime()
+          : Date.parse(String(row.created_at))
+        : NaN;
+    if (
+      row.is_deleted === true ||
+      (row.has_app_user === false &&
+        (Boolean(row.phone_confirmed_at) ||
+          (Number.isFinite(createdAtMs) &&
+            Date.now() - createdAtMs >= ORPHAN_ABANDONMENT_WINDOW_MS)))
+    ) {
+      return null;
+    }
     const rawPhone = typeof row.phone === 'string' ? row.phone : normalized;
     const canonicalPhone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
     return {
@@ -156,48 +214,72 @@ export class TextBeeSmsProvider {
       ? AbortSignal.any([signal, timeoutSignal])
       : timeoutSignal;
 
-    let response: Response;
-    try {
-      response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
-        method: 'POST',
-        headers: {
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          phone,
-          password,
-          phone_confirm: false,
-        }),
-        signal: combinedSignal,
-      });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        (error.name === 'AbortError' ||
-          /timeout|timed out/i.test(error.message))
-      ) {
-        fail(504, 'PROVIDER_TIMEOUT', 'SMS provider timed out', [], true);
+    let response!: Response;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+          method: 'POST',
+          headers: {
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            phone,
+            password,
+            phone_confirm: false,
+          }),
+          signal: combinedSignal,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' ||
+            /timeout|timed out/i.test(error.message))
+        ) {
+          fail(504, 'PROVIDER_TIMEOUT', 'SMS provider timed out', [], true);
+        }
+        fail(
+          502,
+          'SMS_PROVIDER_ERROR',
+          'GoTrue createUser failed with network error',
+          [],
+          true,
+        );
       }
-      fail(
-        502,
-        'SMS_PROVIDER_ERROR',
-        'GoTrue createUser failed with network error',
-        [],
-        true,
-      );
-    }
 
-    if (response.status === 422) {
-      const err = (await response.json().catch(() => null)) as any;
-      if (
-        err?.error_code === 'phone_exists' ||
-        err?.code === 'phone_exists' ||
-        /exists|already/i.test(err?.msg || '')
-      ) {
-        fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+      if (response.status === 422) {
+        const err = (await response.json().catch(() => null)) as any;
+        if (
+          err?.error_code === 'phone_exists' ||
+          err?.code === 'phone_exists' ||
+          /exists|already/i.test(err?.msg || '')
+        ) {
+          if (
+            attempt === 0 &&
+            (await this.purgeOrphanedByPhone(phone, combinedSignal))
+          ) {
+            continue;
+          }
+          fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
+        }
       }
+      if (response.status === 429) {
+        const retryHeader = Number(response.headers?.get?.('retry-after'));
+        const retryAfter =
+          Number.isFinite(retryHeader) && retryHeader > 0
+            ? Math.ceil(retryHeader)
+            : 60;
+        fail(
+          429,
+          'OTP_LIMIT_EXCEEDED',
+          'SMS delivery is temporarily rate-limited. Please try again later.',
+          [],
+          true,
+          retryAfter,
+        );
+      }
+      break;
     }
 
     if (!response.ok) {

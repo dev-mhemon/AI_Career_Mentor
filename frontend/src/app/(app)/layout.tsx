@@ -1,3 +1,4 @@
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { logoutAction } from '@/lib/auth/actions';
 import { getFastSessionShellUser } from '@/lib/auth/shell-user';
@@ -20,6 +21,18 @@ export default async function AuthenticatedAppLayout({
   const fastSession = await getFastSessionShellUser();
 
   if (fastSession.unauthenticated) {
+    let isDeleted = false;
+    try {
+      const cookieStore = await cookies();
+      if (cookieStore?.get('account_deleted')?.value === 'true') {
+        isDeleted = true;
+      }
+    } catch {
+      // Ignore if cookies() is unavailable outside request context
+    }
+    if (isDeleted) {
+      redirect('/login?deleted=true');
+    }
     redirect('/login');
   }
 
@@ -32,7 +45,7 @@ export default async function AuthenticatedAppLayout({
         <div
           id="main-content"
           tabIndex={-1}
-          className="flex flex-1 flex-col outline-none"
+          className="flex flex-1 flex-col outline-none focus:outline-none focus-visible:outline-none"
         >
           {children}
         </div>

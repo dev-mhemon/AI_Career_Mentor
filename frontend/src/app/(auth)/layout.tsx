@@ -44,7 +44,7 @@ export default function AuthLayout({
         <main
           id="main-content"
           tabIndex={-1}
-          className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-md outline-none sm:p-8"
+          className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-md outline-none focus:outline-none focus-visible:outline-none sm:p-8"
         >
           {children}
         </main>

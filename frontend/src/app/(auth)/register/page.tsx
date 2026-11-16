@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getAppUser } from "@/lib/auth/user";
+import { hasAuthenticatedAppSession } from "@/lib/auth/user";
 import { RegisterForm } from "@/components/auth/register-form";
 
 /**
@@ -10,9 +10,7 @@ import { RegisterForm } from "@/components/auth/register-form";
  *  - Unauthenticated → show registration form
  */
 export default async function RegisterPage() {
-  const user = await getAppUser();
-
-  if (user) {
+  if (await hasAuthenticatedAppSession()) {
     redirect("/dashboard");
   }
 

@@ -68,6 +68,23 @@ export function mapApiError(error: unknown): MappedError {
   }
   if (s === 401) {
     if (
+      error.code === 'AUTH_USER_NOT_FOUND' ||
+      error.code === 'ACCOUNT_NOT_FOUND' ||
+      error.code === 'USER_NOT_FOUND' ||
+      error.code === 'ACCOUNT_DELETED' ||
+      (error.code === 'AUTH_REQUIRED' &&
+        /no account found|account.*not found|user.*not found|deleted/i.test(
+          error.message ?? '',
+        ))
+    ) {
+      return {
+        ...m,
+        message: error.message || 'No account found with this email address.',
+        requiresSignIn: false,
+        retryable: false,
+      };
+    }
+    if (
       error.code === 'AUTH_INVALID_CREDENTIALS' ||
       error.code === 'INVALID_CREDENTIALS'
     ) {
@@ -94,7 +111,10 @@ export function mapApiError(error: unknown): MappedError {
     return {
       ...m,
       message:
-        error.code === 'AUTH_USER_NOT_FOUND' || error.code === 'ACCOUNT_NOT_FOUND'
+        error.code === 'AUTH_USER_NOT_FOUND' ||
+        error.code === 'ACCOUNT_NOT_FOUND' ||
+        error.code === 'USER_NOT_FOUND' ||
+        error.code === 'ACCOUNT_DELETED'
           ? error.message || 'No account found with this email address.'
           : error.message || 'The requested resource was not found.',
       retryable: false,

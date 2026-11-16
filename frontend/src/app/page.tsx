@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { SVGProps } from "react";
 import { CheckCircleIcon, CheckIcon } from "@/components/ui/icons";
+import { hasAuthenticatedAppSession } from "@/lib/auth/user";
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -300,7 +301,11 @@ const ctaAuthChannels = ["Email", "🇧🇩 +880 Phone", "Google", "Facebook"];
  * Landing page — public flagship SaaS showcase for AI Career Mentor.
  * Grounded in PRD v1.4.1 & UI/UX Specification v2.0.2 (Screen 01).
  */
-export default function LandingPage() {
+export default async function LandingPage() {
+  const isAuthenticated = await hasAuthenticatedAppSession();
+  const signInHref = isAuthenticated ? "/dashboard" : "/login";
+  const getStartedHref = isAuthenticated ? "/dashboard" : "/register";
+
   return (
     <div className="flex flex-1 flex-col bg-surface-canvas text-text-primary">
       {/* 1. Sticky Glass Navbar */}
@@ -336,13 +341,13 @@ export default function LandingPage() {
 
           <div className="flex items-center gap-2">
             <Link
-              href="/login"
+              href={signInHref}
               className="inline-flex min-h-11 items-center justify-center rounded-md px-3.5 text-label font-medium text-text-secondary transition-colors duration-(--duration-fast) ease-standard hover:bg-action-ghost-background-hover hover:text-text-primary"
             >
               Sign In
             </Link>
             <Link
-              href="/register"
+              href={getStartedHref}
               className="inline-flex min-h-11 items-center justify-center rounded-md bg-action-primary-background px-4 text-label font-semibold text-action-primary-foreground shadow-[0_0_24px_-4px_color-mix(in_oklab,var(--color-primary-500)_55%,transparent)] transition-all duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active"
             >
               Get Started Free
@@ -351,7 +356,11 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 outline-none focus:outline-none focus-visible:outline-none"
+      >
         {/* 2. Atmospheric Hero Section + Live 3-Panel Product Showcase */}
         <section className="relative overflow-hidden border-b border-border-subtle">
           {/* Fine Architectural Grid with Bottom Fade Mask */}
@@ -392,14 +401,14 @@ export default function LandingPage() {
 
               <div className="mt-8 flex w-full flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
                 <Link
-                  href="/register"
+                  href={getStartedHref}
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-action-primary-background px-6 text-label-lg font-semibold text-action-primary-foreground shadow-[0_8px_28px_-6px_color-mix(in_oklab,var(--color-primary-500)_55%,transparent)] transition-all duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active"
                 >
                   <span>Start Your Career Roadmap</span>
                   <ArrowRightIcon />
                 </Link>
                 <Link
-                  href="/login"
+                  href={signInHref}
                   className="inline-flex min-h-12 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background/90 px-6 text-label-lg font-medium text-action-secondary-foreground backdrop-blur-sm transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active"
                 >
                   Sign In to Workspace
@@ -1227,7 +1236,7 @@ export default function LandingPage() {
 
                       <div className="mt-5 flex flex-col gap-3">
                         <Link
-                          href="/register"
+                          href={getStartedHref}
                           className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-400 px-5 text-label-lg font-semibold text-slate-950 shadow-lg shadow-teal-500/20 transition hover:bg-teal-300 active:bg-teal-200"
                         >
                           <span>Start Your Career Roadmap</span>
@@ -1235,7 +1244,7 @@ export default function LandingPage() {
                         </Link>
 
                         <Link
-                          href="/login"
+                          href={signInHref}
                           className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/15 bg-white/5 px-5 text-label-lg font-medium text-white transition hover:bg-white/10 active:bg-white/15"
                         >
                           Sign In to Existing Account
@@ -1322,7 +1331,7 @@ export default function LandingPage() {
               <ul className="mt-2 flex flex-col gap-0.5 text-body-sm text-text-secondary">
                 <li>
                   <Link
-                    href="/register"
+                    href={getStartedHref}
                     className="inline-flex min-h-11 items-center hover:text-text-primary"
                   >
                     Get Started
@@ -1330,7 +1339,7 @@ export default function LandingPage() {
                 </li>
                 <li>
                   <Link
-                    href="/login"
+                    href={signInHref}
                     className="inline-flex min-h-11 items-center hover:text-text-primary"
                   >
                     Sign In

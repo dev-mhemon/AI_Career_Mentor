@@ -1,8 +1,54 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
 import { Button } from './button';
 import { Input } from './input';
+
+/**
+ * Returns backdrop mouse/click handlers that close a modal only when a click begins
+ * and ends on the backdrop itself (ignoring drags started inside the dialog).
+ */
+export function useBackdropDismiss(onDismiss: () => void, disabled = false) {
+  const mouseDownTargetRef = useRef<EventTarget | null>(null);
+  const mouseUpTargetRef = useRef<EventTarget | null>(null);
+
+  return {
+    onMouseDown: (e: MouseEvent<HTMLElement>) => {
+      mouseDownTargetRef.current = e.target;
+      mouseUpTargetRef.current = null;
+    },
+    onMouseUp: (e: MouseEvent<HTMLElement>) => {
+      mouseUpTargetRef.current = e.target;
+    },
+    onClick: (e: MouseEvent<HTMLElement>) => {
+      const downTarget = mouseDownTargetRef.current;
+      const upTarget = mouseUpTargetRef.current;
+      mouseDownTargetRef.current = null;
+      mouseUpTargetRef.current = null;
+
+      if (disabled || e.target !== e.currentTarget) {
+        return;
+      }
+
+      const clickedBackdrop =
+        downTarget === e.currentTarget &&
+        (upTarget === null || upTarget === e.currentTarget);
+      const keyboardActivation =
+        downTarget === null && upTarget === null && e.detail === 0;
+
+      if (clickedBackdrop || keyboardActivation) {
+        onDismiss();
+      }
+    },
+  };
+}
 
 export type ModalVariant = 'confirm' | 'hours_prompt' | 'destructive_delete' | 'report_dialog';
 
@@ -92,10 +138,14 @@ function ModalInner({
   const reportValid = variant !== 'report_dialog' || text.trim().length >= 3;
   const canConfirm = (literal === undefined || text === literal) && hoursValid && reportValid;
 
+  const backdropDismiss = useBackdropDismiss(onClose, Boolean(loading));
   const defaultLabel = { confirm: 'Confirm', hours_prompt: 'Save', destructive_delete: 'Delete', report_dialog: 'Send report' }[variant];
 
   return (
-    <div className="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-surface-overlay sm:items-center sm:p-4">
+    <div
+      {...backdropDismiss}
+      className="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-surface-overlay sm:items-center sm:p-4"
+    >
       <div
         ref={panel}
         role="dialog"
@@ -104,7 +154,7 @@ function ModalInner({
         aria-labelledby={`${uid}-title`}
         aria-describedby={description ? `${uid}-desc` : undefined}
         onKeyDown={onKey}
-        className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl bg-surface-raised p-6 text-text-primary shadow-xl outline-none sm:max-w-md sm:rounded-xl"
+        className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl bg-surface-raised p-6 text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none sm:max-w-md sm:rounded-xl"
       >
         <h2 id={`${uid}-title`} className="text-heading-md" dir="auto">{title}</h2>
         {description && <p id={`${uid}-desc`} className="text-body text-text-secondary" dir="auto">{description}</p>}

@@ -265,7 +265,7 @@ export function AddContactForm({
               setContactError(undefined);
             }
           }}
-          placeholder={activeTab === 'email' ? 'you@example.com' : '01XXXXXXXXX'}
+          placeholder={activeTab === 'email' ? 'Enter your email' : '01XXXXXXXXX'}
           hint={
             activeTab === 'phone'
               ? 'Bangladesh mobile numbers only (e.g. 01XXXXXXXXX).'

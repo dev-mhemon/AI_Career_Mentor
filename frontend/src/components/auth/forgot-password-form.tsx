@@ -3,7 +3,11 @@
 import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
-import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import {
+  AuthAlert,
+  focusFirstInvalidControl,
+  useDismissedActionState,
+} from "@/components/auth/auth-alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
@@ -19,9 +23,7 @@ import {
 } from "@/lib/auth/verification-draft";
 import {
   validateBdPhone,
-  validateBdPhoneOnChange,
   validateEmail,
-  validateEmailLive,
 } from "@/lib/validation/auth-schemas";
 
 /**
@@ -48,7 +50,6 @@ export function ForgotPasswordForm() {
     channel: VerificationChannel;
     identifier: string;
   } | null>(null);
-  const phoneBlurredRef = useRef(false);
 
   useEffect(() => {
     if (state?.error) {
@@ -116,7 +117,6 @@ export function ForgotPasswordForm() {
           setChannel(id as VerificationChannel);
           setIdentifier("");
           setClientError(undefined);
-          phoneBlurredRef.current = false;
           dismissAlert();
         }}
         items={[
@@ -141,10 +141,8 @@ export function ForgotPasswordForm() {
               channel === "email" ? validateEmail(identifier) : validateBdPhone(identifier);
             if (!check.ok) {
               e.preventDefault();
-              if (channel === "phone" && identifier.trim()) {
-                phoneBlurredRef.current = true;
-              }
               setClientError(check.error);
+              focusFirstInvalidControl(form);
               return;
             }
             const normalized = check.value;
@@ -183,22 +181,11 @@ export function ForgotPasswordForm() {
                 (isDismissed ? undefined : state?.fieldErrors?.identifier)
               }
               onChange={(e) => {
-                const v = e.target.value;
-                setIdentifier(v);
+                setIdentifier(e.target.value);
                 if (state?.fieldErrors?.identifier) dismissAlert();
-                const res = validateEmailLive(v);
-                setClientError(res.ok ? undefined : res.error);
+                setClientError(undefined);
               }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) return;
-                const res = validateEmail(e.target.value);
-                if (!res.ok) setClientError(res.error);
-                else {
-                  setIdentifier(res.value);
-                  setClientError(undefined);
-                }
-              }}
-              placeholder="you@example.com"
+              placeholder="Enter your email"
             />
           ) : (
             <Input
@@ -215,21 +202,9 @@ export function ForgotPasswordForm() {
                 (isDismissed ? undefined : state?.fieldErrors?.identifier)
               }
               onChange={(e) => {
-                const v = e.target.value;
-                setIdentifier(v);
+                setIdentifier(e.target.value);
                 if (state?.fieldErrors?.identifier) dismissAlert();
-                const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
-                if (check.resetBlurred) phoneBlurredRef.current = false;
-                setClientError(check.error);
-              }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) {
-                  phoneBlurredRef.current = false;
-                  return;
-                }
-                phoneBlurredRef.current = true;
-                const res = validateBdPhone(e.target.value);
-                setClientError(res.ok ? undefined : res.error);
+                setClientError(undefined);
               }}
               placeholder="01XXXXXXXXX"
             />

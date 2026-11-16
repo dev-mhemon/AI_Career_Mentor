@@ -20,6 +20,7 @@ export interface AlertProps {
   retryLabel?: string;
   action?: { label: string; onClick?: () => void; href?: string };
   role?: 'alert' | 'status';
+  ariaLive?: 'polite' | 'assertive' | 'off';
   className?: string;
 }
 
@@ -138,6 +139,7 @@ export function Alert({
   retryLabel = 'Retry',
   action,
   role,
+  ariaLive,
   className,
 }: AlertProps) {
   const [elapsed, setElapsed] = useState(false);
@@ -165,7 +167,11 @@ export function Alert({
     >
       <span className="mt-0.5 shrink-0">{icons[variant]}</span>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div role={role ?? (live ? 'alert' : 'status')} className="flex flex-col gap-2">
+        <div
+          role={role ?? (live ? 'alert' : 'status')}
+          aria-live={ariaLive}
+          className="flex flex-col gap-2"
+        >
           {title && <p className="text-label-lg">{title}</p>}
           <div className="text-body-sm" dir="auto">{children}</div>
         </div>

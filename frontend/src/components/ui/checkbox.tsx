@@ -47,6 +47,21 @@ export function Checkbox({
     if (inner.current) inner.current.indeterminate = indeterminate;
   }, [indeterminate, checked]);
 
+  useEffect(() => {
+    const el = inner.current;
+    const form = el?.form;
+    if (!el || !form || checked === undefined) return;
+    const handleReset = () => {
+      queueMicrotask(() => {
+        if (inner.current) {
+          inner.current.checked = checked;
+        }
+      });
+    };
+    form.addEventListener('reset', handleReset);
+    return () => form.removeEventListener('reset', handleReset);
+  }, [checked]);
+
   const callout = variant === 'warning_callout';
   return (
     <div className="flex flex-col gap-1.5">

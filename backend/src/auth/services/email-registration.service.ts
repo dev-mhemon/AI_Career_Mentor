@@ -159,12 +159,7 @@ export class EmailRegistrationService {
         );
       }
       this.smsProvider.ready();
-      const { retryAfterSeconds } = await this.abuse.reserveSend(
-        { channel: 'phone', identifier },
-        ip,
-      );
-      const metadata = this.pending(identifier, retryAfterSeconds, 'phone');
-      let identity: PendingPhoneIdentity;
+      await this.abuse.enforceIpQuota('register', ip);
       try {
         const existing = await this.providerCall((signal) =>
           this.smsProvider!.findByPhone(identifier, signal),
@@ -172,6 +167,19 @@ export class EmailRegistrationService {
         if (existing) {
           fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
         }
+      } catch (error) {
+        if (error instanceof HttpException && error.getStatus() === 409) {
+          throw error;
+        }
+        return this.providerError(error, 'phone');
+      }
+      const { retryAfterSeconds } = await this.abuse.reserveSend(
+        { channel: 'phone', identifier },
+        ip,
+      );
+      const metadata = this.pending(identifier, retryAfterSeconds, 'phone');
+      let identity: PendingPhoneIdentity;
+      try {
         identity = await this.providerCall((signal) =>
           this.smsProvider!.createPending(identifier, input.password, signal),
         );
@@ -179,7 +187,10 @@ export class EmailRegistrationService {
           identity = { ...identity, phone: `+${identity.phone}` };
         }
       } catch (error) {
-        if (error instanceof HttpException && error.getStatus() === 409) {
+        if (
+          error instanceof HttpException &&
+          (error.getStatus() === 409 || error.getStatus() === 429)
+        ) {
           throw error;
         }
         return this.providerError(error, 'phone');
@@ -208,12 +219,7 @@ export class EmailRegistrationService {
 
     // channel === 'email'
     this.provider.ready();
-    const { retryAfterSeconds } = await this.abuse.reserveSend(
-      { channel: 'email', identifier },
-      ip,
-    );
-    const metadata = this.pending(identifier, retryAfterSeconds, 'email');
-    let identity: PendingEmailIdentity;
+    await this.abuse.enforceIpQuota('register', ip);
     try {
       const existing = await this.providerCall((signal) =>
         this.provider.findByEmail(identifier, signal),
@@ -221,11 +227,27 @@ export class EmailRegistrationService {
       if (existing) {
         fail(409, 'CONTACT_ALREADY_REGISTERED', 'Contact already registered');
       }
+    } catch (error) {
+      if (error instanceof HttpException && error.getStatus() === 409) {
+        throw error;
+      }
+      return this.providerError(error, 'email');
+    }
+    const { retryAfterSeconds } = await this.abuse.reserveSend(
+      { channel: 'email', identifier },
+      ip,
+    );
+    const metadata = this.pending(identifier, retryAfterSeconds, 'email');
+    let identity: PendingEmailIdentity;
+    try {
       identity = await this.providerCall((signal) =>
         this.provider.createPending(identifier, input.password, signal),
       );
     } catch (error) {
-      if (error instanceof HttpException && error.getStatus() === 409) {
+      if (
+        error instanceof HttpException &&
+        (error.getStatus() === 409 || error.getStatus() === 429)
+      ) {
         throw error;
       }
       return this.providerError(error, 'email');

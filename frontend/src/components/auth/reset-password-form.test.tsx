@@ -44,7 +44,7 @@ describe("ResetPasswordForm", () => {
 
     expect(screen.getByLabelText(/email or phone/i)).toHaveAttribute(
       "placeholder",
-      "you@example.com or 01XXXXXXXXX",
+      "Enter your email or 01XXXXXXXXX",
     );
     expect(
       screen.getByLabelText(/6-digit verification code/i),
@@ -259,44 +259,69 @@ describe("ResetPasswordForm", () => {
     expect(signInLink).toHaveAttribute("href", "/login");
   });
 
-  it("validates identifier, 6-digit OTP, password, and confirm password live onChange without waiting for blur", () => {
+  it("does not validate while typing or blurring before submit, validates all fields on submit, clears errors onChange, and shows color-coded strength", () => {
     render(<ResetPasswordForm />);
+
+    expect(
+      screen.getByText(
+        /must be at least 8 characters\. mixed with uppercase, lowercase, numbers, and symbols is stronger\./i,
+      ),
+    ).toBeInTheDocument();
 
     const identifierInput = screen.getByLabelText(/email or phone/i);
     const otpInput = screen.getByLabelText(/6-digit verification code/i);
     const newPasswordInput = screen.getByLabelText(/^new password$/i);
     const confirmPasswordInput = screen.getByLabelText(/confirm new password/i);
+    const form = identifierInput.closest("form")!;
 
     fireEvent.change(identifierInput, { target: { value: "not-valid" } });
+    fireEvent.blur(identifierInput);
+    fireEvent.change(otpInput, { target: { value: "123" } });
+    fireEvent.blur(otpInput);
+    fireEvent.change(newPasswordInput, { target: { value: "short" } });
+    fireEvent.blur(newPasswordInput);
+    fireEvent.change(confirmPasswordInput, { target: { value: "Mismatch1!" } });
+    fireEvent.blur(confirmPasswordInput);
+
+    expect(
+      screen.queryByText(/enter a valid email address or bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/enter the 6-digit code/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/password must be at least 8 characters/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/passwords do not match/i)).not.toBeInTheDocument();
+
+    fireEvent.submit(form);
     expect(
       screen.getByText(/enter a valid email address or bangladesh mobile number/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/enter the 6-digit code/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/password must be at least 8 characters/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/passwords do not match/i)).toBeInTheDocument();
+    expect(resetPasswordAction).not.toHaveBeenCalled();
 
-    fireEvent.change(identifierInput, { target: { value: "user@example.com" } });
+    fireEvent.change(identifierInput, { target: { value: "u" } });
     expect(
       screen.queryByText(/enter a valid email address or bangladesh mobile number/i),
     ).not.toBeInTheDocument();
 
-    fireEvent.change(otpInput, { target: { value: "123" } });
-    expect(screen.getByText(/enter the 6-digit code/i)).toBeInTheDocument();
-
-    fireEvent.change(otpInput, { target: { value: "123456" } });
+    fireEvent.change(otpInput, { target: { value: "1234" } });
     expect(screen.queryByText(/enter the 6-digit code/i)).not.toBeInTheDocument();
 
-    fireEvent.change(newPasswordInput, { target: { value: "short" } });
-    expect(
-      screen.getByText(/password must be at least 8 characters/i),
-    ).toBeInTheDocument();
-
-    fireEvent.change(newPasswordInput, { target: { value: "NewPassw0rd!" } });
+    fireEvent.change(newPasswordInput, { target: { value: "Abcdef1!" } });
     expect(
       screen.queryByText(/password must be at least 8 characters/i),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("Good")).toHaveClass(
+      "font-semibold",
+      "tracking-wide",
+      "text-teal-600",
+    );
 
-    fireEvent.change(confirmPasswordInput, { target: { value: "Mismatch1!" } });
-    expect(screen.getByText(/passwords do not match/i)).toBeInTheDocument();
-
-    fireEvent.change(confirmPasswordInput, { target: { value: "NewPassw0rd!" } });
+    fireEvent.change(confirmPasswordInput, { target: { value: "A" } });
     expect(screen.queryByText(/passwords do not match/i)).not.toBeInTheDocument();
   });
 
@@ -534,5 +559,34 @@ describe("ResetPasswordForm", () => {
     expect(
       screen.getByRole("button", { name: /^resend code$/i }),
     ).toBeEnabled();
+  });
+
+  it("validates empty password on submit, preserves error across blur/toggle focus, and clears onChange", () => {
+    render(<ResetPasswordForm />);
+
+    const newPasswordInput = screen.getByLabelText(/^new password$/i);
+    const showPasswordBtns = screen.getAllByRole("button", { name: /show password/i });
+    const form = newPasswordInput.closest("form")!;
+
+    fireEvent.blur(newPasswordInput);
+    expect(
+      screen.queryByText(/password must be at least 8 characters\./i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.submit(form);
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.blur(newPasswordInput, { relatedTarget: showPasswordBtns[0] });
+    fireEvent.blur(newPasswordInput);
+    expect(
+      screen.getByText(/password must be at least 8 characters\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(newPasswordInput, { target: { value: "a" } });
+    expect(
+      screen.queryByText(/password must be at least 8 characters\./i),
+    ).not.toBeInTheDocument();
   });
 });

@@ -374,7 +374,7 @@ function VerifyFormContent() {
                 }
               }}
               readOnly={isPending || isResending}
-              placeholder={channelParam === 'email' ? 'you@example.com' : '01XXXXXXXXX'}
+              placeholder={channelParam === 'email' ? 'Enter your email' : '01XXXXXXXXX'}
             />
             {isDraftExpired && (
               <Alert variant="warning">

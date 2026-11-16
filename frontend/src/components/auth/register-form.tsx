@@ -1,10 +1,15 @@
 "use client";
 
-import { useActionState, useRef, useState, useEffect } from "react";
+import { useActionState, useState, useEffect } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
-import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import {
+  AuthAlert,
+  focusFirstInvalidControl,
+  useDismissedActionState,
+} from "@/components/auth/auth-alert";
+import { PasswordStrengthHint } from "@/components/auth/password-strength-hint";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -15,13 +20,9 @@ import {
 } from "@/lib/auth/verification-draft";
 import {
   PASSWORD_MAX,
-  passwordStrength,
   validateBdPhone,
-  validateBdPhoneOnChange,
   validateEmail,
-  validateEmailLive,
   validatePassword,
-  validatePasswordLive,
   validatePasswordMatch,
 } from "@/lib/validation/auth-schemas";
 
@@ -38,15 +39,24 @@ export function RegisterForm() {
   >(registerAction, {});
 
   const [activeTab, setActiveTab] = useState<Channel>("email");
-  const [identifier, setIdentifier] = useState("");
+  const [emailValue, setEmailValue] = useState("");
+  const [phoneValue, setPhoneValue] = useState("");
+  const identifier = activeTab === "email" ? emailValue : phoneValue;
+  const setIdentifier = (value: string) => {
+    if (activeTab === "email") {
+      setEmailValue(value);
+    } else {
+      setPhoneValue(value);
+    }
+  };
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [acceptedPrivacyPolicy, setAcceptedPrivacyPolicy] = useState(false);
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [dismissedServer, setDismissedServer] = useState<{
     ref: AuthActionResult;
     fields: Set<string>;
   } | null>(null);
-  const phoneBlurredRef = useRef(false);
 
   useEffect(() => {
     if (state?.error || state?.fieldErrors) {
@@ -80,15 +90,10 @@ export function RegisterForm() {
       ? undefined
       : state?.fieldErrors?.[field];
 
-  const strength = passwordStrength(password);
-  const mismatch =
-    confirm.length > 0 && !validatePasswordMatch(password, confirm).ok
-      ? "Passwords do not match."
-      : undefined;
-
   const identifierError = clientErrors.identifier ?? serverFieldError("identifier");
   const passwordError = clientErrors.password ?? serverFieldError("password");
-  const confirmError = clientErrors.confirmPassword ?? mismatch;
+  const confirmError =
+    clientErrors.confirmPassword ?? serverFieldError("confirmPassword");
   const {
     visibleState: visibleAlertState,
     dismiss: dismissAlert,
@@ -107,9 +112,7 @@ export function RegisterForm() {
         value={activeTab}
         onValueChange={(id) => {
           setActiveTab(id as Channel);
-          setIdentifier("");
           setClientErrors({});
-          phoneBlurredRef.current = false;
           dismissAlert();
         }}
         items={[
@@ -137,19 +140,19 @@ export function RegisterForm() {
               activeTab === "email" ? validateEmail(identifier) : validateBdPhone(identifier);
             if (!id.ok) {
               errors.identifier = id.error;
-              if (activeTab === "phone" && identifier.trim()) {
-                phoneBlurredRef.current = true;
-              }
             }
             const pw = validatePassword(password);
             if (!pw.ok) errors.password = pw.error;
             const match = validatePasswordMatch(password, confirm);
             if (!match.ok) errors.confirmPassword = match.error;
-            if (!consentEl.checked) errors.consent = "You must agree to the privacy policy to continue.";
+            if (!acceptedPrivacyPolicy && !consentEl?.checked) {
+              errors.consent = "You must agree to the privacy policy to continue.";
+            }
 
             if (Object.keys(errors).length) {
               e.preventDefault();
               setClientErrors(errors);
+              focusFirstInvalidControl(form);
               return;
             }
             setClientErrors({});
@@ -181,22 +184,11 @@ export function RegisterForm() {
               value={identifier}
               error={identifierError}
               onChange={(e) => {
-                const v = e.target.value;
-                setIdentifier(v);
+                setIdentifier(e.target.value);
                 dismissServerField("identifier");
-                const res = validateEmailLive(v);
-                setFieldError("identifier", res.ok ? undefined : res.error);
+                setFieldError("identifier", undefined);
               }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) return;
-                const res = validateEmail(e.target.value);
-                if (!res.ok) setFieldError("identifier", res.error);
-                else {
-                  setIdentifier(res.value);
-                  setFieldError("identifier", undefined);
-                }
-              }}
-              placeholder="you@example.com"
+              placeholder="Enter your email"
             />
           ) : (
             <Input
@@ -210,21 +202,9 @@ export function RegisterForm() {
               value={identifier}
               error={identifierError}
               onChange={(e) => {
-                const v = e.target.value;
-                setIdentifier(v);
+                setIdentifier(e.target.value);
                 dismissServerField("identifier");
-                const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
-                if (check.resetBlurred) phoneBlurredRef.current = false;
-                setFieldError("identifier", check.error);
-              }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) {
-                  phoneBlurredRef.current = false;
-                  return;
-                }
-                phoneBlurredRef.current = true;
-                const res = validateBdPhone(e.target.value);
-                setFieldError("identifier", res.ok ? undefined : res.error);
+                setFieldError("identifier", undefined);
               }}
               hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
               placeholder="01XXXXXXXXX"
@@ -248,28 +228,14 @@ export function RegisterForm() {
                 const v = e.target.value;
                 setPassword(v);
                 dismissServerField("password");
-                const pw = validatePasswordLive(v);
-                setFieldError("password", pw.ok ? undefined : pw.error);
-                if (!confirm || validatePasswordMatch(v, confirm).ok) {
+                setFieldError("password", undefined);
+                if (confirm && validatePasswordMatch(v, confirm).ok) {
                   setFieldError("confirmPassword", undefined);
                 }
               }}
-              onBlur={(e) => {
-                if (!e.target.value) return;
-                const pw = validatePassword(e.target.value);
-                setFieldError("password", pw.ok ? undefined : pw.error);
-              }}
               placeholder="Password"
             />
-            <p aria-live="polite" className="text-caption text-text-secondary">
-              Use 8–128 characters; longer with mixed case, numbers and symbols is stronger.
-              {password && (
-                <>
-                  {" "}
-                  Strength: <strong className="text-text-primary">{strength.label}</strong> ({strength.score}/4)
-                </>
-              )}
-            </p>
+            <PasswordStrengthHint password={password} />
           </div>
 
           <Input
@@ -297,9 +263,13 @@ export function RegisterForm() {
             name="privacy_consent"
             label="I agree to the privacy policy"
             required
+            checked={acceptedPrivacyPolicy}
             readOnly={isPending}
             error={clientErrors.consent}
-            onChange={() => setFieldError("consent", undefined)}
+            onChange={(checked) => {
+              setAcceptedPrivacyPolicy(checked);
+              setFieldError("consent", undefined);
+            }}
           />
 
           <AuthAlert

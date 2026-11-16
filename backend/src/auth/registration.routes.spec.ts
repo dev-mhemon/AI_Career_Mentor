@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { type INestApplication } from '@nestjs/common';
 import { HttpException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { configureHttp, fail } from '../common/http.js';
@@ -33,6 +34,7 @@ describe('canonical A01/A04 HTTP boundary', () => {
     sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
   };
   const abuse = {
+    enforceIpQuota: vi.fn().mockResolvedValue(undefined),
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
   };
   const database = {
@@ -58,6 +60,7 @@ describe('canonical A01/A04 HTTP boundary', () => {
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
+      imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }])],
       controllers: [AuthController],
       providers: [
         EmailRegistrationService,
@@ -77,6 +80,7 @@ describe('canonical A01/A04 HTTP boundary', () => {
   beforeEach(() => {
     provider.findByEmail.mockReset().mockResolvedValue(null);
     provider.sendChallenge.mockClear();
+    abuse.enforceIpQuota.mockReset().mockResolvedValue(undefined);
     abuse.reserveSend.mockReset().mockResolvedValue({ retryAfterSeconds: 60 });
   });
 

@@ -4,6 +4,8 @@ import {
   getAppSessionState,
   getAppUserResult,
   getAppSessionStateResult,
+  getSupabaseAuthUser,
+  hasAuthenticatedAppSession,
   isSessionExpired,
 } from './user';
 import {
@@ -14,6 +16,7 @@ import {
   type CurrentUserStateResponse,
 } from '@/lib/api/client';
 
+const mockGetUser = vi.fn();
 const mockGetSession = vi.fn();
 const mockSetSession = vi.fn();
 const mockSignOut = vi.fn().mockResolvedValue({ error: null });
@@ -24,6 +27,7 @@ vi.mock('@/lib/supabase/server', () => ({
     mockCreateSupabaseServerClient(options);
     return {
       auth: {
+        getUser: mockGetUser,
         getSession: mockGetSession,
         setSession: mockSetSession,
         signOut: mockSignOut,
@@ -134,7 +138,9 @@ describe('frontend user session resolver (user.ts) - read-only Server Component 
 
     const result = await getAppUserResult();
     expect(result).toEqual({ status: 'authenticated', data: mockActiveUser });
-    expect(getMe).toHaveBeenCalledWith('valid-token');
+    expect(getMe).toHaveBeenCalledWith('valid-token', {
+      signal: expect.any(AbortSignal),
+    });
     expect(mockSetSession).not.toHaveBeenCalled();
     expect(mockSignOut).not.toHaveBeenCalled();
   });
@@ -180,7 +186,9 @@ describe('frontend user session resolver (user.ts) - read-only Server Component 
 
     const result = await getAppUserResult();
     expect(result).toEqual({ status: 'unauthenticated', data: null });
-    expect(getMe).toHaveBeenCalledWith('stale-token');
+    expect(getMe).toHaveBeenCalledWith('stale-token', {
+      signal: expect.any(AbortSignal),
+    });
     expect(mockSetSession).not.toHaveBeenCalled();
     expect(mockSignOut).not.toHaveBeenCalled();
   });
@@ -220,7 +228,9 @@ describe('frontend user session resolver (user.ts) - read-only Server Component 
 
     const result = await getAppSessionStateResult();
     expect(result).toEqual({ status: 'authenticated', data: mockSessionState });
-    expect(getCurrentUserState).toHaveBeenCalledWith('valid-token');
+    expect(getCurrentUserState).toHaveBeenCalledWith('valid-token', {
+      signal: expect.any(AbortSignal),
+    });
     expect(mockSetSession).not.toHaveBeenCalled();
     expect(mockSignOut).not.toHaveBeenCalled();
   });
@@ -243,7 +253,9 @@ describe('frontend user session resolver (user.ts) - read-only Server Component 
       data: null,
       error: backendError,
     });
-    expect(getCurrentUserState).toHaveBeenCalledWith('valid-token');
+    expect(getCurrentUserState).toHaveBeenCalledWith('valid-token', {
+      signal: expect.any(AbortSignal),
+    });
     expect(mockSetSession).not.toHaveBeenCalled();
     expect(mockSignOut).not.toHaveBeenCalled();
   });
@@ -297,5 +309,280 @@ describe('frontend user session resolver (user.ts) - read-only Server Component 
     });
     vi.mocked(getCurrentUserState).mockRejectedValueOnce(new Error('500'));
     expect(await getAppSessionState()).toBeNull();
+  });
+
+  it('getSupabaseAuthUser returns user in readOnly mode when Supabase verifies active session', async () => {
+    const sbUser = { id: 'sb-123', email: 'user@example.com' };
+    mockGetUser.mockResolvedValueOnce({ data: { user: sbUser }, error: null });
+
+    await expect(getSupabaseAuthUser()).resolves.toEqual(sbUser);
+    expect(mockCreateSupabaseServerClient).toHaveBeenCalledWith({ readOnly: true });
+  });
+
+  it('getSupabaseAuthUser returns null on missing session error or thrown exception', async () => {
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: null },
+      error: { message: 'Auth session missing!' },
+    });
+    await expect(getSupabaseAuthUser()).resolves.toBeNull();
+
+    mockGetUser.mockRejectedValueOnce(new Error('Network down'));
+    await expect(getSupabaseAuthUser()).resolves.toBeNull();
+  });
+
+  it('hasAuthenticatedAppSession returns true only when app session state is authenticated', async () => {
+    mockGetSession.mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'valid-token',
+          refresh_token: 'valid-refresh',
+        },
+      },
+    });
+    vi.mocked(getCurrentUserState).mockResolvedValueOnce(mockSessionState);
+    await expect(hasAuthenticatedAppSession()).resolves.toBe(true);
+
+    mockGetSession.mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'expired-or-rejected',
+          refresh_token: 'valid-refresh',
+        },
+      },
+    });
+    vi.mocked(getCurrentUserState).mockRejectedValueOnce(
+      new UnauthorizedError('Unauthorized'),
+    );
+    await expect(hasAuthenticatedAppSession()).resolves.toBe(false);
+
+    mockGetSession.mockResolvedValueOnce({ data: { session: null } });
+    await expect(hasAuthenticatedAppSession()).resolves.toBe(false);
+  });
+
+  it('returns transient_error and false within bounded timeout when getCurrentUserState stalls', async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      const actualClient =
+        await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+      const abortAwareStalledFetch = vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const sig = init?.signal;
+            if (!sig) return;
+            if (sig.aborted) {
+              reject(sig.reason ?? new DOMException('Aborted', 'AbortError'));
+              return;
+            }
+            sig.addEventListener(
+              'abort',
+              () => reject(sig.reason ?? new DOMException('Aborted', 'AbortError')),
+              { once: true },
+            );
+          }),
+      );
+      vi.stubGlobal('fetch', abortAwareStalledFetch);
+      vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://localhost:3000/api/v1');
+
+      mockGetSession.mockResolvedValue({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            refresh_token: 'valid-refresh',
+          },
+        },
+      });
+      vi.mocked(getCurrentUserState)
+        .mockImplementationOnce(actualClient.getCurrentUserState)
+        .mockImplementationOnce(actualClient.getCurrentUserState);
+
+      const statePromise = getAppSessionStateResult();
+      await vi.advanceTimersByTimeAsync(
+        actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS,
+      );
+
+      const stateResult = await statePromise;
+      expect(stateResult.status).toBe('transient_error');
+      expect(stateResult.data).toBeNull();
+      expect(abortAwareStalledFetch).toHaveBeenCalledTimes(1);
+
+      const authPromise = hasAuthenticatedAppSession();
+      await vi.advanceTimersByTimeAsync(
+        actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS,
+      );
+      await expect(authPromise).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
+  it('returns transient_error and false within bounded timeout when supabase getSession stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      const actualClient =
+        await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+      mockGetSession
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockImplementationOnce(() => new Promise(() => {}));
+
+      const statePromise = getAppSessionStateResult();
+      await vi.advanceTimersByTimeAsync(
+        actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS,
+      );
+
+      const stateResult = await statePromise;
+      expect(stateResult.status).toBe('transient_error');
+      expect(stateResult.data).toBeNull();
+      expect(getCurrentUserState).not.toHaveBeenCalled();
+
+      const authPromise = hasAuthenticatedAppSession();
+      await vi.advanceTimersByTimeAsync(
+        actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS,
+      );
+      await expect(authPromise).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('absorbs late fetcher rejection cleanly when remaining deadline hits 0ms boundary', async () => {
+    vi.useFakeTimers();
+    try {
+      const startTime = 1_000_000;
+      vi.setSystemTime(startTime);
+      const actualClient =
+        await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+      let capturedSignal: AbortSignal | undefined;
+      let rejectLateFetcher!: (err: unknown) => void;
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            refresh_token: 'valid-refresh',
+          },
+        },
+      });
+      vi.mocked(getCurrentUserState).mockImplementationOnce(
+        (_token, options) => {
+          capturedSignal = options?.signal;
+          vi.setSystemTime(startTime + actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS);
+          return new Promise((_resolve, reject) => {
+            rejectLateFetcher = reject;
+          });
+        },
+      );
+
+      const result = await getAppSessionStateResult();
+      expect(result.status).toBe('transient_error');
+      expect((result.error as DOMException).name).toBe('TimeoutError');
+      expect(capturedSignal?.aborted).toBe(true);
+
+      rejectLateFetcher(new actualClient.NetworkError('Late network failure'));
+      await Promise.resolve();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns transient_error and aborts signal when fulfillment is processed after deadline expiry before timer callback fires', async () => {
+    vi.useFakeTimers();
+    try {
+      const startTime = 1_000_000;
+      vi.setSystemTime(startTime);
+      const actualClient =
+        await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+      let capturedSignal: AbortSignal | undefined;
+      let resolveFetcher!: (state: typeof mockSessionState) => void;
+
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'valid-token',
+            refresh_token: 'valid-refresh',
+          },
+        },
+      });
+      vi.mocked(getCurrentUserState).mockImplementationOnce(
+        (_token, options) => {
+          capturedSignal = options?.signal;
+          return new Promise((resolve) => {
+            resolveFetcher = resolve;
+          });
+        },
+      );
+
+      const statePromise = getAppSessionStateResult();
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
+      expect(resolveFetcher).toBeTypeOf('function');
+
+      vi.setSystemTime(startTime + actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS + 1);
+      resolveFetcher(mockSessionState);
+
+      const result = await statePromise;
+      expect(result.status).toBe('transient_error');
+      expect(result.data).toBeNull();
+      expect((result.error as DOMException).name).toBe('TimeoutError');
+      expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts the signal passed to fetcher using remaining deadline budget after slow getSession', async () => {
+    vi.useFakeTimers();
+    try {
+      const actualClient =
+        await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+      let capturedSignal: AbortSignal | undefined;
+      const abortedAt: number[] = [];
+      const startTime = 2_000_000;
+      vi.setSystemTime(startTime);
+
+      mockGetSession.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                data: {
+                  session: {
+                    access_token: 'valid-token',
+                    refresh_token: 'valid-refresh',
+                  },
+                },
+              });
+            }, 3500);
+          }),
+      );
+
+      vi.mocked(getCurrentUserState).mockImplementationOnce(
+        (_token, options) => {
+          capturedSignal = options?.signal;
+          return new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              'abort',
+              () => {
+                abortedAt.push(Date.now() - startTime);
+                reject(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+              },
+              { once: true },
+            );
+          });
+        },
+      );
+
+      const pending = getAppSessionStateResult();
+      await vi.advanceTimersByTimeAsync(actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS);
+
+      const result = await pending;
+      expect(result.status).toBe('transient_error');
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(abortedAt).toEqual([actualClient.DEFAULT_AUTH_STATE_TIMEOUT_MS]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

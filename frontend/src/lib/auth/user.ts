@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
+  DEFAULT_AUTH_STATE_TIMEOUT_MS,
   getMe,
   getCurrentUserState,
   UnauthorizedError,
@@ -67,14 +68,56 @@ export function isSessionExpired(session: {
  *  - 'unauthenticated': missing session, expired session, or 401 UnauthorizedError
  *  - 'transient_error': valid non-expired session, but backend threw 5xx, 429, or network error
  */
+function withTimeout<T>(
+  value: PromiseLike<T> | T,
+  deadline: number,
+  message = 'Operation timed out',
+): Promise<T> {
+  const settled = Promise.resolve(value);
+  const timeoutMs = deadline - Date.now();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    settled.catch(() => undefined);
+    return Promise.reject(new DOMException(message, 'TimeoutError'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new DOMException(message, 'TimeoutError'));
+    }, timeoutMs);
+    settled.then(
+      (resolved) => {
+        clearTimeout(timer);
+        if (Date.now() >= deadline) {
+          reject(new DOMException(message, 'TimeoutError'));
+          return;
+        }
+        resolve(resolved);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 async function fetchReadOnlySession<T>(
-  fetcher: (accessToken: string) => Promise<T>,
+  fetcher: (accessToken: string, signal: AbortSignal) => Promise<T>,
 ): Promise<ReadOnlySessionResult<T>> {
+  const deadline = Date.now() + DEFAULT_AUTH_STATE_TIMEOUT_MS;
+
   try {
-    const supabase = await createSupabaseServerClient({ readOnly: true });
+    const supabase = await withTimeout(
+      createSupabaseServerClient({ readOnly: true }),
+      deadline,
+      'Supabase client setup timed out',
+    );
     const {
       data: { session },
-    } = await supabase.auth.getSession();
+    } = await withTimeout(
+      supabase.auth.getSession(),
+      deadline,
+      'Supabase session lookup timed out',
+    );
 
     if (!session?.access_token) {
       return { status: 'unauthenticated', data: null };
@@ -84,14 +127,45 @@ async function fetchReadOnlySession<T>(
       return { status: 'unauthenticated', data: null };
     }
 
+    const remainingMs = deadline - Date.now();
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+      return {
+        status: 'transient_error',
+        data: null,
+        error: new DOMException('Auth state request timed out', 'TimeoutError'),
+      };
+    }
+
+    const controller = new AbortController();
+    const timeoutError = new DOMException(
+      'Auth state request timed out',
+      'TimeoutError',
+    );
+    const abortTimer = setTimeout(() => {
+      controller.abort(timeoutError);
+    }, remainingMs);
+
     try {
-      const data = await fetcher(session.access_token);
+      const data = await withTimeout(
+        fetcher(session.access_token, controller.signal),
+        deadline,
+        'Auth state request timed out',
+      );
       return { status: 'authenticated', data };
     } catch (err) {
       if (err instanceof UnauthorizedError) {
         return { status: 'unauthenticated', data: null };
       }
+      if (
+        !controller.signal.aborted &&
+        ((err instanceof Error && err.name === 'TimeoutError') ||
+          Date.now() >= deadline)
+      ) {
+        controller.abort(err);
+      }
       return { status: 'transient_error', data: null, error: err };
+    } finally {
+      clearTimeout(abortTimer);
     }
   } catch (err) {
     return { status: 'transient_error', data: null, error: err };
@@ -103,8 +177,8 @@ async function fetchReadOnlySession<T>(
  * with explicit status discrimination (authenticated, unauthenticated, transient_error).
  */
 export async function getAppSessionStateResult(): Promise<ReadOnlySessionResult<AppSessionState>> {
-  return fetchReadOnlySession((accessToken) =>
-    getCurrentUserState(accessToken),
+  return fetchReadOnlySession((accessToken, signal) =>
+    getCurrentUserState(accessToken, { signal }),
   );
 }
 
@@ -113,7 +187,9 @@ export async function getAppSessionStateResult(): Promise<ReadOnlySessionResult<
  * with explicit status discrimination (authenticated, unauthenticated, transient_error).
  */
 export async function getAppUserResult(): Promise<ReadOnlySessionResult<UserResponse>> {
-  return fetchReadOnlySession((accessToken) => getMe(accessToken));
+  return fetchReadOnlySession((accessToken, signal) =>
+    getMe(accessToken, { signal }),
+  );
 }
 
 /**
@@ -134,4 +210,40 @@ export async function getAppSessionState(): Promise<AppSessionState | null> {
 export async function getAppUser(): Promise<UserResponse | null> {
   const result = await getAppUserResult();
   return result.status === 'authenticated' ? result.data : null;
+}
+
+/**
+ * Checks active authentication directly against Supabase Auth cookies (`auth.getUser()`)
+ * in read-only Server Component mode without calling NestJS `/api/v1/auth/me`.
+ * Returns the verified Supabase user when an active session exists, or `null` otherwise.
+ */
+export async function getSupabaseAuthUser() {
+  const deadline = Date.now() + DEFAULT_AUTH_STATE_TIMEOUT_MS;
+  try {
+    const supabase = await withTimeout(
+      createSupabaseServerClient({ readOnly: true }),
+      deadline,
+      'Supabase client setup timed out',
+    );
+    const { data, error } = await withTimeout(
+      supabase.auth.getUser(),
+      deadline,
+      'Supabase user lookup timed out',
+    );
+    if (error || !data?.user) {
+      return null;
+    }
+    return data.user;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns `true` only when an active Supabase session exists and EP-A13 (`GET /api/v1/auth/me`)
+ * confirms access so public/auth routes never redirect into a `/dashboard` -> `/login` bounce loop.
+ */
+export async function hasAuthenticatedAppSession(): Promise<boolean> {
+  const result = await getAppSessionStateResult();
+  return result.status === 'authenticated';
 }

@@ -55,7 +55,7 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     expect(screen.getByRole('button', { name: /delete account/i })).toBeDisabled();
   });
 
-  it('opens confirmation modal dialog when delete button is clicked', () => {
+  it('opens confirmation modal dialog without Type DELETE input when delete button is clicked', () => {
     render(<AccountDeletionCard canDeleteAccount={true} />);
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -66,30 +66,31 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /are you sure\?/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/type delete to confirm/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /this action cannot be undone\. enter your account password below to confirm deletion\./i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/type delete to confirm/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/account password/i)).toBeInTheDocument();
   });
 
-  it('keeps submit button disabled until literal "DELETE" and password are typed', () => {
+  it('keeps submit button disabled until account password is entered', () => {
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
     fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
 
-    const submitBtn = screen.getByRole('button', { name: /confirm permanent deletion/i });
+    const submitBtn = screen.getByRole('button', { name: /confirm deletion/i });
     expect(submitBtn).toBeDisabled();
 
-    const confirmInput = screen.getByLabelText(/type delete to confirm/i);
     const passwordInput = screen.getByLabelText(/account password/i);
     expect(passwordInput).toHaveAttribute('placeholder', 'Password');
 
-    // Case-sensitive check: "delete" should not enable submit
-    fireEvent.change(confirmInput, { target: { value: 'delete' } });
     fireEvent.change(passwordInput, { target: { value: 'ValidPass123!' } });
-    expect(submitBtn).toBeDisabled();
-
-    // Literal uppercase "DELETE" enables submit
-    fireEvent.change(confirmInput, { target: { value: 'DELETE' } });
     expect(submitBtn).not.toBeDisabled();
+
+    fireEvent.change(passwordInput, { target: { value: '   ' } });
+    expect(submitBtn).toBeDisabled();
   });
 
   it('closes modal when cancel button is clicked', () => {
@@ -104,7 +105,7 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('enables submit button for non-password accounts without requiring password', () => {
+  it('enables submit button immediately for non-password accounts without requiring password', () => {
     render(
       <AccountDeletionCard
         canDeleteAccount={true}
@@ -116,13 +117,10 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
 
     expect(screen.queryByLabelText(/account password/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/type delete to confirm/i)).not.toBeInTheDocument();
     expect(screen.getByText(/active sign-in session \(google\)/i)).toBeInTheDocument();
 
-    const confirmInput = screen.getByLabelText(/type delete to confirm/i);
-    const submitBtn = screen.getByRole('button', { name: /confirm permanent deletion/i });
-    expect(submitBtn).toBeDisabled();
-
-    fireEvent.change(confirmInput, { target: { value: 'DELETE' } });
+    const submitBtn = screen.getByRole('button', { name: /confirm deletion/i });
     expect(submitBtn).not.toBeDisabled();
   });
 
@@ -137,19 +135,16 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
     fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
-    fireEvent.change(screen.getByLabelText(/type delete to confirm/i), {
-      target: { value: 'DELETE' },
-    });
     fireEvent.change(screen.getByLabelText(/account password/i), {
       target: { value: 'ValidPass123!' },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /confirm permanent deletion/i }));
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
     });
 
     expect(screen.getByText(/processing account deletion, please wait/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/type delete to confirm/i)).toBeDisabled();
+    expect(screen.getByLabelText(/account password/i)).toBeDisabled();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -173,15 +168,12 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
     fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
-    fireEvent.change(screen.getByLabelText(/type delete to confirm/i), {
-      target: { value: 'DELETE' },
-    });
     fireEvent.change(screen.getByLabelText(/account password/i), {
       target: { value: 'ValidPass123!' },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /confirm permanent deletion/i }));
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
     });
 
     await act(async () => {
@@ -205,15 +197,12 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
 
     fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
-    fireEvent.change(screen.getByLabelText(/type delete to confirm/i), {
-      target: { value: 'DELETE' },
-    });
     fireEvent.change(screen.getByLabelText(/account password/i), {
       target: { value: 'ValidPass123!' },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /confirm permanent deletion/i }));
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
     });
 
     await act(async () => {
@@ -228,5 +217,95 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     expect(cancelBtn).not.toBeDisabled();
     fireEvent.click(cancelBtn);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('clears mentor_remembered_login from localStorage and mentor_login_hint cookie when submitting account deletion', async () => {
+    window.localStorage.setItem(
+      'mentor_remembered_login',
+      JSON.stringify({
+        channel: 'phone',
+        identifier: '01629795421',
+        rememberMe: true,
+      }),
+    );
+    document.cookie = 'mentor_login_hint=stale; path=/';
+
+    vi.mocked(requestAccountDeletionAction).mockResolvedValueOnce({
+      success: true,
+      status: 'completed',
+      deletionReceipt: 'receipt-del-clear',
+    });
+
+    render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/account password/i), {
+      target: { value: 'ValidPass123!' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
+    });
+
+    expect(window.localStorage.getItem('mentor_remembered_login')).toBeNull();
+    expect(document.cookie).not.toContain('mentor_login_hint=');
+    expect(mockRouter.push).toHaveBeenCalledWith('/login?deleted=true');
+  });
+
+  it('closes modal when clicking outside the modal box, stays open on inside clicks, and ignores outside clicks while polling', async () => {
+    render(<AccountDeletionCard canDeleteAccount={true} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    const dialog = screen.getByRole('dialog');
+    const backdrop = dialog.parentElement!;
+
+    // Clicking inside modal box keeps dialog open
+    fireEvent.mouseDown(dialog);
+    fireEvent.click(dialog);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // Drag starting inside dialog and releasing on backdrop keeps dialog open (both detail=1 and jsdom detail=0)
+    fireEvent.mouseDown(dialog);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop, { detail: 1 });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.mouseDown(dialog);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // Drag starting on backdrop and releasing inside dialog keeps dialog open
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseUp(dialog);
+    fireEvent.click(backdrop, { detail: 1 });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // Direct click outside on backdrop closes dialog
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop, { detail: 1 });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Outside click does not close dialog while deletion polling is in flight
+    vi.useFakeTimers();
+    vi.mocked(requestAccountDeletionAction).mockResolvedValueOnce({
+      success: true,
+      status: 'in_progress',
+      deletionReceipt: 'receipt-backdrop-busy',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/account password/i), {
+      target: { value: 'ValidPass123!' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
+    });
+
+    const busyBackdrop = screen.getByRole('dialog').parentElement!;
+    fireEvent.mouseDown(busyBackdrop);
+    fireEvent.click(busyBackdrop, { detail: 1 });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

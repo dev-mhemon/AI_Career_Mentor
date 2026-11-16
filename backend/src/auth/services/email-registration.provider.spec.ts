@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConfigService } from '@nestjs/config';
+import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
+import { readAbuseConfiguration } from '../abuse-control/config.js';
 import {
   EmailRegistrationProvider,
   createEmailTransportFromConfig,
@@ -12,7 +14,10 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
   const email = 'candidate@example.invalid';
 
   let config: ConfigService;
-  let database: { query: ReturnType<typeof vi.fn> };
+  let database: {
+    query: ReturnType<typeof vi.fn>;
+    transaction: ReturnType<typeof vi.fn>;
+  };
   let otpStore: {
     generateOtp: ReturnType<typeof vi.fn>;
     storeOtp: ReturnType<typeof vi.fn>;
@@ -35,8 +40,15 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       }),
     } as unknown as ConfigService;
 
+    const queryFn = vi.fn();
     database = {
-      query: vi.fn(),
+      query: queryFn,
+      transaction: vi.fn(
+        async (
+          _userId: string | null,
+          op: (db: { query: typeof queryFn }) => Promise<unknown>,
+        ) => op({ query: queryFn }),
+      ),
     };
 
     otpStore = {
@@ -179,7 +191,10 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       const normalizedSql = executedSql.replace(/\s+/g, ' ');
       expect(normalizedSql).toContain('LEFT JOIN public.user_auth_providers p');
       expect(normalizedSql).toContain(
-        'WHERE lower(u.email) = $1 OR lower(p.contact_value) = $1',
+        'WHERE u.deleted_at IS NULL AND (lower(u.email) = $1 OR lower(p.contact_value) = $1)',
+      );
+      expect(normalizedSql).toContain(
+        "AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')",
       );
       expect(normalizedSql).toContain('ORDER BY');
       expect(normalizedSql).toContain(
@@ -199,6 +214,76 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         id: userId,
         subject: userId,
         email: 'secondary@example.invalid',
+        verified: false,
+      });
+    });
+
+    it('ignores soft-deleted rows and confirmed orphaned auth users with no public.users row', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: '2026-10-01T00:00:00Z',
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+
+      await expect(provider.findByEmail(email)).resolves.toBeNull();
+    });
+
+    it('excludes unconfirmed 15m+ orphaned auth users with no public.users row while keeping recent (<15m) registrations blocked', async () => {
+      const oldCreatedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: oldCreatedAt,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toBeNull();
+
+      const recentCreatedAt = new Date(
+        Date.now() - 2 * 60 * 1000,
+      ).toISOString();
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: recentCreatedAt,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: false,
+      });
+
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: null,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toEqual({
+        id: userId,
+        subject: userId,
+        email,
         verified: false,
       });
     });
@@ -280,6 +365,71 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       });
     });
 
+    it('self-heals orphaned/deleted email account on 422 email_exists and retries fresh creation cleanly', async () => {
+      const staleId = '99999999-9999-4999-8999-999999999999';
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          sql.includes('FROM auth.users u') &&
+          (sql.includes('WHERE u.id = $1::uuid') ||
+            sql.includes('SELECT DISTINCT u.id'))
+        ) {
+          return [{ id: staleId, email }];
+        }
+        return [];
+      });
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            error_code: 'email_exists',
+            msg: 'A user with this email address has already been registered',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: userId, email }),
+        });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const created = await provider.createPending(email, 'Password123!');
+
+      expect(created).toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: false,
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        `http://supabase.invalid/auth/v1/admin/users/${staleId}`,
+        expect.objectContaining({
+          method: 'DELETE',
+          body: JSON.stringify({ should_soft_delete: false }),
+        }),
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [staleId],
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM public.users WHERE id = $1::uuid'),
+        [staleId],
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM auth.users'),
+        [staleId],
+      );
+    });
+
     it('maps upstream errors to 502 EMAIL_PROVIDER_ERROR', async () => {
       vi.stubGlobal(
         'fetch',
@@ -296,6 +446,152 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         status: 502,
         response: { code: 'EMAIL_PROVIDER_ERROR' },
       });
+    });
+
+    it('maps upstream 429 to 429 OTP_LIMIT_EXCEEDED with Retry-After seconds', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 429,
+          headers: new Headers({ 'retry-after': '120' }),
+          json: async () => ({ error_code: 'over_email_send_rate_limit' }),
+        }),
+      );
+
+      await expect(
+        provider.createPending(email, 'Password123!'),
+      ).rejects.toMatchObject({
+        status: 429,
+        response: {
+          code: 'OTP_LIMIT_EXCEEDED',
+          retryAfterSeconds: 120,
+        },
+      });
+    });
+
+    it('clears Redis OTP/challenge keys while preserving send limits when purgeOrphanedByEmail purges a stale account', async () => {
+      const clearChallengeState = vi.fn().mockResolvedValue(undefined);
+      const clearContactsState = vi.fn().mockResolvedValue(undefined);
+      const providerWithAbuse = new EmailRegistrationProvider(
+        config,
+        database as unknown as DatabaseService,
+        otpStore as unknown as OtpSecretStore,
+        { clearChallengeState, clearContactsState } as any,
+      );
+      providerWithAbuse.setTransport(vi.fn());
+      const staleId = '00000000-0000-4000-8000-000000000099';
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          sql.includes('SELECT DISTINCT u.id') ||
+          sql.includes('WHERE u.id = $1::uuid')
+        ) {
+          return [{ id: staleId, email }];
+        }
+        if (sql.includes('DELETE FROM auth.users')) {
+          return [{ email, phone: null }];
+        }
+        return [];
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+      );
+
+      const purged = await providerWithAbuse.purgeOrphanedByEmail(email);
+
+      expect(purged).toBe(true);
+      expect(clearChallengeState).toHaveBeenCalledWith(
+        expect.arrayContaining([{ channel: 'email', identifier: email }]),
+        [staleId],
+      );
+      expect(clearContactsState).not.toHaveBeenCalled();
+    });
+
+    it('preserves auth:v1:send:cooldown:* and auth:v1:send:contact:* in Redis during createPending orphan recovery', async () => {
+      const abuseConfig = readAbuseConfiguration({
+        AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+        AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+      });
+      const abuse = new AuthAbuseControl(abuseConfig);
+      const delMock = vi.fn().mockResolvedValue(1);
+      vi.spyOn(
+        abuse as unknown as { getConnectedClient: () => Promise<unknown> },
+        'getConnectedClient',
+      ).mockResolvedValue({
+        withCommandOptions: vi.fn().mockReturnValue({ del: delMock }),
+      });
+
+      try {
+        const providerWithAbuse = new EmailRegistrationProvider(
+          config,
+          database as unknown as DatabaseService,
+          otpStore as unknown as OtpSecretStore,
+          abuse,
+        );
+        providerWithAbuse.setTransport(vi.fn());
+        const staleId = '00000000-0000-4000-8000-000000000099';
+        database.query.mockImplementation(async (sql: string) => {
+          if (
+            sql.includes('SELECT DISTINCT u.id') ||
+            sql.includes('WHERE u.id = $1::uuid')
+          ) {
+            return [{ id: staleId, email }];
+          }
+          if (sql.includes('DELETE FROM auth.users')) {
+            return [{ email, phone: null }];
+          }
+          return [];
+        });
+
+        let postCount = 0;
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async (_url: string, init?: RequestInit) => {
+            if (init?.method === 'DELETE') {
+              return { ok: true, status: 200 };
+            }
+            postCount += 1;
+            if (postCount === 1) {
+              return {
+                ok: false,
+                status: 422,
+                json: async () => ({ error_code: 'email_exists' }),
+              };
+            }
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ id: userId, email }),
+            };
+          }),
+        );
+
+        const created = await providerWithAbuse.createPending(
+          email,
+          'Password123!',
+        );
+        expect(created).toEqual({
+          id: userId,
+          subject: userId,
+          email,
+          verified: false,
+        });
+        expect(delMock).toHaveBeenCalledTimes(1);
+        const deletedKeys = delMock.mock.calls[0][0] as string[];
+        expect(
+          deletedKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+        ).toBe(false);
+        expect(
+          deletedKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+        ).toBe(false);
+        expect(
+          deletedKeys.some((k) => k.startsWith('auth:v1:challenge:')),
+        ).toBe(true);
+        expect(deletedKeys).toContain(`auth:v1:otp:secret:${staleId}`);
+      } finally {
+        abuse.onModuleDestroy();
+      }
     });
   });
 

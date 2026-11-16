@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import type { EntityManager } from 'typeorm';
 import { type INestApplication, HttpException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ThrottlerModule } from '@nestjs/throttler';
 import request from 'supertest';
 import { configureHttp, fail } from '../../common/http.js';
 import { AuthController } from '../controllers/auth.controller.js';
@@ -382,7 +383,7 @@ describe('AuthService session approval boundary', () => {
       ),
     ).toBe(false);
     expect(database.transaction).toHaveBeenCalledWith(
-      null,
+      userId,
       expect.any(Function),
       false,
       false,
@@ -580,27 +581,29 @@ describe('AuthService session approval boundary', () => {
         status: 403,
         response: { code: 'UNVERIFIED_ACCOUNT' },
       });
-      expect(query).toHaveBeenNthCalledWith(
-        1,
-        'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
-        [userId],
+      expect(database.transaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Function),
+        false,
+        false,
+        false,
       );
       expect(query).toHaveBeenNthCalledWith(
-        2,
+        1,
         'SELECT pg_advisory_xact_lock(hashtext($1::text))',
         [userId],
       );
       expect(query).toHaveBeenNthCalledWith(
-        3,
+        2,
         'SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1::uuid) AS auth_user_exists',
         [userId],
       );
-      expect(query).toHaveBeenNthCalledWith(4, 'SET LOCAL ROLE service_role');
+      expect(query).toHaveBeenNthCalledWith(3, 'SET LOCAL ROLE service_role');
       expect(approvals.approve).not.toHaveBeenCalled();
     },
   );
 
-  it('locks public.users row before hashtext(userId) on bootstrap upsert to match user-ID transaction lock order', async () => {
+  it('passes userId to DatabaseService.transaction so public.users row lock precedes hashtext(userId) on bootstrap upsert', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -667,18 +670,17 @@ describe('AuthService session approval boundary', () => {
       'google',
     );
 
-    expect(txArgs[0]?.[0]).toBeNull();
-    const rowLockIdx = executedSql.findIndex((sql) =>
-      sql.includes('SELECT id FROM public.users WHERE id = $1 FOR UPDATE'),
-    );
+    expect(txArgs[0]?.[0]).toBe(userId);
+    expect(txArgs[0]?.[2]).toBe(false);
+    expect(txArgs[0]?.[3]).toBe(false);
+    expect(txArgs[0]?.[4]).toBe(false);
     const advisoryIdx = executedSql.findIndex((sql) =>
       sql.includes('pg_advisory_xact_lock(hashtext($1::text))'),
     );
     const upsertIdx = executedSql.findIndex((sql) =>
       sql.includes('INSERT INTO public.users'),
     );
-    expect(rowLockIdx).toBeGreaterThanOrEqual(0);
-    expect(advisoryIdx).toBeGreaterThan(rowLockIdx);
+    expect(advisoryIdx).toBeGreaterThanOrEqual(0);
     expect(upsertIdx).toBeGreaterThan(advisoryIdx);
   });
 
@@ -741,6 +743,7 @@ describe('AuthService session approval boundary', () => {
     );
 
     const abuse = {
+      enforceIpQuota: vi.fn().mockResolvedValue(undefined),
       reserveSend: vi.fn(),
       login: vi.fn(async (_contact, _ip, authenticate) => {
         const result = await authenticate();
@@ -767,6 +770,7 @@ describe('AuthService session approval boundary', () => {
 
     // Spin up full HTTP app with AuthController and real EmailRegistrationProvider
     const module = await Test.createTestingModule({
+      imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }])],
       controllers: [AuthController],
       providers: [
         AuthService,
@@ -1342,7 +1346,7 @@ describe('AuthService session approval boundary', () => {
     );
 
     expect(database.transaction).toHaveBeenCalledWith(
-      null,
+      userId,
       expect.any(Function),
       false,
       false,
@@ -6390,6 +6394,10 @@ describe('AuthService session approval boundary', () => {
           message: 'No account found with this phone number.',
         },
       });
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('JOIN public.users pu ON pu.id = u.id'),
+        ['+8801712345678'],
+      );
     });
 
     it('returns 401 AUTH_INVALID_CREDENTIALS when password does not match or hash is non-bcrypt', async () => {

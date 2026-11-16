@@ -47,6 +47,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
     transaction: ReturnType<typeof vi.fn>;
   };
   let abuse: {
+    enforceIpQuota: ReturnType<typeof vi.fn>;
     reserveSend: ReturnType<typeof vi.fn>;
     login: ReturnType<typeof vi.fn>;
     isReady: ReturnType<typeof vi.fn>;
@@ -173,6 +174,7 @@ describe('M01-10 Canonical Email & Session Integration Matrix', () => {
     };
 
     abuse = {
+      enforceIpQuota: vi.fn().mockResolvedValue(undefined),
       reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
       login: vi.fn(),
       isReady: vi.fn().mockReturnValue(true),

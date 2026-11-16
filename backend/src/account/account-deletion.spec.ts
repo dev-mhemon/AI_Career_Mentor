@@ -660,6 +660,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([]) // revoke gotrue refresh tokens
         .mockResolvedValueOnce([]) // delete gotrue sessions
         .mockResolvedValueOnce([]) // delete public.users
+        .mockResolvedValueOnce([]) // hard-delete auth.identities and auth.users
         .mockResolvedValueOnce([
           {
             id: TEST_REQUEST_ID,
@@ -726,6 +727,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
           },
         ])
         .mockResolvedValueOnce([]) // user_auth_providers (R35)
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -803,6 +805,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
           {
             id: TEST_REQUEST_ID,
@@ -842,6 +845,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
           },
         ])
         .mockResolvedValueOnce([]) // user_auth_providers (R35)
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1002,6 +1006,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([]) // 3. revoke gotrue refresh tokens
         .mockResolvedValueOnce([]) // 4. delete gotrue sessions
         .mockResolvedValueOnce([]) // 5. delete public.users
+        .mockResolvedValueOnce([]) // 6. hard-delete auth.identities and auth.users
         .mockResolvedValueOnce([
           {
             id: TEST_REQUEST_ID,
@@ -1040,12 +1045,20 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         params,
       }));
 
-      // Verifies public.users deletion
+      // Verifies public.users deletion and hard-deletion of auth.identities / auth.users
       const userDeleteCall = sqlCalls.find((c) =>
         c.sql.includes('DELETE FROM public.users'),
       );
       expect(userDeleteCall).toBeDefined();
       expect(userDeleteCall?.params).toEqual([TEST_USER_ID]);
+
+      const authHardDeleteCall = sqlCalls.find(
+        (c) =>
+          c.sql.includes('DELETE FROM auth.identities') &&
+          c.sql.includes('DELETE FROM auth.users'),
+      );
+      expect(authHardDeleteCall).toBeDefined();
+      expect(authHardDeleteCall?.params).toEqual([TEST_USER_ID]);
 
       // Verifies approved_auth_sessions revocation
       const sessionRevokeCall = sqlCalls.find((c) =>
@@ -1086,6 +1099,92 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
       );
     });
 
+    it('immediately dispatches GoTrue Admin hard-delete (should_soft_delete: false) when service role credentials are configured so email/phone are freed', async () => {
+      const adminConfigService = {
+        get: vi.fn((key: string) => {
+          if (key === 'DELETION_RECEIPT_SECRET') return TEST_SECRET;
+          if (key === 'NODE_ENV') return 'test';
+          if (key === 'SUPABASE_URL') return 'http://supabase.test';
+          if (key === 'SUPABASE_ANON_KEY') return 'test-anon-key';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'test-service-key';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const adminProviderCleanup = new ProviderCleanupService(
+        adminConfigService,
+        database,
+      );
+      const adminDeletionService = new AccountDeletionService(
+        database,
+        receiptService,
+        reauthService,
+        adminProviderCleanup,
+        privacyRetentionService,
+      );
+
+      mockQuery
+        .mockResolvedValueOnce([{ email: null, phone: '+8801629795421' }])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: TEST_USER_ID,
+            status: 'in_progress',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: null,
+            provider_deletion_requested: false,
+          },
+        ])
+        .mockResolvedValueOnce([
+          { provider: 'phone', provider_subject: TEST_USER_ID },
+        ])
+        .mockResolvedValueOnce([]) // update provider_cleanup
+        .mockResolvedValueOnce([]) // revoke approved_auth_sessions
+        .mockResolvedValueOnce([]) // revoke auth.refresh_tokens
+        .mockResolvedValueOnce([]) // delete auth.sessions
+        .mockResolvedValueOnce([]) // delete public.users
+        .mockResolvedValueOnce([]) // hard-delete auth.identities + auth.users
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: null,
+            status: 'completed',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: new Date('2026-11-10T08:05:00.000Z'),
+            provider_deletion_requested: false,
+          },
+        ]);
+
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ user: { id: TEST_USER_ID } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        });
+
+      const result = await adminDeletionService.requestDeletion(TEST_USER_ID, {
+        confirmation: 'DELETE',
+        password: 'S3cure!Password',
+      });
+
+      expect(result.status).toBe('completed');
+      expect(fetchMock).toHaveBeenCalledWith(
+        `http://supabase.test/auth/v1/admin/users/${TEST_USER_ID}`,
+        expect.objectContaining({
+          method: 'DELETE',
+          body: JSON.stringify({ should_soft_delete: false }),
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-service-key',
+          }),
+        }),
+      );
+    });
+
     it('populates provider_cleanup with AEAD-encrypted entries when user has linked auth providers (R35)', async () => {
       mockQuery
         .mockResolvedValueOnce([{ email: 'user@example.com', phone: null }]) // reauth check
@@ -1108,6 +1207,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([]) // 5. revoke gotrue refresh tokens
         .mockResolvedValueOnce([]) // 6. delete gotrue sessions
         .mockResolvedValueOnce([]) // 7. delete public.users
+        .mockResolvedValueOnce([]) // 8. hard-delete auth.identities and auth.users
         .mockResolvedValueOnce([
           {
             id: TEST_REQUEST_ID,
@@ -1318,6 +1418,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
           {
             id: TEST_REQUEST_ID,
@@ -1365,6 +1466,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
           },
         ])
         .mockResolvedValueOnce([]) // user_auth_providers (R35)
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1444,6 +1546,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([]); // empty tombstone!
 
       let rolledBack = false;
@@ -1483,6 +1586,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
           },
         ])
         .mockResolvedValueOnce([]) // user_auth_providers (R35)
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -1535,6 +1639,7 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
           },
         ])
         .mockResolvedValueOnce([]) // user_auth_providers (R35)
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
@@ -2146,6 +2251,175 @@ describe('M03-02 Account Deletion: Re-Authentication, Atomic Cascade Execution &
           code: 'DELETION_REQUEST_NOT_FOUND',
         }),
       });
+    });
+
+    it('captures pre-commit Redis contact state and unwraps [rows, affected] tuples before race-safe cleanup', async () => {
+      const snapshot = {
+        entries: [
+          {
+            key: 'auth:v1:send:contact:abc',
+            kind: 'string' as const,
+            value: '2',
+            pexpiretime: 1794827507884,
+          },
+        ],
+      };
+      const captureContactsState = vi.fn().mockResolvedValue(snapshot);
+      const clearCapturedContactsState = vi.fn().mockResolvedValue(undefined);
+      const clearContactsState = vi.fn().mockResolvedValue(undefined);
+      const serviceWithAbuse = new AccountDeletionService(
+        database,
+        receiptService,
+        reauthService,
+        providerCleanupService,
+        privacyRetentionService,
+        {
+          captureContactsState,
+          clearCapturedContactsState,
+          clearContactsState,
+        } as any,
+      );
+
+      mockQuery
+        .mockResolvedValueOnce([
+          { email: 'freed@example.com', phone: '+8801629795421' },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: TEST_USER_ID,
+            status: 'in_progress',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: null,
+            provider_deletion_requested: false,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            provider: 'email',
+            provider_subject: TEST_USER_ID,
+            contact_value: 'freed@example.com',
+          },
+          {
+            provider: 'phone',
+            provider_subject: TEST_USER_ID,
+            contact_value: '+8801629795421',
+          },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        // Simulate Postgres TypeORM driver [rows, affectedCount] tuple returns on DELETE ... RETURNING
+        .mockResolvedValueOnce([
+          [{ email: 'TuplePublic@example.com', phone: '+8801711111111' }],
+          1,
+        ])
+        .mockResolvedValueOnce([
+          [{ email: 'TupleAuth@example.com', phone: '8801822222222' }],
+          1,
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: null,
+            status: 'completed',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: new Date('2026-11-10T08:01:00.000Z'),
+            provider_deletion_requested: false,
+          },
+        ]);
+
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: TEST_USER_ID } }),
+      });
+
+      const res = await serviceWithAbuse.requestDeletion(TEST_USER_ID, {
+        confirmation: 'DELETE',
+        password: 'S3cure!Password',
+      });
+
+      expect(res.status).toBe('completed');
+      expect(captureContactsState).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          { channel: 'email', identifier: 'freed@example.com' },
+          { channel: 'phone', identifier: '+8801629795421' },
+          { channel: 'email', identifier: 'tuplepublic@example.com' },
+          { channel: 'phone', identifier: '+8801711111111' },
+          { channel: 'email', identifier: 'tupleauth@example.com' },
+          { channel: 'phone', identifier: '+8801822222222' },
+        ]),
+      );
+      expect(clearCapturedContactsState).toHaveBeenCalledWith(snapshot, [
+        TEST_USER_ID,
+      ]);
+      expect(clearContactsState).not.toHaveBeenCalled();
+    });
+
+    it('never blind-deletes contact keys post-commit when captureContactsState returns undefined', async () => {
+      const captureContactsState = vi.fn().mockResolvedValue(undefined);
+      const clearCapturedContactsState = vi.fn().mockResolvedValue(undefined);
+      const clearContactsState = vi.fn().mockResolvedValue(undefined);
+      const serviceWithAbuse = new AccountDeletionService(
+        database,
+        receiptService,
+        reauthService,
+        providerCleanupService,
+        privacyRetentionService,
+        {
+          captureContactsState,
+          clearCapturedContactsState,
+          clearContactsState,
+        } as any,
+      );
+
+      mockQuery
+        .mockResolvedValueOnce([{ email: 'freed@example.com', phone: null }])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: TEST_USER_ID,
+            status: 'in_progress',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: null,
+            provider_deletion_requested: false,
+          },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_REQUEST_ID,
+            user_id: null,
+            status: 'completed',
+            requested_at: new Date('2026-11-10T08:00:00.000Z'),
+            completed_at: new Date('2026-11-10T08:01:00.000Z'),
+            provider_deletion_requested: false,
+          },
+        ]);
+
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: TEST_USER_ID } }),
+      });
+
+      const res = await serviceWithAbuse.requestDeletion(TEST_USER_ID, {
+        confirmation: 'DELETE',
+        password: 'S3cure!Password',
+      });
+
+      expect(res.status).toBe('completed');
+      expect(clearCapturedContactsState).toHaveBeenCalledWith(undefined, [
+        TEST_USER_ID,
+      ]);
+      expect(clearContactsState).not.toHaveBeenCalled();
     });
   });
 });

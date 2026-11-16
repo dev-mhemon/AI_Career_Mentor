@@ -42,6 +42,8 @@ export interface HeaderProps {
   nav?: HeaderNavItem[];
   /** Optional authenticated user summary for avatar, full name, and current role. */
   user?: ShellUserInfo | null;
+  /** Whether the visitor has an active session in `variant="public"` (defaults to `Boolean(user)`). */
+  authenticated?: boolean;
   /** Server Action invoked by the Sign Out menu item. */
   signOutAction?: () => Promise<void> | void;
   /** Whether the user account is suspended. */
@@ -68,6 +70,12 @@ const publicNav: HeaderNavItem[] = [
   { href: '/register', label: 'Create account' },
 ];
 
+const publicAuthenticatedNav: HeaderNavItem[] = [
+  { href: '/', label: 'Home' },
+  { href: '/dashboard', label: 'Sign in' },
+  { href: '/dashboard', label: 'Create account' },
+];
+
 const QUICK_SEARCH_ROUTES = [
   { href: '/dashboard', label: 'Dashboard', keywords: 'dashboard overview workspace', restrictedWhenSuspended: true },
   { href: '/onboarding/profile', label: 'Profile Setup', keywords: 'profile onboarding skills experience role', restrictedWhenSuspended: true },
@@ -89,6 +97,7 @@ export function Header({
   variant = 'authenticated',
   nav,
   user,
+  authenticated,
   signOutAction = logoutAction,
   isSuspended = false,
   actions,
@@ -250,7 +259,8 @@ export function Header({
   }
 
   if (variant === 'public') {
-    const items = nav ?? publicNav;
+    const isAuthenticated = authenticated ?? Boolean(user);
+    const items = nav ?? (isAuthenticated ? publicAuthenticatedNav : publicNav);
     return (
       <>
         {includeSkipLink && <SkipLink />}
@@ -266,7 +276,7 @@ export function Header({
           <nav aria-label="Primary" className="flex flex-wrap items-center gap-1">
             {items.map((i) => (
               <Link
-                key={i.href}
+                key={`${i.href}:${i.label}`}
                 href={i.href}
                 className="flex min-h-11 items-center rounded-md px-3 text-label-lg text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
               >

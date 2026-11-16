@@ -470,7 +470,9 @@ export class ProviderCleanupService {
             headers: {
               Authorization: `Bearer ${serviceKey}`,
               apikey: serviceKey,
+              'Content-Type': 'application/json',
             },
+            body: JSON.stringify({ should_soft_delete: false }),
             signal: combinedSignal,
           },
         );

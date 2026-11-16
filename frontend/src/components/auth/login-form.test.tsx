@@ -40,11 +40,13 @@ describe("LoginForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   it("renders Email/Phone tabs, default Email field, and Password field", () => {
@@ -206,7 +208,7 @@ describe("LoginForm", () => {
     const emailInput = screen.getByLabelText(/^email$/i) as HTMLInputElement;
     const passwordInput = screen.getByLabelText(/^password$/i) as HTMLInputElement;
     const rememberCheckbox = screen.getByRole("checkbox", {
-      name: /keep me signed in/i,
+      name: /^Keep Signed In$/,
     }) as HTMLInputElement;
     expect(rememberCheckbox.checked).toBe(false);
 
@@ -226,48 +228,59 @@ describe("LoginForm", () => {
     ).toBeInTheDocument();
   });
 
-  it("validates email, phone, and password in real time onChange without waiting for blur", () => {
+  it("does not validate while typing or blurring before submit, validates email/phone/password on submit, and clears field errors on change", () => {
     render(<LoginForm />);
 
     const emailInput = screen.getByLabelText(/^email$/i);
+    expect(emailInput).toHaveAttribute("placeholder", "Enter your email");
     const passwordInput = screen.getByLabelText(/^password$/i);
+    const form = emailInput.closest("form")!;
 
-    fireEvent.change(emailInput, { target: { value: "invalid@" } });
-    expect(
-      screen.getByText(/enter a valid email address/i),
-    ).toBeInTheDocument();
-
-    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    // Typing and blurring partial values before submit does not show errors
+    fireEvent.change(emailInput, { target: { value: "ss" } });
+    fireEvent.blur(emailInput);
     expect(
       screen.queryByText(/enter a valid email address/i),
     ).not.toBeInTheDocument();
 
-    fireEvent.change(passwordInput, { target: { value: "1234567" } });
+    // Submit runs full validation
+    fireEvent.submit(form);
     expect(
-      screen.queryByText(/password must be at least 8 characters/i),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/enter your password/i),
-    ).not.toBeInTheDocument();
-
-    fireEvent.change(passwordInput, { target: { value: "" } });
-    expect(
-      screen.getByText(/enter your password/i),
+      screen.getByText(/enter a valid email address/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/enter your password/i)).toBeInTheDocument();
+    expect(loginAction).not.toHaveBeenCalled();
+
+    // Editing errored fields clears each field's error immediately
+    fireEvent.change(emailInput, { target: { value: "u" } });
+    expect(
+      screen.queryByText(/enter a valid email address/i),
+    ).not.toBeInTheDocument();
 
     fireEvent.change(passwordInput, { target: { value: "1" } });
     expect(
       screen.queryByText(/enter your password/i),
     ).not.toBeInTheDocument();
 
+    // Same pattern on Phone tab
     fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
     const phoneInput = screen.getByLabelText(/^phone number$/i);
 
     fireEvent.change(phoneInput, { target: { value: "012" } });
-    expect(screen.getByText(/prefix must be 013/i)).toBeInTheDocument();
+    fireEvent.blur(phoneInput);
+    expect(
+      screen.queryByText(/enter a valid bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
 
-    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
-    expect(screen.queryByText(/prefix must be 013/i)).not.toBeInTheDocument();
+    fireEvent.submit(phoneInput.closest("form")!);
+    expect(
+      screen.getByText(/enter a valid bangladesh mobile number/i),
+    ).toBeInTheDocument();
+
+    fireEvent.change(phoneInput, { target: { value: "017" } });
+    expect(
+      screen.queryByText(/enter a valid bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
   });
 
   it("auto-dismisses AuthAlert on input focus or change and re-displays on subsequent error", async () => {
@@ -319,26 +332,30 @@ describe("LoginForm", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("includes rememberMe='on' in submitted FormData when Keep me signed in is checked", async () => {
+  it("includes rememberMe='on' in submitted FormData and stays checked while pending or after reset", async () => {
+    let resolveLogin!: (val: Record<string, unknown>) => void;
     let submittedFormData: FormData | null = null;
-    vi.mocked(loginAction).mockImplementationOnce(async (_prev, formData) => {
-      submittedFormData = formData;
-      return {};
-    });
+    vi.mocked(loginAction).mockImplementationOnce(
+      (_prev, formData) =>
+        new Promise((resolve) => {
+          submittedFormData = formData;
+          resolveLogin = resolve;
+        }),
+    );
 
     render(<LoginForm />);
 
     const emailInput = screen.getByLabelText(/^email$/i);
     const passwordInput = screen.getByLabelText(/^password$/i);
     const rememberCheckbox = screen.getByRole("checkbox", {
-      name: /keep me signed in/i,
+      name: /^Keep Signed In$/,
     }) as HTMLInputElement;
     const form = emailInput.closest("form")!;
 
     fireEvent.change(emailInput, { target: { value: "user@example.com" } });
     fireEvent.change(passwordInput, { target: { value: "validpass123" } });
     fireEvent.click(rememberCheckbox);
-    expect(rememberCheckbox.checked).toBe(true);
+    expect(rememberCheckbox).toBeChecked();
 
     await act(async () => {
       fireEvent.submit(form);
@@ -346,5 +363,470 @@ describe("LoginForm", () => {
 
     expect(submittedFormData).not.toBeNull();
     expect(submittedFormData!.get("rememberMe")).toBe("on");
+    expect(rememberCheckbox).toBeChecked();
+    expect(rememberCheckbox).not.toBeDisabled();
+
+    await act(async () => {
+      resolveLogin({});
+    });
+
+    expect(rememberCheckbox).toBeChecked();
+    expect(emailInput).toHaveValue("user@example.com");
+  });
+
+  it("preserves both typed and remembered email and phone values and Keep Signed In across tab switches", () => {
+    const { unmount } = render(
+      <LoginForm
+        initialRememberedLogin={{
+          channel: "email",
+          identifier: "saved@example.com",
+          rememberMe: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("saved@example.com");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i);
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("saved@example.com");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    expect(screen.getByLabelText(/^phone number$/i)).toHaveValue("01712345678");
+
+    unmount();
+
+    window.localStorage.clear();
+    render(<LoginForm />);
+    const freshEmail = screen.getByLabelText(/^email$/i);
+    fireEvent.change(freshEmail, { target: { value: "typed@example.com" } });
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("typed@example.com");
+  });
+
+  it("restores saved Phone channel, identifier, and Keep Signed In checked across remount without storing password", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({});
+
+    const { unmount } = render(<LoginForm />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
+    expect(phoneInput).toHaveAttribute("autoComplete", "username");
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const rememberCheckbox = screen.getByRole("checkbox", {
+      name: /^Keep Signed In$/,
+    }) as HTMLInputElement;
+
+    fireEvent.change(phoneInput, { target: { value: "01629795421" } });
+    fireEvent.change(passwordInput, { target: { value: "supersecret99" } });
+    fireEvent.click(rememberCheckbox);
+
+    await act(async () => {
+      fireEvent.submit(phoneInput.closest("form")!);
+    });
+
+    expect(window.localStorage.getItem("mentor_remembered_login")).not.toContain(
+      "supersecret99",
+    );
+
+    unmount();
+    render(<LoginForm />);
+
+    const restoredPhoneInput = screen.getByLabelText(
+      /^phone number$/i,
+    ) as HTMLInputElement;
+    const restoredRemember = screen.getByRole("checkbox", {
+      name: /^Keep Signed In$/,
+    }) as HTMLInputElement;
+    expect(restoredPhoneInput.value).toBe("01629795421");
+    expect(restoredRemember).toBeChecked();
+
+    fireEvent.click(restoredRemember);
+    expect(restoredRemember).not.toBeChecked();
+    expect(window.localStorage.getItem("mentor_remembered_login")).toBeNull();
+  });
+
+  it("clears remembered login state when clearSavedLogin is true", () => {
+    window.localStorage.setItem(
+      "mentor_remembered_login",
+      JSON.stringify({
+        channel: "phone",
+        identifier: "01629795421",
+        rememberMe: true,
+      }),
+    );
+
+    render(<LoginForm clearSavedLogin />);
+
+    expect(window.localStorage.getItem("mentor_remembered_login")).toBeNull();
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+  });
+
+  it("clears localStorage remembered hint, resets email/phone inputs, and unchecks Keep Signed In when landing on /login after account deletion (clearSavedLogin or initialRememberedLogin=null)", () => {
+    window.localStorage.setItem(
+      "mentor_remembered_login",
+      JSON.stringify({
+        channel: "phone",
+        identifier: "01629795421",
+        rememberMe: true,
+      }),
+    );
+    document.cookie = "mentor_login_hint=stale; path=/";
+
+    render(<LoginForm initialRememberedLogin={null} clearSavedLogin={false} />);
+
+    expect(window.localStorage.getItem("mentor_remembered_login")).toBeNull();
+    expect(document.cookie).not.toContain("mentor_login_hint=");
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    expect(screen.getByLabelText(/^phone number$/i)).toHaveValue("");
+  });
+
+  it("triggers empty-password validation only on submit, preserves state on blur/toggle, and clears error onChange", () => {
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const showPasswordBtn = screen.getByRole("button", { name: /show password/i });
+    const form = passwordInput.closest("form")!;
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "abc" } });
+    fireEvent.change(passwordInput, { target: { value: "" } });
+    expect(screen.queryByText(/enter your password\./i)).not.toBeInTheDocument();
+
+    fireEvent.blur(passwordInput);
+    expect(screen.queryByText(/enter your password\./i)).not.toBeInTheDocument();
+
+    fireEvent.submit(form);
+    expect(screen.getByText(/enter your password\./i)).toBeInTheDocument();
+    expect(passwordInput).toHaveAttribute("aria-invalid", "true");
+
+    // Moving focus to the visibility toggle or outside does not trigger or hide submit errors
+    fireEvent.blur(passwordInput, { relatedTarget: showPasswordBtn });
+    fireEvent.blur(showPasswordBtn);
+    expect(screen.getByText(/enter your password\./i)).toBeInTheDocument();
+
+    // Typing clears the password error immediately
+    fireEvent.change(passwordInput, { target: { value: "a" } });
+    expect(screen.queryByText(/enter your password\./i)).not.toBeInTheDocument();
+    expect(passwordInput).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("prefers newer client localStorage hint over initialRememberedLogin cookie and does not overwrite it", () => {
+    const storedHint = {
+      channel: "email",
+      identifier: "stored@example.com",
+      rememberMe: true,
+    };
+    window.localStorage.setItem(
+      "mentor_remembered_login",
+      JSON.stringify(storedHint),
+    );
+
+    render(
+      <LoginForm
+        initialRememberedLogin={{
+          channel: "email",
+          identifier: "cookie@example.com",
+          rememberMe: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("stored@example.com");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+    expect(
+      JSON.parse(window.localStorage.getItem("mentor_remembered_login") ?? "{}"),
+    ).toEqual(storedHint);
+  });
+
+  it("clears remembered state and expires hint cookie on storage-clear event without falling back to initialRememberedLogin", () => {
+    document.cookie = "mentor_login_hint=stale; path=/";
+    render(
+      <LoginForm
+        initialRememberedLogin={{
+          channel: "email",
+          identifier: "cookie@example.com",
+          rememberMe: true,
+        }}
+      />,
+    );
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("cookie@example.com");
+
+    act(() => {
+      window.localStorage.removeItem("mentor_remembered_login");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: null,
+        }),
+      );
+    });
+
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+    expect(document.cookie).not.toContain("mentor_login_hint=");
+  });
+
+  it("unchecks Keep Signed In override and expires cookie on external removal after failed submit while preserving typed email", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "Invalid credentials.",
+      status: 401,
+    });
+    document.cookie = "mentor_login_hint=stale; path=/";
+
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const checkbox = screen.getByRole("checkbox", { name: /^Keep Signed In$/ });
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "WrongPass1!" } });
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    await act(async () => {
+      fireEvent.submit(emailInput.closest("form")!);
+    });
+    expect(checkbox).toBeChecked();
+
+    act(() => {
+      window.localStorage.removeItem("mentor_remembered_login");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: null,
+        }),
+      );
+    });
+
+    expect(checkbox).not.toBeChecked();
+    expect(emailInput).toHaveValue("user@example.com");
+    expect(document.cookie).not.toContain("mentor_login_hint=");
+  });
+
+  it("keeps previously dismissed server fieldErrors.email dismissed when switching to Phone tab and back", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "Validation failed.",
+      fieldErrors: { email: "This email address cannot be used." },
+      status: 400,
+    });
+
+    render(<LoginForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const form = emailInput.closest("form")!;
+
+    fireEvent.change(emailInput, { target: { value: "user@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "validpass123" } });
+
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(
+      screen.getByText(/this email address cannot be used\./i),
+    ).toBeInTheDocument();
+
+    // Editing email dismisses server fieldErrors.email
+    fireEvent.change(emailInput, { target: { value: "other@example.com" } });
+    expect(
+      screen.queryByText(/this email address cannot be used\./i),
+    ).not.toBeInTheDocument();
+
+    // Switching to Phone tab must NOT re-expose the obsolete server email error
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    expect(
+      screen.queryByText(/this email address cannot be used\./i),
+    ).not.toBeInTheDocument();
+
+    // Switching back to Email tab keeps it dismissed as well
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(
+      screen.queryByText(/this email address cannot be used\./i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows channel-specific not-found messages for deleted/missing phone or email instead of overwriting 401 with generic credentials copy", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "No account found with this phone number.",
+      status: 401,
+      code: "AUTH_REQUIRED",
+    });
+
+    render(<LoginForm />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    fireEvent.change(phoneInput, { target: { value: "01629795421" } });
+    fireEvent.change(passwordInput, { target: { value: "ValidPass1!" } });
+
+    await act(async () => {
+      fireEvent.submit(phoneInput.closest("form")!);
+    });
+
+    expect(
+      screen.getByText("No account found with this phone number."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Invalid credentials. Please try again."),
+    ).not.toBeInTheDocument();
+
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "No account found with this email address.",
+      status: 404,
+      code: "ACCOUNT_DELETED",
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    const emailInput = screen.getByLabelText(/^email$/i);
+    fireEvent.change(emailInput, { target: { value: "deleted@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "ValidPass1!" } });
+
+    await act(async () => {
+      fireEvent.submit(emailInput.closest("form")!);
+    });
+
+    expect(
+      screen.getByText("No account found with this email address."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders floating auto-dismissing account deletion Toast instead of inline banner and cleans URL query params", () => {
+    vi.useFakeTimers();
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    window.history.replaceState({}, "", "/login?deleted=1");
+
+    render(
+      <LoginForm
+        toastMessage="Your account has been permanently deleted."
+        clearSavedLogin
+        initialRememberedLogin={null}
+      />,
+    );
+
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveAttribute("aria-live", "polite");
+    expect(toast).toHaveTextContent("Your account has been permanently deleted.");
+    expect(toast.closest(".fixed")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+    expect(replaceStateSpy).toHaveBeenCalledWith(
+      window.history.state,
+      "",
+      "/login",
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(
+      screen.getByText("Your account has been permanently deleted."),
+    ).toBeInTheDocument();
+
+    // Typing while Toast is visible must not reset the 4500ms auto-dismiss timer
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
+      target: { value: "typing@example.com" },
+    });
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(
+      screen.queryByText("Your account has been permanently deleted."),
+    ).not.toBeInTheDocument();
+
+    window.history.replaceState({}, "", "/");
+    replaceStateSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("renders deletion Toast from notice=account_deleted URL query param and allows closing manually", () => {
+    window.history.replaceState({}, "", "/login?notice=account_deleted");
+
+    render(<LoginForm clearSavedLogin initialRememberedLogin={null} />);
+
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveTextContent("Your account has been permanently deleted.");
+    expect(window.location.search).toBe("");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /dismiss notification/i }),
+    );
+    expect(
+      screen.queryByText("Your account has been permanently deleted."),
+    ).not.toBeInTheDocument();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("reads live localStorage snapshot instead of stale StorageEvent.newValue on external storage events", () => {
+    const validHint = JSON.stringify({
+      channel: "email",
+      identifier: "live@example.com",
+      rememberMe: true,
+    });
+    window.localStorage.setItem("mentor_remembered_login", validHint);
+    document.cookie = "mentor_login_hint=active; path=/";
+
+    render(<LoginForm />);
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("live@example.com");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+
+    // Stale StorageEvent claims newValue=null even though current localStorage holds validHint
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: null,
+        }),
+      );
+    });
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+    expect(document.cookie).toContain("mentor_login_hint=active");
+
+    // Genuine removal in localStorage clears even if StorageEvent carries stale non-null newValue
+    act(() => {
+      window.localStorage.removeItem("mentor_remembered_login");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: validHint,
+        }),
+      );
+    });
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+    expect(document.cookie).not.toContain("mentor_login_hint=");
   });
 });
