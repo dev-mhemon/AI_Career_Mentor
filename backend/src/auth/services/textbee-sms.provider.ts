@@ -5,6 +5,7 @@ import type { AuthAbuseControl } from '../abuse-control/abuse-control.service.js
 import { DatabaseService } from './database.service.js';
 import {
   ORPHAN_ABANDONMENT_WINDOW_MS,
+  hasOAuthProviderMetadata,
   purgeOrphanedAuthByContact,
 } from './orphaned-auth-cleanup.js';
 import { OtpSecretStore } from './otp-secret-store.service.js';
@@ -151,14 +152,59 @@ export class TextBeeSmsProvider {
               pu.verified_contact,
               p.verified_at AS provider_verified_at,
               (pu.id IS NOT NULL) AS has_app_user,
-              (u.deleted_at IS NOT NULL) AS is_deleted
+              (u.deleted_at IS NOT NULL) AS is_deleted,
+              (
+                lower(COALESCE(u.raw_app_meta_data->>'provider', '')) IN ('google', 'facebook')
+                OR EXISTS (
+                  SELECT 1
+                    FROM jsonb_array_elements_text(
+                      CASE
+                        WHEN jsonb_typeof(u.raw_app_meta_data->'providers') = 'array'
+                          THEN u.raw_app_meta_data->'providers'
+                        ELSE '[]'::jsonb
+                      END
+                    ) p_el
+                   WHERE lower(p_el) IN ('google', 'facebook')
+                )
+                OR EXISTS (
+                  SELECT 1
+                    FROM auth.identities oi
+                   WHERE oi.user_id = u.id
+                     AND lower(oi.provider) IN ('google', 'facebook')
+                )
+              ) AS is_oauth_user
          FROM auth.users u
          LEFT JOIN public.users pu ON pu.id = u.id
          LEFT JOIN public.user_auth_providers p
            ON p.user_id = u.id AND p.provider = 'phone'
         WHERE u.deleted_at IS NULL
           AND (u.phone IN ($1, ltrim($1, '+')) OR p.contact_value IN ($1, ltrim($1, '+')))
-          AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')
+          AND (
+            NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')
+            OR (
+              u.phone_confirmed_at IS NOT NULL
+              AND (
+                lower(COALESCE(u.raw_app_meta_data->>'provider', '')) IN ('google', 'facebook')
+                OR EXISTS (
+                  SELECT 1
+                    FROM jsonb_array_elements_text(
+                      CASE
+                        WHEN jsonb_typeof(u.raw_app_meta_data->'providers') = 'array'
+                          THEN u.raw_app_meta_data->'providers'
+                        ELSE '[]'::jsonb
+                      END
+                    ) p_el
+                   WHERE lower(p_el) IN ('google', 'facebook')
+                )
+                OR EXISTS (
+                  SELECT 1
+                    FROM auth.identities oi
+                   WHERE oi.user_id = u.id
+                     AND lower(oi.provider) IN ('google', 'facebook')
+                )
+              )
+            )
+          )
         ORDER BY
           COALESCE(p.contact_value IN ($1, ltrim($1, '+')), false) DESC,
           COALESCE(COALESCE(p.contact_value, u.phone) IN ($1, ltrim($1, '+')), false) DESC,
@@ -178,10 +224,13 @@ export class TextBeeSmsProvider {
           ? row.created_at.getTime()
           : Date.parse(String(row.created_at))
         : NaN;
+    const isConfirmed = Boolean(row.phone_confirmed_at);
+    const isOAuthUser = hasOAuthProviderMetadata(row);
     if (
       row.is_deleted === true ||
       (row.has_app_user === false &&
-        (Boolean(row.phone_confirmed_at) ||
+        (!isOAuthUser || !isConfirmed) &&
+        (isConfirmed ||
           (Number.isFinite(createdAtMs) &&
             Date.now() - createdAtMs >= ORPHAN_ABANDONMENT_WINDOW_MS)))
     ) {
@@ -193,7 +242,14 @@ export class TextBeeSmsProvider {
       id: row.id,
       subject: row.id,
       phone: canonicalPhone,
-      verified: Boolean(row.verified_contact || row.provider_verified_at),
+      verified:
+        row.has_app_user === true
+          ? Boolean(row.verified_contact || row.provider_verified_at)
+          : Boolean(
+              row.verified_contact ||
+              row.provider_verified_at ||
+              (isOAuthUser && isConfirmed),
+            ),
     };
   }
 

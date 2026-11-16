@@ -2,6 +2,7 @@ import { HttpException } from '@nestjs/common';
 import { AuthAbuseControl } from './abuse-control.service.js';
 import { readAbuseConfiguration } from './config.js';
 import {
+  sendScript,
   ipQuotaScript,
   captureContactKeysScript,
   clearCapturedKeysScript,
@@ -436,7 +437,7 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       );
       expect(delMock).toHaveBeenCalledTimes(1);
       const deletedKeys = delMock.mock.calls[0][0] as string[];
-      expect(deletedKeys).toHaveLength(16);
+      expect(deletedKeys).toHaveLength(20);
       expect(
         deletedKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
       ).toBe(true);
@@ -706,6 +707,88 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       expect(redisStore.has(challengeKey)).toBe(false);
       expect(redisStore.has(verifyEmailChallengeKey)).toBe(false);
       expect(redisStore.has(`auth:v1:otp:secret:${newUserId}`)).toBe(false);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('scopes reserveSend cooldown and contact quota keys by purpose and clears cooldown on verification', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+    });
+    const service = new AuthAbuseControl(config);
+
+    const activeCooldowns = new Set<string>();
+    const evaluateSpy = vi
+      .spyOn(service as any, 'evaluate')
+      .mockImplementation(async (_script: unknown, keys: unknown) => {
+        const keyList = keys as string[];
+        const cooldownKey = keyList[0];
+        if (activeCooldowns.has(cooldownKey)) {
+          return [1, 60000];
+        }
+        activeCooldowns.add(cooldownKey);
+        return [0, 60000];
+      });
+
+    const delMock = vi.fn(async (key: string) => {
+      activeCooldowns.delete(key);
+      return 1;
+    });
+    vi.spyOn(
+      service as unknown as { getConnectedClient: () => Promise<unknown> },
+      'getConnectedClient',
+    ).mockResolvedValue({
+      withCommandOptions: vi.fn().mockReturnValue({ del: delMock }),
+    });
+
+    try {
+      const contact = {
+        channel: 'email' as const,
+        identifier: 'mhemon.dev77@gmail.com',
+      };
+      // Sign-Up sets default registration cooldown
+      await service.reserveSend(contact, '127.0.0.1');
+      expect(evaluateSpy).toHaveBeenNthCalledWith(
+        1,
+        sendScript,
+        [
+          expect.stringMatching(/^auth:v1:send:cooldown:[0-9a-f]+$/),
+          expect.stringMatching(/^auth:v1:send:contact:[0-9a-f]+$/),
+          expect.stringMatching(/^auth:v1:send:ip:/),
+        ],
+        expect.any(Array),
+      );
+
+      // Forgot Password uses scoped reset_password keys and does NOT hit registration cooldown
+      await service.reserveSend(contact, '127.0.0.1', {
+        purpose: 'reset_password',
+      });
+      expect(evaluateSpy).toHaveBeenNthCalledWith(
+        2,
+        sendScript,
+        [
+          expect.stringMatching(
+            /^auth:v1:send:cooldown:reset_password:[0-9a-f]+$/,
+          ),
+          expect.stringMatching(
+            /^auth:v1:send:contact:reset_password:[0-9a-f]+$/,
+          ),
+          expect.stringMatching(/^auth:v1:send:ip:/),
+        ],
+        expect.any(Array),
+      );
+
+      // Completing email verification clears registration send cooldown
+      await service.clearSendCooldown(contact);
+      expect(delMock).toHaveBeenCalledWith(
+        expect.stringMatching(/^auth:v1:send:cooldown:[0-9a-f]+$/),
+      );
+      // Registration resend immediately succeeds once cleared
+      await expect(service.reserveSend(contact, '127.0.0.1')).resolves.toEqual({
+        retryAfterSeconds: 60,
+      });
     } finally {
       service.onModuleDestroy();
     }

@@ -143,6 +143,7 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
       expect(abuse.reserveSend).toHaveBeenCalledWith(
         { channel: 'email', identifier: TEST_EMAIL },
         '10.0.0.1',
+        { purpose: 'reset_password' },
       );
       expect(emailProvider.ready).toHaveBeenCalled();
       expect(emailProvider.sendPasswordResetChallenge).toHaveBeenCalledWith(
