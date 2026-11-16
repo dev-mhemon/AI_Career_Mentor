@@ -264,13 +264,26 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     fireEvent.click(dialog);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-    // Drag starting inside dialog and releasing on backdrop keeps dialog open
+    // Drag starting inside dialog and releasing on backdrop keeps dialog open (both detail=1 and jsdom detail=0)
     fireEvent.mouseDown(dialog);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop, { detail: 1 });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.mouseDown(dialog);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // Drag starting on backdrop and releasing inside dialog keeps dialog open
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseUp(dialog);
     fireEvent.click(backdrop, { detail: 1 });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
     // Direct click outside on backdrop closes dialog
     fireEvent.mouseDown(backdrop);
+    fireEvent.mouseUp(backdrop);
     fireEvent.click(backdrop, { detail: 1 });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 

@@ -35,7 +35,6 @@ import {
   getRememberedLoginSnapshot,
   loadRememberedLogin,
   parseRememberedLoginHint,
-  REMEMBERED_LOGIN_STORAGE_KEY,
   saveRememberedLogin,
   subscribeRememberedLogin,
   type RememberedLoginHint,
@@ -226,6 +225,7 @@ export function LoginForm({
 
   useEffect(() => {
     const syncClearState = () => {
+      // Read live localStorage directly via getRememberedLoginSnapshot rather than trusting stale StorageEvent.newValue
       const cleared = !parseRememberedLoginHint(getRememberedLoginSnapshot());
       setStorageCleared(cleared);
       if (cleared) {
@@ -233,23 +233,7 @@ export function LoginForm({
         clearRememberedLoginCookie();
       }
     };
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === null || e.key === REMEMBERED_LOGIN_STORAGE_KEY) {
-        const cleared =
-          e.newValue === null || !parseRememberedLoginHint(e.newValue);
-        setStorageCleared(cleared);
-        if (cleared) {
-          setKeepSignedInOverride(false);
-          clearRememberedLoginCookie();
-        }
-      }
-    };
-    const unsubscribe = subscribeRememberedLogin(syncClearState);
-    window.addEventListener("storage", handleStorage);
-    return () => {
-      unsubscribe();
-      window.removeEventListener("storage", handleStorage);
-    };
+    return subscribeRememberedLogin(syncClearState);
   }, []);
 
   useEffect(() => {

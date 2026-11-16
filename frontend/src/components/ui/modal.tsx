@@ -16,20 +16,34 @@ import { Input } from './input';
  * and ends on the backdrop itself (ignoring drags started inside the dialog).
  */
 export function useBackdropDismiss(onDismiss: () => void, disabled = false) {
-  const startedOnBackdropRef = useRef(false);
+  const mouseDownTargetRef = useRef<EventTarget | null>(null);
+  const mouseUpTargetRef = useRef<EventTarget | null>(null);
 
   return {
     onMouseDown: (e: MouseEvent<HTMLElement>) => {
-      startedOnBackdropRef.current = !disabled && e.target === e.currentTarget;
+      mouseDownTargetRef.current = e.target;
+      mouseUpTargetRef.current = null;
+    },
+    onMouseUp: (e: MouseEvent<HTMLElement>) => {
+      mouseUpTargetRef.current = e.target;
     },
     onClick: (e: MouseEvent<HTMLElement>) => {
+      const downTarget = mouseDownTargetRef.current;
+      const upTarget = mouseUpTargetRef.current;
+      mouseDownTargetRef.current = null;
+      mouseUpTargetRef.current = null;
+
       if (disabled || e.target !== e.currentTarget) {
-        startedOnBackdropRef.current = false;
         return;
       }
-      const allow = startedOnBackdropRef.current || e.detail === 0;
-      startedOnBackdropRef.current = false;
-      if (allow) {
+
+      const clickedBackdrop =
+        downTarget === e.currentTarget &&
+        (upTarget === null || upTarget === e.currentTarget);
+      const keyboardActivation =
+        downTarget === null && upTarget === null && e.detail === 0;
+
+      if (clickedBackdrop || keyboardActivation) {
         onDismiss();
       }
     },

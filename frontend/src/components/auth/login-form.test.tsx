@@ -784,4 +784,49 @@ describe("LoginForm", () => {
     ).not.toBeInTheDocument();
     window.history.replaceState({}, "", "/");
   });
+
+  it("reads live localStorage snapshot instead of stale StorageEvent.newValue on external storage events", () => {
+    const validHint = JSON.stringify({
+      channel: "email",
+      identifier: "live@example.com",
+      rememberMe: true,
+    });
+    window.localStorage.setItem("mentor_remembered_login", validHint);
+    document.cookie = "mentor_login_hint=active; path=/";
+
+    render(<LoginForm />);
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("live@example.com");
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+
+    // Stale StorageEvent claims newValue=null even though current localStorage holds validHint
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: null,
+        }),
+      );
+    });
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).toBeChecked();
+    expect(document.cookie).toContain("mentor_login_hint=active");
+
+    // Genuine removal in localStorage clears even if StorageEvent carries stale non-null newValue
+    act(() => {
+      window.localStorage.removeItem("mentor_remembered_login");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mentor_remembered_login",
+          newValue: validHint,
+        }),
+      );
+    });
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+    expect(document.cookie).not.toContain("mentor_login_hint=");
+  });
 });
