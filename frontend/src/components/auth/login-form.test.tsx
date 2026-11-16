@@ -5,6 +5,10 @@ import {
   saveVerificationDraft,
   loadVerificationDraft,
 } from "@/lib/auth/verification-draft";
+import {
+  clearOAuthLoginHint,
+  OAUTH_HINT_CLEARED_STORAGE_KEY,
+} from "@/lib/auth/remember-login";
 import { loginAction } from "@/lib/auth/actions";
 
 // Mock next/navigation
@@ -21,8 +25,19 @@ vi.mock("@/lib/auth/actions", () => ({
 }));
 
 // Mock the OAuthButtons component to isolate LoginForm testing
+const mockOAuthButtons = vi.fn();
 vi.mock("@/components/auth/oauth-buttons", () => ({
-  OAuthButtons: () => <div data-testid="oauth-buttons">OAuth Buttons</div>,
+  OAuthButtons: ({ oauthHint }: { oauthHint?: unknown }) => {
+    mockOAuthButtons({ oauthHint });
+    return (
+      <div
+        data-testid="oauth-buttons"
+        data-oauth-hint={oauthHint ? JSON.stringify(oauthHint) : ""}
+      >
+        OAuth Buttons
+      </div>
+    );
+  },
 }));
 
 const mockClearVerificationDraft = vi.fn();
@@ -224,7 +239,9 @@ describe("LoginForm", () => {
     expect(emailInput.value).toBe("user@example.com");
     expect(passwordInput.value).toBe("");
     expect(
-      screen.getByText(/invalid credentials\. please try again\./i),
+      screen.getByText(
+        "Please verify your credentials. The password entered is incorrect.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -323,12 +340,16 @@ describe("LoginForm", () => {
       fireEvent.submit(form);
     });
     expect(
-      screen.getByText(/invalid credentials\. please try again\./i),
+      screen.getByText(
+        "Please verify your credentials. The password entered is incorrect.",
+      ),
     ).toBeInTheDocument();
 
     fireEvent.change(passwordInput, { target: { value: "1234" } });
     expect(
-      screen.queryByText(/invalid credentials/i),
+      screen.queryByText(
+        "Please verify your credentials. The password entered is incorrect.",
+      ),
     ).not.toBeInTheDocument();
   });
 
@@ -694,7 +715,9 @@ describe("LoginForm", () => {
       screen.getByText("No account found with this phone number."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Invalid credentials. Please try again."),
+      screen.queryByText(
+        "Please verify your credentials. The password entered is incorrect.",
+      ),
     ).not.toBeInTheDocument();
 
     vi.mocked(loginAction).mockResolvedValueOnce({
@@ -828,5 +851,84 @@ describe("LoginForm", () => {
       screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
     ).not.toBeChecked();
     expect(document.cookie).not.toContain("mentor_login_hint=");
+  });
+
+  it("forwards returning OAuth login hint to OAuthButtons and clears it on account deletion", () => {
+    const oauthHint = {
+      provider: "google" as const,
+      displayName: "Mehedi",
+      email: "mehediemon7@gmail.com",
+      avatarUrl: "https://lh3.googleusercontent.com/avatar.png",
+    };
+
+    const { unmount } = render(<LoginForm initialOAuthHint={oauthHint} />);
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      JSON.stringify(oauthHint),
+    );
+    expect(window.localStorage.getItem("mentor_oauth_hint")).toBe(
+      JSON.stringify(oauthHint),
+    );
+    unmount();
+
+    // Clears localStorage and cookie on account deletion (/login?deleted=1 or clearSavedLogin)
+    document.cookie = "mentor_oauth_hint=stale; path=/";
+    render(
+      <LoginForm
+        clearSavedLogin
+        initialRememberedLogin={null}
+        initialOAuthHint={null}
+      />,
+    );
+    expect(window.localStorage.getItem("mentor_oauth_hint")).toBeNull();
+    expect(document.cookie).not.toContain("mentor_oauth_hint=");
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      "",
+    );
+  });
+
+  it("does not restore or seed stale initialOAuthHint when clearOAuthLoginHint ran in another tab", () => {
+    const staleOAuthHint = {
+      provider: "google" as const,
+      displayName: "Mehedi",
+      email: "mehediemon7@gmail.com",
+      avatarUrl: "https://lh3.googleusercontent.com/avatar.png",
+    };
+
+    // Simulate another tab clearing the OAuth hint between SSR cookie read and client hydration
+    clearOAuthLoginHint();
+    expect(window.localStorage.getItem(OAUTH_HINT_CLEARED_STORAGE_KEY)).toBe("1");
+
+    const { unmount } = render(<LoginForm initialOAuthHint={staleOAuthHint} />);
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      "",
+    );
+    expect(window.localStorage.getItem("mentor_oauth_hint")).toBeNull();
+    unmount();
+
+    // Also verifies live cross-tab StorageEvent clearing on mounted LoginForm
+    window.localStorage.clear();
+    render(<LoginForm initialOAuthHint={staleOAuthHint} />);
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      JSON.stringify(staleOAuthHint),
+    );
+
+    act(() => {
+      clearOAuthLoginHint();
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: OAUTH_HINT_CLEARED_STORAGE_KEY,
+          newValue: "1",
+        }),
+      );
+    });
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      "",
+    );
+    expect(window.localStorage.getItem("mentor_oauth_hint")).toBeNull();
   });
 });

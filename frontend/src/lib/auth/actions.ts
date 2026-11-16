@@ -37,6 +37,7 @@ import {
 import type { VerificationDraftContext } from '@/lib/auth/verification-draft';
 import {
   LOGIN_HINT_COOKIE,
+  OAUTH_HINT_COOKIE,
   serializeRememberedLoginHint,
   type LoginChannel,
 } from '@/lib/auth/remember-login';
@@ -143,6 +144,9 @@ function resolveUserNotFoundMessage(
   return 'No account found with this email address.';
 }
 
+const INVALID_CREDENTIALS_MESSAGE =
+  'Please verify your credentials. The password entered is incorrect.';
+
 // Product decision: explicit 404 account-not-found feedback is intentional and bounded by backend IP rate limits.
 function mapAuthApiError(
   err: ApiError,
@@ -159,8 +163,12 @@ function mapAuthApiError(
     (err.code === 'AUTH_INVALID_CREDENTIALS' ||
       err.code === 'INVALID_CREDENTIALS')
   ) {
+    const message =
+      !err.message || /^invalid credentials/i.test(err.message.trim())
+        ? INVALID_CREDENTIALS_MESSAGE
+        : err.message;
     return {
-      error: err.message || 'Invalid credentials. Please try again.',
+      error: message,
       ...apiMeta(err),
     };
   }
@@ -179,22 +187,39 @@ function clearRememberMeCookies(cookieStore: {
   }
 }
 
-function clearLoginHintCookie(cookieStore: {
-  set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
-  delete: (name: string) => unknown;
-}): void {
+function clearCookieByName(
+  cookieStore: {
+    set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
+    delete: (name: string) => unknown;
+  },
+  name: string,
+): void {
   try {
-    cookieStore.set?.(LOGIN_HINT_COOKIE, '', {
+    cookieStore.set?.(name, '', {
       httpOnly: false,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: 0,
     });
-    cookieStore.delete(LOGIN_HINT_COOKIE);
+    cookieStore.delete(name);
   } catch {
     // Ignore cookie cleanup errors outside request context
   }
+}
+
+function clearLoginHintCookie(cookieStore: {
+  set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
+  delete: (name: string) => unknown;
+}): void {
+  clearCookieByName(cookieStore, LOGIN_HINT_COOKIE);
+}
+
+function clearOAuthLoginHintCookie(cookieStore: {
+  set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
+  delete: (name: string) => unknown;
+}): void {
+  clearCookieByName(cookieStore, OAUTH_HINT_COOKIE);
 }
 
 function persistRememberPreferenceCookies(
@@ -856,6 +881,17 @@ export async function registerAction(
       const raw = regResult as Record<string, unknown>;
       const errObj = toErrorRecord(raw.error);
       if (errObj) {
+        if (errObj.code === 'CONTACT_ALREADY_REGISTERED') {
+          const duplicateMessage =
+            type === 'phone'
+              ? 'This phone number is already registered.'
+              : 'This email is already registered.';
+          return {
+            status: 409,
+            code: 'CONTACT_ALREADY_REGISTERED',
+            fieldErrors: { [type]: duplicateMessage },
+          };
+        }
         return {
           error:
             (typeof errObj.message === 'string' && errObj.message) ||
@@ -873,6 +909,22 @@ export async function registerAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (err.statusCode === 409 && err.code === 'CONTACT_ALREADY_REGISTERED') {
+        const duplicateMessage =
+          type === 'phone'
+            ? 'This phone number is already registered.'
+            : 'This email is already registered.';
+        const meta = apiMeta(err);
+        return {
+          ...meta,
+          status: 409,
+          code: 'CONTACT_ALREADY_REGISTERED',
+          fieldErrors: {
+            ...(meta.fieldErrors ?? {}),
+            [type]: duplicateMessage,
+          },
+        };
+      }
       if (err.statusCode === 429) {
         return {
           error:
@@ -1557,6 +1609,7 @@ export async function requestAccountDeletionAction(
         const cookieStore = await cookies();
         clearRememberMeCookies(cookieStore);
         clearLoginHintCookie(cookieStore);
+        clearOAuthLoginHintCookie(cookieStore);
         cookieStore.set('account_deleted', 'true', {
           path: '/',
           maxAge: 15,
@@ -1570,6 +1623,7 @@ export async function requestAccountDeletionAction(
       try {
         const cookieStore = await cookies();
         clearLoginHintCookie(cookieStore);
+        clearOAuthLoginHintCookie(cookieStore);
       } catch {
         // Best effort login hint cleanup
       }
@@ -1640,6 +1694,7 @@ export async function pollAccountDeletionStatusAction(
         const cookieStore = await cookies();
         clearRememberMeCookies(cookieStore);
         clearLoginHintCookie(cookieStore);
+        clearOAuthLoginHintCookie(cookieStore);
         cookieStore.set('account_deleted', 'true', {
           path: '/',
           maxAge: 15,

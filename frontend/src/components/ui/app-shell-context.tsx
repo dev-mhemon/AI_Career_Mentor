@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { ShellUserInfo } from '@/lib/auth/user-display';
+import { syncOAuthLoginHintFromDocumentCookie } from '@/lib/auth/remember-login';
 
 export interface AppShellStateValue {
   variant: 'authenticated' | 'admin';
@@ -47,6 +48,10 @@ export function AppShellProvider({
     isSuspended: initialIsSuspended,
     disabled: false,
   });
+
+  useEffect(() => {
+    syncOAuthLoginHintFromDocumentCookie();
+  }, []);
 
   const syncState = useCallback((next: Partial<AppShellStateValue>) => {
     setState((prev) => {

@@ -116,9 +116,6 @@ export default async function SettingsPage({
                 <Link href="/settings" className={primaryLinkClass}>
                   Try Again
                 </Link>
-                <Link href="/" className={secondaryLinkClass}>
-                  Back to Home
-                </Link>
                 <form action={logoutAction}>
                   <Button type="submit" variant="secondary" size="md">
                     Sign Out

@@ -22,9 +22,6 @@ import {
 const primaryLinkClass =
   'inline-flex h-10 min-h-11 items-center justify-center gap-2 rounded-lg bg-action-primary-background px-5 text-label-lg font-medium text-action-primary-foreground shadow-xs transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active';
 
-const secondaryLinkClass =
-  'inline-flex h-10 min-h-11 items-center justify-center rounded-lg border border-action-secondary-border bg-action-secondary-background px-5 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active';
-
 function StatusBadge({
   ready,
   readyLabel,
@@ -76,9 +73,6 @@ export default async function DashboardPage() {
                 <Link href="/dashboard" className={primaryLinkClass}>
                   Try Again
                 </Link>
-                <Link href="/" className={secondaryLinkClass}>
-                  Back to Home
-                </Link>
                 <form action={logoutAction}>
                   <Button type="submit" variant="secondary" size="md">
                     Sign Out
@@ -117,9 +111,6 @@ export default async function DashboardPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <Link href="/settings" className={primaryLinkClass}>
                   Account Settings
-                </Link>
-                <Link href="/" className={secondaryLinkClass}>
-                  Back to Home
                 </Link>
                 <form action={logoutAction}>
                   <Button type="submit" variant="secondary" size="md">

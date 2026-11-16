@@ -228,7 +228,16 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
         rememberMe: true,
       }),
     );
+    window.localStorage.setItem(
+      'mentor_oauth_hint',
+      JSON.stringify({
+        provider: 'google',
+        displayName: 'Mehedi',
+        email: 'mehedi@example.com',
+      }),
+    );
     document.cookie = 'mentor_login_hint=stale; path=/';
+    document.cookie = 'mentor_oauth_hint=stale; path=/';
 
     vi.mocked(requestAccountDeletionAction).mockResolvedValueOnce({
       success: true,
@@ -248,7 +257,9 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     });
 
     expect(window.localStorage.getItem('mentor_remembered_login')).toBeNull();
+    expect(window.localStorage.getItem('mentor_oauth_hint')).toBeNull();
     expect(document.cookie).not.toContain('mentor_login_hint=');
+    expect(document.cookie).not.toContain('mentor_oauth_hint=');
     expect(mockRouter.push).toHaveBeenCalledWith('/login?deleted=true');
   });
 
@@ -307,5 +318,62 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
     fireEvent.mouseDown(busyBackdrop);
     fireEvent.click(busyBackdrop, { detail: 1 });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('still submits account deletion and redirects when browser storage and cookies throw SecurityError', async () => {
+    const removeSpy = vi
+      .spyOn(Storage.prototype, 'removeItem')
+      .mockImplementation(() => {
+        throw new Error('SecurityError');
+      });
+    const setSpy = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new Error('SecurityError');
+      });
+    const clearSpy = vi
+      .spyOn(Storage.prototype, 'clear')
+      .mockImplementation(() => {
+        throw new Error('SecurityError');
+      });
+    const cookieDescriptor = Object.getOwnPropertyDescriptor(
+      Document.prototype,
+      'cookie',
+    );
+    Object.defineProperty(document, 'cookie', {
+      configurable: true,
+      get: () => '',
+      set: () => {
+        throw new Error('SecurityError');
+      },
+    });
+
+    vi.mocked(requestAccountDeletionAction).mockResolvedValueOnce({
+      success: true,
+      status: 'completed',
+      deletionReceipt: 'receipt-restricted-storage',
+    });
+
+    try {
+      render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
+      fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+      fireEvent.change(screen.getByLabelText(/account password/i), {
+        target: { value: 'ValidPass123!' },
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
+      });
+
+      expect(requestAccountDeletionAction).toHaveBeenCalledTimes(1);
+      expect(mockRouter.push).toHaveBeenCalledWith('/login?deleted=true');
+    } finally {
+      removeSpy.mockRestore();
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
+      if (cookieDescriptor) {
+        Object.defineProperty(document, 'cookie', cookieDescriptor);
+      }
+    }
   });
 });

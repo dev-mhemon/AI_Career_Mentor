@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
@@ -33,12 +33,11 @@ type Channel = "email" | "phone";
  * Saves sanitized R18 verification draft in sessionStorage before navigation.
  */
 export function RegisterForm() {
-  const [state, formAction, isPending] = useActionState<
-    AuthActionResult,
-    FormData
-  >(registerAction, {});
-
+  const formRef = useRef<HTMLFormElement>(null);
   const [activeTab, setActiveTab] = useState<Channel>("email");
+  const [submittedChannel, setSubmittedChannel] = useState<Channel | null>(
+    null,
+  );
   const [emailValue, setEmailValue] = useState("");
   const [phoneValue, setPhoneValue] = useState("");
   const identifier = activeTab === "email" ? emailValue : phoneValue;
@@ -52,16 +51,76 @@ export function RegisterForm() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [acceptedPrivacyPolicy, setAcceptedPrivacyPolicy] = useState(false);
+  const [emailError, setEmailError] = useState<string | undefined>();
+  const [phoneError, setPhoneError] = useState<string | undefined>();
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [dismissedServer, setDismissedServer] = useState<{
     ref: AuthActionResult;
     fields: Set<string>;
   } | null>(null);
 
+  const [state, formAction, isPending] = useActionState<
+    AuthActionResult,
+    FormData
+  >(async (prevState, formData) => {
+    const channel: Channel =
+      formData.get("type") === "phone" ? "phone" : "email";
+    const result = await registerAction(prevState, formData);
+    const emailFromResult =
+      result?.fieldErrors?.email ??
+      (channel === "email"
+        ? (result?.fieldErrors?.identifier ??
+          (result?.code === "CONTACT_ALREADY_REGISTERED"
+            ? "This email is already registered."
+            : undefined))
+        : undefined);
+    const phoneFromResult =
+      result?.fieldErrors?.phone ??
+      (channel === "phone"
+        ? (result?.fieldErrors?.identifier ??
+          (result?.code === "CONTACT_ALREADY_REGISTERED"
+            ? "This phone number is already registered."
+            : undefined))
+        : undefined);
+
+    if (channel === "email") {
+      setEmailError(emailFromResult);
+      if (phoneFromResult !== undefined) {
+        setPhoneError(phoneFromResult);
+      }
+    } else {
+      setPhoneError(phoneFromResult);
+      if (emailFromResult !== undefined) {
+        setEmailError(emailFromResult);
+      }
+    }
+    return result;
+  }, {});
+
   useEffect(() => {
     if (state?.error || state?.fieldErrors) {
       clearVerificationDraft();
     }
+    const form = formRef.current;
+    if (!form) return;
+    const hasContactFieldError = Boolean(
+      state?.fieldErrors?.identifier ||
+        state?.fieldErrors?.email ||
+        state?.fieldErrors?.phone ||
+        state?.code === "CONTACT_ALREADY_REGISTERED",
+    );
+    const hasAnyServerFieldError =
+      hasContactFieldError ||
+      Boolean(state?.fieldErrors && Object.keys(state.fieldErrors).length > 0);
+    if (!hasAnyServerFieldError) return;
+    const target = hasContactFieldError
+      ? form.querySelector<HTMLElement>("#identifier")
+      : form.querySelector<HTMLElement>(
+          'input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"], [data-invalid="true"]',
+        );
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    target.focus();
   }, [state]);
 
   const setFieldError = (field: string, error?: string) =>
@@ -90,7 +149,16 @@ export function RegisterForm() {
       ? undefined
       : state?.fieldErrors?.[field];
 
-  const identifierError = clientErrors.identifier ?? serverFieldError("identifier");
+  const handleContactChange = (channel: Channel, value: string) => {
+    setIdentifier(value);
+    if (channel === "email") {
+      setEmailError(undefined);
+    } else {
+      setPhoneError(undefined);
+    }
+  };
+
+  const identifierError = activeTab === "phone" ? phoneError : emailError;
   const passwordError = clientErrors.password ?? serverFieldError("password");
   const confirmError =
     clientErrors.confirmPassword ?? serverFieldError("confirmPassword");
@@ -100,6 +168,16 @@ export function RegisterForm() {
     onFormActivity,
   } = useDismissedActionState(state);
   const conflict = visibleAlertState?.status === 409;
+  const isDuplicateContactConflict =
+    state?.code === "CONTACT_ALREADY_REGISTERED";
+  const stateMatchesActiveChannel =
+    (submittedChannel ?? activeTab) === activeTab;
+  const suppressBottomAlert =
+    isDuplicateContactConflict ||
+    Boolean(
+      stateMatchesActiveChannel &&
+        (state?.fieldErrors?.identifier || state?.fieldErrors?.[activeTab]),
+    );
 
   return (
     <div className="flex flex-col gap-6">
@@ -112,7 +190,6 @@ export function RegisterForm() {
         value={activeTab}
         onValueChange={(id) => {
           setActiveTab(id as Channel);
-          setClientErrors({});
           dismissAlert();
         }}
         items={[
@@ -127,6 +204,7 @@ export function RegisterForm() {
         aria-label={activeTab === "email" ? "Register with Email" : "Register with Phone"}
       >
         <form
+          ref={formRef}
           action={formAction}
           noValidate
           onFocusCapture={onFormActivity}
@@ -138,9 +216,6 @@ export function RegisterForm() {
 
             const id =
               activeTab === "email" ? validateEmail(identifier) : validateBdPhone(identifier);
-            if (!id.ok) {
-              errors.identifier = id.error;
-            }
             const pw = validatePassword(password);
             if (!pw.ok) errors.password = pw.error;
             const match = validatePasswordMatch(password, confirm);
@@ -149,13 +224,28 @@ export function RegisterForm() {
               errors.consent = "You must agree to the privacy policy to continue.";
             }
 
-            if (Object.keys(errors).length) {
+            if (!id.ok || Object.keys(errors).length) {
               e.preventDefault();
+              if (activeTab === "email") {
+                setEmailError(id.ok ? undefined : id.error);
+              } else {
+                setPhoneError(id.ok ? undefined : id.error);
+              }
               setClientErrors(errors);
-              focusFirstInvalidControl(form);
+              if (!id.ok) {
+                form.querySelector<HTMLElement>("#identifier")?.focus();
+              } else {
+                focusFirstInvalidControl(form);
+              }
               return;
             }
+            if (activeTab === "email") {
+              setEmailError(undefined);
+            } else {
+              setPhoneError(undefined);
+            }
             setClientErrors({});
+            setSubmittedChannel(activeTab);
             if (id.ok) {
               if (activeTab === "email") {
                 const emailEl = form.elements.namedItem("identifier") as HTMLInputElement | null;
@@ -183,11 +273,7 @@ export function RegisterForm() {
               readOnly={isPending}
               value={identifier}
               error={identifierError}
-              onChange={(e) => {
-                setIdentifier(e.target.value);
-                dismissServerField("identifier");
-                setFieldError("identifier", undefined);
-              }}
+              onChange={(e) => handleContactChange("email", e.target.value)}
               placeholder="Enter your email"
             />
           ) : (
@@ -201,11 +287,7 @@ export function RegisterForm() {
               readOnly={isPending}
               value={identifier}
               error={identifierError}
-              onChange={(e) => {
-                setIdentifier(e.target.value);
-                dismissServerField("identifier");
-                setFieldError("identifier", undefined);
-              }}
+              onChange={(e) => handleContactChange("phone", e.target.value)}
               hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
               placeholder="01XXXXXXXXX"
             />
@@ -273,8 +355,12 @@ export function RegisterForm() {
           />
 
           <AuthAlert
-            result={visibleAlertState}
-            action={conflict ? { label: "Sign in instead", href: "/login" } : undefined}
+            result={suppressBottomAlert ? null : visibleAlertState}
+            action={
+              conflict && !suppressBottomAlert
+                ? { label: "Sign in instead", href: "/login" }
+                : undefined
+            }
           />
 
           <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Creating account…">

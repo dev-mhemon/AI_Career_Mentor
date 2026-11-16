@@ -218,6 +218,100 @@ describe('Auth Callback Route Handler (GET /auth/callback)', () => {
       expect(response.headers.get('location')).toBe('http://localhost:3001/dashboard');
     });
 
+    it('sets mentor_oauth_hint cookie for returning Google and Facebook sign-ins', async () => {
+      mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'google-access-token',
+            user: {
+              id: 'user-google-hint',
+              email: 'Mehedi@Example.com',
+              user_metadata: {
+                full_name: 'Mehedi Hasan',
+                avatar_url: 'https://lh3.googleusercontent.com/avatar.png',
+              },
+              identities: [{ provider: 'google', id: 'google-sub-hint' }],
+            },
+          },
+        },
+      });
+      vi.mocked(approveOAuthSession).mockResolvedValueOnce({
+        user: {
+          id: 'user-google-hint',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          linked_providers: ['google'],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        verified_contact_required: false,
+        next_step: 'app_home',
+      });
+
+      const googleResp = await GET(
+        new Request(
+          'http://localhost:3001/auth/callback?code=valid-code&provider=google',
+        ),
+      );
+      const googleCookie = googleResp.cookies.get('mentor_oauth_hint')?.value;
+      expect(googleCookie).toBeDefined();
+      expect(JSON.parse(googleCookie!)).toEqual({
+        provider: 'google',
+        displayName: 'Mehedi Hasan',
+        email: 'mehedi@example.com',
+        avatarUrl: 'https://lh3.googleusercontent.com/avatar.png',
+      });
+
+      mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+      mockGetSession.mockResolvedValueOnce({
+        data: {
+          session: {
+            access_token: 'fb-access-token',
+            user: {
+              id: 'user-fb-hint',
+              email: 'fb@example.com',
+              user_metadata: {
+                name: 'FB User',
+                picture: 'https://graph.facebook.com/me/pic.jpg',
+              },
+              identities: [{ provider: 'facebook', id: 'fb-sub-hint' }],
+            },
+          },
+        },
+      });
+      vi.mocked(approveOAuthSession).mockResolvedValueOnce({
+        user: {
+          id: 'user-fb-hint',
+          email: 'fb@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          linked_providers: ['facebook'],
+          verified_contact: true,
+        },
+        profile_complete: true,
+        verified_contact_required: false,
+        next_step: 'app_home',
+      });
+
+      const fbResp = await GET(
+        new Request(
+          'http://localhost:3001/auth/callback?code=valid-code&provider=facebook',
+        ),
+      );
+      const fbCookie = fbResp.cookies.get('mentor_oauth_hint')?.value;
+      expect(fbCookie).toBeDefined();
+      expect(JSON.parse(fbCookie!)).toEqual({
+        provider: 'facebook',
+        displayName: 'FB User',
+        email: 'fb@example.com',
+        avatarUrl: 'https://graph.facebook.com/me/pic.jpg',
+      });
+    });
+
     it('approves Facebook OAuth session and routes to /settings?prompt=verify_contact when contact is unverified', async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({

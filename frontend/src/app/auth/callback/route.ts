@@ -6,6 +6,12 @@ import {
   ApiError,
   NetworkError,
 } from "@/lib/api/client";
+import {
+  OAUTH_HINT_COOKIE,
+  OAUTH_HINT_MAX_AGE,
+  extractOAuthLoginHintFromUser,
+  serializeOAuthLoginHint,
+} from "@/lib/auth/remember-login";
 
 /**
  * Safely signs out the local Supabase session, suppressing any errors.
@@ -147,7 +153,26 @@ export async function GET(request: Request) {
               ? "/onboarding/profile"
               : "/dashboard";
 
-      return NextResponse.redirect(`${origin}${destination}`);
+      const response = NextResponse.redirect(`${origin}${destination}`);
+      response.cookies.delete("account_deleted");
+      const oauthHint = extractOAuthLoginHintFromUser(
+        provider,
+        session.user,
+        approved.user.email,
+      );
+      const serializedOAuthHint = oauthHint
+        ? serializeOAuthLoginHint(oauthHint)
+        : null;
+      if (serializedOAuthHint) {
+        response.cookies.set(OAUTH_HINT_COOKIE, serializedOAuthHint, {
+          httpOnly: false,
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+          path: "/",
+          maxAge: OAUTH_HINT_MAX_AGE,
+        });
+      }
+      return response;
     }
 
     // Branch B: Transitional email confirmation callback (flow=email or no provider query param)

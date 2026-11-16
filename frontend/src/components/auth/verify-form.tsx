@@ -426,9 +426,18 @@ function VerifyFormContent() {
           >
             {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : 'Resend code'}
           </Button>
-          <span className="sr-only" aria-live="polite">
-            {isCooldownHydrated && cooldown === 0 ? 'You can now resend the verification code.' : ''}
-          </span>
+          <div
+            role="region"
+            aria-live="polite"
+            aria-label="Resend code cooldown status"
+            className="sr-only"
+          >
+            {isCooldownHydrated && cooldown > 0
+              ? 'Verification code cooldown started. You must wait until the timer finishes before resending a code.'
+              : isCooldownHydrated && cooldown === 0
+                ? 'You can now resend the verification code.'
+                : ''}
+          </div>
         </div>
 
         <AuthAlert result={resendError} />

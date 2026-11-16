@@ -26,7 +26,13 @@ function fieldErrorsOf(err: ApiError): Record<string, string> {
   return out;
 }
 
-export function mapApiError(error: unknown): MappedError {
+export const INVALID_CREDENTIALS_MESSAGE =
+  'Please verify your credentials. The password entered is incorrect.';
+
+export function mapApiError(
+  error: unknown,
+  options?: { channel?: 'email' | 'phone' },
+): MappedError {
   const base: MappedError = {
     message: 'Something went wrong. Please try again.',
     tone: 'error',
@@ -88,11 +94,13 @@ export function mapApiError(error: unknown): MappedError {
       error.code === 'AUTH_INVALID_CREDENTIALS' ||
       error.code === 'INVALID_CREDENTIALS'
     ) {
+      const message =
+        !error.message || /^invalid credentials/i.test(error.message.trim())
+          ? INVALID_CREDENTIALS_MESSAGE
+          : error.message;
       return {
         ...m,
-        message:
-          error.message ||
-          'Invalid credentials. Please try again.',
+        message,
         requiresSignIn: false,
         retryable: false,
       };
@@ -121,9 +129,30 @@ export function mapApiError(error: unknown): MappedError {
     };
   }
   if (s === 409) {
+    let message =
+      error.message || 'This conflicts with existing data. Review and try again.';
+    if (error.code === 'CONTACT_ALREADY_REGISTERED') {
+      const inferredChannel =
+        options?.channel ??
+        (error.details?.some((d) => d.field === 'phone')
+          ? 'phone'
+          : error.details?.some((d) => d.field === 'email')
+            ? 'email'
+            : undefined);
+      if (inferredChannel === 'phone') {
+        message = 'This phone number is already registered.';
+      } else if (inferredChannel === 'email') {
+        message = 'This email is already registered.';
+      } else if (
+        !error.message ||
+        /^contact already registered\.?$/i.test(error.message.trim())
+      ) {
+        message = 'This contact is already registered.';
+      }
+    }
     return {
       ...m,
-      message: error.message || 'This conflicts with existing data. Review and try again.',
+      message,
       tone: 'warning',
       retryable: false,
     };

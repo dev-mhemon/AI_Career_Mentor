@@ -6,8 +6,10 @@ import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions"
 import {
   AuthAlert,
   focusFirstInvalidControl,
+  isCooldownWaitResult,
   useDismissedActionState,
 } from "@/components/auth/auth-alert";
+import { formatCountdown } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
@@ -16,11 +18,11 @@ import {
   loadVerificationDraft,
   clearVerificationDraft,
   setPersistedCooldown,
-  clearPersistedCooldown,
   MAX_COOLDOWN_DURATION_SECONDS,
   type VerificationChannel,
   type VerificationDraft,
 } from "@/lib/auth/verification-draft";
+import { useResendCooldown } from "@/lib/auth/use-resend-cooldown";
 import {
   validateBdPhone,
   validateEmail,
@@ -45,6 +47,29 @@ export function ForgotPasswordForm() {
     dismiss: dismissAlert,
     onFormActivity,
   } = useDismissedActionState(state);
+  const normalizedCandidate = (() => {
+    if (!identifier.trim()) return null;
+    const check =
+      channel === "email"
+        ? validateEmail(identifier)
+        : validateBdPhone(identifier);
+    return check.ok ? check.value : null;
+  })();
+
+  const {
+    cooldown,
+    isCooldownHydrated,
+    startCooldown,
+    clearCooldown,
+  } = useResendCooldown({
+    channel,
+    identifier: normalizedCandidate,
+  });
+  const cooldownActionsRef = useRef({ startCooldown, clearCooldown });
+  useEffect(() => {
+    cooldownActionsRef.current = { startCooldown, clearCooldown };
+  }, [startCooldown, clearCooldown]);
+
   const previousDraftRef = useRef<VerificationDraft | null>(null);
   const submittedCooldownTargetRef = useRef<{
     channel: VerificationChannel;
@@ -54,22 +79,24 @@ export function ForgotPasswordForm() {
   useEffect(() => {
     if (state?.error) {
       const target = submittedCooldownTargetRef.current;
-      if (target) {
-        if (typeof state.retryAfterSeconds === "number" && state.retryAfterSeconds > 0) {
-          const secs = Math.min(state.retryAfterSeconds, MAX_COOLDOWN_DURATION_SECONDS);
-          const now = Date.now();
-          setPersistedCooldown(
-            target.channel,
-            now + secs * 1000,
-            secs,
-            now,
-            target.identifier,
-          );
-        } else {
-          clearPersistedCooldown(target.channel, target.identifier);
-        }
-        submittedCooldownTargetRef.current = null;
+      const isCooldown = isCooldownWaitResult(state);
+      if (isCooldown) {
+        const secs = Math.min(
+          typeof state.retryAfterSeconds === "number" &&
+            state.retryAfterSeconds > 0
+            ? state.retryAfterSeconds
+            : 60,
+          MAX_COOLDOWN_DURATION_SECONDS,
+        );
+        cooldownActionsRef.current.startCooldown(
+          secs,
+          undefined,
+          target?.identifier,
+        );
+      } else if (target) {
+        cooldownActionsRef.current.clearCooldown(target.identifier);
       }
+      submittedCooldownTargetRef.current = null;
       if (previousDraftRef.current) {
         const originalExpiresAtMs = new Date(
           previousDraftRef.current.expires_at,
@@ -136,6 +163,10 @@ export function ForgotPasswordForm() {
           onFocusCapture={onFormActivity}
           onChangeCapture={onFormActivity}
           onSubmit={(e) => {
+            if (cooldown > 0) {
+              e.preventDefault();
+              return;
+            }
             const form = e.currentTarget;
             const check =
               channel === "email" ? validateEmail(identifier) : validateBdPhone(identifier);
@@ -172,7 +203,7 @@ export function ForgotPasswordForm() {
               id="identifier"
               name="identifier"
               variant="email"
-              label="Registered Email"
+              label="Email"
               required
               readOnly={isPending}
               value={identifier}
@@ -193,7 +224,7 @@ export function ForgotPasswordForm() {
               id="identifier"
               name="identifier"
               variant="phone_bd"
-              label="Registered Phone Number"
+              label="Phone Number"
               required
               readOnly={isPending}
               value={identifier}
@@ -210,11 +241,46 @@ export function ForgotPasswordForm() {
             />
           )}
 
-          <AuthAlert result={visibleAlertState} />
+          <AuthAlert
+            result={
+              isCooldownWaitResult(visibleAlertState) ? null : visibleAlertState
+            }
+          />
 
-          <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Sending code…">
+          <Button
+            type="submit"
+            size="lg"
+            fullWidth
+            isLoading={isPending}
+            loadingText="Sending code…"
+            disabled={cooldown > 0 || isPending}
+          >
             Send Reset Code
           </Button>
+          {cooldown > 0 && (
+            <p
+              className="text-center text-body-sm text-text-secondary tabular-nums"
+              aria-live="off"
+              data-testid="forgot-password-cooldown"
+            >
+              Resend available in{" "}
+              <span className="font-mono font-medium">
+                {formatCountdown(cooldown)}
+              </span>
+            </p>
+          )}
+          <div
+            role="region"
+            aria-live="polite"
+            aria-label="Reset code cooldown status"
+            className="sr-only"
+          >
+            {isCooldownHydrated && cooldown > 0
+              ? "Reset code cooldown started. You must wait until the timer finishes before requesting a new code."
+              : isCooldownHydrated && cooldown === 0
+                ? "You can now request a password reset code."
+                : ""}
+          </div>
         </form>
       </div>
 

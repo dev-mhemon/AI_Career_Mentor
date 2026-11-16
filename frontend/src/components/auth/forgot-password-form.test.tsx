@@ -45,7 +45,8 @@ describe("ForgotPasswordForm", () => {
 
     expect(screen.getByRole("tab", { name: /^email$/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /^phone$/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/registered email/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/registered/i)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /send reset code/i }),
     ).toBeInTheDocument();
@@ -57,7 +58,8 @@ describe("ForgotPasswordForm", () => {
     const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
-    expect(screen.getByLabelText(/registered phone number/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^phone number$/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/registered/i)).not.toBeInTheDocument();
     expect(screen.getByText("+88")).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText("01XXXXXXXXX"),
@@ -75,7 +77,7 @@ describe("ForgotPasswordForm", () => {
   it("saves recovery draft on form submission with password_recovery context", async () => {
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     fireEvent.change(input, { target: { value: "user@example.com" } });
 
     const form = input.closest("form")!;
@@ -94,7 +96,7 @@ describe("ForgotPasswordForm", () => {
     const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
-    const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
+    const input = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "017742590012dddddddd12" } });
     expect(input.value).toBe("01774259001212");
     expect(
@@ -120,7 +122,7 @@ describe("ForgotPasswordForm", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
 
-    const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
+    const input = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "01712345678" } });
     fireEvent.blur(input);
 
@@ -143,7 +145,7 @@ describe("ForgotPasswordForm", () => {
   it("does not validate email while typing or blurring before submit, validates on submit, and clears on change", () => {
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     expect(input).toHaveAttribute("placeholder", "Enter your email");
 
     fireEvent.change(input, { target: { value: "not-an-email" } });
@@ -164,7 +166,7 @@ describe("ForgotPasswordForm", () => {
     const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
     fireEvent.click(phoneTab);
 
-    const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
+    const input = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "+8801712345678" } });
     expect(input.checkValidity()).toBe(true);
 
@@ -181,7 +183,7 @@ describe("ForgotPasswordForm", () => {
   it("fails browser constraint validation when a phone number is entered on email tab", () => {
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i) as HTMLInputElement;
+    const input = screen.getByLabelText(/^email$/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "+8801712345678" } });
 
     expect(input.checkValidity()).toBe(false);
@@ -195,7 +197,7 @@ describe("ForgotPasswordForm", () => {
 
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     fireEvent.change(input, { target: { value: "user@example.com" } });
 
     const button = screen.getByRole("button", { name: /send reset code/i });
@@ -230,7 +232,7 @@ describe("ForgotPasswordForm", () => {
 
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     fireEvent.change(input, { target: { value: "other@example.com" } });
 
     const button = screen.getByRole("button", { name: /send reset code/i });
@@ -266,7 +268,7 @@ describe("ForgotPasswordForm", () => {
 
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     fireEvent.change(input, { target: { value: "new-attempt@example.com" } });
 
     const button = screen.getByRole("button", { name: /send reset code/i });
@@ -318,7 +320,7 @@ describe("ForgotPasswordForm", () => {
 
       render(<ForgotPasswordForm />);
 
-      const input = screen.getByLabelText(/registered email/i);
+      const input = screen.getByLabelText(/^email$/i);
       fireEvent.change(input, { target: { value: "retry@example.com" } });
 
       const button = screen.getByRole("button", { name: /send reset code/i });
@@ -350,7 +352,7 @@ describe("ForgotPasswordForm", () => {
 
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     const button = screen.getByRole("button", { name: /send reset code/i });
     fireEvent.change(input, { target: { value: "missing@example.com" } });
 
@@ -367,7 +369,7 @@ describe("ForgotPasswordForm", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
-    const phoneInput = screen.getByLabelText(/registered phone number/i);
+    const phoneInput = screen.getByLabelText(/^phone number$/i);
     fireEvent.change(phoneInput, { target: { value: "01712345678" } });
 
     await act(async () => {
@@ -386,7 +388,7 @@ describe("ForgotPasswordForm", () => {
   it("validates empty email on submit without validating blur and clears error onChange", () => {
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     const form = input.closest("form")!;
 
     fireEvent.blur(input);
@@ -405,7 +407,7 @@ describe("ForgotPasswordForm", () => {
   it("focuses the invalid input when submit-time validation blocks recovery", async () => {
     render(<ForgotPasswordForm />);
 
-    const input = screen.getByLabelText(/registered email/i);
+    const input = screen.getByLabelText(/^email$/i);
     const form = input.closest("form")!;
 
     fireEvent.submit(form);
@@ -413,5 +415,73 @@ describe("ForgotPasswordForm", () => {
       expect(input).toHaveAttribute("aria-invalid", "true");
       expect(document.activeElement).toBe(input);
     });
+  });
+
+  it("keeps Send Reset Code button visible (disabled) with inline timer on 429 RESEND_COOLDOWN_ACTIVE and removes timer at 00:00", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-16T17:00:00.000Z"));
+      vi.mocked(forgotPasswordAction).mockResolvedValueOnce({
+        error: "Wait before requesting another code",
+        status: 429,
+        code: "RESEND_COOLDOWN_ACTIVE",
+        retryAfterSeconds: 19,
+      });
+
+      render(<ForgotPasswordForm />);
+
+      const input = screen.getByLabelText(/^email$/i);
+      fireEvent.change(input, { target: { value: "mhemon.dev7@gmail.com" } });
+
+      const button = screen.getByRole("button", { name: /^send reset code$/i });
+      await act(async () => {
+        fireEvent.click(button);
+      });
+
+      expect(
+        screen.queryByText(/wait before requesting another code/i),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/try again in/i)).not.toBeInTheDocument();
+
+      const disabledBtn = screen.getByRole("button", {
+        name: /^send reset code$/i,
+      });
+      expect(disabledBtn).toBeInTheDocument();
+      expect(disabledBtn).toBeDisabled();
+
+      const timerEl = screen.getByTestId("forgot-password-cooldown");
+      expect(timerEl).toHaveTextContent(/resend available in 00:19/i);
+      expect(timerEl).toHaveAttribute("aria-live", "off");
+
+      const liveRegion = screen.getByRole("region", {
+        name: /reset code cooldown status/i,
+      });
+      expect(liveRegion).toHaveAttribute("aria-live", "polite");
+      expect(liveRegion).toHaveTextContent(
+        /reset code cooldown started\. you must wait until the timer finishes before requesting a new code\./i,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(liveRegion).toHaveTextContent(
+        /reset code cooldown started\. you must wait until the timer finishes before requesting a new code\./i,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(18_000);
+      });
+
+      expect(
+        screen.queryByTestId("forgot-password-cooldown"),
+      ).not.toBeInTheDocument();
+      expect(liveRegion).toHaveTextContent(
+        /you can now request a password reset code\./i,
+      );
+      const readyBtn = screen.getByRole("button", { name: /^send reset code$/i });
+      expect(readyBtn).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

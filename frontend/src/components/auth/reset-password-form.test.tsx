@@ -589,4 +589,88 @@ describe("ResetPasswordForm", () => {
       screen.queryByText(/password must be at least 8 characters\./i),
     ).not.toBeInTheDocument();
   });
+
+  it("uses sleek inline button countdown without bulky alert on RESEND_COOLDOWN_ACTIVE and never shows Try again timer on 5xx errors", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-16T17:00:00.000Z"));
+      saveVerificationDraft({
+        channel: "email",
+        identifier: "mhemon.dev7@gmail.com",
+        contactMasked: "m****@gmail.com",
+        context: "password_recovery",
+      });
+      vi.mocked(forgotPasswordAction).mockResolvedValueOnce({
+        error: "Wait before requesting another code",
+        status: 429,
+        code: "RESEND_COOLDOWN_ACTIVE",
+        retryAfterSeconds: 19,
+      });
+      vi.mocked(resetPasswordAction).mockResolvedValueOnce({
+        error: "Service temporarily unavailable. Please try again.",
+        status: 500,
+        code: "INTERNAL_ERROR",
+        retryAfterSeconds: 1,
+      });
+
+      render(<ResetPasswordForm />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const resendBtn = screen.getByRole("button", { name: /^resend code$/i });
+      expect(resendBtn).toBeEnabled();
+
+      await act(async () => {
+        fireEvent.click(resendBtn);
+      });
+
+      expect(
+        screen.queryByText(/wait before requesting another code/i),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/try again in/i)).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /resend code in 00:19/i }),
+      ).toBeDisabled();
+      const liveRegion = screen.getByRole("region", {
+        name: /resend code cooldown status/i,
+      });
+      expect(liveRegion).toHaveAttribute("aria-live", "polite");
+      expect(liveRegion).toHaveTextContent(
+        /verification code cooldown started\. you must wait until the timer finishes before resending a code\./i,
+      );
+
+      // Submitting reset password with a non-rate-limit 500 + retryAfterSeconds must NOT show Try again in 00:01
+      fireEvent.change(screen.getByLabelText(/6-digit verification code/i), {
+        target: { value: "123456" },
+      });
+      fireEvent.change(screen.getByLabelText(/^new password$/i), {
+        target: { value: "NewPassw0rd!" },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+        target: { value: "NewPassw0rd!" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /set new password/i }));
+      });
+
+      expect(
+        screen.getByText(/service temporarily unavailable\. please try again\./i),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/try again in/i)).not.toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(19_000);
+      });
+      expect(
+        screen.getByRole("button", { name: /^resend code$/i }),
+      ).toBeEnabled();
+      expect(liveRegion).toHaveTextContent(
+        /you can now resend the verification code\./i,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
