@@ -469,12 +469,13 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
     });
 
     it('clears Redis OTP/challenge keys while preserving send limits when purgeOrphanedByEmail purges a stale account', async () => {
+      const clearChallengeState = vi.fn().mockResolvedValue(undefined);
       const clearContactsState = vi.fn().mockResolvedValue(undefined);
       const providerWithAbuse = new EmailRegistrationProvider(
         config,
         database as unknown as DatabaseService,
         otpStore as unknown as OtpSecretStore,
-        { clearContactsState } as any,
+        { clearChallengeState, clearContactsState } as any,
       );
       providerWithAbuse.setTransport(vi.fn());
       const staleId = '00000000-0000-4000-8000-000000000099';
@@ -498,11 +499,11 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       const purged = await providerWithAbuse.purgeOrphanedByEmail(email);
 
       expect(purged).toBe(true);
-      expect(clearContactsState).toHaveBeenCalledWith(
+      expect(clearChallengeState).toHaveBeenCalledWith(
         expect.arrayContaining([{ channel: 'email', identifier: email }]),
         [staleId],
-        { preserveSendLimits: true },
       );
+      expect(clearContactsState).not.toHaveBeenCalled();
     });
   });
 

@@ -669,6 +669,19 @@ export class AuthAbuseControl implements OnModuleDestroy {
   }
 
   /**
+   * Best-effort cleanup of per-contact challenge and per-user OTP secret keys after
+   * orphaned-account purge, explicitly preserving send-cooldown and send-contact quota keys.
+   */
+  async clearChallengeState(
+    contacts: ReadonlyArray<Contact>,
+    userIds: ReadonlyArray<string> = [],
+  ): Promise<void> {
+    await this.clearContactsState(contacts, userIds, {
+      preserveSendLimits: true,
+    });
+  }
+
+  /**
    * Best-effort cleanup of per-contact rate-limit, cooldown, challenge, and OTP secret keys
    * after account deletion or orphaned-account purge. Pass `preserveSendLimits: true` during
    * registration orphan self-healing so caller send cooldown/contact quotas stay enforced.

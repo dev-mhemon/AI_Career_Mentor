@@ -1,6 +1,12 @@
 import 'reflect-metadata';
+import { GUARDS_METADATA } from '@nestjs/common/constants.js';
+import { Test } from '@nestjs/testing';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import request from 'supertest';
+import { configureHttp } from '../../common/http.js';
 import { AuthController } from './auth.controller.js';
-import type { AuthService } from '../services/auth.service.js';
+import { AuthService } from '../services/auth.service.js';
+import { EmailRegistrationService } from '../services/email-registration.service.js';
 
 describe('C05 OAuth session response', () => {
   it.each([
@@ -277,5 +283,58 @@ describe('C05 OAuth session response', () => {
     expect(
       Reflect.getMetadata('access-policy', AuthController.prototype.resendOtp),
     ).toEqual({ public: true });
+  });
+
+  it('guards POST /auth/register with ThrottlerGuard before reaching registration lookups', async () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AuthController.prototype.register,
+    ) as unknown[];
+    expect(guards).toContain(ThrottlerGuard);
+
+    const register = vi.fn().mockResolvedValue({
+      verification_channel: 'email',
+      contact_masked: 'p****@example.invalid',
+      expires_in_seconds: 600,
+      resend_available_at: '2026-11-10T00:01:00.000Z',
+    });
+    const moduleRef = await Test.createTestingModule({
+      imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 2 }])],
+      controllers: [AuthController],
+      providers: [
+        { provide: AuthService, useValue: {} },
+        { provide: EmailRegistrationService, useValue: { register } },
+      ],
+    }).compile();
+
+    const app = moduleRef.createNestApplication();
+    configureHttp(app);
+    await app.init();
+
+    try {
+      const payload = {
+        email: 'person@example.invalid',
+        password: 'Synthetic!Pass123',
+        confirm_password: 'Synthetic!Pass123',
+        privacy_consent: true,
+      };
+      const first = await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send(payload);
+      const second = await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send(payload);
+      const third = await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send(payload);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(third.status).toBe(429);
+      expect(third.body.error?.code).toBe('RATE_LIMITED');
+      expect(register).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
   });
 });

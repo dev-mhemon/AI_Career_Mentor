@@ -216,6 +216,7 @@ describe('purgeOrphanedAuthByContact', () => {
         1,
       ]); // DELETE FROM auth.users tuple
 
+    const clearChallengeState = vi.fn().mockResolvedValue(undefined);
     const clearContactsState = vi.fn().mockResolvedValue(undefined);
     const database = {
       query: vi.fn().mockResolvedValueOnce([
@@ -252,7 +253,7 @@ describe('purgeOrphanedAuthByContact', () => {
       database,
       supabaseUrl: 'http://supabase.invalid',
       serviceRoleKey: 'service-role-key',
-      abuseControl: { clearContactsState },
+      abuseControl: { clearChallengeState, clearContactsState },
       preserveSendLimits: true,
     });
 
@@ -288,8 +289,8 @@ describe('purgeOrphanedAuthByContact', () => {
     );
     expect(managerQuery.mock.calls[3]?.[0]).toContain('DELETE FROM auth.users');
 
-    expect(clearContactsState).toHaveBeenCalledTimes(1);
-    expect(clearContactsState).toHaveBeenCalledWith(
+    expect(clearChallengeState).toHaveBeenCalledTimes(1);
+    expect(clearChallengeState).toHaveBeenCalledWith(
       [
         { channel: 'email', identifier: 'orphan@example.invalid' },
         { channel: 'phone', identifier: '+8801629795421' },
@@ -298,8 +299,8 @@ describe('purgeOrphanedAuthByContact', () => {
         { channel: 'phone', identifier: '+8801712345678' },
       ],
       [staleId],
-      { preserveSendLimits: true },
     );
+    expect(clearContactsState).not.toHaveBeenCalled();
   });
 
   it('clears contact state immediately after Candidate A commits even if Candidate B throws', async () => {

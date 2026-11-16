@@ -645,10 +645,17 @@ describe('TextBeeSmsProvider', () => {
         getOrThrow: vi.fn(() => 'http://127.0.0.1:56321'),
       } as unknown as ConfigService;
 
-      const provider = new TextBeeSmsProvider(config, database, {
-        generateOtp: vi.fn(),
-        storeOtp: vi.fn(),
-      } as unknown as OtpSecretStore);
+      const clearChallengeState = vi.fn().mockResolvedValue(undefined);
+      const clearContactsState = vi.fn().mockResolvedValue(undefined);
+      const provider = new TextBeeSmsProvider(
+        config,
+        database,
+        {
+          generateOtp: vi.fn(),
+          storeOtp: vi.fn(),
+        } as unknown as OtpSecretStore,
+        { clearChallengeState, clearContactsState } as any,
+      );
 
       const created = await provider.createPending(
         orphanedPhone,
@@ -660,6 +667,13 @@ describe('TextBeeSmsProvider', () => {
         phone: orphanedPhone,
         verified: false,
       });
+      expect(clearChallengeState).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          { channel: 'phone', identifier: orphanedPhone },
+        ]),
+        [staleId],
+      );
+      expect(clearContactsState).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenNthCalledWith(
         2,
         `http://127.0.0.1:56321/auth/v1/admin/users/${staleId}`,

@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import type { EntityManager } from 'typeorm';
 import { type INestApplication, HttpException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ThrottlerModule } from '@nestjs/throttler';
 import request from 'supertest';
 import { configureHttp, fail } from '../../common/http.js';
 import { AuthController } from '../controllers/auth.controller.js';
@@ -382,7 +383,7 @@ describe('AuthService session approval boundary', () => {
       ),
     ).toBe(false);
     expect(database.transaction).toHaveBeenCalledWith(
-      null,
+      userId,
       expect.any(Function),
       false,
       false,
@@ -580,6 +581,13 @@ describe('AuthService session approval boundary', () => {
         status: 403,
         response: { code: 'UNVERIFIED_ACCOUNT' },
       });
+      expect(database.transaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Function),
+        false,
+        false,
+        false,
+      );
       expect(query).toHaveBeenNthCalledWith(
         1,
         'SELECT pg_advisory_xact_lock(hashtext($1::text))',
@@ -587,20 +595,15 @@ describe('AuthService session approval boundary', () => {
       );
       expect(query).toHaveBeenNthCalledWith(
         2,
-        'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
-        [userId],
-      );
-      expect(query).toHaveBeenNthCalledWith(
-        3,
         'SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1::uuid) AS auth_user_exists',
         [userId],
       );
-      expect(query).toHaveBeenNthCalledWith(4, 'SET LOCAL ROLE service_role');
+      expect(query).toHaveBeenNthCalledWith(3, 'SET LOCAL ROLE service_role');
       expect(approvals.approve).not.toHaveBeenCalled();
     },
   );
 
-  it('acquires hashtext(userId) advisory lock before locking public.users row on bootstrap upsert to match orphan-cleanup lock order', async () => {
+  it('passes userId to DatabaseService.transaction so public.users row lock precedes hashtext(userId) on bootstrap upsert', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -667,10 +670,10 @@ describe('AuthService session approval boundary', () => {
       'google',
     );
 
-    expect(txArgs[0]?.[0]).toBeNull();
-    const rowLockIdx = executedSql.findIndex((sql) =>
-      sql.includes('SELECT id FROM public.users WHERE id = $1 FOR UPDATE'),
-    );
+    expect(txArgs[0]?.[0]).toBe(userId);
+    expect(txArgs[0]?.[2]).toBe(false);
+    expect(txArgs[0]?.[3]).toBe(false);
+    expect(txArgs[0]?.[4]).toBe(false);
     const advisoryIdx = executedSql.findIndex((sql) =>
       sql.includes('pg_advisory_xact_lock(hashtext($1::text))'),
     );
@@ -678,8 +681,7 @@ describe('AuthService session approval boundary', () => {
       sql.includes('INSERT INTO public.users'),
     );
     expect(advisoryIdx).toBeGreaterThanOrEqual(0);
-    expect(rowLockIdx).toBeGreaterThan(advisoryIdx);
-    expect(upsertIdx).toBeGreaterThan(rowLockIdx);
+    expect(upsertIdx).toBeGreaterThan(advisoryIdx);
   });
 
   it('exercises full end-to-end bypass rejection: signup -> verify -> HTTP sync -> login while production A01 returns 503', async () => {
@@ -768,6 +770,7 @@ describe('AuthService session approval boundary', () => {
 
     // Spin up full HTTP app with AuthController and real EmailRegistrationProvider
     const module = await Test.createTestingModule({
+      imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }])],
       controllers: [AuthController],
       providers: [
         AuthService,
@@ -1343,7 +1346,7 @@ describe('AuthService session approval boundary', () => {
     );
 
     expect(database.transaction).toHaveBeenCalledWith(
-      null,
+      userId,
       expect.any(Function),
       false,
       false,

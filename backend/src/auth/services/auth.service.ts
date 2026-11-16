@@ -628,15 +628,11 @@ export class AuthService {
     const incomingDigits = provider ? phone?.replace(/\D/g, '') || null : null;
     const txResult = await this.database
       .transaction(
-        null,
+        user.id,
         async (db) => {
           await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
             user.id,
           ]);
-          await db.query(
-            'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
-            [user.id],
-          );
           const [authUserState] = await db.query(
             'SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1::uuid) AS auth_user_exists',
             [user.id],

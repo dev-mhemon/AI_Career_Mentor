@@ -16,7 +16,9 @@ export interface PurgeOrphanedAuthOptions {
   supabaseUrl?: string;
   serviceRoleKey?: string;
   signal?: AbortSignal;
-  abuseControl?: Pick<AuthAbuseControl, 'clearContactsState'>;
+  abuseControl?: Partial<
+    Pick<AuthAbuseControl, 'clearChallengeState' | 'clearContactsState'>
+  >;
   preserveSendLimits?: boolean;
 }
 
@@ -323,11 +325,25 @@ export async function purgeOrphanedAuthByContact(
     if (purged) {
       purgedAny = true;
       addCandidateContact(channel, normalized);
-      await abuseControl
-        ?.clearContactsState?.(candidateContacts, [candidate.id], {
-          preserveSendLimits,
-        })
-        .catch(() => undefined);
+      if (preserveSendLimits) {
+        if (typeof abuseControl?.clearChallengeState === 'function') {
+          await abuseControl
+            .clearChallengeState(candidateContacts, [candidate.id])
+            .catch(() => undefined);
+        } else {
+          await abuseControl
+            ?.clearContactsState?.(candidateContacts, [candidate.id], {
+              preserveSendLimits: true,
+            })
+            .catch(() => undefined);
+        }
+      } else {
+        await abuseControl
+          ?.clearContactsState?.(candidateContacts, [candidate.id], {
+            preserveSendLimits: false,
+          })
+          .catch(() => undefined);
+      }
     }
   }
 

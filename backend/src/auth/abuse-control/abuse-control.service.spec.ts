@@ -471,6 +471,17 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       expect(
         preservedModeKeys.some((k) => k.startsWith('auth:v1:challenge:')),
       ).toBe(true);
+
+      await service.clearChallengeState(
+        [
+          { channel: 'email', identifier: 'User@Example.Invalid' },
+          { channel: 'phone', identifier: '+8801629795421' },
+        ],
+        ['00000000-0000-4000-8000-000000000001'],
+      );
+      expect(delMock).toHaveBeenCalledTimes(3);
+      const challengeOnlyKeys = delMock.mock.calls[2][0] as string[];
+      expect(challengeOnlyKeys).toEqual(preservedModeKeys);
     } finally {
       service.onModuleDestroy();
     }
