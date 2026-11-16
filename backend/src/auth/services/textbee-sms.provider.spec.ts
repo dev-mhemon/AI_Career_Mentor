@@ -613,11 +613,23 @@ describe('TextBeeSmsProvider', () => {
           ),
         );
 
+      const txQuery = vi.fn(async (sql: string) => {
+        if (
+          sql.includes('SELECT DISTINCT u.id') ||
+          sql.includes('WHERE u.id = $1::uuid')
+        ) {
+          return [{ id: staleId, phone: '8801629795421' }];
+        }
+        return [];
+      });
       const database = {
-        query: vi
-          .fn()
-          .mockResolvedValueOnce([{ id: staleId }])
-          .mockResolvedValueOnce([]),
+        query: txQuery,
+        transaction: vi.fn(
+          async (
+            _userId: string | null,
+            op: (db: { query: typeof txQuery }) => Promise<unknown>,
+          ) => op({ query: txQuery }),
+        ),
       } as unknown as DatabaseService;
 
       const config = {
@@ -656,9 +668,13 @@ describe('TextBeeSmsProvider', () => {
           body: JSON.stringify({ should_soft_delete: false }),
         }),
       );
-      expect(database.query).toHaveBeenCalledWith(
+      expect(txQuery).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [staleId],
+      );
+      expect(txQuery).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM auth.users'),
-        [[staleId]],
+        [staleId],
       );
     });
 

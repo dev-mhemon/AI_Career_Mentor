@@ -1693,6 +1693,7 @@ describe('M02-02 Phone Auth, Social Identity Linking & Contact Matrix (EP-A03, E
           sendChallenge: emailProvider.sendChallenge,
         } as unknown as EmailRegistrationProvider,
         {
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
           reserveSend: vi.fn(async () => ({ retryAfterSeconds: 60 })),
         } as unknown as AuthAbuseControl,
         database as unknown as DatabaseService,

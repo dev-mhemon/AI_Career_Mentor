@@ -582,12 +582,12 @@ describe('AuthService session approval boundary', () => {
       });
       expect(query).toHaveBeenNthCalledWith(
         1,
-        'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
         [userId],
       );
       expect(query).toHaveBeenNthCalledWith(
         2,
-        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        'SELECT id FROM public.users WHERE id = $1 FOR UPDATE',
         [userId],
       );
       expect(query).toHaveBeenNthCalledWith(
@@ -600,7 +600,7 @@ describe('AuthService session approval boundary', () => {
     },
   );
 
-  it('locks public.users row before hashtext(userId) on bootstrap upsert to match user-ID transaction lock order', async () => {
+  it('acquires hashtext(userId) advisory lock before locking public.users row on bootstrap upsert to match orphan-cleanup lock order', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -677,9 +677,9 @@ describe('AuthService session approval boundary', () => {
     const upsertIdx = executedSql.findIndex((sql) =>
       sql.includes('INSERT INTO public.users'),
     );
-    expect(rowLockIdx).toBeGreaterThanOrEqual(0);
-    expect(advisoryIdx).toBeGreaterThan(rowLockIdx);
-    expect(upsertIdx).toBeGreaterThan(advisoryIdx);
+    expect(advisoryIdx).toBeGreaterThanOrEqual(0);
+    expect(rowLockIdx).toBeGreaterThan(advisoryIdx);
+    expect(upsertIdx).toBeGreaterThan(rowLockIdx);
   });
 
   it('exercises full end-to-end bypass rejection: signup -> verify -> HTTP sync -> login while production A01 returns 503', async () => {
@@ -741,6 +741,7 @@ describe('AuthService session approval boundary', () => {
     );
 
     const abuse = {
+      enforceIpQuota: vi.fn().mockResolvedValue(undefined),
       reserveSend: vi.fn(),
       login: vi.fn(async (_contact, _ip, authenticate) => {
         const result = await authenticate();

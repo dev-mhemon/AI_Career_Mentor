@@ -33,6 +33,7 @@ describe('canonical A01/A04 HTTP boundary', () => {
     sendChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
   };
   const abuse = {
+    enforceIpQuota: vi.fn().mockResolvedValue(undefined),
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
   };
   const database = {
@@ -77,6 +78,7 @@ describe('canonical A01/A04 HTTP boundary', () => {
   beforeEach(() => {
     provider.findByEmail.mockReset().mockResolvedValue(null);
     provider.sendChallenge.mockClear();
+    abuse.enforceIpQuota.mockReset().mockResolvedValue(undefined);
     abuse.reserveSend.mockReset().mockResolvedValue({ retryAfterSeconds: 60 });
   });
 

@@ -159,6 +159,7 @@ export class EmailRegistrationService {
         );
       }
       this.smsProvider.ready();
+      await this.abuse.enforceIpQuota('register', ip);
       try {
         const existing = await this.providerCall((signal) =>
           this.smsProvider!.findByPhone(identifier, signal),
@@ -218,6 +219,7 @@ export class EmailRegistrationService {
 
     // channel === 'email'
     this.provider.ready();
+    await this.abuse.enforceIpQuota('register', ip);
     try {
       const existing = await this.providerCall((signal) =>
         this.provider.findByEmail(identifier, signal),

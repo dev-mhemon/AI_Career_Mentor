@@ -269,23 +269,28 @@ export class AuthAbuseControl implements OnModuleDestroy {
 
   /** Enforce an atomic per-IP request budget before running database account lookups. */
   async enforceIpQuota(
-    scope: 'forgot-password' | 'login',
+    scope: 'forgot-password' | 'login' | 'register',
     ip: string,
   ): Promise<void> {
     if (!this.configuration) this.unavailable();
     const address = this.ipKey(ip);
     const p = this.configuration.policy;
     const isForgotPassword = scope === 'forgot-password';
+    const isRegister = scope === 'register';
     const keys = isForgotPassword
       ? [`auth:v1:ip:forgot-password:${address}`, `auth:v1:send:ip:${address}`]
-      : [`auth:v1:ip:login:${address}`];
-    const limit = isForgotPassword
-      ? p.AUTH_SEND_IP_LIMIT
-      : p.AUTH_SEND_IP_LIMIT * 2;
-    const windowMs = isForgotPassword
-      ? p.AUTH_SEND_WINDOW_SECONDS * 1000
-      : p.AUTH_LOGIN_WINDOW_SECONDS * 1000;
-    const rejectionCode = isForgotPassword ? 2 : 10;
+      : isRegister
+        ? [`auth:v1:ip:register:${address}`]
+        : [`auth:v1:ip:login:${address}`];
+    const limit =
+      isForgotPassword || isRegister
+        ? p.AUTH_SEND_IP_LIMIT
+        : p.AUTH_SEND_IP_LIMIT * 2;
+    const windowMs =
+      isForgotPassword || isRegister
+        ? p.AUTH_SEND_WINDOW_SECONDS * 1000
+        : p.AUTH_LOGIN_WINDOW_SECONDS * 1000;
+    const rejectionCode = isForgotPassword || isRegister ? 2 : 10;
     this.check(
       await this.evaluate(ipQuotaScript, keys, [
         limit,
@@ -533,7 +538,10 @@ export class AuthAbuseControl implements OnModuleDestroy {
     return result.value;
   }
 
-  private buildContactClearKeys(contacts: ReadonlyArray<Contact>): string[] {
+  private buildContactClearKeys(
+    contacts: ReadonlyArray<Contact>,
+    includeSendLimits = true,
+  ): string[] {
     const keys = new Set<string>();
     for (const contact of contacts) {
       let id: string;
@@ -554,8 +562,10 @@ export class AuthAbuseControl implements OnModuleDestroy {
       } catch {
         continue;
       }
-      keys.add(`auth:v1:send:cooldown:${id}`);
-      keys.add(`auth:v1:send:contact:${id}`);
+      if (includeSendLimits) {
+        keys.add(`auth:v1:send:cooldown:${id}`);
+        keys.add(`auth:v1:send:contact:${id}`);
+      }
       keys.add(`auth:v1:challenge:${id}`);
       keys.add(`auth:v1:challenge:verify_email:${id}`);
       keys.add(`auth:v1:challenge:verify_phone:${id}`);
@@ -660,16 +670,19 @@ export class AuthAbuseControl implements OnModuleDestroy {
 
   /**
    * Best-effort cleanup of per-contact rate-limit, cooldown, challenge, and OTP secret keys
-   * after account deletion or orphaned-account purge so freed credentials can register cleanly.
+   * after account deletion or orphaned-account purge. Pass `preserveSendLimits: true` during
+   * registration orphan self-healing so caller send cooldown/contact quotas stay enforced.
    */
   async clearContactsState(
     contacts: ReadonlyArray<Contact>,
     userIds: ReadonlyArray<string> = [],
+    options?: { preserveSendLimits?: boolean },
   ): Promise<void> {
     if (!this.configuration || this.stopped) return;
+    const includeSendLimits = !options?.preserveSendLimits;
     const keys = Array.from(
       new Set([
-        ...this.buildContactClearKeys(contacts),
+        ...this.buildContactClearKeys(contacts, includeSendLimits),
         ...this.buildUserOtpKeys(userIds),
       ]),
     );

@@ -276,6 +276,18 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
         1,
       ],
     );
+
+    await service.enforceIpQuota('register', '192.0.2.1');
+    expect(evaluateSpy).toHaveBeenLastCalledWith(
+      ipQuotaScript,
+      [expect.stringMatching(/^auth:v1:ip:register:/)],
+      [
+        config!.policy.AUTH_SEND_IP_LIMIT,
+        config!.policy.AUTH_SEND_WINDOW_SECONDS * 1000,
+        2,
+        1,
+      ],
+    );
     service.onModuleDestroy();
   });
 
@@ -437,6 +449,71 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       expect(deletedKeys).toContain(
         'auth:v1:otp:secret:00000000-0000-4000-8000-000000000001',
       );
+
+      // With preserveSendLimits: true (orphan purge self-healing), send:cooldown and send:contact stay untouched
+      await service.clearContactsState(
+        [
+          { channel: 'email', identifier: 'User@Example.Invalid' },
+          { channel: 'phone', identifier: '+8801629795421' },
+        ],
+        ['00000000-0000-4000-8000-000000000001'],
+        { preserveSendLimits: true },
+      );
+      expect(delMock).toHaveBeenCalledTimes(2);
+      const preservedModeKeys = delMock.mock.calls[1][0] as string[];
+      expect(preservedModeKeys).toHaveLength(12);
+      expect(
+        preservedModeKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+      ).toBe(false);
+      expect(
+        preservedModeKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+      ).toBe(false);
+      expect(
+        preservedModeKeys.some((k) => k.startsWith('auth:v1:challenge:')),
+      ).toBe(true);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('enforceIpQuota for register uses single unified KEYS[1] atomically and hits 429 across limit', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:1',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+      AUTH_SEND_IP_LIMIT: '3',
+    })!;
+    const service = new AuthAbuseControl(config);
+    const store = new Map<string, MockRedisCounter>();
+    const observedKeys: string[][] = [];
+
+    vi.spyOn(service as any, 'evaluate').mockImplementation(
+      async (script: unknown, keys: unknown, args: unknown) => {
+        const keyList = keys as string[];
+        observedKeys.push(keyList);
+        return executeIpQuotaLua(
+          script as string,
+          keyList,
+          args as (string | number)[],
+          store,
+        );
+      },
+    );
+
+    try {
+      await service.enforceIpQuota('register', '192.0.2.55');
+      await service.enforceIpQuota('register', '192.0.2.55');
+      await service.enforceIpQuota('register', '192.0.2.55');
+
+      expect(observedKeys.every((k) => k.length === 1)).toBe(true);
+      expect(new Set(observedKeys.map((k) => k[0])).size).toBe(1);
+      expect(observedKeys[0]?.[0]).toMatch(/^auth:v1:ip:register:/);
+
+      await expect(
+        service.enforceIpQuota('register', '192.0.2.55'),
+      ).rejects.toMatchObject({
+        status: 429,
+        response: expect.objectContaining({ code: 'OTP_LIMIT_EXCEEDED' }),
+      });
     } finally {
       service.onModuleDestroy();
     }

@@ -1,4 +1,7 @@
-import type { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
+import type {
+  AuthAbuseControl,
+  Contact,
+} from '../abuse-control/abuse-control.service.js';
 import type { DatabaseService } from './database.service.js';
 
 export const ORPHAN_ABANDONMENT_WINDOW_MS = 15 * 60 * 1000;
@@ -14,6 +17,7 @@ export interface PurgeOrphanedAuthOptions {
   serviceRoleKey?: string;
   signal?: AbortSignal;
   abuseControl?: Pick<AuthAbuseControl, 'clearContactsState'>;
+  preserveSendLimits?: boolean;
 }
 
 interface StaleAuthUserRow {
@@ -21,11 +25,42 @@ interface StaleAuthUserRow {
   deleted_at?: unknown;
   created_at?: unknown;
   has_app_user?: unknown;
+  email?: unknown;
+  phone?: unknown;
+  provider_contact?: unknown;
 }
 
 interface ContactRow {
   email?: unknown;
   phone?: unknown;
+}
+
+function unwrapQueryRows<T>(result: unknown): T[] {
+  if (Array.isArray(result) && Array.isArray(result[0])) {
+    return result[0] as T[];
+  }
+  return Array.isArray(result) ? (result as T[]) : [];
+}
+
+function addNormalizedContact(
+  channel: 'email' | 'phone',
+  raw: unknown,
+  seen: Set<string>,
+  target: Contact[],
+): void {
+  if (typeof raw !== 'string') return;
+  const trimmed = raw.trim();
+  if (!trimmed) return;
+  const identifier =
+    channel === 'email'
+      ? trimmed.toLowerCase()
+      : trimmed.startsWith('+')
+        ? trimmed
+        : `+${trimmed}`;
+  const key = `${channel}:${identifier}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  target.push({ channel, identifier });
 }
 
 function buildLookupSql(channel: 'email' | 'phone'): string {
@@ -45,7 +80,10 @@ function buildLookupSql(channel: 'email' | 'phone'): string {
   return `SELECT DISTINCT u.id,
                  u.deleted_at,
                  u.created_at,
-                 (pu.id IS NOT NULL) AS has_app_user
+                 (pu.id IS NOT NULL) AS has_app_user,
+                 u.email,
+                 u.phone,
+                 p.contact_value AS provider_contact
             FROM auth.users u
             LEFT JOIN public.users pu ON pu.id = u.id
             LEFT JOIN public.user_auth_providers p
@@ -54,6 +92,20 @@ function buildLookupSql(channel: 'email' | 'phone'): string {
               ON i.user_id = u.id
            WHERE ${contactPredicate}
              AND ${ORPHANED_LOOKUP_CONDITION}`;
+}
+
+function buildCandidateRecheckSql(): string {
+  return `SELECT u.id,
+                 u.deleted_at,
+                 u.created_at,
+                 (pu.id IS NOT NULL) AS has_app_user,
+                 u.email,
+                 u.phone
+            FROM auth.users u
+            LEFT JOIN public.users pu ON pu.id = u.id
+           WHERE u.id = $1::uuid
+             AND ${ORPHANED_LOOKUP_CONDITION}
+           LIMIT 1`;
 }
 
 function isAbandonedOrphanRow(
@@ -88,7 +140,8 @@ function isAbandonedOrphanRow(
 /**
  * Finds and hard-deletes deleted or abandoned GoTrue `auth.users` (and `auth.identities`) records
  * matching `identifier` when no active application user owns that contact (`deleted_at IS NOT NULL`,
- * or `public.users` row absent for >= 15 minutes). Returns `true` when at least one stale record was purged.
+ * or `public.users` row absent for >= 15 minutes). Coordinates per-candidate cleanup with bootstrap
+ * via PostgreSQL advisory locks (`pg_advisory_xact_lock`) and re-check before deleting.
  */
 export async function purgeOrphanedAuthByContact(
   options: PurgeOrphanedAuthOptions,
@@ -101,8 +154,12 @@ export async function purgeOrphanedAuthByContact(
     serviceRoleKey,
     signal,
     abuseControl,
+    preserveSendLimits = true,
   } = options;
-  if (typeof database?.query !== 'function') {
+  if (
+    typeof database?.query !== 'function' ||
+    typeof database?.transaction !== 'function'
+  ) {
     return false;
   }
 
@@ -112,147 +169,167 @@ export async function purgeOrphanedAuthByContact(
     return false;
   }
 
-  const rows = (await database.query(buildLookupSql(channel), [
-    normalized,
-  ])) as StaleAuthUserRow[];
-  if (!Array.isArray(rows) || rows.length === 0) {
+  const rawRows = await database.query(buildLookupSql(channel), [normalized]);
+  const rows = unwrapQueryRows<StaleAuthUserRow>(rawRows);
+  if (rows.length === 0) {
     return false;
   }
 
   const nowMs = Date.now();
-  const staleIds = Array.from(
-    new Set(
-      rows
-        .filter((r) => isAbandonedOrphanRow(r, nowMs))
-        .map((r) => (typeof r.id === 'string' ? r.id.trim() : ''))
-        .filter((id) => id.length > 0),
-    ),
-  );
-  if (staleIds.length === 0) {
+  const candidatesById = new Map<
+    string,
+    { id: string; contacts: Contact[]; seenKeys: Set<string> }
+  >();
+  for (const row of rows) {
+    if (!isAbandonedOrphanRow(row, nowMs)) continue;
+    const id = typeof row.id === 'string' ? row.id.trim() : '';
+    if (!id) continue;
+    let entry = candidatesById.get(id);
+    if (!entry) {
+      entry = { id, contacts: [], seenKeys: new Set<string>() };
+      candidatesById.set(id, entry);
+    }
+    addNormalizedContact('email', row.email, entry.seenKeys, entry.contacts);
+    addNormalizedContact('phone', row.phone, entry.seenKeys, entry.contacts);
+    if (typeof row.provider_contact === 'string') {
+      addNormalizedContact(
+        channel,
+        row.provider_contact,
+        entry.seenKeys,
+        entry.contacts,
+      );
+    }
+  }
+  const candidates = [...candidatesById.values()];
+  if (candidates.length === 0) {
     return false;
   }
 
   const baseUrl = supabaseUrl?.replace(/\/$/, '');
-  if (baseUrl && serviceRoleKey) {
-    for (const staleId of staleIds) {
-      try {
-        await fetch(
-          `${baseUrl}/auth/v1/admin/users/${encodeURIComponent(staleId)}`,
-          {
-            method: 'DELETE',
-            headers: {
-              apikey: serviceRoleKey,
-              Authorization: `Bearer ${serviceRoleKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ should_soft_delete: false }),
-            signal,
-          },
+  let purgedAny = false;
+
+  for (const candidate of candidates) {
+    const candidateContacts: Contact[] = [];
+    const candidateContactKeys = new Set<string>();
+    const addCandidateContact = (
+      contactChannel: 'email' | 'phone',
+      rawVal: unknown,
+    ) => {
+      addNormalizedContact(
+        contactChannel,
+        rawVal,
+        candidateContactKeys,
+        candidateContacts,
+      );
+    };
+    for (const c of candidate.contacts) {
+      addCandidateContact(c.channel, c.identifier);
+    }
+
+    const purged = await database.transaction(
+      null,
+      async (manager): Promise<boolean> => {
+        await manager.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+          [candidate.id],
         );
-      } catch {
-        // Proceed with SQL hard-delete below so local/dev orphan rows are always cleared.
-      }
+
+        const recheckRaw = await manager.query(buildCandidateRecheckSql(), [
+          candidate.id,
+        ]);
+        const recheckRows = unwrapQueryRows<StaleAuthUserRow>(recheckRaw);
+        const recheckRow = recheckRows[0];
+        if (!recheckRow || !isAbandonedOrphanRow(recheckRow, Date.now())) {
+          return false;
+        }
+
+        addCandidateContact('email', recheckRow.email);
+        addCandidateContact('phone', recheckRow.phone);
+
+        if (baseUrl && serviceRoleKey) {
+          const timeoutSignal = AbortSignal.timeout(4000);
+          const adminSignal = signal
+            ? AbortSignal.any([signal, timeoutSignal])
+            : timeoutSignal;
+          try {
+            await fetch(
+              `${baseUrl}/auth/v1/admin/users/${encodeURIComponent(candidate.id)}`,
+              {
+                method: 'DELETE',
+                headers: {
+                  apikey: serviceRoleKey,
+                  Authorization: `Bearer ${serviceRoleKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ should_soft_delete: false }),
+                signal: adminSignal,
+              },
+            );
+          } catch {
+            // Proceed with SQL hard-delete below so local/dev orphan rows are always cleared.
+          }
+        }
+
+        const deletedPublicRaw = await manager.query<ContactRow[]>(
+          `DELETE FROM public.users WHERE id = $1::uuid
+           RETURNING email, phone`,
+          [candidate.id],
+        );
+        const deletedPublicRows = unwrapQueryRows<ContactRow>(deletedPublicRaw);
+
+        const deletedAuthRaw = await manager.query<ContactRow[]>(
+          `WITH target_ids AS (
+             SELECT u.id
+               FROM auth.users u
+              WHERE u.id = $1::uuid
+                AND (
+                  u.deleted_at IS NOT NULL
+                  OR (
+                    NOT EXISTS (SELECT 1 FROM public.users pu WHERE pu.id = u.id)
+                    AND ${ABANDONMENT_CUTOFF_SQL}
+                  )
+                )
+           ),
+           deleted_refresh AS (
+             DELETE FROM auth.refresh_tokens
+              WHERE user_id IN (SELECT id::text FROM target_ids)
+           ),
+           deleted_sessions AS (
+             DELETE FROM auth.sessions
+              WHERE user_id IN (SELECT id FROM target_ids)
+           ),
+           deleted_identities AS (
+             DELETE FROM auth.identities
+              WHERE user_id IN (SELECT id FROM target_ids)
+           )
+           DELETE FROM auth.users
+            WHERE id IN (SELECT id FROM target_ids)
+            RETURNING email, phone`,
+          [candidate.id],
+        );
+        const deletedAuthRows = unwrapQueryRows<ContactRow>(deletedAuthRaw);
+
+        for (const row of [...deletedPublicRows, ...deletedAuthRows]) {
+          addCandidateContact('email', row?.email);
+          addCandidateContact('phone', row?.phone);
+        }
+        return true;
+      },
+      false,
+      false,
+      false,
+    );
+
+    if (purged) {
+      purgedAny = true;
+      addCandidateContact(channel, normalized);
+      await abuseControl
+        ?.clearContactsState?.(candidateContacts, [candidate.id], {
+          preserveSendLimits,
+        })
+        .catch(() => undefined);
     }
   }
 
-  const deletedContacts: Array<{
-    channel: 'email' | 'phone';
-    identifier: string;
-  }> = [];
-  const seenContacts = new Set<string>();
-  const addContact = (
-    contactChannel: 'email' | 'phone',
-    contactIdentifier: string,
-  ) => {
-    const key = `${contactChannel}:${contactIdentifier}`;
-    if (seenContacts.has(key)) return;
-    seenContacts.add(key);
-    deletedContacts.push({
-      channel: contactChannel,
-      identifier: contactIdentifier,
-    });
-  };
-  addContact(
-    channel,
-    channel === 'phone' && !normalized.startsWith('+')
-      ? `+${normalized}`
-      : normalized,
-  );
-
-  const collectDeletedContacts = (deletedResult: unknown) => {
-    const deletedRows =
-      Array.isArray(deletedResult) && Array.isArray(deletedResult[0])
-        ? deletedResult[0]
-        : Array.isArray(deletedResult)
-          ? deletedResult
-          : [];
-    for (const row of deletedRows as ContactRow[]) {
-      if (typeof row?.email === 'string' && row.email.trim()) {
-        addContact('email', row.email.trim().toLowerCase());
-      }
-      if (typeof row?.phone === 'string' && row.phone.trim()) {
-        const p = row.phone.trim();
-        addContact('phone', p.startsWith('+') ? p : `+${p}`);
-      }
-    }
-  };
-
-  const runSqlCleanup = async (db: { query: DatabaseService['query'] }) => {
-    const deletedPublicRows = await db.query<ContactRow[]>(
-      `DELETE FROM public.users WHERE id = ANY($1::uuid[])
-         AND EXISTS (
-           SELECT 1
-             FROM auth.users u
-            WHERE u.id = public.users.id
-              AND u.deleted_at IS NOT NULL
-         )
-       RETURNING email, phone`,
-      [staleIds],
-    );
-    collectDeletedContacts(deletedPublicRows);
-
-    const deletedAuthRows = await db.query<ContactRow[]>(
-      `WITH target_ids AS (
-         SELECT u.id
-           FROM auth.users u
-          WHERE u.id = ANY($1::uuid[])
-            AND (
-              u.deleted_at IS NOT NULL
-              OR (
-                NOT EXISTS (SELECT 1 FROM public.users pu WHERE pu.id = u.id)
-                AND ${ABANDONMENT_CUTOFF_SQL}
-              )
-            )
-       ),
-       deleted_refresh AS (
-         DELETE FROM auth.refresh_tokens
-          WHERE user_id IN (SELECT id::text FROM target_ids)
-       ),
-       deleted_sessions AS (
-         DELETE FROM auth.sessions
-          WHERE user_id IN (SELECT id FROM target_ids)
-       ),
-       deleted_identities AS (
-         DELETE FROM auth.identities
-          WHERE user_id IN (SELECT id FROM target_ids)
-       )
-       DELETE FROM auth.users
-        WHERE id IN (SELECT id FROM target_ids)
-        RETURNING email, phone`,
-      [staleIds],
-    );
-    collectDeletedContacts(deletedAuthRows);
-  };
-
-  if (typeof database.transaction === 'function') {
-    await database.transaction(null, runSqlCleanup, false, false, false);
-  } else {
-    await runSqlCleanup(database);
-  }
-
-  await abuseControl
-    ?.clearContactsState?.(deletedContacts, staleIds)
-    .catch(() => undefined);
-
-  return true;
+  return purgedAny;
 }

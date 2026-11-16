@@ -5,6 +5,13 @@ import {
   purgeOrphanedAuthByContact,
 } from './orphaned-auth-cleanup.js';
 
+function withTxMock(query: ReturnType<typeof vi.fn>) {
+  return {
+    query,
+    transaction: vi.fn(),
+  } as unknown as DatabaseService;
+}
+
 describe('purgeOrphanedAuthByContact', () => {
   const email = 'orphan@example.invalid';
   const staleId = '99999999-9999-4999-8999-999999999999';
@@ -21,9 +28,24 @@ describe('purgeOrphanedAuthByContact', () => {
     vi.unstubAllGlobals();
   });
 
-  it('enforces the 15-minute abandonment window in both SQL lookup and cleanup CTE', async () => {
-    const query = vi.fn().mockResolvedValueOnce([]);
+  it('refuses to run non-transactional advisory lock when database.transaction is unavailable', async () => {
+    const query = vi.fn().mockResolvedValueOnce([{ id: staleId }]);
     const database = { query } as unknown as DatabaseService;
+
+    const purged = await purgeOrphanedAuthByContact({
+      channel: 'email',
+      identifier: email,
+      database,
+    });
+
+    expect(purged).toBe(false);
+    expect(query).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('enforces the 15-minute COALESCE abandonment window in SQL lookup', async () => {
+    const query = vi.fn().mockResolvedValueOnce([]);
+    const database = withTxMock(query);
 
     const purged = await purgeOrphanedAuthByContact({
       channel: 'email',
@@ -49,7 +71,7 @@ describe('purgeOrphanedAuthByContact', () => {
         created_at: null,
       },
     ]);
-    const database = { query } as unknown as DatabaseService;
+    const database = withTxMock(query);
 
     const purged = await purgeOrphanedAuthByContact({
       channel: 'email',
@@ -76,7 +98,7 @@ describe('purgeOrphanedAuthByContact', () => {
         created_at: recentCreatedAt,
       },
     ]);
-    const database = { query } as unknown as DatabaseService;
+    const database = withTxMock(query);
 
     const purged = await purgeOrphanedAuthByContact({
       channel: 'email',
@@ -103,7 +125,7 @@ describe('purgeOrphanedAuthByContact', () => {
         created_at: oldCreatedAt,
       },
     ]);
-    const database = { query } as unknown as DatabaseService;
+    const database = withTxMock(query);
 
     const purged = await purgeOrphanedAuthByContact({
       channel: 'email',
@@ -118,26 +140,32 @@ describe('purgeOrphanedAuthByContact', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it('purges an older (> 15 minutes old) abandoned auth user with no public.users row and calls Admin DELETE + SQL cleanup', async () => {
+  it('acquires pg_advisory_xact_lock strictly on manager client inside transaction, re-checks, and skips when concurrent bootstrap activates user', async () => {
     const oldCreatedAt = new Date(
       Date.now() - (ORPHAN_ABANDONMENT_WINDOW_MS + 60_000),
     ).toISOString();
-    const txQuery = vi.fn().mockResolvedValue([]);
-    const query = vi.fn().mockResolvedValueOnce([
+    const outerQuery = vi.fn().mockResolvedValueOnce([
       {
         id: staleId,
         deleted_at: null,
         has_app_user: false,
         created_at: oldCreatedAt,
+        email: null,
+        phone: '8801629795421',
       },
     ]);
+    const managerQuery = vi
+      .fn()
+      .mockResolvedValueOnce([]) // pg_advisory_xact_lock
+      .mockResolvedValueOnce([]); // re-check returns empty because public.users now exists
+    const clearContactsState = vi.fn().mockResolvedValue(undefined);
     const database = {
-      query,
+      query: outerQuery,
       transaction: vi.fn(
         async (
           _uid: string | null,
-          op: (db: { query: typeof txQuery }) => Promise<void>,
-        ) => op({ query: txQuery }),
+          op: (db: { query: typeof managerQuery }) => Promise<unknown>,
+        ) => op({ query: managerQuery }),
       ),
     } as unknown as DatabaseService;
 
@@ -147,65 +175,74 @@ describe('purgeOrphanedAuthByContact', () => {
       database,
       supabaseUrl: 'http://supabase.invalid',
       serviceRoleKey: 'service-role-key',
+      abuseControl: { clearContactsState },
     });
 
-    expect(purged).toBe(true);
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      `http://supabase.invalid/auth/v1/admin/users/${staleId}`,
-      expect.objectContaining({
-        method: 'DELETE',
-        body: JSON.stringify({ should_soft_delete: false }),
-      }),
-    );
-
-    expect(txQuery).toHaveBeenCalledTimes(2);
-    expect(txQuery).toHaveBeenNthCalledWith(
+    expect(purged).toBe(false);
+    expect(outerQuery).toHaveBeenCalledTimes(1); // NEVER used for lock or delete
+    expect(managerQuery).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining(
-        'DELETE FROM public.users WHERE id = ANY($1::uuid[])',
-      ),
-      [[staleId]],
+      'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+      [staleId],
     );
-    expect(txQuery).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining(
-        "COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'",
-      ),
-      [[staleId]],
-    );
-    expect(txQuery).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('DELETE FROM auth.users'),
-      [[staleId]],
-    );
+    expect(managerQuery).toHaveBeenCalledTimes(2);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(clearContactsState).not.toHaveBeenCalled();
   });
 
-  it('explicitly deletes lingering public.users rows before auth.users for soft-deleted accounts and unwraps [rows, affected] tuples', async () => {
-    const txQuery = vi
+  it('locks candidate via manager, bounds Admin DELETE with 4s AbortSignal, deletes public.users directly, deduplicates contacts, and preserves send limits', async () => {
+    const oldCreatedAt = new Date(
+      Date.now() - (ORPHAN_ABANDONMENT_WINDOW_MS + 60_000),
+    ).toISOString();
+    const managerQuery = vi
       .fn()
+      .mockResolvedValueOnce([]) // pg_advisory_xact_lock
+      .mockResolvedValueOnce([
+        {
+          id: staleId,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email: 'Orphan@Example.INVALID',
+          phone: null,
+        },
+      ]) // re-check under lock
       .mockResolvedValueOnce([
         [{ email: 'Secondary@Example.INVALID', phone: '8801712345678' }],
         1,
-      ])
+      ]) // DELETE FROM public.users tuple (unconditional for locked candidate)
       .mockResolvedValueOnce([
-        [{ email: 'orphan@example.invalid', phone: null }],
+        [{ email: 'orphan@example.invalid', phone: '8801629795421' }],
         1,
-      ]);
+      ]); // DELETE FROM auth.users tuple
+
     const clearContactsState = vi.fn().mockResolvedValue(undefined);
     const database = {
       query: vi.fn().mockResolvedValueOnce([
         {
           id: staleId,
-          deleted_at: '2026-11-16T08:00:00Z',
-          has_app_user: true,
-          created_at: new Date().toISOString(),
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email: 'ORPHAN@Example.INVALID',
+          phone: '8801629795421',
+          provider_contact: 'Orphan@example.invalid',
+        },
+        {
+          id: staleId,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email: 'orphan@example.invalid',
+          phone: '+8801629795421',
+          provider_contact: 'extra@example.invalid',
         },
       ]),
       transaction: vi.fn(
         async (
           _uid: string | null,
-          op: (db: { query: typeof txQuery }) => Promise<void>,
-        ) => op({ query: txQuery }),
+          op: (db: { query: typeof managerQuery }) => Promise<unknown>,
+        ) => op({ query: managerQuery }),
       ),
     } as unknown as DatabaseService;
 
@@ -216,27 +253,133 @@ describe('purgeOrphanedAuthByContact', () => {
       supabaseUrl: 'http://supabase.invalid',
       serviceRoleKey: 'service-role-key',
       abuseControl: { clearContactsState },
+      preserveSendLimits: true,
     });
 
     expect(purged).toBe(true);
-    expect(globalThis.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [fetchUrl, fetchInit] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(fetchUrl).toBe(
       `http://supabase.invalid/auth/v1/admin/users/${staleId}`,
-      expect.objectContaining({
-        method: 'DELETE',
-        body: JSON.stringify({ should_soft_delete: false }),
-      }),
     );
-    expect(txQuery.mock.calls[0]?.[0]).toContain(
-      'DELETE FROM public.users WHERE id = ANY($1::uuid[])',
+    expect(fetchInit?.method).toBe('DELETE');
+    expect(fetchInit?.body).toBe(JSON.stringify({ should_soft_delete: false }));
+    expect(fetchInit?.signal).toBeInstanceOf(AbortSignal);
+
+    expect(managerQuery).toHaveBeenCalledTimes(4);
+    expect(managerQuery).toHaveBeenNthCalledWith(
+      1,
+      'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+      [staleId],
     );
-    expect(txQuery.mock.calls[1]?.[0]).toContain('DELETE FROM auth.users');
+    expect(managerQuery.mock.calls[1]?.[0]).toContain('WHERE u.id = $1::uuid');
+
+    const publicDeleteSql = String(managerQuery.mock.calls[2]?.[0]).replace(
+      /\s+/g,
+      ' ',
+    );
+    expect(publicDeleteSql).toContain(
+      'DELETE FROM public.users WHERE id = $1::uuid',
+    );
+    expect(publicDeleteSql).not.toContain('EXISTS');
+
+    expect(managerQuery.mock.calls[3]?.[0]).toContain(
+      "COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'",
+    );
+    expect(managerQuery.mock.calls[3]?.[0]).toContain('DELETE FROM auth.users');
+
+    expect(clearContactsState).toHaveBeenCalledTimes(1);
     expect(clearContactsState).toHaveBeenCalledWith(
       [
-        { channel: 'email', identifier: email },
+        { channel: 'email', identifier: 'orphan@example.invalid' },
+        { channel: 'phone', identifier: '+8801629795421' },
+        { channel: 'email', identifier: 'extra@example.invalid' },
         { channel: 'email', identifier: 'secondary@example.invalid' },
         { channel: 'phone', identifier: '+8801712345678' },
       ],
       [staleId],
+      { preserveSendLimits: true },
+    );
+  });
+
+  it('clears contact state immediately after Candidate A commits even if Candidate B throws', async () => {
+    const oldCreatedAt = new Date(
+      Date.now() - (ORPHAN_ABANDONMENT_WINDOW_MS + 60_000),
+    ).toISOString();
+    const candidateA = '11111111-1111-4111-8111-111111111111';
+    const candidateB = '22222222-2222-4222-8222-222222222222';
+    const clearContactsState = vi.fn().mockResolvedValue(undefined);
+
+    const txAQuery = vi
+      .fn()
+      .mockResolvedValueOnce([]) // lock
+      .mockResolvedValueOnce([
+        {
+          id: candidateA,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email: 'a@example.invalid',
+          phone: null,
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ email: 'a@example.invalid', phone: null }]);
+
+    const txBQuery = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('Simulated DB error on candidate B'));
+
+    const database = {
+      query: vi.fn().mockResolvedValueOnce([
+        {
+          id: candidateA,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email: 'a@example.invalid',
+          phone: null,
+        },
+        {
+          id: candidateB,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email: 'b@example.invalid',
+          phone: null,
+        },
+      ]),
+      transaction: vi
+        .fn()
+        .mockImplementationOnce(
+          async (
+            _uid: string | null,
+            op: (db: { query: typeof txAQuery }) => Promise<unknown>,
+          ) => op({ query: txAQuery }),
+        )
+        .mockImplementationOnce(
+          async (
+            _uid: string | null,
+            op: (db: { query: typeof txBQuery }) => Promise<unknown>,
+          ) => op({ query: txBQuery }),
+        ),
+    } as unknown as DatabaseService;
+
+    await expect(
+      purgeOrphanedAuthByContact({
+        channel: 'email',
+        identifier: 'a@example.invalid',
+        database,
+        abuseControl: { clearContactsState },
+      }),
+    ).rejects.toThrow('Simulated DB error on candidate B');
+
+    expect(clearContactsState).toHaveBeenCalledTimes(1);
+    expect(clearContactsState).toHaveBeenCalledWith(
+      [{ channel: 'email', identifier: 'a@example.invalid' }],
+      [candidateA],
+      { preserveSendLimits: true },
     );
   });
 });

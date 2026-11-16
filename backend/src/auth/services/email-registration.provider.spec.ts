@@ -12,7 +12,10 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
   const email = 'candidate@example.invalid';
 
   let config: ConfigService;
-  let database: { query: ReturnType<typeof vi.fn> };
+  let database: {
+    query: ReturnType<typeof vi.fn>;
+    transaction: ReturnType<typeof vi.fn>;
+  };
   let otpStore: {
     generateOtp: ReturnType<typeof vi.fn>;
     storeOtp: ReturnType<typeof vi.fn>;
@@ -35,8 +38,15 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       }),
     } as unknown as ConfigService;
 
+    const queryFn = vi.fn();
     database = {
-      query: vi.fn(),
+      query: queryFn,
+      transaction: vi.fn(
+        async (
+          _userId: string | null,
+          op: (db: { query: typeof queryFn }) => Promise<unknown>,
+        ) => op({ query: queryFn }),
+      ),
     };
 
     otpStore = {
@@ -355,9 +365,16 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
 
     it('self-heals orphaned/deleted email account on 422 email_exists and retries fresh creation cleanly', async () => {
       const staleId = '99999999-9999-4999-8999-999999999999';
-      database.query
-        .mockResolvedValueOnce([{ id: staleId }])
-        .mockResolvedValueOnce([]);
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          sql.includes('FROM auth.users u') &&
+          (sql.includes('WHERE u.id = $1::uuid') ||
+            sql.includes('SELECT DISTINCT u.id'))
+        ) {
+          return [{ id: staleId, email }];
+        }
+        return [];
+      });
 
       const fetchMock = vi
         .fn()
@@ -398,14 +415,16 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         }),
       );
       expect(database.query).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'DELETE FROM public.users WHERE id = ANY($1::uuid[])',
-        ),
-        [[staleId]],
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [staleId],
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM public.users WHERE id = $1::uuid'),
+        [staleId],
       );
       expect(database.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM auth.users'),
-        [[staleId]],
+        [staleId],
       );
     });
 
@@ -449,7 +468,7 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       });
     });
 
-    it('clears Redis contact abuse-control keys when purgeOrphanedByEmail purges a stale account', async () => {
+    it('clears Redis OTP/challenge keys while preserving send limits when purgeOrphanedByEmail purges a stale account', async () => {
       const clearContactsState = vi.fn().mockResolvedValue(undefined);
       const providerWithAbuse = new EmailRegistrationProvider(
         config,
@@ -459,9 +478,18 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       );
       providerWithAbuse.setTransport(vi.fn());
       const staleId = '00000000-0000-4000-8000-000000000099';
-      database.query
-        .mockResolvedValueOnce([{ id: staleId }])
-        .mockResolvedValueOnce([{ email, phone: null }]);
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          sql.includes('SELECT DISTINCT u.id') ||
+          sql.includes('WHERE u.id = $1::uuid')
+        ) {
+          return [{ id: staleId, email }];
+        }
+        if (sql.includes('DELETE FROM auth.users')) {
+          return [{ email, phone: null }];
+        }
+        return [];
+      });
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue({ ok: true, status: 200 }),
@@ -473,6 +501,7 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       expect(clearContactsState).toHaveBeenCalledWith(
         expect.arrayContaining([{ channel: 'email', identifier: email }]),
         [staleId],
+        { preserveSendLimits: true },
       );
     });
   });

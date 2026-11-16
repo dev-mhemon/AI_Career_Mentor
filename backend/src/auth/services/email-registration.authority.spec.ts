@@ -42,6 +42,7 @@ function createTestHarness() {
   };
 
   const abuse = {
+    enforceIpQuota: vi.fn().mockResolvedValue(undefined),
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
     issueChallenge: vi.fn().mockResolvedValue({ expiresInSeconds: 600 }),
     verifyChallenge: vi.fn().mockResolvedValue(undefined),

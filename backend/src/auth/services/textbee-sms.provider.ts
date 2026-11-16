@@ -131,6 +131,7 @@ export class TextBeeSmsProvider {
       serviceRoleKey: this.getServiceRoleKey(),
       signal,
       abuseControl: this.abuse,
+      preserveSendLimits: true,
     });
   }
 

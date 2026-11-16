@@ -64,6 +64,7 @@ function harness() {
     checkDeliveryHealth: vi.fn().mockResolvedValue(undefined),
   };
   const abuse = {
+    enforceIpQuota: vi.fn().mockResolvedValue(undefined),
     reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
   };
   const queries = vi.fn(async (sql: string): Promise<any[]> => {
@@ -176,6 +177,25 @@ describe('A01/A04 email service with synthetic provider', () => {
     );
     expect(abuse.reserveSend).not.toHaveBeenCalled();
     expect(provider.findByEmail).not.toHaveBeenCalled();
+  });
+
+  it('enforces IP quota before contact lookup during register to prevent unauthenticated DB load', async () => {
+    const { service, provider, abuse } = harness();
+    abuse.enforceIpQuota.mockRejectedValueOnce(
+      new HttpException(
+        { code: 'OTP_LIMIT_EXCEEDED', retryAfterSeconds: 60 },
+        429,
+      ),
+    );
+
+    await rejection(
+      () => service.register(body, peer),
+      429,
+      'OTP_LIMIT_EXCEEDED',
+    );
+    expect(abuse.enforceIpQuota).toHaveBeenCalledWith('register', '192.0.2.4');
+    expect(provider.findByEmail).not.toHaveBeenCalled();
+    expect(abuse.reserveSend).not.toHaveBeenCalled();
   });
 
   it('protects a verified contact and does not create or send', async () => {
@@ -707,6 +727,13 @@ describe('A01/A04 email service with synthetic provider', () => {
         expires_in_seconds: 600,
       });
       expect(smsProvider.ready).toHaveBeenCalled();
+      expect(abuse.enforceIpQuota).toHaveBeenCalledWith(
+        'register',
+        '192.0.2.4',
+      );
+      expect(abuse.enforceIpQuota.mock.invocationCallOrder[0]).toBeLessThan(
+        smsProvider.findByPhone.mock.invocationCallOrder[0],
+      );
       expect(abuse.reserveSend).toHaveBeenCalledWith(
         { channel: 'phone', identifier: phone },
         '192.0.2.4',
