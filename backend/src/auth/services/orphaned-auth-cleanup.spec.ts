@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseService } from './database.service.js';
+import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
+import { readAbuseConfiguration } from '../abuse-control/config.js';
 import {
   ORPHAN_ABANDONMENT_WINDOW_MS,
   purgeOrphanedAuthByContact,
@@ -382,5 +384,84 @@ describe('purgeOrphanedAuthByContact', () => {
       [candidateA],
       { preserveSendLimits: true },
     );
+  });
+
+  it('never deletes auth:v1:send:cooldown:* or auth:v1:send:contact:* when wired to real AuthAbuseControl', async () => {
+    const oldCreatedAt = new Date(
+      Date.now() - (ORPHAN_ABANDONMENT_WINDOW_MS + 60_000),
+    ).toISOString();
+    const abuseConfig = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+    });
+    const abuse = new AuthAbuseControl(abuseConfig);
+    const delMock = vi.fn().mockResolvedValue(1);
+    vi.spyOn(
+      abuse as unknown as { getConnectedClient: () => Promise<unknown> },
+      'getConnectedClient',
+    ).mockResolvedValue({
+      withCommandOptions: vi.fn().mockReturnValue({ del: delMock }),
+    });
+
+    const managerQuery = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: staleId,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email,
+          phone: null,
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ email, phone: null }]);
+
+    const database = {
+      query: vi.fn().mockResolvedValueOnce([
+        {
+          id: staleId,
+          deleted_at: null,
+          has_app_user: false,
+          created_at: oldCreatedAt,
+          email,
+          phone: null,
+        },
+      ]),
+      transaction: vi.fn(
+        async (
+          _uid: string | null,
+          op: (db: { query: typeof managerQuery }) => Promise<unknown>,
+        ) => op({ query: managerQuery }),
+      ),
+    } as unknown as DatabaseService;
+
+    try {
+      const purged = await purgeOrphanedAuthByContact({
+        channel: 'email',
+        identifier: email,
+        database,
+        abuseControl: abuse,
+        preserveSendLimits: true,
+      });
+
+      expect(purged).toBe(true);
+      expect(delMock).toHaveBeenCalledTimes(1);
+      const deletedKeys = delMock.mock.calls[0][0] as string[];
+      expect(
+        deletedKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+      ).toBe(false);
+      expect(
+        deletedKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+      ).toBe(false);
+      expect(deletedKeys.some((k) => k.startsWith('auth:v1:challenge:'))).toBe(
+        true,
+      );
+      expect(deletedKeys).toContain(`auth:v1:otp:secret:${staleId}`);
+    } finally {
+      abuse.onModuleDestroy();
+    }
   });
 });

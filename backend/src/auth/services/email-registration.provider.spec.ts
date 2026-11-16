@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConfigService } from '@nestjs/config';
+import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
+import { readAbuseConfiguration } from '../abuse-control/config.js';
 import {
   EmailRegistrationProvider,
   createEmailTransportFromConfig,
@@ -504,6 +506,92 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         [staleId],
       );
       expect(clearContactsState).not.toHaveBeenCalled();
+    });
+
+    it('preserves auth:v1:send:cooldown:* and auth:v1:send:contact:* in Redis during createPending orphan recovery', async () => {
+      const abuseConfig = readAbuseConfiguration({
+        AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+        AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+      });
+      const abuse = new AuthAbuseControl(abuseConfig);
+      const delMock = vi.fn().mockResolvedValue(1);
+      vi.spyOn(
+        abuse as unknown as { getConnectedClient: () => Promise<unknown> },
+        'getConnectedClient',
+      ).mockResolvedValue({
+        withCommandOptions: vi.fn().mockReturnValue({ del: delMock }),
+      });
+
+      try {
+        const providerWithAbuse = new EmailRegistrationProvider(
+          config,
+          database as unknown as DatabaseService,
+          otpStore as unknown as OtpSecretStore,
+          abuse,
+        );
+        providerWithAbuse.setTransport(vi.fn());
+        const staleId = '00000000-0000-4000-8000-000000000099';
+        database.query.mockImplementation(async (sql: string) => {
+          if (
+            sql.includes('SELECT DISTINCT u.id') ||
+            sql.includes('WHERE u.id = $1::uuid')
+          ) {
+            return [{ id: staleId, email }];
+          }
+          if (sql.includes('DELETE FROM auth.users')) {
+            return [{ email, phone: null }];
+          }
+          return [];
+        });
+
+        let postCount = 0;
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async (_url: string, init?: RequestInit) => {
+            if (init?.method === 'DELETE') {
+              return { ok: true, status: 200 };
+            }
+            postCount += 1;
+            if (postCount === 1) {
+              return {
+                ok: false,
+                status: 422,
+                json: async () => ({ error_code: 'email_exists' }),
+              };
+            }
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ id: userId, email }),
+            };
+          }),
+        );
+
+        const created = await providerWithAbuse.createPending(
+          email,
+          'Password123!',
+        );
+        expect(created).toEqual({
+          id: userId,
+          subject: userId,
+          email,
+          verified: false,
+        });
+        expect(delMock).toHaveBeenCalledTimes(1);
+        const deletedKeys = delMock.mock.calls[0][0] as string[];
+        expect(
+          deletedKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+        ).toBe(false);
+        expect(
+          deletedKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+        ).toBe(false);
+        expect(
+          deletedKeys.some((k) => k.startsWith('auth:v1:challenge:')),
+        ).toBe(true);
+        expect(deletedKeys).toContain(`auth:v1:otp:secret:${staleId}`);
+      } finally {
+        abuse.onModuleDestroy();
+      }
     });
   });
 

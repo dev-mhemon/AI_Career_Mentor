@@ -772,6 +772,28 @@ describe('A01/A04 email service with synthetic provider', () => {
       );
     });
 
+    it('enforces IP quota before phone contact lookup during register', async () => {
+      const { service, smsProvider, abuse } = harness();
+      abuse.enforceIpQuota.mockRejectedValueOnce(
+        new HttpException(
+          { code: 'OTP_LIMIT_EXCEEDED', retryAfterSeconds: 60 },
+          429,
+        ),
+      );
+
+      await rejection(
+        () => service.register(phoneBody, peer),
+        429,
+        'OTP_LIMIT_EXCEEDED',
+      );
+      expect(abuse.enforceIpQuota).toHaveBeenCalledWith(
+        'register',
+        '192.0.2.4',
+      );
+      expect(smsProvider.findByPhone).not.toHaveBeenCalled();
+      expect(abuse.reserveSend).not.toHaveBeenCalled();
+    });
+
     it('successfully resends OTP challenge for unverified phone contact', async () => {
       const { service, smsProvider, abuse } = harness();
       smsProvider.findByPhone.mockResolvedValueOnce(phoneIdentity);
