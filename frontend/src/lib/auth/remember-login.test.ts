@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   clearRememberedLogin,
   loadRememberedLogin,
+  parseRememberedLoginCookieHint,
   parseRememberedLoginHint,
   saveRememberedLogin,
   serializeRememberedLoginHint,
@@ -72,5 +73,19 @@ describe('remember-login helper', () => {
 
     clearRememberedLogin();
     expect(loadRememberedLogin()).toBeNull();
+  });
+
+  it('parseRememberedLoginCookieHint returns undefined on absent or invalid cookie values', () => {
+    expect(parseRememberedLoginCookieHint(undefined)).toBeUndefined();
+    expect(parseRememberedLoginCookieHint(null)).toBeUndefined();
+    expect(parseRememberedLoginCookieHint('')).toBeUndefined();
+    expect(parseRememberedLoginCookieHint('not-json')).toBeUndefined();
+
+    const valid = serializeRememberedLoginHint('email', 'user@example.com');
+    expect(parseRememberedLoginCookieHint(valid)).toEqual({
+      channel: 'email',
+      identifier: 'user@example.com',
+      rememberMe: true,
+    });
   });
 });

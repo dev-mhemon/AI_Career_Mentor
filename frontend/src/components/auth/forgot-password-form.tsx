@@ -3,7 +3,11 @@
 import { useActionState, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
-import { AuthAlert, useDismissedActionState } from "@/components/auth/auth-alert";
+import {
+  AuthAlert,
+  focusFirstInvalidControl,
+  useDismissedActionState,
+} from "@/components/auth/auth-alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
@@ -138,6 +142,7 @@ export function ForgotPasswordForm() {
             if (!check.ok) {
               e.preventDefault();
               setClientError(check.error);
+              focusFirstInvalidControl(form);
               return;
             }
             const normalized = check.value;

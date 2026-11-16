@@ -6,6 +6,7 @@ import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import {
   AuthAlert,
+  focusFirstInvalidControl,
   useDismissedActionState,
 } from "@/components/auth/auth-alert";
 import { PasswordStrengthHint } from "@/components/auth/password-strength-hint";
@@ -151,6 +152,7 @@ export function RegisterForm() {
             if (Object.keys(errors).length) {
               e.preventDefault();
               setClientErrors(errors);
+              focusFirstInvalidControl(form);
               return;
             }
             setClientErrors({});

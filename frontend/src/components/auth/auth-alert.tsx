@@ -109,3 +109,17 @@ export function handleAuthBlur(
     options.setError(res.ok ? undefined : res.error);
   }
 }
+
+/**
+ * Moves keyboard/screen-reader focus to the first invalid control within a form after client validation fails.
+ */
+export function focusFirstInvalidControl(form: HTMLFormElement): void {
+  setTimeout(() => {
+    if (!form.isConnected) return;
+    form
+      .querySelector<HTMLElement>(
+        'input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"], [data-invalid="true"]',
+      )
+      ?.focus();
+  }, 0);
+}

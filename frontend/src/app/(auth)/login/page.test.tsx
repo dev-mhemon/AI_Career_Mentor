@@ -285,4 +285,28 @@ describe('LoginPage Server Component', () => {
       }),
     );
   });
+
+  it('passes initialRememberedLogin as undefined (never null) when cookie is absent or invalid and not deleted', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    mockCookieGet.mockReturnValue(undefined);
+
+    render(await LoginPage({}));
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialRememberedLogin: undefined,
+        clearSavedLogin: false,
+      }),
+    );
+
+    mockCookieGet.mockImplementation((name: string) =>
+      name === 'mentor_login_hint' ? { value: '{broken-json' } : undefined,
+    );
+    render(await LoginPage({}));
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialRememberedLogin: undefined,
+        clearSavedLogin: false,
+      }),
+    );
+  });
 });

@@ -101,7 +101,7 @@ function withTimeout<T>(
 }
 
 async function fetchReadOnlySession<T>(
-  fetcher: (accessToken: string) => Promise<T>,
+  fetcher: (accessToken: string, signal: AbortSignal) => Promise<T>,
 ): Promise<ReadOnlySessionResult<T>> {
   const deadline = Date.now() + DEFAULT_AUTH_STATE_TIMEOUT_MS;
 
@@ -127,9 +127,27 @@ async function fetchReadOnlySession<T>(
       return { status: 'unauthenticated', data: null };
     }
 
+    const remainingMs = deadline - Date.now();
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+      return {
+        status: 'transient_error',
+        data: null,
+        error: new DOMException('Auth state request timed out', 'TimeoutError'),
+      };
+    }
+
+    const controller = new AbortController();
+    const timeoutError = new DOMException(
+      'Auth state request timed out',
+      'TimeoutError',
+    );
+    const abortTimer = setTimeout(() => {
+      controller.abort(timeoutError);
+    }, remainingMs);
+
     try {
       const data = await withTimeout(
-        fetcher(session.access_token),
+        fetcher(session.access_token, controller.signal),
         deadline,
         'Auth state request timed out',
       );
@@ -138,7 +156,16 @@ async function fetchReadOnlySession<T>(
       if (err instanceof UnauthorizedError) {
         return { status: 'unauthenticated', data: null };
       }
+      if (
+        !controller.signal.aborted &&
+        ((err instanceof Error && err.name === 'TimeoutError') ||
+          Date.now() >= deadline)
+      ) {
+        controller.abort(err);
+      }
       return { status: 'transient_error', data: null, error: err };
+    } finally {
+      clearTimeout(abortTimer);
     }
   } catch (err) {
     return { status: 'transient_error', data: null, error: err };
@@ -150,8 +177,8 @@ async function fetchReadOnlySession<T>(
  * with explicit status discrimination (authenticated, unauthenticated, transient_error).
  */
 export async function getAppSessionStateResult(): Promise<ReadOnlySessionResult<AppSessionState>> {
-  return fetchReadOnlySession((accessToken) =>
-    getCurrentUserState(accessToken),
+  return fetchReadOnlySession((accessToken, signal) =>
+    getCurrentUserState(accessToken, { signal }),
   );
 }
 
@@ -160,7 +187,9 @@ export async function getAppSessionStateResult(): Promise<ReadOnlySessionResult<
  * with explicit status discrimination (authenticated, unauthenticated, transient_error).
  */
 export async function getAppUserResult(): Promise<ReadOnlySessionResult<UserResponse>> {
-  return fetchReadOnlySession((accessToken) => getMe(accessToken));
+  return fetchReadOnlySession((accessToken, signal) =>
+    getMe(accessToken, { signal }),
+  );
 }
 
 /**

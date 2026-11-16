@@ -401,4 +401,17 @@ describe("ForgotPasswordForm", () => {
     fireEvent.change(input, { target: { value: "a" } });
     expect(screen.queryByText(/enter your email address\./i)).not.toBeInTheDocument();
   });
+
+  it("focuses the invalid input when submit-time validation blocks recovery", async () => {
+    render(<ForgotPasswordForm />);
+
+    const input = screen.getByLabelText(/registered email/i);
+    const form = input.closest("form")!;
+
+    fireEvent.submit(form);
+    await waitFor(() => {
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(document.activeElement).toBe(input);
+    });
+  });
 });

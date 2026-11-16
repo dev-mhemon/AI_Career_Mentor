@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { hasAuthenticatedAppSession } from "@/lib/auth/user";
 import {
   LOGIN_HINT_COOKIE,
-  parseRememberedLoginHint,
+  parseRememberedLoginCookieHint,
+  type RememberedLoginHint,
 } from "@/lib/auth/remember-login";
 import { LoginForm } from "@/components/auth/login-form";
 
@@ -27,16 +28,16 @@ export default async function LoginPage({
   const isVerified = awaitedSearchParams?.verified === "true";
 
   let hasAccountDeletedCookie = false;
-  let initialRememberedLogin = null;
+  let initialRememberedLogin: RememberedLoginHint | null | undefined = undefined;
   try {
     const cookieStore = await cookies();
     hasAccountDeletedCookie =
       cookieStore.get("account_deleted")?.value === "true";
-    initialRememberedLogin = parseRememberedLoginHint(
+    initialRememberedLogin = parseRememberedLoginCookieHint(
       cookieStore.get(LOGIN_HINT_COOKIE)?.value,
     );
   } catch {
-    initialRememberedLogin = null;
+    initialRememberedLogin = undefined;
   }
 
   const hasDeletedParam =

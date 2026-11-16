@@ -399,4 +399,30 @@ describe("RegisterForm", () => {
       "01629795421",
     );
   });
+
+  it("focuses the first invalid field when submit-time validation blocks registration", async () => {
+    render(<RegisterForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    const confirmInput = screen.getByLabelText(/confirm password/i);
+    const consentCheckbox = screen.getByLabelText(/agree to the privacy policy/i);
+    const form = emailInput.closest("form")!;
+
+    fireEvent.submit(form);
+    await waitFor(() => {
+      expect(emailInput).toHaveAttribute("aria-invalid", "true");
+      expect(document.activeElement).toBe(emailInput);
+    });
+
+    fireEvent.change(emailInput, { target: { value: "valid@example.com" } });
+    fireEvent.change(passwordInput, { target: { value: "Password123!" } });
+    fireEvent.change(confirmInput, { target: { value: "Password123!" } });
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(consentCheckbox).toHaveAttribute("aria-invalid", "true");
+      expect(document.activeElement).toBe(consentCheckbox);
+    });
+  });
 });

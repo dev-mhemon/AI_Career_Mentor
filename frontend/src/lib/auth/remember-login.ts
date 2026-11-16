@@ -83,6 +83,16 @@ export function parseRememberedLoginHint(
   };
 }
 
+/**
+ * Parses a server-side `mentor_login_hint` cookie value, returning `undefined` (not `null`) when absent or invalid
+ * so `null` remains reserved for explicit post-deletion clearing in `LoginPage`.
+ */
+export function parseRememberedLoginCookieHint(
+  raw: string | undefined | null,
+): RememberedLoginHint | undefined {
+  return parseRememberedLoginHint(raw) ?? undefined;
+}
+
 const listeners = new Set<() => void>();
 
 function notifyRememberedLoginListeners(): void {
