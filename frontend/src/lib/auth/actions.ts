@@ -83,13 +83,47 @@ function apiMeta(
   };
 }
 
+const ACCOUNT_MISSING_CODES = new Set([
+  'AUTH_USER_NOT_FOUND',
+  'ACCOUNT_NOT_FOUND',
+  'USER_NOT_FOUND',
+  'ACCOUNT_DELETED',
+  'AUTH_REQUIRED',
+]);
+
+const ACCOUNT_MISSING_MESSAGE_PATTERN =
+  /account not found|user not found|no account found|account.*deleted|does not exist/i;
+
+function isAccountMissingOrDeletedError(err: {
+  statusCode?: number;
+  code?: string;
+  message?: string;
+}): boolean {
+  if (err.statusCode === 404) return true;
+  if (err.code && ACCOUNT_MISSING_CODES.has(err.code)) {
+    return err.code !== 'AUTH_REQUIRED' || ACCOUNT_MISSING_MESSAGE_PATTERN.test(err.message ?? '');
+  }
+  return Boolean(err.message && ACCOUNT_MISSING_MESSAGE_PATTERN.test(err.message));
+}
+
 /**
- * Resolves a channel-specific 404 / AUTH_USER_NOT_FOUND error message for email vs phone.
+ * Resolves a channel-specific 404 / deleted / missing-account error message for email vs phone.
  */
 function resolveUserNotFoundMessage(
   errMessage: string | undefined,
   channelOrIdentifier?: 'email' | 'phone' | string,
 ): string {
+  if (channelOrIdentifier === 'phone') {
+    return 'No account found with this phone number.';
+  }
+  if (channelOrIdentifier === 'email') {
+    return 'No account found with this email address.';
+  }
+  if (typeof channelOrIdentifier === 'string' && channelOrIdentifier.length > 0) {
+    return channelOrIdentifier.includes('@')
+      ? 'No account found with this email address.'
+      : 'No account found with this phone number.';
+  }
   if (
     errMessage === 'No account found with this email address.' ||
     errMessage === 'No account found with this phone number.'
@@ -98,18 +132,15 @@ function resolveUserNotFoundMessage(
   }
   if (
     errMessage &&
-    errMessage !== 'No account found with this email or phone number.'
+    errMessage !== 'No account found with this email or phone number.' &&
+    errMessage !== 'Service temporarily unavailable. Please try again.' &&
+    !ACCOUNT_MISSING_MESSAGE_PATTERN.test(errMessage) &&
+    !errMessage.toLowerCase().includes('deleted') &&
+    !errMessage.toLowerCase().includes('not found')
   ) {
     return errMessage;
   }
-  const isPhone =
-    channelOrIdentifier === 'phone' ||
-    (typeof channelOrIdentifier === 'string' &&
-      channelOrIdentifier !== 'email' &&
-      !channelOrIdentifier.includes('@'));
-  return isPhone
-    ? 'No account found with this phone number.'
-    : 'No account found with this email address.';
+  return 'No account found with this email address.';
 }
 
 // Product decision: explicit 404 account-not-found feedback is intentional and bounded by backend IP rate limits.
@@ -117,11 +148,7 @@ function mapAuthApiError(
   err: ApiError,
   channelOrIdentifier?: 'email' | 'phone' | string,
 ): AuthActionResult {
-  if (
-    err.statusCode === 404 ||
-    err.code === 'AUTH_USER_NOT_FOUND' ||
-    err.code === 'ACCOUNT_NOT_FOUND'
-  ) {
+  if (isAccountMissingOrDeletedError(err)) {
     return {
       error: resolveUserNotFoundMessage(err.message, channelOrIdentifier),
       ...apiMeta(err),
@@ -141,6 +168,7 @@ function mapAuthApiError(
 }
 
 function clearRememberMeCookies(cookieStore: {
+  set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
   delete: (name: string) => unknown;
 }): void {
   try {
@@ -152,9 +180,17 @@ function clearRememberMeCookies(cookieStore: {
 }
 
 function clearLoginHintCookie(cookieStore: {
+  set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
   delete: (name: string) => unknown;
 }): void {
   try {
+    cookieStore.set?.(LOGIN_HINT_COOKIE, '', {
+      httpOnly: false,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 0,
+    });
     cookieStore.delete(LOGIN_HINT_COOKIE);
   } catch {
     // Ignore cookie cleanup errors outside request context
@@ -695,6 +731,15 @@ export async function loginAction(
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      if (isAccountMissingOrDeletedError(err)) {
+        try {
+          const supabase = await createSupabaseServerClient();
+          await safeSignOut(supabase);
+        } catch {
+          // Best-effort cleanup of any partial session cookie
+        }
+        return mapAuthApiError(err, idCheck.value.kind);
+      }
       if (
         err.statusCode === 403 &&
         (err.code === 'UNVERIFIED_ACCOUNT' ||
@@ -711,6 +756,19 @@ export async function loginAction(
           });
         } catch (resendErr) {
           resendError = resendErr;
+        }
+
+        if (
+          resendError instanceof ApiError &&
+          isAccountMissingOrDeletedError(resendError)
+        ) {
+          try {
+            const supabase = await createSupabaseServerClient();
+            await safeSignOut(supabase);
+          } catch {
+            // Best-effort cleanup of any partial session cookie
+          }
+          return mapAuthApiError(resendError, idCheck.value.kind);
         }
 
         const dispatch = evaluateResendDispatch(resendResult, resendError);
@@ -817,13 +875,23 @@ export async function registerAction(
     if (err instanceof ApiError) {
       if (err.statusCode === 429) {
         return {
-          error: 'Email delivery is temporarily rate-limited. Please try again later.',
+          error:
+            type === 'phone'
+              ? 'SMS delivery is temporarily rate-limited. Please try again later.'
+              : 'Email delivery is temporarily rate-limited. Please try again later.',
           ...apiMeta(err),
         };
       }
       return { error: err.message, ...apiMeta(err) };
     }
     return { error: 'An unexpected error occurred during registration.' };
+  }
+
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete('account_deleted');
+  } catch {
+    // Non-fatal in unit/non-mutable cookie contexts
   }
 
   await setVerificationContext({ type, identifier });
@@ -1439,15 +1507,8 @@ export async function requestAccountDeletionAction(
   _prevState: AccountDeletionActionResult,
   formData: FormData,
 ): Promise<AccountDeletionActionResult> {
-  const confirmation = formData.get('confirmation');
   const password = formData.get('password');
   const reauthToken = formData.get('reauth_token');
-
-  if (confirmation !== 'DELETE') {
-    return {
-      error: 'কনফার্মেশন নিশ্চিত করতে অবশ্যই DELETE লিখুন (Confirmation must be DELETE).',
-    };
-  }
 
   const supabase = await createSupabaseServerClient();
   const {
@@ -1500,10 +1561,17 @@ export async function requestAccountDeletionAction(
           path: '/',
           maxAge: 15,
           sameSite: 'lax',
-          httpOnly: true,
+          httpOnly: false,
         });
       } catch {
         // Best effort cookie set
+      }
+    } else {
+      try {
+        const cookieStore = await cookies();
+        clearLoginHintCookie(cookieStore);
+      } catch {
+        // Best effort login hint cleanup
       }
     }
 
@@ -1572,6 +1640,12 @@ export async function pollAccountDeletionStatusAction(
         const cookieStore = await cookies();
         clearRememberMeCookies(cookieStore);
         clearLoginHintCookie(cookieStore);
+        cookieStore.set('account_deleted', 'true', {
+          path: '/',
+          maxAge: 15,
+          sameSite: 'lax',
+          httpOnly: false,
+        });
       } catch {
         // Best effort cookie cleanup
       }

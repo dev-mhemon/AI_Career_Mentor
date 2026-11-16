@@ -394,4 +394,47 @@ describe('Unconfigured abuse controls never bypass shared enforcement', () => {
       service.onModuleDestroy();
     }
   });
+
+  it('clearContactsState deletes contact send, cooldown, challenge, and OTP secret keys', async () => {
+    const config = readAbuseConfiguration({
+      AUTH_REDIS_URL: 'redis://127.0.0.1:6379',
+      AUTH_HMAC_SECRET: 'synthetic-secret-with-at-least-32-bytes',
+    });
+    const service = new AuthAbuseControl(config);
+    const delMock = vi.fn().mockResolvedValue(1);
+    const withCommandOptionsMock = vi.fn().mockReturnValue({ del: delMock });
+    vi.spyOn(
+      service as unknown as { getConnectedClient: () => Promise<unknown> },
+      'getConnectedClient',
+    ).mockResolvedValue({
+      withCommandOptions: withCommandOptionsMock,
+    });
+
+    try {
+      await service.clearContactsState(
+        [
+          { channel: 'email', identifier: 'User@Example.Invalid' },
+          { channel: 'phone', identifier: '+8801629795421' },
+        ],
+        ['00000000-0000-4000-8000-000000000001'],
+      );
+      expect(delMock).toHaveBeenCalledTimes(1);
+      const deletedKeys = delMock.mock.calls[0][0] as string[];
+      expect(deletedKeys).toHaveLength(16);
+      expect(
+        deletedKeys.some((k) => k.startsWith('auth:v1:send:cooldown:')),
+      ).toBe(true);
+      expect(
+        deletedKeys.some((k) => k.startsWith('auth:v1:send:contact:')),
+      ).toBe(true);
+      expect(deletedKeys.some((k) => k.startsWith('auth:v1:challenge:'))).toBe(
+        true,
+      );
+      expect(deletedKeys).toContain(
+        'auth:v1:otp:secret:00000000-0000-4000-8000-000000000001',
+      );
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
 });

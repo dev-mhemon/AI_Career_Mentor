@@ -40,6 +40,16 @@ describe("mapApiError", () => {
       ).message,
     ).toBe("Invalid credentials. Please try again.");
     expect(mapApiError(new UnauthorizedError()).requiresSignIn).toBe(true);
+    const missing401 = mapApiError(
+      new ApiError(
+        401,
+        "No account found with this phone number.",
+        "AUTH_REQUIRED",
+      ),
+    );
+    expect(missing401.message).toBe("No account found with this phone number.");
+    expect(missing401.requiresSignIn).toBe(false);
+    expect(missing401.retryable).toBe(false);
   });
 
   it("maps 404 account errors without rewriting message", () => {

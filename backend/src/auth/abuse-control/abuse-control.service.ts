@@ -520,6 +520,70 @@ export class AuthAbuseControl implements OnModuleDestroy {
     return result.value;
   }
 
+  /**
+   * Best-effort cleanup of per-contact rate-limit, cooldown, challenge, and OTP secret keys
+   * after account deletion or orphaned-account purge so freed credentials can register cleanly.
+   */
+  async clearContactsState(
+    contacts: ReadonlyArray<Contact>,
+    userIds: ReadonlyArray<string> = [],
+  ): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const keys = new Set<string>();
+    for (const contact of contacts) {
+      let id: string;
+      try {
+        const trimmed =
+          typeof contact.identifier === 'string'
+            ? contact.identifier.trim()
+            : '';
+        if (!trimmed) continue;
+        const canonical: Contact =
+          contact.channel === 'email'
+            ? { channel: 'email', identifier: trimmed.toLowerCase() }
+            : {
+                channel: 'phone',
+                identifier: trimmed.startsWith('+') ? trimmed : `+${trimmed}`,
+              };
+        id = this.contactKey(canonical);
+      } catch {
+        continue;
+      }
+      keys.add(`auth:v1:send:cooldown:${id}`);
+      keys.add(`auth:v1:send:contact:${id}`);
+      keys.add(`auth:v1:challenge:${id}`);
+      keys.add(`auth:v1:challenge:verify_email:${id}`);
+      keys.add(`auth:v1:challenge:verify_phone:${id}`);
+      keys.add(`auth:v1:challenge:reset_password:${id}`);
+    }
+    for (const userId of userIds) {
+      const normalizedId = typeof userId === 'string' ? userId.trim() : '';
+      if (!normalizedId) continue;
+      keys.add(`auth:v1:otp:secret:${normalizedId}`);
+      keys.add(`auth:v1:otp:secret:verify_email:${normalizedId}`);
+      keys.add(`auth:v1:otp:secret:verify_phone:${normalizedId}`);
+      keys.add(`auth:v1:otp:secret:reset_password:${normalizedId}`);
+    }
+    if (keys.size === 0) return;
+
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).del([...keys]),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /** Clears per-contact abuse-control keys for a single contact identifier. */
+  async clearContactState(contact: Contact): Promise<void> {
+    await this.clearContactsState([contact]);
+  }
+
   onModuleDestroy(): void {
     this.stopped = true;
     if (this.client?.isOpen) this.client.destroy();

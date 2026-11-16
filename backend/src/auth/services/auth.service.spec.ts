@@ -6390,6 +6390,10 @@ describe('AuthService session approval boundary', () => {
           message: 'No account found with this phone number.',
         },
       });
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('JOIN public.users pu ON pu.id = u.id'),
+        ['+8801712345678'],
+      );
     });
 
     it('returns 401 AUTH_INVALID_CREDENTIALS when password does not match or hash is non-bcrypt', async () => {

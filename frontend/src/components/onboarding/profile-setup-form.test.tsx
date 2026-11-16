@@ -217,7 +217,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('validates Full Name on blur and submit (empty, too short, digit-only, whitespace collapse)', async () => {
+  it('validates Full Name on submit, clears error on change, and collapses extra whitespace on valid blur', async () => {
     render(
       <ProfileSetupForm
         initialProfile={EMPTY_PROFILE}
@@ -237,29 +237,46 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(fullNameInput).toHaveAttribute('aria-describedby', 'full_name-error');
     expect(screen.getByText('Enter your full name.')).toBeInTheDocument();
 
-    // Too short
+    // Editing clears existing error immediately without triggering new error on keystroke/blur
     fireEvent.change(fullNameInput, { target: { value: 'A' } });
+    expect(screen.queryByText('Enter your full name.')).not.toBeInTheDocument();
     fireEvent.blur(fullNameInput);
+    expect(
+      screen.queryByText('Full name must be at least 2 characters.'),
+    ).not.toBeInTheDocument();
+
+    // Too short on submit
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
     expect(
       screen.getByText('Full name must be at least 2 characters.'),
     ).toBeInTheDocument();
 
-    // Digit-only
+    // Digit-only -> cleared on change, shown on submit
     fireEvent.change(fullNameInput, { target: { value: '12345' } });
-    fireEvent.blur(fullNameInput);
+    expect(
+      screen.queryByText('Full name must be at least 2 characters.'),
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
     expect(
       screen.getByText('Full name cannot contain only digits.'),
     ).toBeInTheDocument();
 
     // Valid name collapses extra internal whitespace on blur and clears error
     fireEvent.change(fullNameInput, { target: { value: '  Alice   Rahman  ' } });
+    expect(
+      screen.queryByText('Full name cannot contain only digits.'),
+    ).not.toBeInTheDocument();
     fireEvent.blur(fullNameInput);
     expect(fullNameInput).toHaveValue('Alice Rahman');
     expect(fullNameInput).not.toHaveAttribute('aria-invalid', 'true');
     expect(fullNameInput).not.toHaveAttribute('aria-describedby');
   });
 
-  it('auto-prefills Verified readOnly Email for email-signup users and validates optional Phone', () => {
+  it('auto-prefills Verified readOnly Email for email-signup users and validates optional Phone on submit', async () => {
     const { container } = render(
       <ProfileSetupForm
         initialProfile={EMPTY_PROFILE}
@@ -269,6 +286,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     const emailInput = screen.getByLabelText(/email address/i);
     expect(emailInput).toHaveValue('alice@example.com');
+    expect(emailInput).toHaveAttribute('placeholder', 'Enter your email');
     expect(emailInput).toHaveAttribute('readonly');
     expect(screen.getByText('Verified')).toBeInTheDocument();
 
@@ -277,15 +295,25 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(phoneInput).toHaveAttribute('placeholder', '01XXXXXXXXX');
     expect(screen.getByText('+88')).toBeInTheDocument();
 
-    // Invalid BD prefix shows error
+    // Invalid BD prefix does not error while typing before submit
     fireEvent.change(phoneInput, { target: { value: '01234' } });
     expect(
-      screen.getByText(/bangladesh mobile prefix must be 013/i),
+      screen.queryByText(/enter a valid bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
+
+    // Submitting displays phone validation error
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+    });
+    expect(
+      screen.getByText(/enter a valid bangladesh mobile number/i),
     ).toBeInTheDocument();
 
-    // Valid BD number clears error and submits canonical +8801XXXXXXXXX in hidden input
+    // Editing phone clears error immediately and keeps canonical +8801XXXXXXXXX in hidden input
     fireEvent.change(phoneInput, { target: { value: '01712345678' } });
-    fireEvent.blur(phoneInput);
+    expect(
+      screen.queryByText(/enter a valid bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
     expect(phoneInput).not.toHaveAttribute('aria-invalid', 'true');
     const hiddenPhone = container.querySelector(
       'input[type="hidden"][name="phone"]',
@@ -293,7 +321,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(hiddenPhone.value).toBe('+8801712345678');
   });
 
-  it('auto-prefills Verified readOnly Phone (+88 + 01XXXXXXXXX) for phone-signup users and validates optional Email', () => {
+  it('auto-prefills Verified readOnly Phone (+88 + 01XXXXXXXXX) for phone-signup users and validates optional Email on submit', async () => {
     const { container } = render(
       <ProfileSetupForm
         initialProfile={EMPTY_PROFILE}
@@ -328,11 +356,18 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     const emailInput = screen.getByLabelText(/email address/i);
     expect(emailInput).not.toHaveAttribute('readonly');
+    expect(emailInput).toHaveAttribute('placeholder', 'Enter your email');
     fireEvent.change(emailInput, { target: { value: 'not-valid' } });
     fireEvent.blur(emailInput);
+    expect(screen.queryByText('Enter a valid email address.')).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+    });
     expect(screen.getByText('Enter a valid email address.')).toBeInTheDocument();
 
     fireEvent.change(emailInput, { target: { value: '  Alt@Example.COM ' } });
+    expect(screen.queryByText('Enter a valid email address.')).not.toBeInTheDocument();
     fireEvent.blur(emailInput);
     expect(emailInput).toHaveValue('alt@example.com');
     expect(emailInput).not.toHaveAttribute('aria-invalid', 'true');
@@ -378,7 +413,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
   });
 
-  it('rejects non-0.5 daily hours and >200 char education on blur and submit, falling back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
+  it('rejects non-0.5 daily hours and >200 char education on submit (clearing on change) and falls back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
     const tzSpy = vi
       .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
       .mockReturnValue({
@@ -410,26 +445,47 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
       fireEvent.change(educationInput, { target: { value: 'x'.repeat(201) } });
       fireEvent.blur(educationInput);
-      expect(
-        screen.getByText('Education must be 200 characters or fewer.'),
-      ).toBeInTheDocument();
-
       fireEvent.blur(hoursInput);
       expect(
-        screen.getByText(
+        screen.queryByText('Education must be 200 characters or fewer.'),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(
           'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
         ),
-      ).toBeInTheDocument();
+      ).not.toBeInTheDocument();
 
       const submitBtn = screen.getByRole('button', { name: /save profile/i });
       await act(async () => {
         fireEvent.click(submitBtn);
       });
       expect(saveProfileSetupAction).not.toHaveBeenCalled();
+      expect(
+        screen.getByText('Education must be 200 characters or fewer.'),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
+        ),
+      ).toBeInTheDocument();
 
-      // Non-0.5 out-of-range step 12.5 also rejected
+      // Editing clears both errors immediately
+      fireEvent.change(educationInput, { target: { value: 'BSc' } });
+      expect(
+        screen.queryByText('Education must be 200 characters or fewer.'),
+      ).not.toBeInTheDocument();
+
       fireEvent.change(hoursInput, { target: { value: '12.5' } });
-      fireEvent.blur(hoursInput);
+      expect(
+        screen.queryByText(
+          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
+        ),
+      ).not.toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(submitBtn);
+      });
+      expect(saveProfileSetupAction).not.toHaveBeenCalled();
       expect(
         screen.getByText(
           'Enter daily study hours between 0.5 and 12 in 0.5 increments.',

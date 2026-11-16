@@ -11,6 +11,7 @@ import { DatabaseService } from './services/database.service.js';
 import { ProfileController } from '../profile/profile.controller.js';
 import { ProfileService } from '../profile/profile.service.js';
 import { AuthAbuseControlModule } from './abuse-control/abuse-control.module.js';
+import { AuthAbuseControl } from './abuse-control/abuse-control.service.js';
 import { EmailRegistrationProvider } from './services/email-registration.provider.js';
 import { TextBeeSmsProvider } from './services/textbee-sms.provider.js';
 import { EmailRegistrationService } from './services/email-registration.service.js';
@@ -33,8 +34,14 @@ import { OtpSecretStore } from './services/otp-secret-store.service.js';
         config: ConfigService,
         database: DatabaseService,
         otpStore: OtpSecretStore,
-      ) => new EmailRegistrationProvider(config, database, otpStore),
-      inject: [ConfigService, DatabaseService, OtpSecretStore],
+        abuse: AuthAbuseControl,
+      ) => new EmailRegistrationProvider(config, database, otpStore, abuse),
+      inject: [
+        ConfigService,
+        DatabaseService,
+        OtpSecretStore,
+        AuthAbuseControl,
+      ],
     },
     {
       provide: TextBeeSmsProvider,
@@ -43,8 +50,14 @@ import { OtpSecretStore } from './services/otp-secret-store.service.js';
         config: ConfigService,
         database: DatabaseService,
         otpStore: OtpSecretStore,
-      ) => new TextBeeSmsProvider(config, database, otpStore),
-      inject: [ConfigService, DatabaseService, OtpSecretStore],
+        abuse: AuthAbuseControl,
+      ) => new TextBeeSmsProvider(config, database, otpStore, abuse),
+      inject: [
+        ConfigService,
+        DatabaseService,
+        OtpSecretStore,
+        AuthAbuseControl,
+      ],
     },
     EmailRegistrationService,
     SessionApprovalService,

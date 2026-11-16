@@ -356,7 +356,11 @@ export default async function LandingPage() {
         </div>
       </header>
 
-      <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 outline-none focus:outline-none focus-visible:outline-none"
+      >
         {/* 2. Atmospheric Hero Section + Live 3-Panel Product Showcase */}
         <section className="relative overflow-hidden border-b border-border-subtle">
           {/* Fine Architectural Grid with Bottom Fade Mask */}

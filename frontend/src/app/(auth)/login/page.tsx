@@ -24,8 +24,29 @@ export default async function LoginPage({
       : Array.isArray(errorCode) &&
         errorCode.some((value) => value.trim().length > 0);
   const resetSuccess = awaitedSearchParams?.reset === "success";
-  const isDeleted = awaitedSearchParams?.deleted === "true";
   const isVerified = awaitedSearchParams?.verified === "true";
+
+  let hasAccountDeletedCookie = false;
+  let initialRememberedLogin = null;
+  try {
+    const cookieStore = await cookies();
+    hasAccountDeletedCookie =
+      cookieStore.get("account_deleted")?.value === "true";
+    initialRememberedLogin = parseRememberedLoginHint(
+      cookieStore.get(LOGIN_HINT_COOKIE)?.value,
+    );
+  } catch {
+    initialRememberedLogin = null;
+  }
+
+  const hasDeletedParam =
+    awaitedSearchParams?.deleted === "true" ||
+    awaitedSearchParams?.deleted === "1" ||
+    awaitedSearchParams?.notice === "account_deleted";
+  const isDeleted = hasDeletedParam || hasAccountDeletedCookie;
+  if (isDeleted) {
+    initialRememberedLogin = null;
+  }
 
   if (!hasErrorParam && !isDeleted) {
     if (await hasAuthenticatedAppSession()) {
@@ -40,25 +61,14 @@ export default async function LoginPage({
     initialError = "Account synchronization failed. Please contact support.";
   }
 
-  const successMessage = isDeleted
-    ? "Your account has been permanently deleted."
-    : resetSuccess
+  const successMessage = resetSuccess
     ? "Password reset successfully. Please sign in with your new password."
     : isVerified
     ? "Email verified successfully. Please sign in."
     : undefined;
-
-  let initialRememberedLogin = null;
-  if (!isDeleted) {
-    try {
-      const cookieStore = await cookies();
-      initialRememberedLogin = parseRememberedLoginHint(
-        cookieStore.get(LOGIN_HINT_COOKIE)?.value,
-      );
-    } catch {
-      initialRememberedLogin = null;
-    }
-  }
+  const toastMessage = hasDeletedParam
+    ? "Your account has been permanently deleted."
+    : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,6 +81,7 @@ export default async function LoginPage({
       <LoginForm
         initialError={initialError}
         successMessage={successMessage}
+        toastMessage={toastMessage}
         initialRememberedLogin={initialRememberedLogin}
         clearSavedLogin={isDeleted}
       />

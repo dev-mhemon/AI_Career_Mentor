@@ -48,17 +48,20 @@ vi.mock('@/components/auth/login-form', () => ({
   LoginForm: ({
     initialError,
     successMessage,
+    toastMessage,
     initialRememberedLogin,
     clearSavedLogin,
   }: {
     initialError?: string;
     successMessage?: string;
+    toastMessage?: string;
     initialRememberedLogin?: unknown;
     clearSavedLogin?: boolean;
   }) => {
     mockLoginForm({
       initialError,
       successMessage,
+      toastMessage,
       initialRememberedLogin,
       clearSavedLogin,
     });
@@ -66,6 +69,7 @@ vi.mock('@/components/auth/login-form', () => ({
       <div data-testid="login-form">
         {initialError && <div data-testid="initial-error">{initialError}</div>}
         {successMessage && <div data-testid="success-message">{successMessage}</div>}
+        {toastMessage && <div data-testid="toast-message">{toastMessage}</div>}
       </div>
     );
   },
@@ -186,16 +190,47 @@ describe('LoginPage Server Component', () => {
     expect(screen.getByTestId('login-form')).toBeInTheDocument();
   });
 
-  it('renders deletion confirmation banner when searchParams.deleted is true', async () => {
+  it('forwards deletion toastMessage without inline success banner when searchParams.deleted is true or notice=account_deleted', async () => {
     mockGetSession.mockResolvedValue({ data: { session: null } });
 
-    const jsx = await LoginPage({
-      searchParams: Promise.resolve({ deleted: 'true' }),
-    });
-    render(jsx);
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ deleted: 'true' }),
+      }),
+    );
 
-    const successEl = screen.getByTestId('success-message');
-    expect(successEl).toHaveTextContent('Your account has been permanently deleted.');
+    expect(screen.getByTestId('toast-message')).toHaveTextContent(
+      'Your account has been permanently deleted.',
+    );
+    expect(screen.queryByTestId('success-message')).not.toBeInTheDocument();
+
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ notice: 'account_deleted' }),
+      }),
+    );
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        successMessage: undefined,
+        toastMessage: 'Your account has been permanently deleted.',
+        clearSavedLogin: true,
+        initialRememberedLogin: null,
+      }),
+    );
+
+    // Cookie-only fallback clears remembered login without re-triggering URL toast on refresh
+    mockCookieGet.mockImplementation((name: string) =>
+      name === 'account_deleted' ? { value: 'true' } : undefined,
+    );
+    render(await LoginPage({}));
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        successMessage: undefined,
+        toastMessage: undefined,
+        clearSavedLogin: true,
+        initialRememberedLogin: null,
+      }),
+    );
   });
 
   it('renders password reset success message when searchParams.reset is success', async () => {
@@ -238,13 +273,15 @@ describe('LoginPage Server Component', () => {
 
     render(
       await LoginPage({
-        searchParams: Promise.resolve({ deleted: 'true' }),
+        searchParams: Promise.resolve({ deleted: '1' }),
       }),
     );
     expect(mockLoginForm).toHaveBeenLastCalledWith(
       expect.objectContaining({
         initialRememberedLogin: null,
         clearSavedLogin: true,
+        toastMessage: 'Your account has been permanently deleted.',
+        successMessage: undefined,
       }),
     );
   });

@@ -286,10 +286,44 @@ describe('TextBeeSmsProvider', () => {
       });
       expect(database.query).toHaveBeenCalledWith(
         expect.stringContaining(
-          "WHERE u.phone IN ($1, ltrim($1, '+')) OR p.contact_value IN ($1, ltrim($1, '+'))",
+          "AND (u.phone IN ($1, ltrim($1, '+')) OR p.contact_value IN ($1, ltrim($1, '+')))",
         ),
         [TEST_PHONE],
       );
+    });
+
+    it('findByPhone ignores deleted or confirmed-orphan auth.users rows with no active public.users account', async () => {
+      const orphanedPhone = '+8801629795421';
+      const database = {
+        query: vi.fn().mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: '8801629795421',
+            phone_confirmed_at: '2026-10-01T00:00:00Z',
+            verified_contact: false,
+            has_app_user: false,
+            is_deleted: false,
+          },
+        ]),
+      } as unknown as DatabaseService;
+
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'TEXTBEE_API_KEY') return 'test_key';
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return '01234567890123456789012345678901';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'sb-service-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(config, database, {
+        generateOtp: vi.fn(),
+        storeOtp: vi.fn(),
+      } as unknown as OtpSecretStore);
+
+      await expect(provider.findByPhone(orphanedPhone)).resolves.toBeNull();
     });
 
     it('findByPhone normalizes digits-only phone identity from database to canonical E.164 with leading +', async () => {
@@ -471,6 +505,79 @@ describe('TextBeeSmsProvider', () => {
         const resp = (err as HttpException).getResponse() as any;
         expect(resp.code).toBe('CONTACT_ALREADY_REGISTERED');
       }
+    });
+
+    it('createPending self-heals orphaned phone (+8801629795421) on 422 phone_exists and retries fresh sign-up', async () => {
+      const orphanedPhone = '+8801629795421';
+      const staleId = '99999999-9999-4999-8999-999999999999';
+      const freshId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+      const fetchMock = vi.mocked(globalThis.fetch);
+      fetchMock
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              error_code: 'phone_exists',
+              msg: 'A user with this phone number already exists',
+            }),
+            { status: 422 },
+          ),
+        )
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ id: freshId, phone: '8801629795421' }),
+            { status: 200 },
+          ),
+        );
+
+      const database = {
+        query: vi
+          .fn()
+          .mockResolvedValueOnce([{ id: staleId }])
+          .mockResolvedValueOnce([]),
+      } as unknown as DatabaseService;
+
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'TEXTBEE_API_KEY') return 'test_key';
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return '01234567890123456789012345678901';
+          if (key === 'SUPABASE_URL') return 'http://127.0.0.1:56321';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'sb-service-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          return undefined;
+        }),
+        getOrThrow: vi.fn(() => 'http://127.0.0.1:56321'),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(config, database, {
+        generateOtp: vi.fn(),
+        storeOtp: vi.fn(),
+      } as unknown as OtpSecretStore);
+
+      const created = await provider.createPending(
+        orphanedPhone,
+        'Password123!',
+      );
+      expect(created).toEqual({
+        id: freshId,
+        subject: freshId,
+        phone: orphanedPhone,
+        verified: false,
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        `http://127.0.0.1:56321/auth/v1/admin/users/${staleId}`,
+        expect.objectContaining({
+          method: 'DELETE',
+          body: JSON.stringify({ should_soft_delete: false }),
+        }),
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM auth.users'),
+        [[staleId]],
+      );
     });
 
     it('sendChallenge generates OTP, stores in Redis with verify_phone purpose, and dispatches SMS', async () => {

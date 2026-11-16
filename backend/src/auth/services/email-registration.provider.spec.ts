@@ -179,7 +179,7 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       const normalizedSql = executedSql.replace(/\s+/g, ' ');
       expect(normalizedSql).toContain('LEFT JOIN public.user_auth_providers p');
       expect(normalizedSql).toContain(
-        'WHERE lower(u.email) = $1 OR lower(p.contact_value) = $1',
+        'WHERE u.deleted_at IS NULL AND (lower(u.email) = $1 OR lower(p.contact_value) = $1)',
       );
       expect(normalizedSql).toContain('ORDER BY');
       expect(normalizedSql).toContain(
@@ -201,6 +201,21 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         email: 'secondary@example.invalid',
         verified: false,
       });
+    });
+
+    it('ignores soft-deleted rows and confirmed orphaned auth users with no public.users row', async () => {
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: '2026-10-01T00:00:00Z',
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+        },
+      ]);
+
+      await expect(provider.findByEmail(email)).resolves.toBeNull();
     });
 
     it('returns the coalesced provider contact_value when u.email matched lookup but p.contact_value is different', async () => {
@@ -280,6 +295,62 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       });
     });
 
+    it('self-heals orphaned/deleted email account on 422 email_exists and retries fresh creation cleanly', async () => {
+      const staleId = '99999999-9999-4999-8999-999999999999';
+      database.query
+        .mockResolvedValueOnce([{ id: staleId }])
+        .mockResolvedValueOnce([]);
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            error_code: 'email_exists',
+            msg: 'A user with this email address has already been registered',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: userId, email }),
+        });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const created = await provider.createPending(email, 'Password123!');
+
+      expect(created).toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: false,
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        `http://supabase.invalid/auth/v1/admin/users/${staleId}`,
+        expect.objectContaining({
+          method: 'DELETE',
+          body: JSON.stringify({ should_soft_delete: false }),
+        }),
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'DELETE FROM public.users WHERE id = ANY($1::uuid[])',
+        ),
+        [[staleId]],
+      );
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM auth.users'),
+        [[staleId]],
+      );
+    });
+
     it('maps upstream errors to 502 EMAIL_PROVIDER_ERROR', async () => {
       vi.stubGlobal(
         'fetch',
@@ -296,6 +367,55 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         status: 502,
         response: { code: 'EMAIL_PROVIDER_ERROR' },
       });
+    });
+
+    it('maps upstream 429 to 429 OTP_LIMIT_EXCEEDED with Retry-After seconds', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 429,
+          headers: new Headers({ 'retry-after': '120' }),
+          json: async () => ({ error_code: 'over_email_send_rate_limit' }),
+        }),
+      );
+
+      await expect(
+        provider.createPending(email, 'Password123!'),
+      ).rejects.toMatchObject({
+        status: 429,
+        response: {
+          code: 'OTP_LIMIT_EXCEEDED',
+          retryAfterSeconds: 120,
+        },
+      });
+    });
+
+    it('clears Redis contact abuse-control keys when purgeOrphanedByEmail purges a stale account', async () => {
+      const clearContactsState = vi.fn().mockResolvedValue(undefined);
+      const providerWithAbuse = new EmailRegistrationProvider(
+        config,
+        database as unknown as DatabaseService,
+        otpStore as unknown as OtpSecretStore,
+        { clearContactsState } as any,
+      );
+      providerWithAbuse.setTransport(vi.fn());
+      const staleId = '00000000-0000-4000-8000-000000000099';
+      database.query
+        .mockResolvedValueOnce([{ id: staleId }])
+        .mockResolvedValueOnce([{ email, phone: null }]);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+      );
+
+      const purged = await providerWithAbuse.purgeOrphanedByEmail(email);
+
+      expect(purged).toBe(true);
+      expect(clearContactsState).toHaveBeenCalledWith(
+        expect.arrayContaining([{ channel: 'email', identifier: email }]),
+        [staleId],
+      );
     });
   });
 

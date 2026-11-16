@@ -13,12 +13,12 @@ body {
   background: var(--surface-selection);
 }
 
-:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring);
-  outline-offset: var(--focus-ring-offset-width, 2px);
-}
-
 @layer base {
+  :focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset-width, 2px);
+  }
+
   input::placeholder,
   textarea::placeholder {
     font-weight: 300;

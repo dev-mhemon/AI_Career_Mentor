@@ -25,7 +25,6 @@ import { cn } from '@/components/ui/cn';
 import {
   normalizeBdPhone,
   normalizeEmail,
-  validateBdPhoneOnChange,
 } from '@/lib/validation/auth-schemas';
 import {
   CURRENT_ROLE_MAX,
@@ -277,7 +276,6 @@ function ProfileSetupFormInner({
   const [dismissedSuccessState, setDismissedSuccessState] =
     useState<ProfileSetupActionState | null>(null);
 
-  const phoneBlurredRef = useRef(false);
   const hydratedRef = useRef(false);
   const processedResultRef = useRef<ProfileSetupActionState | null>(null);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
@@ -678,10 +676,7 @@ function ProfileSetupFormInner({
       return;
     }
     dismissServerField('experience_level');
-    if (getFieldError('experience_level')) {
-      const check = validateExperienceLevel(nextLevel);
-      setFieldError('experience_level', check.ok ? undefined : check.error);
-    }
+    setFieldError('experience_level', undefined);
 
     if (nextLevel !== 'beginner') {
       dismissServerField('existing_skills_none');
@@ -732,9 +727,6 @@ function ProfileSetupFormInner({
       : validateOptionalBdPhone(displayedPhone);
     if (!phoneCheck.ok) {
       errors.phone = phoneCheck.error;
-      if (displayedPhone.trim()) {
-        phoneBlurredRef.current = true;
-      }
     }
 
     if (
@@ -903,7 +895,11 @@ function ProfileSetupFormInner({
       )}
 
       {visibleAlertState?.error && (
-        <div ref={errorAlertRef} tabIndex={-1} className="focus:outline-none">
+        <div
+          ref={errorAlertRef}
+          tabIndex={-1}
+          className="outline-none focus:outline-none focus-visible:outline-none"
+        >
           <AuthAlert
             result={{
               ...visibleAlertState,
@@ -943,22 +939,12 @@ function ProfileSetupFormInner({
           onChange={(e) => {
             const v = e.target.value;
             dismissServerField('full_name');
-            if (/[\u0000-\u001F\u007F]/.test(v)) {
-              setFieldError('full_name', 'Full name cannot contain control characters.');
-            } else if (clientErrors.full_name) {
-              const check = validateFullName(v);
-              setFieldError('full_name', check.ok ? undefined : check.error);
-            }
+            setFieldError('full_name', undefined);
             commitFieldPatch({ full_name: v });
           }}
           onBlur={(e) => {
             const check = validateFullName(e.target.value);
-            if (!check.ok) {
-              setFieldError('full_name', check.error);
-              return;
-            }
-            setFieldError('full_name', undefined);
-            if (check.value !== values.full_name) {
+            if (check.ok && check.value !== values.full_name) {
               commitFieldPatch({ full_name: check.value });
             }
           }}
@@ -976,32 +962,18 @@ function ProfileSetupFormInner({
             labelBadge={emailVerified ? <VerifiedBadge /> : undefined}
             value={displayedEmail}
             error={emailError}
-            placeholder="you@example.com"
+            placeholder="Enter your email"
             onChange={(e) => {
               if (emailVerified) return;
               const v = e.target.value;
               dismissServerField('email');
-              if (!v.trim()) {
-                setFieldError('email', undefined);
-              } else if (clientErrors.email) {
-                const check = validateOptionalEmail(v);
-                setFieldError('email', check.ok ? undefined : check.error);
-              }
+              setFieldError('email', undefined);
               commitFieldPatch({ email: v });
             }}
             onBlur={(e) => {
-              if (emailVerified) return;
-              if (!e.target.value.trim()) {
-                setFieldError('email', undefined);
-                return;
-              }
+              if (emailVerified || !e.target.value.trim()) return;
               const check = validateOptionalEmail(e.target.value);
-              if (!check.ok) {
-                setFieldError('email', check.error);
-                return;
-              }
-              setFieldError('email', undefined);
-              if (check.value !== values.email) {
+              if (check.ok && check.value !== values.email) {
                 commitFieldPatch({ email: check.value });
               }
             }}
@@ -1022,24 +994,11 @@ function ProfileSetupFormInner({
               if (phoneVerified) return;
               const v = e.target.value;
               dismissServerField('phone');
-              const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
-              if (check.resetBlurred) phoneBlurredRef.current = false;
-              setFieldError('phone', check.error);
-              if (!emailVerified && clientErrors.email && !displayedEmail.trim() && check.ok && v.trim()) {
+              setFieldError('phone', undefined);
+              if (!emailVerified && clientErrors.email && !displayedEmail.trim() && v.trim()) {
                 setFieldError('email', undefined);
               }
               commitFieldPatch({ phone: v });
-            }}
-            onBlur={(e) => {
-              if (phoneVerified) return;
-              if (!e.target.value.trim()) {
-                phoneBlurredRef.current = false;
-                setFieldError('phone', undefined);
-                return;
-              }
-              phoneBlurredRef.current = true;
-              const check = validateOptionalBdPhone(e.target.value);
-              setFieldError('phone', check.ok ? undefined : check.error);
             }}
           />
         </div>
@@ -1070,19 +1029,8 @@ function ProfileSetupFormInner({
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('education');
-              if (
-                /[\u0000-\u001F\u007F]/.test(v) ||
-                v.trim().length > EDUCATION_MAX ||
-                clientErrors.education
-              ) {
-                const check = validateEducation(v);
-                setFieldError('education', check.ok ? undefined : check.error);
-              }
+              setFieldError('education', undefined);
               commitFieldPatch({ education: v }, { educationTouched: true });
-            }}
-            onBlur={(e) => {
-              const check = validateEducation(e.target.value);
-              setFieldError('education', check.ok ? undefined : check.error);
             }}
           />
         </div>
@@ -1104,30 +1052,8 @@ function ProfileSetupFormInner({
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('current_role');
-              if (/[\u0000-\u001F\u007F]/.test(v)) {
-                setFieldError(
-                  'current_role',
-                  'Current role cannot contain control characters.',
-                );
-              } else if (
-                clientErrors.current_role ||
-                v.trim().length > CURRENT_ROLE_MAX
-              ) {
-                const check = validateCurrentRole(v);
-                setFieldError('current_role', check.ok ? undefined : check.error);
-              }
-              commitFieldPatch({ current_role: v });
-            }}
-            onBlur={(e) => {
-              const check = validateCurrentRole(e.target.value);
-              if (!check.ok) {
-                setFieldError('current_role', check.error);
-                return;
-              }
               setFieldError('current_role', undefined);
-              if (check.value !== values.current_role) {
-                commitFieldPatch({ current_role: check.value });
-              }
+              commitFieldPatch({ current_role: v });
             }}
           />
 
@@ -1147,13 +1073,6 @@ function ProfileSetupFormInner({
                 tabIndex={isPending ? -1 : undefined}
                 value={values.experience_level}
                 onChange={(e) => handleExperienceLevelChange(e.target.value)}
-                onBlur={(e) => {
-                  const check = validateExperienceLevel(e.target.value);
-                  setFieldError(
-                    'experience_level',
-                    check.ok ? undefined : check.error,
-                  );
-                }}
                 aria-invalid={experienceLevelError ? 'true' : undefined}
                 aria-describedby={
                   experienceLevelError ? 'experience_level-error' : undefined
@@ -1316,21 +1235,8 @@ function ProfileSetupFormInner({
             onChange={(e) => {
               const v = e.target.value;
               dismissServerField('preferred_daily_hours');
-              if (clientErrors.preferred_daily_hours) {
-                const check = validateDailyHours(v);
-                setFieldError(
-                  'preferred_daily_hours',
-                  check.ok ? undefined : check.error,
-                );
-              }
+              setFieldError('preferred_daily_hours', undefined);
               commitFieldPatch({ preferred_daily_hours: v });
-            }}
-            onBlur={(e) => {
-              const check = validateDailyHours(e.target.value);
-              setFieldError(
-                'preferred_daily_hours',
-                check.ok ? undefined : check.error,
-              );
             }}
           />
         </div>

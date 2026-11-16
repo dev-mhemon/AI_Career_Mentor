@@ -1,6 +1,7 @@
 import { sanitizeBdPhoneDisplay } from '@/lib/validation/auth-schemas';
 
 export const LOGIN_HINT_COOKIE = 'mentor_login_hint';
+export const REMEMBERED_LOGIN_COOKIE_NAME = LOGIN_HINT_COOKIE;
 export const REMEMBERED_LOGIN_STORAGE_KEY = 'mentor_remembered_login';
 
 export type LoginChannel = 'email' | 'phone';
@@ -155,3 +156,6 @@ export function clearRememberedLogin(): void {
   clearRememberedLoginCookie();
   notifyRememberedLoginListeners();
 }
+
+export const clearRememberedLoginHint = clearRememberedLogin;
+export const clearRememberedLoginStorage = clearRememberedLogin;

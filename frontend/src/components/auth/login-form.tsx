@@ -2,6 +2,7 @@
 
 import {
   useActionState,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -14,7 +15,6 @@ import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import {
   AuthAlert,
-  handleAuthBlur,
   useDismissedActionState,
 } from "@/components/auth/auth-alert";
 import { Alert } from "@/components/ui/alert";
@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
+import { Toast } from "@/components/ui/toast";
 import {
   loadVerificationDraft,
   saveVerificationDraft,
@@ -42,9 +43,7 @@ import {
 import {
   sanitizeBdPhoneDisplay,
   validateBdPhone,
-  validateBdPhoneOnChange,
   validateEmail,
-  validateEmailLive,
   validateLoginPassword,
 } from "@/lib/validation/auth-schemas";
 
@@ -59,25 +58,72 @@ type Channel = "email" | "phone";
 export function LoginForm({
   initialError,
   successMessage,
+  toastMessage,
   initialRememberedLogin,
   clearSavedLogin = false,
 }: {
   initialError?: string;
   successMessage?: string;
+  toastMessage?: string;
   initialRememberedLogin?: RememberedLoginHint | null;
   clearSavedLogin?: boolean;
 }) {
   const router = useRouter();
+  const [urlDeletionToast] = useState<string | undefined>(() => {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const deletedParam = params.get("deleted");
+      if (
+        deletedParam === "true" ||
+        deletedParam === "1" ||
+        params.get("notice") === "account_deleted"
+      ) {
+        return "Your account has been permanently deleted.";
+      }
+    } catch {
+      // Ignore URL search parsing errors
+    }
+    return undefined;
+  });
+  const effectiveToastSource = toastMessage ?? urlDeletionToast;
+  const [dismissedToastFor, setDismissedToastFor] = useState<
+    string | undefined
+  >(undefined);
+  const visibleToastMessage =
+    effectiveToastSource && dismissedToastFor !== effectiveToastSource
+      ? effectiveToastSource
+      : undefined;
+  const dismissToast = useCallback(
+    () => setDismissedToastFor(effectiveToastSource),
+    [effectiveToastSource],
+  );
+
   const [storageCleared, setStorageCleared] = useState(false);
   const storedHintRaw = useSyncExternalStore(
     subscribeRememberedLogin,
     getRememberedLoginSnapshot,
     getRememberedLoginServerSnapshot,
   );
+  const shouldClearSavedLogin = useMemo(() => {
+    if (clearSavedLogin || initialRememberedLogin === null) return true;
+    if (typeof window === "undefined") return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const deletedParam = params.get("deleted");
+      return (
+        deletedParam === "true" ||
+        deletedParam === "1" ||
+        params.get("notice") === "account_deleted"
+      );
+    } catch {
+      return false;
+    }
+  }, [clearSavedLogin, initialRememberedLogin]);
   const effectiveHint = useMemo(() => {
-    if (clearSavedLogin || storageCleared) return null;
+    if (shouldClearSavedLogin || storageCleared) return null;
     return parseRememberedLoginHint(storedHintRaw) ?? initialRememberedLogin;
-  }, [clearSavedLogin, initialRememberedLogin, storageCleared, storedHintRaw]);
+  }, [initialRememberedLogin, shouldClearSavedLogin, storageCleared, storedHintRaw]);
 
   const [tabOverride, setTabOverride] = useState<Channel | null>(null);
   const [emailOverride, setEmailOverride] = useState<string | null>(null);
@@ -103,7 +149,6 @@ export function LoginForm({
     identifierRef.current = identifier;
   }, [identifier]);
   const submittedIdentifier = useRef("");
-  const phoneBlurredRef = useRef(false);
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [dismissedServer, setDismissedServer] = useState<{
     ref: AuthActionResult;
@@ -132,7 +177,33 @@ export function LoginForm({
 
   const didInitialSeedRef = useRef(false);
   useEffect(() => {
-    if (clearSavedLogin) {
+    const hasDeletionSignal =
+      clearSavedLogin || Boolean(toastMessage) || Boolean(urlDeletionToast);
+    if (hasDeletionSignal) {
+      if (typeof document !== "undefined") {
+        document.cookie =
+          "account_deleted=; path=/; max-age=0; samesite=lax";
+      }
+      if (typeof window !== "undefined") {
+        try {
+          const url = new URL(window.location.href);
+          if (
+            url.searchParams.has("deleted") ||
+            url.searchParams.get("notice") === "account_deleted"
+          ) {
+            url.searchParams.delete("deleted");
+            if (url.searchParams.get("notice") === "account_deleted") {
+              url.searchParams.delete("notice");
+            }
+            const cleaned = `${url.pathname}${url.search}${url.hash}`;
+            window.history.replaceState(window.history.state, "", cleaned);
+          }
+        } catch {
+          // Ignore URL cleanup errors
+        }
+      }
+    }
+    if (shouldClearSavedLogin) {
       clearRememberedLogin();
       return;
     }
@@ -145,7 +216,13 @@ export function LoginForm({
         );
       }
     }
-  }, [clearSavedLogin, initialRememberedLogin]);
+  }, [
+    clearSavedLogin,
+    initialRememberedLogin,
+    shouldClearSavedLogin,
+    toastMessage,
+    urlDeletionToast,
+  ]);
 
   useEffect(() => {
     const syncClearState = () => {
@@ -262,8 +339,35 @@ export function LoginForm({
     serverFieldError("phone");
   const passwordError = clientErrors.password ?? serverFieldError("password");
 
+  const isAccountNotFound401 =
+    visibleAlertState?.status === 401 &&
+    (visibleAlertState.code === "ACCOUNT_DELETED" ||
+      visibleAlertState.code === "AUTH_USER_NOT_FOUND" ||
+      visibleAlertState.code === "ACCOUNT_NOT_FOUND" ||
+      visibleAlertState.code === "USER_NOT_FOUND" ||
+      (visibleAlertState.code === "AUTH_REQUIRED" &&
+        /account.*not found|user.*not found|deleted/i.test(
+          visibleAlertState.error ?? "",
+        )) ||
+      /no account found|account not found|user not found|account.*deleted/i.test(
+        visibleAlertState.error ?? "",
+      ));
+
   return (
     <div className="flex flex-col gap-6">
+      {visibleToastMessage && (
+        <Toast
+          variant="success"
+          position="top-right"
+          role="status"
+          ariaLive="polite"
+          autoDismissMs={4500}
+          onDismiss={dismissToast}
+        >
+          {visibleToastMessage}
+        </Toast>
+      )}
+
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
 
       <Tabs
@@ -282,7 +386,6 @@ export function LoginForm({
               fields: new Set(Object.keys(state.fieldErrors)),
             });
           }
-          phoneBlurredRef.current = false;
           dismissAlert();
         }}
         items={[
@@ -314,9 +417,6 @@ export function LoginForm({
                 : validateBdPhone(identifier);
             if (!id.ok) {
               errors.identifier = id.error;
-              if (activeTab === "phone" && identifier.trim()) {
-                phoneBlurredRef.current = true;
-              }
             }
             const pw = validateLoginPassword(password);
             if (!pw.ok) errors.password = pw.error;
@@ -365,28 +465,13 @@ export function LoginForm({
               value={emailValue}
               error={identifierError}
               onChange={(e) => {
-                const v = e.target.value;
-                setEmailOverride(v);
+                setEmailOverride(e.target.value);
                 dismissServerField("email");
                 dismissServerField("phone");
                 dismissServerField("identifier");
-                const res = validateEmailLive(v);
-                setFieldError("identifier", res.ok ? undefined : res.error);
+                setFieldError("identifier", undefined);
               }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) {
-                  dismissServerField("identifier");
-                  setFieldError("identifier", undefined);
-                  return;
-                }
-                const res = validateEmail(e.target.value);
-                if (!res.ok) setFieldError("identifier", res.error);
-                else {
-                  setEmailOverride(res.value);
-                  setFieldError("identifier", undefined);
-                }
-              }}
-              placeholder="you@example.com"
+              placeholder="Enter your email"
             />
           ) : (
             <Input
@@ -401,28 +486,11 @@ export function LoginForm({
               value={phoneValue}
               error={identifierError}
               onChange={(e) => {
-                const v = e.target.value;
-                setPhoneOverride(v);
+                setPhoneOverride(e.target.value);
                 dismissServerField("email");
                 dismissServerField("phone");
                 dismissServerField("identifier");
-                const check = validateBdPhoneOnChange(
-                  v,
-                  phoneBlurredRef.current,
-                );
-                if (check.resetBlurred) phoneBlurredRef.current = false;
-                setFieldError("identifier", check.error);
-              }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) {
-                  phoneBlurredRef.current = false;
-                  dismissServerField("identifier");
-                  setFieldError("identifier", undefined);
-                  return;
-                }
-                phoneBlurredRef.current = true;
-                const res = validateBdPhone(e.target.value);
-                setFieldError("identifier", res.ok ? undefined : res.error);
+                setFieldError("identifier", undefined);
               }}
               hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
               placeholder="01XXXXXXXXX"
@@ -441,23 +509,10 @@ export function LoginForm({
               value={password}
               error={passwordError}
               onChange={(e) => {
-                const v = e.target.value;
-                setPassword(v);
+                setPassword(e.target.value);
                 dismissServerField("password");
-                const pw = validateLoginPassword(v);
-                setFieldError("password", pw.ok ? undefined : pw.error);
+                setFieldError("password", undefined);
               }}
-              onBlur={(e) =>
-                handleAuthBlur(e, {
-                  ignorePasswordToggle: true,
-                  clearError: () => {
-                    dismissServerField("password");
-                    setFieldError("password", undefined);
-                  },
-                  validate: validateLoginPassword,
-                  setError: (err) => setFieldError("password", err),
-                })
-              }
               placeholder="Password"
             />
             <div className="flex items-center justify-between gap-4">
@@ -493,7 +548,7 @@ export function LoginForm({
             <AuthAlert
               result={visibleAlertState}
               message={
-                visibleAlertState?.status === 401
+                visibleAlertState?.status === 401 && !isAccountNotFound401
                   ? "Invalid credentials. Please try again."
                   : undefined
               }

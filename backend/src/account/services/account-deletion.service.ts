@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import {
+  AuthAbuseControl,
+  type Contact,
+} from '../../auth/abuse-control/abuse-control.service.js';
 import { DatabaseService } from '../../auth/services/database.service.js';
 import { fail } from '../../common/http.js';
 import {
@@ -93,6 +97,7 @@ export class AccountDeletionService {
     private readonly reauthVerificationService: ReauthVerificationService,
     private readonly providerCleanupService?: ProviderCleanupService,
     private readonly privacyRetentionService?: PrivacyRetentionService,
+    private readonly abuseControl?: AuthAbuseControl,
   ) {}
 
   /**
@@ -263,12 +268,38 @@ export class AccountDeletionService {
       );
 
       // 3. Atomic Database Cascade Transaction (R05)
+      const deletedContacts: Contact[] = [];
       let inserted:
         | {
             row: AccountDeletionRequestRow;
             receipt: { receipt: string; expiresAt: string };
           }
         | undefined;
+
+      const collectContactRows = (
+        rows: unknown,
+        emailField = 'email',
+        phoneField = 'phone',
+      ) => {
+        if (!Array.isArray(rows)) return;
+        for (const r of rows as Array<Record<string, unknown>>) {
+          const rawEmail = r?.[emailField];
+          if (typeof rawEmail === 'string' && rawEmail.trim()) {
+            deletedContacts.push({
+              channel: 'email',
+              identifier: rawEmail.trim().toLowerCase(),
+            });
+          }
+          const rawPhone = r?.[phoneField];
+          if (typeof rawPhone === 'string' && rawPhone.trim()) {
+            const trimmed = rawPhone.trim();
+            deletedContacts.push({
+              channel: 'phone',
+              identifier: trimmed.startsWith('+') ? trimmed : `+${trimmed}`,
+            });
+          }
+        }
+      };
 
       try {
         inserted = await this.runWithDatabase(userId, false, async (db) => {
@@ -311,14 +342,42 @@ export class AccountDeletionService {
           if (this.providerCleanupService) {
             try {
               const providerRows = await db.query<
-                Array<{ provider: string; provider_subject: string }>
+                Array<{
+                  provider: string;
+                  provider_subject: string;
+                  contact_value?: string | null;
+                }>
               >(
-                `SELECT provider, provider_subject
+                `SELECT provider, provider_subject, contact_value
                    FROM public.user_auth_providers
                   WHERE user_id = $1::uuid`,
                 [userId],
               );
               if (Array.isArray(providerRows) && providerRows.length > 0) {
+                for (const p of providerRows) {
+                  if (
+                    p.provider === 'email' &&
+                    typeof p.contact_value === 'string' &&
+                    p.contact_value.trim()
+                  ) {
+                    deletedContacts.push({
+                      channel: 'email',
+                      identifier: p.contact_value.trim().toLowerCase(),
+                    });
+                  } else if (
+                    p.provider === 'phone' &&
+                    typeof p.contact_value === 'string' &&
+                    p.contact_value.trim()
+                  ) {
+                    const trimmed = p.contact_value.trim();
+                    deletedContacts.push({
+                      channel: 'phone',
+                      identifier: trimmed.startsWith('+')
+                        ? trimmed
+                        : `+${trimmed}`,
+                    });
+                  }
+                }
                 const outboxEntries =
                   this.providerCleanupService.buildOutboxEntries(
                     row.id,
@@ -370,10 +429,22 @@ export class AccountDeletionService {
             userId,
           ]);
 
-          // 3d. Delete user from public.users (triggers trg_users_complete_deletion BEFORE DELETE)
-          await db.query(`DELETE FROM public.users WHERE id = $1::uuid`, [
-            userId,
-          ]);
+          // 3d. Delete user from public.users first (triggers trg_users_complete_deletion BEFORE DELETE
+          // and cascades public PII/contact tables while nulling account_deletion_requests.user_id),
+          // then hard-delete auth.identities and auth.users so credentials are 100% freed.
+          const deletedPublicUsers = await db.query(
+            `DELETE FROM public.users WHERE id = $1::uuid RETURNING email, phone`,
+            [userId],
+          );
+          collectContactRows(deletedPublicUsers);
+          const deletedAuthUsers = await db.query(
+            `WITH deleted_identities AS (
+               DELETE FROM auth.identities WHERE user_id = $1::uuid
+             )
+             DELETE FROM auth.users WHERE id = $1::uuid RETURNING email, phone`,
+            [userId],
+          );
+          collectContactRows(deletedAuthUsers);
 
           // 3e. Select and strictly validate completed tombstone row (never fabricated in production)
           const tombstoneRows = await db.query<AccountDeletionRequestRow[]>(
@@ -428,6 +499,22 @@ export class AccountDeletionService {
           'Failed to persist account deletion request',
         );
       }
+
+      // 3f. Immediately dispatch GoTrue Admin hard-delete (`should_soft_delete: false`) when configured
+      // so Supabase Auth releases email/phone right away (404 when already removed in SQL succeeds cleanly).
+      try {
+        await this.providerCleanupService?.dispatchProviderDeletion(
+          'supabase',
+          userId,
+        );
+      } catch {
+        // Non-fatal: PostgreSQL transaction already hard-deleted public.users and auth.users
+      }
+
+      // 3g. Best-effort cleanup of per-contact Redis cooldown/quota/challenge state so freed email/phone can re-register cleanly.
+      await this.abuseControl
+        ?.clearContactsState?.(deletedContacts, [userId])
+        .catch(() => undefined);
 
       const resultDto = this.mapRowToStatusDto(inserted.row, inserted.receipt);
 

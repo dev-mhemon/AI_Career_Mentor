@@ -724,6 +724,25 @@ describe('Auth Actions', () => {
       });
     });
 
+    it('returns SMS-specific 429 message for phone registration rate limit', async () => {
+      const formData = new FormData();
+      formData.set('type', 'phone');
+      formData.set('identifier', '+8801629795421');
+      formData.set('password', 'password123');
+      formData.set('confirmPassword', 'password123');
+      formData.set('privacy_consent', 'on');
+
+      vi.mocked(registerUser).mockRejectedValueOnce(
+        new ApiError(429, 'Too many requests', 'OTP_LIMIT_EXCEEDED', undefined, [], true, 60),
+      );
+
+      const result = await registerAction({}, formData);
+      expect(result).toMatchObject({
+        error: 'SMS delivery is temporarily rate-limited. Please try again later.',
+        retryAfterSeconds: 60,
+      });
+    });
+
     it('returns fallback error when registerUser resolves with success false and no error property', async () => {
       const formData = new FormData();
       formData.set('type', 'email');
@@ -774,6 +793,35 @@ describe('Auth Actions', () => {
         expect.any(String),
         expect.objectContaining({ httpOnly: true, maxAge: 600, path: '/verify' }),
       );
+    });
+
+    it('normalizes phone (01629795421 -> +8801629795421), clears stale account_deleted cookie, and redirects on fresh post-deletion re-registration', async () => {
+      const formData = new FormData();
+      formData.set('type', 'phone');
+      formData.set('identifier', '01629795421');
+      formData.set('password', 'password123');
+      formData.set('confirmPassword', 'password123');
+      formData.set('privacy_consent', 'on');
+      vi.mocked(registerUser).mockResolvedValueOnce({
+        verification_channel: 'phone',
+        contact_masked: '+8801****5421',
+        expires_in_seconds: 600,
+        resend_available_at: '2026-01-01T00:00:00Z',
+      });
+      vi.mocked(redirect).mockImplementationOnce(() => {
+        throw new Error('NEXT_REDIRECT');
+      });
+
+      await expect(registerAction({}, formData)).rejects.toThrow('NEXT_REDIRECT');
+      expect(registerUser).toHaveBeenCalledWith({
+        email: null,
+        phone: '+8801629795421',
+        password: 'password123',
+        confirm_password: 'password123',
+        privacy_consent: true,
+      });
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('account_deleted');
+      expect(redirect).toHaveBeenCalledWith('/verify?channel=phone');
     });
   });
 
@@ -2480,13 +2528,29 @@ describe('Auth Actions', () => {
   });
 
   describe('Account Deletion Actions (EP-X01 / EP-X02)', () => {
-    it("returns error when confirmation is not literal 'DELETE'", async () => {
+    it('submits confirmation="DELETE" automatically even when confirmation field is omitted from FormData', async () => {
+      mockGetSession.mockResolvedValueOnce({
+        data: { session: { access_token: 'active-token' } },
+      });
+
+      vi.mocked(requestAccountDeletion).mockResolvedValueOnce({
+        id: 'del-id-auto',
+        status: 'completed',
+        requested_at: '2026-11-10T12:00:00.000Z',
+        completed_at: '2026-11-10T12:01:00.000Z',
+        provider_deletion_requested: false,
+      });
+
       const formData = new FormData();
-      formData.append('confirmation', 'delete');
       formData.append('password', 'Pass1234!');
 
       const res = await requestAccountDeletionAction({}, formData);
-      expect(res.error).toMatch(/DELETE/);
+      expect(res.success).toBe(true);
+      expect(requestAccountDeletion).toHaveBeenCalledWith('active-token', {
+        confirmation: 'DELETE',
+        password: 'Pass1234!',
+        reauth_token: undefined,
+      });
     });
 
     it('returns error when session is missing or expired', async () => {
@@ -2731,6 +2795,88 @@ describe('Auth Actions', () => {
         reauth_token: undefined,
       });
       expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_login_hint');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_remember_me');
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_login_hint',
+        '',
+        expect.objectContaining({ path: '/', maxAge: 0 }),
+      );
+    });
+
+    it('cleans up partial session and returns channel-specific account-not-found error instead of Service temporarily unavailable when signing in with a deleted account', async () => {
+      const phoneForm = new FormData();
+      phoneForm.set('identifier', '01629795421');
+      phoneForm.set('password', 'PhonePass123!');
+
+      vi.mocked(loginUser).mockRejectedValueOnce(
+        new ApiError(
+          404,
+          'No account found with this phone number.',
+          'AUTH_USER_NOT_FOUND',
+        ),
+      );
+
+      const phoneResult = await loginAction({}, phoneForm);
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+      expect(phoneResult).toEqual({
+        error: 'No account found with this phone number.',
+        status: 404,
+        code: 'AUTH_USER_NOT_FOUND',
+      });
+      expect(phoneResult.error).not.toBe(
+        'Service temporarily unavailable. Please try again.',
+      );
+
+      mockSignOut.mockClear();
+      const emailForm = new FormData();
+      emailForm.set('email', 'deleted@example.com');
+      emailForm.set('password', 'EmailPass123!');
+
+      vi.mocked(loginUser).mockRejectedValueOnce(
+        new ApiError(404, 'Account has been deleted.', 'ACCOUNT_DELETED'),
+      );
+
+      const emailResult = await loginAction({}, emailForm);
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+      expect(emailResult).toEqual({
+        error: 'No account found with this email address.',
+        status: 404,
+        code: 'ACCOUNT_DELETED',
+      });
+      expect(emailResult.error).not.toBe(
+        'Service temporarily unavailable. Please try again.',
+      );
+
+      // Also verify 401 Application account not found (DatabaseService AUTH_REQUIRED) resolves cleanly
+      mockSignOut.mockClear();
+      vi.mocked(loginUser).mockRejectedValueOnce(
+        new ApiError(401, 'Application account not found', 'AUTH_REQUIRED'),
+      );
+      const authReqPhoneResult = await loginAction({}, phoneForm);
+      expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+      expect(authReqPhoneResult).toEqual({
+        error: 'No account found with this phone number.',
+        status: 401,
+        code: 'AUTH_REQUIRED',
+      });
+
+      // Active account wrong password still returns generic invalid credentials
+      mockSignOut.mockClear();
+      vi.mocked(loginUser).mockRejectedValueOnce(
+        new ApiError(
+          401,
+          'Invalid credentials. Please try again.',
+          'AUTH_INVALID_CREDENTIALS',
+        ),
+      );
+      const wrongPassResult = await loginAction({}, phoneForm);
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(wrongPassResult).toEqual({
+        error: 'Invalid credentials. Please try again.',
+        status: 401,
+        code: 'AUTH_INVALID_CREDENTIALS',
+      });
     });
   });
 });

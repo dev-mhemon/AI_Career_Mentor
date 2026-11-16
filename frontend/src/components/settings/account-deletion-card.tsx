@@ -7,9 +7,11 @@ import {
   pollAccountDeletionStatusAction,
   requestAccountDeletionAction,
 } from '@/lib/auth/actions';
+import { clearRememberedLogin } from '@/lib/auth/remember-login';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useBackdropDismiss } from '@/components/ui/modal';
 
 /**
  * Props for `AccountDeletionCard` component on Screen 22 (`/settings`).
@@ -32,6 +34,7 @@ const INITIAL_ACTION_STATE: AccountDeletionActionResult = {};
  */
 function safeClearBrowserStorage(): void {
   try {
+    clearRememberedLogin();
     if (typeof window !== 'undefined') {
       window.sessionStorage?.clear();
       window.localStorage?.removeItem('supabase.auth.token');
@@ -44,7 +47,7 @@ function safeClearBrowserStorage(): void {
 /**
  * Screen 22 Danger Zone Account Deletion card & re-authentication confirmation modal.
  *
- * Implements literal confirmation ('DELETE'), live credential re-authentication,
+ * Implements live credential re-authentication, automatic backend confirmation,
  * DeletionReceipt status polling (EP-X01 / EP-X02), and AZ-SUSP suspended-user deletion access.
  */
 export function AccountDeletionCard({
@@ -55,12 +58,18 @@ export function AccountDeletionCard({
 }: AccountDeletionCardProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [confirmationInput, setConfirmationInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [pollError, setPollError] = useState<string | null>(null);
 
   const [state, formAction, isPending] = useActionState(
-    requestAccountDeletionAction,
+    async (prevState: AccountDeletionActionResult, formData: FormData) => {
+      clearRememberedLogin();
+      const result = await requestAccountDeletionAction(prevState, formData);
+      if (result.status === 'completed' || result.success) {
+        safeClearBrowserStorage();
+      }
+      return result;
+    },
     INITIAL_ACTION_STATE,
   );
 
@@ -135,7 +144,6 @@ export function AccountDeletionCard({
   }, [state.status, state.deletionReceipt, isPendingStatus, pollError, router]);
 
   const handleOpenModal = () => {
-    setConfirmationInput('');
     setPasswordInput('');
     setPollError(null);
     setIsModalOpen(true);
@@ -147,9 +155,13 @@ export function AccountDeletionCard({
     }
   };
 
-  const isDeleteConfirmed = confirmationInput.trim() === 'DELETE';
+  const backdropDismiss = useBackdropDismiss(
+    handleCloseModal,
+    isPending || isPolling,
+  );
+
   const isSubmitDisabled =
-    isPending || isPolling || !isDeleteConfirmed || (hasPasswordAuth && !passwordInput.trim());
+    isPending || isPolling || (hasPasswordAuth && !passwordInput.trim());
 
   return (
     <section
@@ -198,7 +210,10 @@ export function AccountDeletionCard({
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-surface-overlay sm:items-center sm:p-4">
+        <div
+          {...backdropDismiss}
+          className="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-surface-overlay sm:items-center sm:p-4"
+        >
           <div
             role="dialog"
             aria-modal="true"
@@ -210,7 +225,7 @@ export function AccountDeletionCard({
                 handleCloseModal();
               }
             }}
-            className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl border border-border-default bg-surface-raised p-6 text-text-primary shadow-xl sm:max-w-md sm:rounded-xl"
+            className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl border border-border-default bg-surface-raised p-6 text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none sm:max-w-md sm:rounded-xl"
           >
             <h3
               id="delete-account-modal-title"
@@ -220,9 +235,9 @@ export function AccountDeletionCard({
             </h3>
 
             <p id="delete-account-modal-desc" className="text-body-sm text-text-secondary">
-              This action cannot be undone. Type{' '}
-              <strong className="font-semibold text-text-primary">DELETE</strong> below
-              {hasPasswordAuth ? ' and enter your account password to confirm.' : ' to confirm.'}
+              {hasPasswordAuth
+                ? 'This action cannot be undone. Enter your account password below to confirm deletion.'
+                : 'This action cannot be undone. Confirm below to permanently delete your account.'}
             </p>
 
             {(state.error || pollError) && (
@@ -238,19 +253,6 @@ export function AccountDeletionCard({
             )}
 
             <form action={formAction} className="flex flex-col gap-4">
-              <Input
-                id="confirmation-input"
-                name="confirmation"
-                variant="text"
-                label="Type DELETE to confirm"
-                required
-                value={confirmationInput}
-                onChange={(e) => setConfirmationInput(e.target.value)}
-                placeholder="DELETE"
-                readOnly={isPending}
-                disabled={isPolling}
-              />
-
               {hasPasswordAuth ? (
                 <Input
                   id="password-input"
@@ -290,7 +292,7 @@ export function AccountDeletionCard({
                   loadingText="Deleting..."
                   disabled={isSubmitDisabled}
                 >
-                  Confirm Permanent Deletion
+                  Confirm Deletion
                 </Button>
               </div>
             </form>

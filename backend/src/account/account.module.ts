@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthAbuseControlModule } from '../auth/abuse-control/abuse-control.module.js';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard.js';
 import { DatabaseService } from '../auth/services/database.service.js';
 import { AccountController } from './controllers/account.controller.js';
@@ -16,6 +17,7 @@ import { ReauthVerificationService } from './services/reauth-verification.servic
  * `PrivacyRetentionService` physical purge worker (`R08`, `R09`, PRD §52).
  */
 @Module({
+  imports: [AuthAbuseControlModule],
   controllers: [AccountController],
   providers: [
     DatabaseService,

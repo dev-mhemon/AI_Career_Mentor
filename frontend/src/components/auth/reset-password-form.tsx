@@ -9,9 +9,9 @@ import {
 } from "@/lib/auth/actions";
 import {
   AuthAlert,
-  handleAuthBlur,
   useDismissedActionState,
 } from "@/components/auth/auth-alert";
+import { PasswordStrengthHint } from "@/components/auth/password-strength-hint";
 import { Alert, formatCountdown } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,13 +27,9 @@ import {
 import { useResendCooldown } from "@/lib/auth/use-resend-cooldown";
 import {
   PASSWORD_MAX,
-  passwordStrength,
   validateIdentifier,
-  validateIdentifierOnChange,
   validateOtp,
-  validateOtpLive,
   validatePassword,
-  validatePasswordLive,
   validatePasswordMatch,
 } from "@/lib/validation/auth-schemas";
 
@@ -50,7 +46,6 @@ export function ResetPasswordForm() {
   const [draft, setDraft] = useState<VerificationDraft | null>(null);
   const [isDraftExpired, setIsDraftExpired] = useState<boolean>(false);
   const draftLoaded = useRef(false);
-  const identifierBlurredRef = useRef(false);
   const [enteredIdentifier, setEnteredIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -219,12 +214,6 @@ export function ResetPasswordForm() {
       ? undefined
       : state?.fieldErrors?.[field];
 
-  const strength = passwordStrength(password);
-  const mismatch =
-    confirm.length > 0 && !validatePasswordMatch(password, confirm).ok
-      ? "Passwords do not match."
-      : undefined;
-
   return (
     <div className="flex flex-col gap-6">
       {draft?.contact_masked ? (
@@ -250,7 +239,6 @@ export function ResetPasswordForm() {
             const id = validateIdentifier(idEl.value);
             if (!id.ok) {
               errors.identifier = id.error;
-              if (idEl.value.trim()) identifierBlurredRef.current = true;
             } else {
               idEl.value = id.value.value;
               setEnteredIdentifier(id.value.value);
@@ -315,34 +303,9 @@ export function ResetPasswordForm() {
               setResendError(null);
               setResendSuccess(null);
               dismissServerField("identifier");
-              const check = validateIdentifierOnChange(
-                e.target.value,
-                identifierBlurredRef.current,
-              );
-              if (check.resetBlurred) identifierBlurredRef.current = false;
-              setFieldError("identifier", check.error);
+              setFieldError("identifier", undefined);
             }}
-            onBlur={(e) => {
-              if (!e.target.value.trim()) {
-                identifierBlurredRef.current = false;
-                setEnteredIdentifier("");
-                dismissServerField("identifier");
-                setFieldError("identifier", undefined);
-                return;
-              }
-              identifierBlurredRef.current = true;
-              const res = validateIdentifier(e.target.value);
-              if (!res.ok) {
-                setEnteredIdentifier(e.target.value);
-                setFieldError("identifier", res.error);
-              } else {
-                const normalized =
-                  res.value.kind === "email" ? res.value.value : e.target.value;
-                setEnteredIdentifier(normalized);
-                setFieldError("identifier", undefined);
-              }
-            }}
-            placeholder="you@example.com or 01XXXXXXXXX"
+            placeholder="Enter your email or 01XXXXXXXXX"
           />
         )}
 
@@ -354,21 +317,10 @@ export function ResetPasswordForm() {
           required
           readOnly={isPending}
           error={clientErrors.code ?? serverFieldError("code")}
-          onChange={(e) => {
+          onChange={() => {
             dismissServerField("code");
-            const res = validateOtpLive(e.target.value);
-            setFieldError("code", res.ok ? undefined : res.error);
+            setFieldError("code", undefined);
           }}
-          onBlur={(e) =>
-            handleAuthBlur(e, {
-              clearError: () => {
-                dismissServerField("code");
-                setFieldError("code", undefined);
-              },
-              validate: validateOtp,
-              setError: (err) => setFieldError("code", err),
-            })
-          }
         />
 
         <div className="flex flex-col gap-2">
@@ -388,30 +340,14 @@ export function ResetPasswordForm() {
               const v = e.target.value;
               setPassword(v);
               dismissServerField("new_password");
-              const pw = validatePasswordLive(v);
-              setFieldError("new_password", pw.ok ? undefined : pw.error);
-              if (!confirm || validatePasswordMatch(v, confirm).ok) {
+              setFieldError("new_password", undefined);
+              if (confirm && validatePasswordMatch(v, confirm).ok) {
                 setFieldError("confirm_new_password", undefined);
               }
             }}
-            onBlur={(e) =>
-              handleAuthBlur(e, {
-                ignorePasswordToggle: true,
-                clearError: () => {
-                  dismissServerField("new_password");
-                  setFieldError("new_password", undefined);
-                },
-                validate: validatePassword,
-                setError: (err) => setFieldError("new_password", err),
-              })
-            }
             placeholder="New password"
           />
-          {password && (
-            <p aria-live="polite" className="text-caption text-text-secondary">
-              Strength: <strong className="text-text-primary">{strength.label}</strong> ({strength.score}/4)
-            </p>
-          )}
+          <PasswordStrengthHint password={password} />
         </div>
 
         <Input
@@ -427,23 +363,13 @@ export function ResetPasswordForm() {
           value={confirm}
           error={
             clientErrors.confirm_new_password ??
-            serverFieldError("confirm_new_password") ??
-            mismatch
+            serverFieldError("confirm_new_password")
           }
           onChange={(e) => {
             setConfirm(e.target.value);
             dismissServerField("confirm_new_password");
             setFieldError("confirm_new_password", undefined);
           }}
-          onBlur={(e) =>
-            handleAuthBlur(e, {
-              ignorePasswordToggle: true,
-              clearError: () => {
-                dismissServerField("confirm_new_password");
-                setFieldError("confirm_new_password", undefined);
-              },
-            })
-          }
           placeholder="Confirm new password"
         />
 

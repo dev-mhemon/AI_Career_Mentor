@@ -402,9 +402,11 @@ export class AuthService {
       channel === 'phone'
         ? `SELECT u.id
              FROM auth.users u
+             JOIN public.users pu ON pu.id = u.id
             WHERE u.deleted_at IS NULL
               AND (
                 u.phone IN ($1, ltrim($1, '+'))
+                OR pu.phone IN ($1, ltrim($1, '+'))
                 OR EXISTS (
                   SELECT 1
                     FROM public.user_auth_providers p
@@ -416,6 +418,7 @@ export class AuthService {
             LIMIT 1`
         : `SELECT u.id
              FROM auth.users u
+             JOIN public.users pu ON pu.id = u.id
             WHERE u.deleted_at IS NULL
               AND (
                 (
@@ -423,6 +426,7 @@ export class AuthService {
                   AND lower(COALESCE(u.email, '')) NOT LIKE '%@synthetic.mentor'
                   AND lower(COALESCE(u.email, '')) NOT LIKE '%@phone.invalid'
                 )
+                OR lower(COALESCE(pu.email, '')) = $1
                 OR EXISTS (
                   SELECT 1
                     FROM public.user_auth_providers p
@@ -663,6 +667,8 @@ export class AuthService {
                      FROM auth.identities i
                      JOIN auth.users au ON au.id = i.user_id
                     WHERE LOWER(i.identity_data->>'email') = $1
+                      AND au.deleted_at IS NULL
+                      AND EXISTS (SELECT 1 FROM public.users pu WHERE pu.id = au.id)
                       AND au.email_confirmed_at IS NOT NULL
                       AND (
                         LOWER(au.email) = $1
@@ -679,6 +685,8 @@ export class AuthService {
                      FROM auth.identities i
                      JOIN auth.users au ON au.id = i.user_id
                     WHERE i.provider = 'phone'
+                      AND au.deleted_at IS NULL
+                      AND EXISTS (SELECT 1 FROM public.users pu WHERE pu.id = au.id)
                       AND (i.identity_data->>'phone' = $1 OR i.identity_data->>'phone' = $2)
                       AND au.phone_confirmed_at IS NOT NULL
                       AND i.user_id <> $3
@@ -2510,6 +2518,7 @@ export class AuthService {
     const lookupRows = await this.database.query(
       `SELECT u.id
          FROM auth.users u
+         JOIN public.users pu ON pu.id = u.id
         WHERE u.phone IN ($1, ltrim($1, '+'))
           AND u.deleted_at IS NULL
         ORDER BY (u.phone_confirmed_at IS NOT NULL) DESC, u.created_at DESC
@@ -2548,9 +2557,10 @@ export class AuthService {
                     ELSE false
                   END AS password_matches
              FROM auth.users u
+             JOIN public.users pu ON pu.id = u.id
             WHERE u.id = $1
               AND u.deleted_at IS NULL
-            FOR UPDATE`,
+            FOR UPDATE OF u`,
           [userId, password],
         );
         const row = Array.isArray(rows) ? rows[0] : undefined;

@@ -88,7 +88,7 @@ describe("ForgotPasswordForm", () => {
     });
   });
 
-  it("strips non-digits from phone_bd input on phone tab and flags invalid prefix immediately onChange", async () => {
+  it("strips non-digits from phone_bd input onChange, validates on submit, and clears error onChange", async () => {
     render(<ForgotPasswordForm />);
 
     const phoneTab = screen.getByRole("tab", { name: /^phone$/i });
@@ -97,11 +97,21 @@ describe("ForgotPasswordForm", () => {
     const input = screen.getByLabelText(/registered phone number/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "017742590012dddddddd12" } });
     expect(input.value).toBe("01774259001212");
-    expect(screen.getByText(/must be 11 digits/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/enter a valid bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.submit(input.closest("form")!);
+    expect(
+      screen.getByText(/enter a valid bangladesh mobile number/i),
+    ).toBeInTheDocument();
+    expect(forgotPasswordAction).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { value: "01712345678" } });
     expect(input.value).toBe("01712345678");
-    expect(screen.queryByText(/must be 11 digits/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/enter a valid bangladesh mobile number/i),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps 01712345678 visible after blur while submitting +8801712345678 in FormData on phone tab", async () => {
@@ -130,14 +140,21 @@ describe("ForgotPasswordForm", () => {
     expect(submittedFormData?.get("identifier")).toBe("+8801712345678");
   });
 
-  it("validates email in real time onChange without waiting for blur", () => {
+  it("does not validate email while typing or blurring before submit, validates on submit, and clears on change", () => {
     render(<ForgotPasswordForm />);
 
     const input = screen.getByLabelText(/registered email/i);
-    fireEvent.change(input, { target: { value: "not-an-email" } });
-    expect(screen.getByText(/enter a valid email address/i)).toBeInTheDocument();
+    expect(input).toHaveAttribute("placeholder", "Enter your email");
 
-    fireEvent.change(input, { target: { value: "user@example.com" } });
+    fireEvent.change(input, { target: { value: "not-an-email" } });
+    fireEvent.blur(input);
+    expect(screen.queryByText(/enter a valid email address/i)).not.toBeInTheDocument();
+
+    fireEvent.submit(input.closest("form")!);
+    expect(screen.getByText(/enter a valid email address/i)).toBeInTheDocument();
+    expect(forgotPasswordAction).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "u" } });
     expect(screen.queryByText(/enter a valid email address/i)).not.toBeInTheDocument();
   });
 
@@ -366,21 +383,22 @@ describe("ForgotPasswordForm", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("clears empty email error on blur outside while preserving submit validation", () => {
+  it("validates empty email on submit without validating blur and clears error onChange", () => {
     render(<ForgotPasswordForm />);
 
     const input = screen.getByLabelText(/registered email/i);
     const form = input.closest("form")!;
 
+    fireEvent.blur(input);
+    expect(screen.queryByText(/enter your email address\./i)).not.toBeInTheDocument();
+
     fireEvent.submit(form);
     expect(screen.getByText(/enter your email address\./i)).toBeInTheDocument();
 
     fireEvent.blur(input);
-    expect(
-      screen.queryByText(/enter your email address\./i),
-    ).not.toBeInTheDocument();
-
-    fireEvent.submit(form);
     expect(screen.getByText(/enter your email address\./i)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "a" } });
+    expect(screen.queryByText(/enter your email address\./i)).not.toBeInTheDocument();
   });
 });
