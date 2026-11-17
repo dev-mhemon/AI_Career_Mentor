@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { memo, useEffect } from 'react';
 import { Alert, type AlertProps } from './alert';
 import { IconButton } from './icon-button';
 import { CloseIcon } from './icons';
@@ -20,10 +20,10 @@ export interface ToastProps extends Omit<AlertProps, 'className'> {
   position?: ToastPosition;
 }
 
-export function Toast({
+export const Toast = memo(function Toast({
   onDismiss,
   autoDismissMs = 6000,
-  position = 'bottom-right',
+  position = 'top-center',
   ariaLive,
   ...alert
 }: ToastProps) {
@@ -52,4 +52,4 @@ export function Toast({
       </div>
     </div>
   );
-}
+});

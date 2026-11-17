@@ -907,7 +907,11 @@ describe('ProfileSetupForm (Screen 07)', () => {
       fireEvent.click(submitBtn);
     });
 
-    expect(screen.getByText(/profile saved successfully/i)).toBeInTheDocument();
+    const toast = screen.getByRole('status');
+    expect(toast).toHaveTextContent('Profile saved.');
+    const toastContainer = toast.closest('.fixed');
+    expect(toastContainer).toBeInTheDocument();
+    expect(toastContainer).toHaveClass('top-4', 'left-1/2', '-translate-x-1/2');
     expect(
       window.sessionStorage.getItem(
         'mentor_onboarding_profile_draft:user-edit-after-save',
@@ -918,7 +922,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     fireEvent.change(roleInput, { target: { value: 'Lead Architect' } });
 
     expect(
-      screen.queryByText(/profile saved successfully/i),
+      screen.queryByText('Profile saved.'),
     ).not.toBeInTheDocument();
 
     const savedDraft = window.sessionStorage.getItem(
@@ -947,14 +951,14 @@ describe('ProfileSetupForm (Screen 07)', () => {
     await act(async () => {
       fireEvent.click(submitBtn);
     });
-    expect(screen.getByText(/profile saved successfully/i)).toBeInTheDocument();
+    expect(screen.getByText('Profile saved.')).toBeInTheDocument();
 
     const noneSwitch = screen.getByRole('switch', {
       name: /complete beginner/i,
     });
     fireEvent.click(noneSwitch);
     expect(
-      screen.queryByText(/profile saved successfully/i),
+      screen.queryByText('Profile saved.'),
     ).not.toBeInTheDocument();
   });
 
@@ -1304,7 +1308,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
     });
-    expect(screen.getByText(/profile saved successfully/i)).toBeInTheDocument();
+    expect(screen.getByText('Profile saved.')).toBeInTheDocument();
 
     // User makes subsequent unsaved edits
     const roleInput = screen.getByLabelText(/current role \/ profession/i);
@@ -1384,7 +1388,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
     });
-    expect(screen.getByText(/user a saved\./i)).toBeInTheDocument();
+    expect(screen.getByText('Profile saved.')).toBeInTheDocument();
     expect(screen.getByText(/GoLang/)).toBeInTheDocument();
 
     // Switching userId unmounts User A's keyed inner form, discarding prior useActionState
@@ -1402,10 +1406,129 @@ describe('ProfileSetupForm (Screen 07)', () => {
       />,
     );
 
-    expect(screen.queryByText(/user a saved\./i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
     expect(screen.queryByText(/GoLang/)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/full name/i)).toHaveValue('User B');
     expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
     expect(screen.getByLabelText(/email address/i)).toHaveValue('b@example.com');
+  });
+
+  it('auto-dismisses the Profile saved toast after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+        success: true,
+        message: 'Profile saved successfully.',
+      });
+
+      render(
+        <ProfileSetupForm
+          initialProfile={EMPTY_PROFILE}
+          initialContact={EMAIL_CONTACT}
+        />,
+      );
+      fillValidFields();
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      });
+
+      expect(screen.getByText('Profile saved.')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not clear a newer User A draft when an unmounted deferred save resolves', async () => {
+    let resolveDeferredSave!: (value: {
+      success?: boolean;
+      message?: string;
+    }) => void;
+    vi.mocked(saveProfileSetupAction).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDeferredSave = resolve;
+        }),
+    );
+
+    const { rerender } = render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: 'a@example.com',
+          emailVerified: true,
+          phone: '',
+          phoneVerified: false,
+        }}
+        userId="user-A"
+      />,
+    );
+
+    fillValidFields({ fullName: 'User A Original', role: 'Backend Dev' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+    });
+    expect(saveProfileSetupAction).toHaveBeenCalledTimes(1);
+
+    // Unmount User A by switching to User B before deferred save completes
+    rerender(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: 'b@example.com',
+          emailVerified: true,
+          phone: '',
+          phoneVerified: false,
+        }}
+        userId="user-B"
+      />,
+    );
+
+    // Remount User A and create a newer draft edit
+    rerender(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{
+          email: 'a@example.com',
+          emailVerified: true,
+          phone: '',
+          phoneVerified: false,
+        }}
+        userId="user-A"
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/current role \/ profession/i), {
+      target: { value: 'Staff Systems Architect' },
+    });
+
+    const draftKey = 'mentor_onboarding_profile_draft:user-A';
+    expect(
+      JSON.parse(window.sessionStorage.getItem(draftKey)!).values.current_role,
+    ).toBe('Staff Systems Architect');
+
+    // Original unmounted save resolves -> must NOT wipe User A's newer draft or state
+    await act(async () => {
+      resolveDeferredSave({
+        success: true,
+        message: 'Profile saved successfully.',
+      });
+    });
+
+    const preserved = window.sessionStorage.getItem(draftKey);
+    expect(preserved).not.toBeNull();
+    expect(JSON.parse(preserved!).values.current_role).toBe(
+      'Staff Systems Architect',
+    );
+    expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue(
+      'Staff Systems Architect',
+    );
+    expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
   });
 });

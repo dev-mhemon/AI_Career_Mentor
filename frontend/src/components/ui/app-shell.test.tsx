@@ -14,6 +14,7 @@ vi.mock('@/lib/auth/actions', () => ({
 import { AppShell } from './app-shell';
 import { AppShellProvider, AppShellSync } from './app-shell-context';
 import { Header } from './header';
+import { resolveShellUserDisplay } from '@/lib/auth/user-display';
 
 function dispatchOutsidePointerDown(target: Element = document.body) {
   const EventCtor = window.PointerEvent ?? window.MouseEvent;
@@ -250,6 +251,7 @@ describe('AppShell, Sidebar, and Header', () => {
           fullName: null,
           currentRole: null,
           email: 'sarah.khan@example.com',
+          phone: null,
         }}
         signOutAction={signOutMock}
       >
@@ -260,6 +262,53 @@ describe('AppShell, Sidebar, and Header', () => {
     const fallbackTrigger = screen.getByRole('button', { name: /sarah\.khan/i });
     expect(fallbackTrigger).toHaveTextContent('SK');
     expect(fallbackTrigger).toHaveTextContent('Learner');
+
+    // Phone-only user with explicit null email/fullName/currentRole formats phone and defaults initials/role
+    rerender(
+      <AppShell
+        user={{
+          fullName: null,
+          currentRole: null,
+          email: null,
+          phone: '+8801712345678',
+        }}
+        signOutAction={signOutMock}
+      >
+        <div>Body</div>
+      </AppShell>,
+    );
+
+    const phoneTrigger = screen.getByRole('button', {
+      name: /\+880 1712-345678/i,
+    });
+    expect(phoneTrigger).toHaveTextContent('U');
+    expect(phoneTrigger).toHaveTextContent('Learner');
+
+    expect(
+      resolveShellUserDisplay({
+        fullName: null,
+        currentRole: null,
+        email: 'sarah.khan@example.com',
+        phone: null,
+      }),
+    ).toEqual({
+      displayName: 'sarah.khan',
+      initials: 'SK',
+      roleLabel: 'Learner',
+    });
+
+    expect(
+      resolveShellUserDisplay({
+        fullName: null,
+        currentRole: null,
+        email: null,
+        phone: '+8801712345678',
+      }),
+    ).toEqual({
+      displayName: '+880 1712-345678',
+      initials: 'U',
+      roleLabel: 'Learner',
+    });
   });
 
   it('closes user dropdown on outside pointerdown, Escape returning focus, pathname change, and supports arrow key navigation', () => {

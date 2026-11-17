@@ -1,6 +1,16 @@
 "use client";
 
-import { type SyntheticEvent, useActionState, useState, useEffect, useRef } from "react";
+import {
+  memo,
+  type ChangeEvent,
+  type SyntheticEvent,
+  useActionState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import {
   resetPasswordAction,
@@ -14,6 +24,7 @@ import {
 } from "@/components/auth/auth-alert";
 import { PasswordStrengthHint } from "@/components/auth/password-strength-hint";
 import { Alert, formatCountdown } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ActionErrorLike } from "@/lib/api/error-mapper";
@@ -33,6 +44,8 @@ import {
   validatePassword,
   validatePasswordMatch,
 } from "@/lib/validation/auth-schemas";
+
+const MemoizedInput = memo(Input);
 
 /**
  * Screen 06: Password Reset Form component.
@@ -61,19 +74,40 @@ export function ResetPasswordForm() {
     fields: Set<string>;
   } | null>(null);
 
-  const handleFormActivity = (e: SyntheticEvent<HTMLFormElement>) => {
-    onFormActivity(e);
-    if (
-      resendError &&
-      (e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement)
-    ) {
-      setResendError(null);
-    }
-  };
+  const stateRef = useRef(state);
+  const resendErrorRef = useRef(resendError);
+  const confirmRef = useRef(confirm);
+  const draftRef = useRef(draft);
+  const handledSuccessStateRef = useRef<AuthActionResult | null>(null);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+  useEffect(() => {
+    resendErrorRef.current = resendError;
+  }, [resendError]);
+  useEffect(() => {
+    confirmRef.current = confirm;
+  }, [confirm]);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
-  const resolvedContact = (() => {
+  const handleFormActivity = useCallback(
+    (e: SyntheticEvent<HTMLFormElement>) => {
+      onFormActivity(e);
+      if (
+        resendErrorRef.current &&
+        (e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          e.target instanceof HTMLSelectElement)
+      ) {
+        setResendError(null);
+      }
+    },
+    [onFormActivity],
+  );
+
+  const resolvedContact = useMemo(() => {
     if (draft?.normalized_identifier) {
       return {
         channel: draft.channel as VerificationChannel,
@@ -88,7 +122,7 @@ export function ResetPasswordForm() {
       channel: check.value.kind as VerificationChannel,
       identifier: check.value.value,
     };
-  })();
+  }, [draft, enteredIdentifier]);
 
   const activeContactKey = resolvedContact
     ? `${resolvedContact.channel}:${resolvedContact.identifier}`
@@ -121,7 +155,8 @@ export function ResetPasswordForm() {
   }, []);
 
   useEffect(() => {
-    if (state?.success) {
+    if (state?.success && handledSuccessStateRef.current !== state) {
+      handledSuccessStateRef.current = state;
       clearCooldown(draft?.normalized_identifier ?? resolvedContact?.identifier);
       if (draft?.context === "password_recovery") {
         clearVerificationDraft();
@@ -129,7 +164,7 @@ export function ResetPasswordForm() {
     }
   }, [state, draft, clearCooldown, resolvedContact?.identifier]);
 
-  const handleResend = async () => {
+  const handleResend = useCallback(async () => {
     if (!resolvedContact || cooldown > 0 || isResending || isPending) return;
 
     const requestContact = resolvedContact;
@@ -166,7 +201,7 @@ export function ResetPasswordForm() {
           }
         }
       } else {
-        setResendSuccess("Verification code sent successfully.");
+        setResendSuccess("Verification code sent.");
         startCooldown(60, undefined, requestContact.identifier);
         const candidate = updateVerificationDraftExpiry(
           600,
@@ -198,28 +233,100 @@ export function ResetPasswordForm() {
     } finally {
       setIsResending(false);
     }
-  };
+  }, [
+    cooldown,
+    draft,
+    isPending,
+    isResending,
+    resolvedContact,
+    startCooldown,
+  ]);
 
-  const setFieldError = (field: string, error?: string) =>
-    setClientErrors((prev) => {
-      if (!error) {
-        if (!prev[field]) return prev;
-        const next = { ...prev };
-        delete next[field];
-        return next;
+  const handleDismissResendSuccess = useCallback(() => {
+    setResendSuccess(null);
+  }, []);
+
+  const setFieldError = useCallback(
+    (field: string, error?: string) =>
+      setClientErrors((prev) => {
+        if (!error) {
+          if (!prev[field]) return prev;
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        }
+        if (prev[field] === error) return prev;
+        return { ...prev, [field]: error };
+      }),
+    [],
+  );
+
+  const dismissServerField = useCallback(
+    (field: string) =>
+      setDismissedServer((prev) => {
+        const currentState = stateRef.current;
+        if (!currentState?.fieldErrors?.[field]) return prev;
+        if (prev?.ref === currentState && prev.fields.has(field)) return prev;
+        const fields = new Set(
+          prev?.ref === currentState ? prev.fields : [],
+        );
+        fields.add(field);
+        return { ref: currentState, fields };
+      }),
+    [],
+  );
+
+  const handleIdentifierChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const nextVal = e.target.value;
+      setEnteredIdentifier(nextVal);
+      if (!draftRef.current?.normalized_identifier) {
+        const nextCheck = validateIdentifier(nextVal.trim());
+        activeContactRef.current = nextCheck.ok
+          ? `${nextCheck.value.kind}:${nextCheck.value.value}`
+          : null;
       }
-      if (prev[field] === error) return prev;
-      return { ...prev, [field]: error };
-    });
+      setResendError(null);
+      setResendSuccess(null);
+      dismissServerField("identifier");
+      setFieldError("identifier", undefined);
+    },
+    [dismissServerField, setFieldError],
+  );
 
-  const dismissServerField = (field: string) =>
-    setDismissedServer((prev) => {
-      if (!state?.fieldErrors?.[field]) return prev;
-      if (prev?.ref === state && prev.fields.has(field)) return prev;
-      const fields = new Set(prev?.ref === state ? prev.fields : []);
-      fields.add(field);
-      return { ref: state, fields };
-    });
+  const handleCodeChange = useCallback(() => {
+    dismissServerField("code");
+    setFieldError("code", undefined);
+  }, [dismissServerField, setFieldError]);
+
+  const handlePasswordChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      setPassword(v);
+      dismissServerField("new_password");
+      setFieldError("new_password", undefined);
+      const currentConfirm = confirmRef.current;
+      if (currentConfirm && validatePasswordMatch(v, currentConfirm).ok) {
+        setFieldError("confirm_new_password", undefined);
+      }
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const handleConfirmChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setConfirm(e.target.value);
+      dismissServerField("confirm_new_password");
+      setFieldError("confirm_new_password", undefined);
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const resendAlertResult = useMemo(
+    () =>
+      resendError ? { ...resendError, retryAfterSeconds: undefined } : null,
+    [resendError],
+  );
 
   const serverFieldError = (field: string) =>
     dismissedServer?.ref === state && dismissedServer.fields.has(field)
@@ -295,7 +402,7 @@ export function ResetPasswordForm() {
             value={draft.normalized_identifier}
           />
         ) : (
-          <Input
+          <MemoizedInput
             id="identifier"
             name="identifier"
             label="Email or Phone"
@@ -303,25 +410,12 @@ export function ResetPasswordForm() {
             value={enteredIdentifier}
             readOnly={isPending || isResending}
             error={clientErrors.identifier ?? serverFieldError("identifier")}
-            onChange={(e) => {
-              const nextVal = e.target.value;
-              setEnteredIdentifier(nextVal);
-              if (!draft?.normalized_identifier) {
-                const nextCheck = validateIdentifier(nextVal.trim());
-                activeContactRef.current = nextCheck.ok
-                  ? `${nextCheck.value.kind}:${nextCheck.value.value}`
-                  : null;
-              }
-              setResendError(null);
-              setResendSuccess(null);
-              dismissServerField("identifier");
-              setFieldError("identifier", undefined);
-            }}
+            onChange={handleIdentifierChange}
             placeholder="Enter your email or 01XXXXXXXXX"
           />
         )}
 
-        <Input
+        <MemoizedInput
           id="code"
           name="code"
           variant="otp_6"
@@ -329,14 +423,11 @@ export function ResetPasswordForm() {
           required
           readOnly={isPending}
           error={clientErrors.code ?? serverFieldError("code")}
-          onChange={() => {
-            dismissServerField("code");
-            setFieldError("code", undefined);
-          }}
+          onChange={handleCodeChange}
         />
 
         <div className="flex flex-col gap-2">
-          <Input
+          <MemoizedInput
             id="new_password"
             name="new_password"
             variant="password"
@@ -348,21 +439,13 @@ export function ResetPasswordForm() {
             readOnly={isPending}
             value={password}
             error={clientErrors.new_password ?? serverFieldError("new_password")}
-            onChange={(e) => {
-              const v = e.target.value;
-              setPassword(v);
-              dismissServerField("new_password");
-              setFieldError("new_password", undefined);
-              if (confirm && validatePasswordMatch(v, confirm).ok) {
-                setFieldError("confirm_new_password", undefined);
-              }
-            }}
+            onChange={handlePasswordChange}
             placeholder="New password"
           />
           <PasswordStrengthHint password={password} />
         </div>
 
-        <Input
+        <MemoizedInput
           id="confirm_new_password"
           name="confirm_new_password"
           variant="password"
@@ -377,11 +460,7 @@ export function ResetPasswordForm() {
             clientErrors.confirm_new_password ??
             serverFieldError("confirm_new_password")
           }
-          onChange={(e) => {
-            setConfirm(e.target.value);
-            dismissServerField("confirm_new_password");
-            setFieldError("confirm_new_password", undefined);
-          }}
+          onChange={handleConfirmChange}
           placeholder="Confirm new password"
         />
 
@@ -403,7 +482,7 @@ export function ResetPasswordForm() {
                 isLoading={isResending}
                 loadingText="Sending…"
                 disabled={!isCooldownHydrated || cooldown > 0 || isResending || isPending}
-                onClick={() => handleResend()}
+                onClick={handleResend}
                 className={cooldown > 0 ? "no-underline tabular-nums" : "underline-offset-4"}
               >
                 {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : "Resend code"}
@@ -421,14 +500,18 @@ export function ResetPasswordForm() {
                     : ""}
               </div>
             </div>
-            <AuthAlert
-              result={
-                resendError
-                  ? { ...resendError, retryAfterSeconds: undefined }
-                  : null
-              }
-            />
-            {resendSuccess && <Alert variant="success">{resendSuccess}</Alert>}
+            <AuthAlert result={resendAlertResult} />
+            {resendSuccess && (
+              <Toast
+                variant="success"
+                role="status"
+                ariaLive="polite"
+                autoDismissMs={4000}
+                onDismiss={handleDismissResendSuccess}
+              >
+                {resendSuccess}
+              </Toast>
+            )}
           </div>
         ) : (
           <p>

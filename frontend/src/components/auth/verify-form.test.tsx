@@ -168,7 +168,7 @@ describe('VerifyForm', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Verification code sent.')).toBeInTheDocument();
       expect(resendButton).toBeDisabled();
       expect(resendButton).toHaveTextContent(/resend code in 01:00/i);
     });
@@ -213,7 +213,7 @@ describe('VerifyForm', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Verification code sent.')).toBeInTheDocument();
       expect(resendButton).toBeDisabled();
       expect(resendButton).toHaveTextContent(/resend code in 00:45/i);
     });
@@ -252,7 +252,7 @@ describe('VerifyForm', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Verification code sent.')).toBeInTheDocument();
     });
 
     /* Replacement draft should now exist in sessionStorage */
@@ -295,7 +295,7 @@ describe('VerifyForm', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Verification code sent.')).toBeInTheDocument();
     });
 
     /* Fallback save should have stored a fresh draft preserving the original context */
@@ -345,7 +345,7 @@ describe('VerifyForm', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Verification code sent.')).toBeInTheDocument();
     });
 
     /* Newer draft in sessionStorage must remain completely untouched */
@@ -506,7 +506,7 @@ describe('VerifyForm', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Verification code sent.')).toBeInTheDocument();
     });
 
     const stored = JSON.parse(

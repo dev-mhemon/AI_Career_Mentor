@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Header } from './header';
 import { Sidebar } from './sidebar';
 import { useOptionalAppShellContext } from './app-shell-context';
@@ -149,6 +156,18 @@ export function AppShell({
     };
   }, [isMobileOpen]);
 
+  const handleToggleCollapse = useCallback(() => {
+    setIsCollapsed((prev) => !prev);
+  }, []);
+
+  const handleCloseMobile = useCallback(() => {
+    setIsMobileOpen(false);
+  }, []);
+
+  const handleToggleMobile = useCallback(() => {
+    setIsMobileOpen((prev) => !prev);
+  }, []);
+
   const hideChrome = Boolean(ctx?.disabled);
 
   return (
@@ -163,9 +182,9 @@ export function AppShell({
         <Sidebar
           id={sidebarId}
           isCollapsed={isCollapsed}
-          onToggleCollapse={() => setIsCollapsed((prev) => !prev)}
+          onToggleCollapse={handleToggleCollapse}
           isMobileOpen={isMobileOpen}
-          onCloseMobile={() => setIsMobileOpen(false)}
+          onCloseMobile={handleCloseMobile}
           isSuspended={effectiveSuspended}
           variant={effectiveVariant}
           sidebarRef={sidebarRef}
@@ -181,7 +200,7 @@ export function AppShell({
             signOutAction={signOutAction}
             isSuspended={effectiveSuspended}
             offline={offline}
-            onOpenMobileMenu={() => setIsMobileOpen((prev) => !prev)}
+            onOpenMobileMenu={handleToggleMobile}
             isMobileMenuOpen={isMobileOpen}
             sidebarId={sidebarId}
             mobileTriggerRef={mobileTriggerRef}

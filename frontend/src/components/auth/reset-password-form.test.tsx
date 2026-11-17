@@ -386,7 +386,7 @@ describe("ResetPasswordForm", () => {
     expect(sentForm?.get("identifier")).toBe("user@example.com");
     expect(sentForm?.get("mode")).toBe("resend");
 
-    expect(screen.getByText(/verification code sent successfully/i)).toBeInTheDocument();
+    expect(screen.getByText("Verification code sent.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /resend code in 01:00/i })).toBeDisabled();
     expect(screen.queryByText(/resend available in/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/when the timer ends/i)).not.toBeInTheDocument();
