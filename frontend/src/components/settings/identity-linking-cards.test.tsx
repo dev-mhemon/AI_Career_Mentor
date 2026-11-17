@@ -9,6 +9,7 @@ vi.mock('@/lib/auth/actions', () => ({
 
 describe('IdentityLinkingCards Component', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.restoreAllMocks();
   });
 
@@ -80,7 +81,7 @@ describe('IdentityLinkingCards Component', () => {
       expect(linkIdentityAction).toHaveBeenCalledWith('google');
     });
     expect(
-      await screen.findByText('Google account linked successfully.'),
+      await screen.findByText('Google account linked.'),
     ).toBeInTheDocument();
     expect(await screen.findByText('Connected')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
@@ -106,7 +107,7 @@ describe('IdentityLinkingCards Component', () => {
       expect(linkIdentityAction).toHaveBeenCalledWith('facebook');
     });
     expect(
-      await screen.findByText('Facebook account linked successfully.'),
+      await screen.findByText('Facebook account linked.'),
     ).toBeInTheDocument();
     expect(await screen.findByText('Connected')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /connect facebook account/i })).not.toBeInTheDocument();
@@ -136,12 +137,12 @@ describe('IdentityLinkingCards Component', () => {
       <IdentityLinkingCards
         linkedProviders={['google']}
         verifiedContact={true}
-        initialSuccess="Google account linked successfully."
+        initialSuccess="Google account linked."
         initialError="Previous action failed."
       />,
     );
 
-    expect(screen.getByRole('status')).toHaveTextContent('Google account linked successfully.');
+    expect(screen.getByRole('status')).toHaveTextContent('Google account linked.');
     expect(screen.getByRole('alert')).toHaveTextContent('Previous action failed.');
   });
 
@@ -161,7 +162,7 @@ describe('IdentityLinkingCards Component', () => {
     const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     fireEvent.click(googleBtn);
 
-    expect(await screen.findByText('Google account linked successfully.')).toBeInTheDocument();
+    expect(await screen.findByText('Google account linked.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
 
     rerender(
@@ -191,7 +192,7 @@ describe('IdentityLinkingCards Component', () => {
     const googleBtn = screen.getByRole('button', { name: /connect google account/i });
     fireEvent.click(googleBtn);
 
-    expect(await screen.findByText('Google account linked successfully.')).toBeInTheDocument();
+    expect(await screen.findByText('Google account linked.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /connect google account/i })).not.toBeInTheDocument();
 
     rerender(

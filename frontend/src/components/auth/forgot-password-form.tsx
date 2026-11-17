@@ -1,6 +1,15 @@
 "use client";
 
-import { useActionState, useState, useEffect, useRef } from "react";
+import {
+  memo,
+  type ChangeEvent,
+  useActionState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { forgotPasswordAction, type AuthActionResult } from "@/lib/auth/actions";
 import {
@@ -28,6 +37,26 @@ import {
   validateEmail,
 } from "@/lib/validation/auth-schemas";
 
+const FORGOT_TAB_ITEMS = [
+  { id: "email", label: "Email", panel: null },
+  { id: "phone", label: "Phone", panel: null },
+];
+
+const MemoizedTabs = memo(Tabs);
+const MemoizedInput = memo(Input);
+
+const FORGOT_SIGN_IN_FOOTER = (
+  <p className="text-center text-body-sm text-text-secondary">
+    Remember your password?{" "}
+    <Link
+      href="/login"
+      className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+    >
+      Sign in
+    </Link>
+  </p>
+);
+
 /**
  * Screen 05: Password Recovery Form component.
  * Dispatches password recovery challenge (EP-A08) and persists R18 recovery draft.
@@ -47,14 +76,14 @@ export function ForgotPasswordForm() {
     dismiss: dismissAlert,
     onFormActivity,
   } = useDismissedActionState(state);
-  const normalizedCandidate = (() => {
+  const normalizedCandidate = useMemo(() => {
     if (!identifier.trim()) return null;
     const check =
       channel === "email"
         ? validateEmail(identifier)
         : validateBdPhone(identifier);
     return check.ok ? check.value : null;
-  })();
+  }, [channel, identifier]);
 
   const {
     cooldown,
@@ -69,6 +98,11 @@ export function ForgotPasswordForm() {
   useEffect(() => {
     cooldownActionsRef.current = { startCooldown, clearCooldown };
   }, [startCooldown, clearCooldown]);
+
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const previousDraftRef = useRef<VerificationDraft | null>(null);
   const submittedCooldownTargetRef = useRef<{
@@ -131,25 +165,36 @@ export function ForgotPasswordForm() {
     }
   }, [state]);
 
+  const handleTabChange = useCallback(
+    (id: string) => {
+      setChannel(id as VerificationChannel);
+      setIdentifier("");
+      setClientError(undefined);
+      dismissAlert();
+    },
+    [dismissAlert],
+  );
+
+  const handleIdentifierChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setIdentifier(e.target.value);
+      if (stateRef.current?.fieldErrors?.identifier) dismissAlert();
+      setClientError(undefined);
+    },
+    [dismissAlert],
+  );
+
   return (
     <div className="flex flex-col gap-6">
-      <Tabs
+      <MemoizedTabs
         aria-label="Recovery method"
         variant="segmented_pill"
         idPrefix="forgot"
         hidePanels
         disabled={isPending}
         value={channel}
-        onValueChange={(id) => {
-          setChannel(id as VerificationChannel);
-          setIdentifier("");
-          setClientError(undefined);
-          dismissAlert();
-        }}
-        items={[
-          { id: "email", label: "Email", panel: null },
-          { id: "phone", label: "Phone", panel: null },
-        ]}
+        onValueChange={handleTabChange}
+        items={FORGOT_TAB_ITEMS}
       />
 
       <div
@@ -198,7 +243,7 @@ export function ForgotPasswordForm() {
           className="flex flex-col gap-4"
         >
           {channel === "email" ? (
-            <Input
+            <MemoizedInput
               key="email"
               id="identifier"
               name="identifier"
@@ -211,15 +256,11 @@ export function ForgotPasswordForm() {
                 clientError ??
                 (isDismissed ? undefined : state?.fieldErrors?.identifier)
               }
-              onChange={(e) => {
-                setIdentifier(e.target.value);
-                if (state?.fieldErrors?.identifier) dismissAlert();
-                setClientError(undefined);
-              }}
+              onChange={handleIdentifierChange}
               placeholder="Enter your email"
             />
           ) : (
-            <Input
+            <MemoizedInput
               key="phone"
               id="identifier"
               name="identifier"
@@ -232,11 +273,7 @@ export function ForgotPasswordForm() {
                 clientError ??
                 (isDismissed ? undefined : state?.fieldErrors?.identifier)
               }
-              onChange={(e) => {
-                setIdentifier(e.target.value);
-                if (state?.fieldErrors?.identifier) dismissAlert();
-                setClientError(undefined);
-              }}
+              onChange={handleIdentifierChange}
               placeholder="01XXXXXXXXX"
             />
           )}
@@ -284,15 +321,7 @@ export function ForgotPasswordForm() {
         </form>
       </div>
 
-      <p className="text-center text-body-sm text-text-secondary">
-        Remember your password?{" "}
-        <Link
-          href="/login"
-          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
-        >
-          Sign in
-        </Link>
-      </p>
+      {FORGOT_SIGN_IN_FOOTER}
     </div>
   );
 }

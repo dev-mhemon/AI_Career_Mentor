@@ -1,6 +1,15 @@
 'use client';
 
-import { useActionState, useState, useEffect, useRef } from 'react';
+import {
+  memo,
+  type ChangeEvent,
+  type FocusEvent,
+  useActionState,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import { addContactAction, type AuthActionResult } from '@/lib/auth/actions';
 import {
@@ -32,6 +41,22 @@ export interface AddContactFormProps {
   verifiedPhone?: string | null;
 }
 
+const TAB_BUTTON_BASE_CLASS =
+  'flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)';
+
+const AddContactHeader = memo(function AddContactHeader() {
+  return (
+    <div>
+      <h2 id="add-contact-heading" className="text-heading-sm text-text-primary">
+        Contact Channels
+      </h2>
+      <p className="mt-1 text-body-sm text-text-secondary">
+        Add and verify an email address or Bangladesh mobile number to secure your account.
+      </p>
+    </div>
+  );
+});
+
 /**
  * Screen 22: Contact Channels / Add Contact Form component (`EP-A12`).
  * Shows a compact verified status row when a verified contact is present, or allows
@@ -58,6 +83,11 @@ export function AddContactForm({
 
   const router = useRouter();
   const handledStateRef = useRef<AuthActionResult | null>(null);
+  const stateRef = useRef(state);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     if (handledStateRef.current === state) {
@@ -76,6 +106,57 @@ export function AddContactForm({
       router.push(state.redirectTo);
     }
   }, [state, router]);
+
+  const switchTab = useCallback((nextTab: 'email' | 'phone') => {
+    setActiveTab(nextTab);
+    setContact('');
+    setContactError(undefined);
+    setDismissedServerState(stateRef.current);
+    phoneBlurredRef.current = false;
+  }, []);
+
+  const handleSelectEmailTab = useCallback(() => switchTab('email'), [switchTab]);
+  const handleSelectPhoneTab = useCallback(() => switchTab('phone'), [switchTab]);
+
+  const handleContactChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      setContact(v);
+      const currentState = stateRef.current;
+      if (currentState?.error || currentState?.fieldErrors?.contact) {
+        setDismissedServerState(currentState);
+      }
+      if (activeTab === 'email') {
+        const check = validateEmailLive(v);
+        setContactError(check.ok ? undefined : check.error);
+      } else {
+        const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
+        if (check.resetBlurred) phoneBlurredRef.current = false;
+        setContactError(check.error);
+      }
+    },
+    [activeTab],
+  );
+
+  const handleContactBlur = useCallback(
+    (e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (!e.target.value.trim()) {
+        phoneBlurredRef.current = false;
+        return;
+      }
+      if (activeTab === 'phone') phoneBlurredRef.current = true;
+      const check =
+        activeTab === 'email'
+          ? validateEmail(e.target.value)
+          : validateBdPhone(e.target.value);
+      if (!check.ok) setContactError(check.error);
+      else {
+        if (activeTab === 'email') setContact(check.value);
+        setContactError(undefined);
+      }
+    },
+    [activeTab],
+  );
 
   if (isSuspended) {
     return (
@@ -133,27 +214,14 @@ export function AddContactForm({
       aria-labelledby="add-contact-heading"
       className="flex flex-col gap-4 rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
     >
-      <div>
-        <h2 id="add-contact-heading" className="text-heading-sm text-text-primary">
-          Contact Channels
-        </h2>
-        <p className="mt-1 text-body-sm text-text-secondary">
-          Add and verify an email address or Bangladesh mobile number to secure your account.
-        </p>
-      </div>
+      <AddContactHeader />
 
       <div className="flex w-full rounded-lg bg-surface-sunken p-1">
         <button
           type="button"
           disabled={isPending}
-          onClick={() => {
-            setActiveTab('email');
-            setContact('');
-            setContactError(undefined);
-            setDismissedServerState(state);
-            phoneBlurredRef.current = false;
-          }}
-          className={`flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
+          onClick={handleSelectEmailTab}
+          className={`${TAB_BUTTON_BASE_CLASS} ${
             activeTab === 'email'
               ? 'bg-surface-default text-text-primary shadow-xs'
               : 'text-text-secondary hover:text-text-primary'
@@ -165,14 +233,8 @@ export function AddContactForm({
         <button
           type="button"
           disabled={isPending}
-          onClick={() => {
-            setActiveTab('phone');
-            setContact('');
-            setContactError(undefined);
-            setDismissedServerState(state);
-            phoneBlurredRef.current = false;
-          }}
-          className={`flex min-h-11 flex-1 cursor-pointer items-center justify-center rounded-md px-3 py-2 text-center text-label font-medium transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled) ${
+          onClick={handleSelectPhoneTab}
+          className={`${TAB_BUTTON_BASE_CLASS} ${
             activeTab === 'phone'
               ? 'bg-surface-default text-text-primary shadow-xs'
               : 'text-text-secondary hover:text-text-primary'
@@ -234,37 +296,8 @@ export function AddContactForm({
           error={
             contactError ?? visibleState?.fieldErrors?.contact
           }
-          onChange={(e) => {
-            const v = e.target.value;
-            setContact(v);
-            if (state?.error || state?.fieldErrors?.contact) {
-              setDismissedServerState(state);
-            }
-            if (activeTab === 'email') {
-              const check = validateEmailLive(v);
-              setContactError(check.ok ? undefined : check.error);
-            } else {
-              const check = validateBdPhoneOnChange(v, phoneBlurredRef.current);
-              if (check.resetBlurred) phoneBlurredRef.current = false;
-              setContactError(check.error);
-            }
-          }}
-          onBlur={(e) => {
-            if (!e.target.value.trim()) {
-              phoneBlurredRef.current = false;
-              return;
-            }
-            if (activeTab === 'phone') phoneBlurredRef.current = true;
-            const check =
-              activeTab === 'email'
-                ? validateEmail(e.target.value)
-                : validateBdPhone(e.target.value);
-            if (!check.ok) setContactError(check.error);
-            else {
-              if (activeTab === 'email') setContact(check.value);
-              setContactError(undefined);
-            }
-          }}
+          onChange={handleContactChange}
+          onBlur={handleContactBlur}
           placeholder={activeTab === 'email' ? 'Enter your email' : '01XXXXXXXXX'}
           hint={
             activeTab === 'phone'

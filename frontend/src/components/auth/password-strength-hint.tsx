@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { cn } from "@/components/ui/cn";
 import {
   passwordStrength,
@@ -20,7 +21,11 @@ const STRENGTH_COLOR_CLASS: Record<PasswordStrength["score"], string> = {
 /**
  * Password policy helper copy and semantic color-coded strength feedback.
  */
-export function PasswordStrengthHint({ password }: { password: string }) {
+export const PasswordStrengthHint = memo(function PasswordStrengthHint({
+  password,
+}: {
+  password: string;
+}) {
   const strength = passwordStrength(password);
 
   return (
@@ -43,4 +48,4 @@ export function PasswordStrengthHint({ password }: { password: string }) {
       )}
     </p>
   );
-}
+});

@@ -178,9 +178,9 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     });
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/learning settings saved successfully/i),
-      ).toBeInTheDocument();
+      const toast = screen.getByRole('status');
+      expect(toast).toHaveTextContent('Learning settings saved.');
+      expect(toast.closest('.fixed')).toBeInTheDocument();
     });
 
     const passedFormData = vi.mocked(updateLearningSettingsAction).mock.calls[0][1];
@@ -314,7 +314,7 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/learning settings saved successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Learning settings saved.')).toBeInTheDocument();
     });
 
     expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
@@ -349,7 +349,7 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/learning settings saved successfully/i)).toBeInTheDocument();
+      expect(screen.getByText('Learning settings saved.')).toBeInTheDocument();
     });
 
     expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
@@ -487,6 +487,119 @@ describe('LearningSettingsForm Component (M02-04 Screen 22 EP-P04)', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it('memoizes Intl.supportedValuesOf timezone catalog across preferred daily hours keystrokes', () => {
+    const supportedSpy = vi
+      .spyOn(Intl, 'supportedValuesOf')
+      .mockReturnValue(['America/Sao_Paulo', 'Africa/Nairobi']);
+
+    try {
+      render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+      expect(supportedSpy).toHaveBeenCalledTimes(1);
+
+      const hoursInput = screen.getByLabelText(/preferred daily hours/i);
+      fireEvent.change(hoursInput, { target: { value: '3' } });
+      fireEvent.change(hoursInput, { target: { value: '3.' } });
+      fireEvent.change(hoursInput, { target: { value: '3.5' } });
+
+      expect(supportedSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      supportedSpy.mockRestore();
+    }
+  });
+
+  it('clears the saved status banner as soon as hours or timezone is edited after saving', async () => {
+    vi.mocked(updateLearningSettingsAction)
+      .mockResolvedValueOnce({
+        success: true,
+        message: 'Learning settings saved successfully.',
+        values: {
+          timezone: 'Europe/London',
+          preferred_daily_hours: '3.5',
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        message: 'Learning settings saved successfully.',
+        values: {
+          timezone: 'Europe/London',
+          preferred_daily_hours: '4',
+        },
+      });
+
+    render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+
+    fireEvent.change(screen.getByLabelText(/^timezone$/i), {
+      target: { value: 'Europe/London' },
+    });
+    fireEvent.change(screen.getByLabelText(/preferred daily hours/i), {
+      target: { value: '3.5' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Learning settings saved.'),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/preferred daily hours/i), {
+      target: { value: '4' },
+    });
+    expect(
+      screen.queryByText('Learning settings saved.'),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText('Learning settings saved.'),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/^timezone$/i), {
+      target: { value: 'Asia/Dhaka' },
+    });
+    expect(
+      screen.queryByText('Learning settings saved.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('auto-dismisses the Learning settings saved toast after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(updateLearningSettingsAction).mockResolvedValueOnce({
+        success: true,
+        message: 'Learning settings saved successfully.',
+        values: {
+          timezone: 'Asia/Dhaka',
+          preferred_daily_hours: '2.5',
+        },
+      });
+
+      render(<LearningSettingsForm initialProfile={MOCK_PROFILE} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      });
+
+      expect(screen.getByText('Learning settings saved.')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      expect(
+        screen.queryByText('Learning settings saved.'),
+      ).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

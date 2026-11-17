@@ -1,6 +1,16 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import {
+  memo,
+  type ChangeEvent,
+  type RefObject,
+  useActionState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import {
   updateLearningSettingsAction,
@@ -9,6 +19,7 @@ import {
 } from '@/lib/profile/actions';
 import type { ProfileResponse } from '@/lib/api/client';
 import { Alert } from '@/components/ui/alert';
+import { Toast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertCircleIcon } from '@/components/ui/icons';
@@ -41,7 +52,58 @@ const COMMON_TIMEZONES: readonly string[] = [
 const SELECT_BASE_CLASS =
   'min-h-11 w-full cursor-pointer appearance-none truncate rounded-md border bg-surface-default py-2 pl-3 pr-10 text-body text-text-primary transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:text-text-disabled';
 
-const LEGACY_SAVED_SUFFIX = '(Learning settings saved successfully).';
+const MemoizedInput = memo(Input);
+
+const AUTO_DETECT_GLOBE_ICON = (
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+    className="shrink-0"
+  >
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+    <path d="M2 12h20" />
+  </svg>
+);
+
+const TIMEZONE_CHEVRON_ICON = (
+  <span
+    aria-hidden="true"
+    className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 transition-colors duration-200 group-hover:text-slate-600 group-focus-within:text-teal-500 dark:group-hover:text-slate-200"
+  >
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className="transition-transform duration-200 ease-out group-hover:translate-y-0.5 group-focus-within:rotate-180"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  </span>
+);
+
+const EMPTY_TIMEZONE_CATALOG: {
+  list: readonly string[];
+  set: ReadonlySet<string>;
+} = {
+  list: [],
+  set: new Set<string>(),
+};
 
 function getSupportedTimezones(): readonly string[] {
   try {
@@ -56,6 +118,145 @@ function getSupportedTimezones(): readonly string[] {
   }
   return COMMON_TIMEZONES;
 }
+
+function buildBaseTimezoneCatalog(): {
+  list: readonly string[];
+  set: ReadonlySet<string>;
+} {
+  const seen = new Set<string>(COMMON_TIMEZONES);
+  for (const tz of getSupportedTimezones()) {
+    seen.add(tz);
+  }
+  return {
+    list: Array.from(seen),
+    set: seen,
+  };
+}
+
+const LearningSettingsHeader = memo(function LearningSettingsHeader() {
+  return (
+    <div className="flex flex-col gap-1">
+      <h2
+        id="learning-settings-heading"
+        className="text-heading-sm text-text-primary"
+      >
+        Learning Settings
+      </h2>
+      <p className="text-body-sm text-text-secondary">
+        Configure your daily study schedule and local timezone.
+      </p>
+    </div>
+  );
+});
+
+const TimezoneSelectField = memo(function TimezoneSelectField({
+  selectRef,
+  value,
+  options,
+  error,
+  disabled,
+  isPending,
+  onChange,
+  onAutoDetect,
+}: {
+  selectRef: RefObject<HTMLSelectElement | null>;
+  value: string;
+  options: readonly string[];
+  error?: string;
+  disabled: boolean;
+  isPending: boolean;
+  onChange: (e: ChangeEvent<HTMLSelectElement>) => void;
+  onAutoDetect: () => void;
+}) {
+  const timezoneDescribedBy = error ? 'learning-timezone-error' : undefined;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex min-h-6 flex-wrap items-center justify-between gap-2">
+        <label
+          htmlFor="learning-timezone"
+          className="text-label-lg text-text-primary"
+        >
+          Timezone
+        </label>
+        <button
+          type="button"
+          disabled={isPending || disabled}
+          onClick={onAutoDetect}
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-teal-500/40 bg-teal-500/10 px-2.5 py-0.5 text-xs font-medium text-teal-700 transition-colors hover:border-teal-500/60 hover:bg-teal-500/20 dark:text-teal-300 disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)"
+        >
+          {AUTO_DETECT_GLOBE_ICON}
+          <span>Auto-detect</span>
+        </button>
+      </div>
+
+      <div className="group relative">
+        <select
+          ref={selectRef}
+          id="learning-timezone"
+          name="timezone"
+          required
+          disabled={disabled}
+          aria-disabled={isPending || undefined}
+          tabIndex={isPending ? -1 : undefined}
+          value={value}
+          onChange={onChange}
+          aria-invalid={Boolean(error)}
+          aria-describedby={timezoneDescribedBy}
+          className={cn(
+            SELECT_BASE_CLASS,
+            error
+              ? 'border-border-danger border-2 focus:outline-none focus:ring-2 focus:ring-border-danger'
+              : 'border-border-default hover:border-border-strong focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-focus-ring',
+            isPending &&
+              'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
+          )}
+        >
+          {options.map((tz) => (
+            <option key={tz} value={tz}>
+              {tz}
+            </option>
+          ))}
+        </select>
+        {TIMEZONE_CHEVRON_ICON}
+      </div>
+
+      {error && (
+        <p
+          id="learning-timezone-error"
+          role="alert"
+          className="flex items-start gap-1 text-caption text-text-danger"
+        >
+          <AlertCircleIcon className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </p>
+      )}
+    </div>
+  );
+});
+
+const LearningSettingsFooter = memo(function LearningSettingsFooter({
+  isPending,
+  disabled,
+}: {
+  isPending: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <div className="pt-1">
+      <Button
+        type="submit"
+        variant="primary"
+        size="lg"
+        isLoading={isPending}
+        loadingText="Saving..."
+        disabled={disabled}
+      >
+        Save
+      </Button>
+    </div>
+  );
+});
 
 /**
  * Properties for the `LearningSettingsForm` component on Screen 22 (`/settings`).
@@ -196,7 +397,31 @@ export function LearningSettingsForm({
   const activeState = state === dismissedState ? {} : state;
   const isTimezoneErrorCleared = clearedTimezoneErrorState === state;
 
-  const handleAutoDetect = () => {
+  const baseTimezoneCatalog = useMemo(
+    () => (isSuspended ? EMPTY_TIMEZONE_CATALOG : buildBaseTimezoneCatalog()),
+    [isSuspended],
+  );
+
+  const timezoneOptions = useMemo(() => {
+    if (isSuspended) {
+      return EMPTY_TIMEZONE_CATALOG.list;
+    }
+    const trimmedTimezone = values.timezone?.trim();
+    if (!trimmedTimezone || baseTimezoneCatalog.set.has(trimmedTimezone)) {
+      return baseTimezoneCatalog.list;
+    }
+    return [...baseTimezoneCatalog.list, trimmedTimezone];
+  }, [baseTimezoneCatalog, isSuspended, values.timezone]);
+
+  const handleRetry = useCallback(() => {
+    if (onRetry) {
+      onRetry();
+    } else {
+      router.refresh();
+    }
+  }, [onRetry, router]);
+
+  const handleAutoDetect = useCallback(() => {
     const detected = detectBrowserTimezone();
     setClearedTimezoneErrorState(state);
     if (!state.fieldErrors?.preferred_daily_hours) {
@@ -207,25 +432,33 @@ export function LearningSettingsForm({
       ...prev,
       timezone: detected,
     }));
-  };
+  }, [state]);
 
-  const handleTimezoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setDismissedState(state);
-    setClearedTimezoneErrorState(state);
-    setIsDirty(true);
-    setValues((prev) => ({ ...prev, timezone: e.target.value }));
-  };
+  const handleTimezoneChange = useCallback(
+    (e: ChangeEvent<HTMLSelectElement>) => {
+      setDismissedState(state);
+      setClearedTimezoneErrorState(state);
+      setIsDirty(true);
+      setValues((prev) => ({ ...prev, timezone: e.target.value }));
+    },
+    [state],
+  );
 
-  const handleHoursChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => {
+  const handleHoursChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setDismissedState(state);
+      setIsDirty(true);
+      setValues((prev) => ({
+        ...prev,
+        preferred_daily_hours: e.target.value,
+      }));
+    },
+    [state],
+  );
+
+  const handleDismissToast = useCallback(() => {
     setDismissedState(state);
-    setIsDirty(true);
-    setValues((prev) => ({
-      ...prev,
-      preferred_daily_hours: e.target.value,
-    }));
-  };
+  }, [state]);
 
   if (isSuspended) {
     return (
@@ -260,56 +493,21 @@ export function LearningSettingsForm({
       ? activeState.error
       : undefined;
 
-  const timezoneOptions = (() => {
-    const seen = new Set<string>(COMMON_TIMEZONES);
-    for (const tz of getSupportedTimezones()) {
-      seen.add(tz);
-    }
-    const trimmedTimezone = values.timezone?.trim();
-    if (trimmedTimezone) {
-      seen.add(trimmedTimezone);
-    }
-    return Array.from(seen);
-  })();
-
-  const successMessage =
-    activeState.message && activeState.message.includes(LEGACY_SAVED_SUFFIX)
-      ? 'Learning settings saved successfully.'
-      : activeState.message;
-
-  const timezoneDescribedBy = timezoneError
-    ? 'learning-timezone-error'
-    : undefined;
+  const hasLoadError = Boolean(loadError);
 
   return (
     <section
       aria-labelledby="learning-settings-heading"
       className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
     >
-      <div className="flex flex-col gap-1">
-        <h2
-          id="learning-settings-heading"
-          className="text-heading-sm text-text-primary"
-        >
-          Learning Settings
-        </h2>
-        <p className="text-body-sm text-text-secondary">
-          Configure your daily study schedule and local timezone.
-        </p>
-      </div>
+      <LearningSettingsHeader />
 
       {loadError && (
         <Alert
           variant="warning"
           role="alert"
           retryLabel="Retry"
-          onRetry={() => {
-            if (onRetry) {
-              onRetry();
-            } else {
-              router.refresh();
-            }
-          }}
+          onRetry={handleRetry}
           className="mt-4"
         >
           {loadError}
@@ -332,112 +530,33 @@ export function LearningSettingsForm({
         </Alert>
       )}
 
-      {activeState.success && successMessage && (
-        <Alert variant="success" role="status" className="mt-4">
-          {successMessage}
-        </Alert>
+      {activeState.success && (
+        <Toast
+          variant="success"
+          position="top-right"
+          role="status"
+          ariaLive="polite"
+          autoDismissMs={4000}
+          onDismiss={handleDismissToast}
+        >
+          Learning settings saved.
+        </Toast>
       )}
 
       <form action={formAction} className="mt-5 flex flex-col gap-5">
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <div className="flex min-h-6 flex-wrap items-center justify-between gap-2">
-              <label
-                htmlFor="learning-timezone"
-                className="text-label-lg text-text-primary"
-              >
-                Timezone
-              </label>
-              <button
-                type="button"
-                disabled={isPending || Boolean(loadError)}
-                onClick={handleAutoDetect}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-teal-500/40 bg-teal-500/10 px-2.5 py-0.5 text-xs font-medium text-teal-700 transition-colors hover:border-teal-500/60 hover:bg-teal-500/20 dark:text-teal-300 disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)"
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
-                  className="shrink-0"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                  <path d="M2 12h20" />
-                </svg>
-                <span>Auto-detect</span>
-              </button>
-            </div>
+          <TimezoneSelectField
+            selectRef={timezoneSelectRef}
+            value={values.timezone}
+            options={timezoneOptions}
+            error={timezoneError}
+            disabled={hasLoadError}
+            isPending={isPending}
+            onChange={handleTimezoneChange}
+            onAutoDetect={handleAutoDetect}
+          />
 
-            <div className="group relative">
-              <select
-                ref={timezoneSelectRef}
-                id="learning-timezone"
-                name="timezone"
-                required
-                disabled={Boolean(loadError)}
-                aria-disabled={isPending || undefined}
-                tabIndex={isPending ? -1 : undefined}
-                value={values.timezone}
-                onChange={handleTimezoneChange}
-                aria-invalid={Boolean(timezoneError)}
-                aria-describedby={timezoneDescribedBy}
-                className={cn(
-                  SELECT_BASE_CLASS,
-                  timezoneError
-                    ? 'border-border-danger border-2 focus:outline-none focus:ring-2 focus:ring-border-danger'
-                    : 'border-border-default hover:border-border-strong focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-focus-ring',
-                  isPending &&
-                    'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
-                )}
-              >
-                {timezoneOptions.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </select>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 transition-colors duration-200 group-hover:text-slate-600 group-focus-within:text-teal-500 dark:group-hover:text-slate-200"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
-                  className="transition-transform duration-200 ease-out group-hover:translate-y-0.5 group-focus-within:rotate-180"
-                >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </span>
-            </div>
-
-            {timezoneError && (
-              <p
-                id="learning-timezone-error"
-                role="alert"
-                className="flex items-start gap-1 text-caption text-text-danger"
-              >
-                <AlertCircleIcon className="mt-0.5 shrink-0" />
-                <span>{timezoneError}</span>
-              </p>
-            )}
-          </div>
-
-          <Input
+          <MemoizedInput
             id="learning-preferred-daily-hours"
             name="preferred_daily_hours"
             variant="number"
@@ -446,7 +565,7 @@ export function LearningSettingsForm({
             max="12"
             step="0.5"
             required
-            disabled={Boolean(loadError)}
+            disabled={hasLoadError}
             readOnly={isPending}
             value={values.preferred_daily_hours}
             onChange={handleHoursChange}
@@ -455,18 +574,7 @@ export function LearningSettingsForm({
           />
         </div>
 
-        <div className="pt-1">
-          <Button
-            type="submit"
-            variant="primary"
-            size="lg"
-            isLoading={isPending}
-            loadingText="Saving..."
-            disabled={Boolean(loadError)}
-          >
-            Save
-          </Button>
-        </div>
+        <LearningSettingsFooter isPending={isPending} disabled={hasLoadError} />
       </form>
     </section>
   );

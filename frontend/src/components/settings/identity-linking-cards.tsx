@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { memo, type ReactNode, useCallback, useState } from 'react';
 import { linkIdentityAction } from '@/lib/auth/actions';
 import { Alert } from '@/components/ui/alert';
+import { Toast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { CheckCircleIcon, WarningIcon } from '@/components/ui/icons';
 
@@ -26,7 +27,7 @@ interface ProviderMeta {
   id: 'google' | 'facebook';
   name: string;
   description: string;
-  icon: (className?: string) => React.ReactNode;
+  icon: ReactNode;
 }
 
 const PROVIDERS: ProviderMeta[] = [
@@ -34,8 +35,8 @@ const PROVIDERS: ProviderMeta[] = [
     id: 'google',
     name: 'Google',
     description: 'Sign in with Google',
-    icon: (className = 'h-5 w-5') => (
-      <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+    icon: (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
         <path
           d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
           fill="#4285F4"
@@ -59,8 +60,8 @@ const PROVIDERS: ProviderMeta[] = [
     id: 'facebook',
     name: 'Facebook',
     description: 'Sign in with Facebook',
-    icon: (className = 'h-5 w-5') => (
-      <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+    icon: (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
         <path
           d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"
           fill="#1877F2"
@@ -69,6 +70,52 @@ const PROVIDERS: ProviderMeta[] = [
     ),
   },
 ];
+
+const ProviderLinkingCard = memo(function ProviderLinkingCard({
+  provider,
+  isLinked,
+  isPending,
+  disabled,
+  onConnect,
+}: {
+  provider: ProviderMeta;
+  isLinked: boolean;
+  isPending: boolean;
+  disabled: boolean;
+  onConnect: (providerId: 'google' | 'facebook') => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-surface-default p-4">
+      <div className="flex items-center gap-3">
+        {provider.icon}
+        <div>
+          <p className="text-label-lg text-text-primary">{provider.name}</p>
+          <p className="text-caption text-text-muted">{provider.description}</p>
+        </div>
+      </div>
+
+      {isLinked ? (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-3 py-1 text-caption font-medium text-feedback-success-text">
+          <CheckCircleIcon className="h-3.5 w-3.5 text-feedback-success-icon" />
+          Connected
+        </span>
+      ) : (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          isLoading={isPending}
+          loadingText="Connecting..."
+          disabled={disabled}
+          onClick={() => onConnect(provider.id)}
+          aria-label={`Connect ${provider.name} account`}
+        >
+          Connect
+        </Button>
+      )}
+    </div>
+  );
+});
 
 /**
  * Compares two provider string lists for content equality regardless of order.
@@ -112,45 +159,56 @@ export function IdentityLinkingCards({
    * Initiates linking of a social provider (Google or Facebook) via server action.
    * @param provider - Social identity provider to link.
    */
-  const handleLink = async (provider: 'google' | 'facebook') => {
-    setError(null);
-    setSuccess(null);
+  const handleLink = useCallback(
+    async (provider: 'google' | 'facebook') => {
+      setError(null);
+      setSuccess(null);
 
-    if (isSuspended) {
-      setError('Cannot link social accounts while your account is suspended.');
-      return;
-    }
-
-    if (!verifiedContact) {
-      setError('A verified email or phone number is required before linking a social account.');
-      return;
-    }
-
-    setPendingProvider(provider);
-    try {
-      const res = await linkIdentityAction(provider);
-      if (res?.error) {
-        setError(res.error);
-      } else if (res?.success) {
-        if (res.linked_providers) {
-          setLinkedOverride(res.linked_providers);
-        } else {
-          setLinkedOverride((prev) => {
-            const base = prev ?? linkedProviders;
-            return base.includes(provider) ? base : [...base, provider];
-          });
-        }
-        setSuccess(`${provider === 'google' ? 'Google' : 'Facebook'} account linked successfully.`);
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
+      if (isSuspended) {
+        setError('Cannot link social accounts while your account is suspended.');
         return;
       }
-      setError('Failed to link social account. Please try again.');
-    } finally {
-      setPendingProvider(null);
-    }
-  };
+
+      if (!verifiedContact) {
+        setError('A verified email or phone number is required before linking a social account.');
+        return;
+      }
+
+      setPendingProvider(provider);
+      try {
+        const res = await linkIdentityAction(provider);
+        if (res?.error) {
+          setError(res.error);
+        } else if (res?.success) {
+          if (res.linked_providers) {
+            setLinkedOverride(res.linked_providers);
+          } else {
+            setLinkedOverride((prev) => {
+              const base = prev ?? linkedProviders;
+              return base.includes(provider) ? base : [...base, provider];
+            });
+          }
+          setSuccess(`${provider === 'google' ? 'Google' : 'Facebook'} account linked.`);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message === 'NEXT_REDIRECT') {
+          return;
+        }
+        setError('Failed to link social account. Please try again.');
+      } finally {
+        setPendingProvider(null);
+      }
+    },
+    [isSuspended, linkedProviders, verifiedContact],
+  );
+
+  const handleDismissSuccess = useCallback(() => {
+    setSuccess(null);
+  }, []);
+
+  const normalizedSuccess = success
+    ? success.replace(/account linked successfully\.$/i, 'account linked.')
+    : null;
 
   return (
     <section
@@ -172,10 +230,17 @@ export function IdentityLinkingCards({
         </Alert>
       )}
 
-      {success && (
-        <Alert variant="success" role="status">
-          {success}
-        </Alert>
+      {normalizedSuccess && (
+        <Toast
+          variant="success"
+          position="top-right"
+          role="status"
+          ariaLive="polite"
+          autoDismissMs={4000}
+          onDismiss={handleDismissSuccess}
+        >
+          {normalizedSuccess}
+        </Toast>
       )}
 
       {!verifiedContact && (
@@ -191,45 +256,16 @@ export function IdentityLinkingCards({
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {PROVIDERS.map((prov) => {
-          const isLinked = linked.includes(prov.id);
-          const isPending = pendingProvider === prov.id;
-
-          return (
-            <div
-              key={prov.id}
-              className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-surface-default p-4"
-            >
-              <div className="flex items-center gap-3">
-                {prov.icon()}
-                <div>
-                  <p className="text-label-lg text-text-primary">{prov.name}</p>
-                  <p className="text-caption text-text-muted">{prov.description}</p>
-                </div>
-              </div>
-
-              {isLinked ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-3 py-1 text-caption font-medium text-feedback-success-text">
-                  <CheckCircleIcon className="h-3.5 w-3.5 text-feedback-success-icon" />
-                  Connected
-                </span>
-              ) : (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  isLoading={isPending}
-                  loadingText="Connecting..."
-                  disabled={isSuspended || !verifiedContact}
-                  onClick={() => handleLink(prov.id)}
-                  aria-label={`Connect ${prov.name} account`}
-                >
-                  Connect
-                </Button>
-              )}
-            </div>
-          );
-        })}
+        {PROVIDERS.map((prov) => (
+          <ProviderLinkingCard
+            key={prov.id}
+            provider={prov}
+            isLinked={linked.includes(prov.id)}
+            isPending={pendingProvider === prov.id}
+            disabled={isSuspended || !verifiedContact}
+            onConnect={handleLink}
+          />
+        ))}
       </div>
     </section>
   );

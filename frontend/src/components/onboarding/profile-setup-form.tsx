@@ -1,9 +1,14 @@
 'use client';
 
 import {
+  memo,
+  type ChangeEvent,
+  type RefObject,
   type SyntheticEvent,
   useActionState,
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -18,6 +23,7 @@ import {
 import type { ProfileResponse } from '@/lib/api/client';
 import { AuthAlert, useDismissedActionState } from '@/components/auth/auth-alert';
 import { Alert } from '@/components/ui/alert';
+import { Toast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { FieldShell, Input } from '@/components/ui/input';
 import { AlertCircleIcon, CheckCircleIcon } from '@/components/ui/icons';
@@ -77,6 +83,51 @@ const EMPTY_CONTACT: ProfileContactInfo = {
   phoneVerified: false,
 };
 
+const EMPTY_STORED_SKILLS: NonNullable<ProfileResponse['existing_skills']> = [];
+
+const MemoizedInput = memo(Input);
+
+const EXPERIENCE_LEVEL_OPTIONS = (
+  <>
+    <option value="">Select your experience level</option>
+    <option value="beginner">
+      Beginner — Complete newcomer or student
+    </option>
+    <option value="junior">
+      Junior — Early-career developer (0–2 years)
+    </option>
+    <option value="mid">
+      Mid-Level — Solid hands-on experience (2–5 years)
+    </option>
+    <option value="senior">
+      Senior — Experienced engineer or lead (5+ years)
+    </option>
+  </>
+);
+
+const SELECT_CHEVRON_ICON = (
+  <span
+    aria-hidden="true"
+    className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 transition-colors duration-200 group-hover:text-slate-600 group-focus-within:text-teal-500 dark:group-hover:text-slate-200"
+  >
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      className="transition-transform duration-200 ease-out group-hover:translate-y-0.5 group-focus-within:rotate-180"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  </span>
+);
+
 function LockIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -98,14 +149,289 @@ function LockIcon({ className }: { className?: string }) {
   );
 }
 
-function VerifiedBadge() {
+const VERIFIED_BADGE = (
+  <span className="inline-flex items-center gap-1 rounded-full border border-feedback-success-border bg-feedback-success-background px-2 py-0.5 text-caption font-medium text-feedback-success-text">
+    <CheckCircleIcon className="h-3 w-3 shrink-0 text-feedback-success-icon" />
+    <span>Verified</span>
+  </span>
+);
+
+/**
+ * Static Step 1 of 5 onboarding progress header isolated via `React.memo`
+ * so typing in form fields never re-renders stepper DOM nodes.
+ */
+const OnboardingProgressHeader = memo(function OnboardingProgressHeader() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-feedback-success-border bg-feedback-success-background px-2 py-0.5 text-caption font-medium text-feedback-success-text">
-      <CheckCircleIcon className="h-3 w-3 shrink-0 text-feedback-success-icon" />
-      <span>Verified</span>
-    </span>
+    <div
+      role="progressbar"
+      aria-valuenow={1}
+      aria-valuemin={1}
+      aria-valuemax={5}
+      aria-label="Onboarding progress: Step 1 of 5"
+      className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="text-label-lg font-semibold text-text-primary">
+            Profile Setup
+          </span>
+          <span className="inline-flex items-center rounded-full border border-border-default bg-surface-default px-2.5 py-0.5 text-caption font-medium text-text-secondary">
+            Step 1 of 5
+          </span>
+        </div>
+        <span className="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 font-mono text-caption font-semibold tabular-nums text-teal-700 dark:text-teal-300">
+          20% Complete
+        </span>
+      </div>
+
+      <ol className="grid grid-cols-5 items-start">
+        {ONBOARDING_STEPS.map((step, idx) => {
+          const isActive = idx === 0;
+          const isLast = idx === ONBOARDING_STEPS.length - 1;
+          return (
+            <li
+              key={step.label}
+              className="relative flex flex-col items-center px-1 text-center"
+            >
+              {!isLast && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
+                />
+              )}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all',
+                  isActive
+                    ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
+                    : 'border border-border-default bg-surface-default font-medium text-text-muted',
+                )}
+              >
+                {step.number}
+              </span>
+              <span
+                className={cn(
+                  'sr-only mt-2.5 text-caption leading-tight sm:not-sr-only',
+                  isActive
+                    ? 'font-semibold text-text-brand'
+                    : 'text-text-muted',
+                )}
+              >
+                {step.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
-}
+});
+
+const ExperienceLevelField = memo(function ExperienceLevelField({
+  selectRef,
+  value,
+  error,
+  isPending,
+  onChange,
+}: {
+  selectRef: RefObject<HTMLSelectElement | null>;
+  value: string;
+  error?: string;
+  isPending: boolean;
+  onChange: (e: ChangeEvent<HTMLSelectElement>) => void;
+}) {
+  return (
+    <FieldShell
+      id="experience_level"
+      label="Experience Level"
+      required
+      error={error}
+    >
+      <div className="group relative">
+        <select
+          ref={selectRef}
+          id="experience_level"
+          name="experience_level"
+          required
+          aria-disabled={isPending || undefined}
+          tabIndex={isPending ? -1 : undefined}
+          value={value}
+          onChange={onChange}
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={error ? 'experience_level-error' : undefined}
+          className={cn(
+            SELECT_BASE_CLASS,
+            selectBorderClass(Boolean(error)),
+            isPending &&
+              'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
+          )}
+        >
+          {EXPERIENCE_LEVEL_OPTIONS}
+        </select>
+        {SELECT_CHEVRON_ICON}
+      </div>
+    </FieldShell>
+  );
+});
+
+const SkillBaselineField = memo(function SkillBaselineField({
+  isBeginner,
+  checked,
+  touched,
+  isPending,
+  storedSkills,
+  error,
+  onToggle,
+}: {
+  isBeginner: boolean;
+  checked: boolean;
+  touched: boolean;
+  isPending: boolean;
+  storedSkills: NonNullable<ProfileResponse['existing_skills']>;
+  error?: string;
+  onToggle: () => void;
+}) {
+  const storedSkillsText = useMemo(
+    () =>
+      storedSkills.length > 0
+        ? storedSkills.map((s) => s.name).join(', ')
+        : '',
+    [storedSkills],
+  );
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-label-lg text-text-primary">
+          Skill Baseline
+        </span>
+      </div>
+      <div
+        className={cn(
+          'flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors duration-(--duration-fast) ease-standard',
+          isBeginner && checked
+            ? 'border-teal-500/50 bg-teal-500/5'
+            : 'border-border-default bg-surface-subtle hover:border-border-strong',
+          !isBeginner &&
+            'cursor-not-allowed opacity-60 hover:border-border-default',
+        )}
+      >
+        <input
+          type="hidden"
+          name="existing_skills_none"
+          value={isBeginner && checked ? 'true' : 'false'}
+        />
+        <input
+          type="hidden"
+          name="existing_skills_none_touched"
+          value={touched ? 'true' : 'false'}
+        />
+        <span
+          id="existing_skills_none_label"
+          className={cn(
+            'truncate text-body transition-colors',
+            isBeginner && checked
+              ? 'font-medium text-teal-700 dark:text-teal-300'
+              : 'font-normal text-slate-600 dark:text-slate-300',
+          )}
+        >
+          Complete Beginner
+        </span>
+        <button
+          type="button"
+          id="existing_skills_none_toggle"
+          role="switch"
+          aria-checked={isBeginner ? checked : false}
+          aria-labelledby="existing_skills_none_label"
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={error ? 'existing_skills_none-error' : undefined}
+          disabled={isPending || !isBeginner}
+          onClick={onToggle}
+          className={cn(
+            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-(--duration-fast) ease-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed',
+            isBeginner && checked
+              ? 'bg-teal-500'
+              : 'bg-neutral-300 dark:bg-slate-700',
+          )}
+        >
+          <span className="sr-only">
+            {isBeginner && checked
+              ? 'Complete Beginner: On'
+              : 'Complete Beginner: Off'}
+          </span>
+          <span
+            aria-hidden="true"
+            className={cn(
+              'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-xs transition-transform duration-(--duration-fast) ease-standard',
+              isBeginner && checked ? 'translate-x-5' : 'translate-x-0.5',
+            )}
+          />
+        </button>
+      </div>
+
+      {storedSkills.length > 0 && !(isBeginner && checked) && (
+        <p className="text-caption text-text-secondary">
+          <span>Stored skills preserved: </span>
+          <span className="font-medium text-text-primary">
+            {storedSkillsText}
+          </span>
+        </p>
+      )}
+
+      {error && (
+        <p
+          id="existing_skills_none-error"
+          className="flex items-center gap-1.5 text-caption leading-snug text-text-danger"
+        >
+          <AlertCircleIcon className="h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
+        </p>
+      )}
+    </div>
+  );
+});
+
+const ProfileFormFooter = memo(function ProfileFormFooter({
+  isPending,
+}: {
+  isPending: boolean;
+}) {
+  return (
+    <div className="mt-8 flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800/80">
+      <Link
+        href="/dashboard"
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-transparent px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/70"
+      >
+        Go to Dashboard
+      </Link>
+
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+        <button
+          type="button"
+          disabled
+          aria-disabled="true"
+          className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-1.5 rounded-full border border-border-subtle bg-surface-subtle px-4 text-label-lg font-medium text-text-disabled"
+        >
+          <LockIcon className="h-3.5 w-3.5 shrink-0" />
+          <span>Next: Skills</span>
+        </button>
+
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          isLoading={isPending}
+          disabled={isPending}
+          loadingText="Saving profile..."
+          className="min-w-[160px]"
+        >
+          Save Profile
+        </Button>
+      </div>
+    </div>
+  );
+});
 
 /**
  * Props for the `ProfileSetupForm` component on Screen 07 (`/onboarding/profile`).
@@ -242,6 +568,10 @@ export function ProfileSetupForm(props: ProfileSetupFormProps) {
  * Enforces client + server validation, verified contact prefill, optional education, explicit beginner `None`,
  * auto-reset of invalid beginner-only states, account-scoped draft isolation, and SSR hydration safety.
  */
+type InternalProfileSetupActionState = ProfileSetupActionState & {
+  _superseded?: boolean;
+};
+
 function ProfileSetupFormInner({
   initialProfile,
   initialContact = EMPTY_CONTACT,
@@ -249,10 +579,26 @@ function ProfileSetupFormInner({
   loadError,
   userId,
 }: ProfileSetupFormProps) {
+  const isMountedRef = useRef(true);
+  const draftVersionRef = useRef(0);
+
   const [state, formAction, isPending] = useActionState<
-    ProfileSetupActionState,
+    InternalProfileSetupActionState,
     FormData
-  >(saveProfileSetupAction, {});
+  >(async (prevState, formData) => {
+    const submittedDraftVersion = draftVersionRef.current;
+    const result = await saveProfileSetupAction(prevState, formData);
+    const isSuperseded =
+      !isMountedRef.current ||
+      draftVersionRef.current !== submittedDraftVersion;
+    if (result?.success && !isSuperseded) {
+      clearDraft(userId);
+    }
+    if (isSuperseded) {
+      return { ...result, _superseded: true };
+    }
+    return result;
+  }, {});
 
   const [formState, setFormState] = useState<{
     values: ProfileSetupFormValues;
@@ -266,6 +612,7 @@ function ProfileSetupFormInner({
     educationTouched: false,
   }));
 
+  const [lastHandledState, setLastHandledState] = useState(state);
   const [clientErrors, setClientErrors] = useState<
     Partial<Record<ProfileSetupFieldKey, string>>
   >({});
@@ -274,18 +621,94 @@ function ProfileSetupFormInner({
     fields: Set<ProfileSetupFieldKey>;
   } | null>(null);
   const [dismissedSuccessState, setDismissedSuccessState] =
-    useState<ProfileSetupActionState | null>(null);
+    useState<InternalProfileSetupActionState | null>(null);
 
   const hydratedRef = useRef(false);
-  const processedResultRef = useRef<ProfileSetupActionState | null>(null);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
+  const experienceSelectRef = useRef<HTMLSelectElement | null>(null);
+  const formStateRef = useRef(formState);
+  const stateRef = useRef(state);
 
-  const { values, hasDraft, skillsNoneTouched, educationTouched } = formState;
-  const effectiveProfile = state.profile ?? initialProfile;
   const emailVerified = Boolean(initialContact.emailVerified && initialContact.email);
   const phoneVerified = Boolean(initialContact.phoneVerified && initialContact.phone);
   const contactEmailProp = initialContact.email;
   const contactPhoneProp = initialContact.phone;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Render-time reconciliation when useActionState emits a new submission result:
+  // updates formState in the same render pass without a post-commit useEffect cascade.
+  if (state !== lastHandledState) {
+    setLastHandledState(state);
+    if (state.success && !state._superseded) {
+      setFormState((prev) => {
+        if (!state.values) {
+          return prev.hasDraft ? { ...prev, hasDraft: false } : prev;
+        }
+        const reconciledLevel =
+          state.values.experience_level ?? prev.values.experience_level;
+        const reconciledSkillsNone =
+          reconciledLevel === 'beginner'
+            ? typeof state.values.existing_skills_none === 'boolean'
+              ? state.values.existing_skills_none
+              : prev.values.existing_skills_none
+            : false;
+
+        return {
+          hasDraft: false,
+          skillsNoneTouched: false,
+          educationTouched: false,
+          values: {
+            full_name: state.values.full_name ?? prev.values.full_name,
+            email: emailVerified
+              ? contactEmailProp
+              : (state.values.email ?? prev.values.email),
+            phone: phoneVerified
+              ? contactPhoneProp
+              : (state.values.phone ?? prev.values.phone),
+            current_role: state.values.current_role ?? prev.values.current_role,
+            education: state.values.education ?? prev.values.education,
+            experience_level: reconciledLevel,
+            existing_skills_none: reconciledSkillsNone,
+            timezone:
+              sanitizeIanaTimezone(state.values.timezone) ??
+              sanitizeIanaTimezone(prev.values.timezone) ??
+              'Asia/Dhaka',
+            preferred_daily_hours:
+              state.values.preferred_daily_hours ??
+              prev.values.preferred_daily_hours,
+          },
+        };
+      });
+    }
+  }
+
+  useEffect(() => {
+    formStateRef.current = formState;
+  }, [formState]);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  const { values, hasDraft, skillsNoneTouched, educationTouched } = formState;
+
+  useEffect(() => {
+    // React 19 calls HTMLFormElement.reset() after <form action={...}> completes;
+    // keep the controlled experience select DOM value synchronized with state.
+    if (
+      experienceSelectRef.current &&
+      experienceSelectRef.current.value !== values.experience_level
+    ) {
+      experienceSelectRef.current.value = values.experience_level;
+    }
+  });
+  const effectiveProfile = state.profile ?? initialProfile;
   const displayedEmail = emailVerified ? contactEmailProp : values.email;
   const displayedPhone = phoneVerified ? contactPhoneProp : values.phone;
   const isBeginner = values.experience_level === 'beginner';
@@ -495,116 +918,47 @@ function ProfileSetupFormInner({
   ]);
 
   const isSuccessVisible =
-    Boolean(state.success) && dismissedSuccessState !== state;
+    Boolean(state.success) &&
+    !state._superseded &&
+    dismissedSuccessState !== state;
 
-  // Effect 1: Success handling - processes each useActionState result at most once,
-  // and reconciles later verified contact prop updates without wiping unsaved edits.
-  useEffect(() => {
-    const isNewSuccess =
-      Boolean(state.success) && processedResultRef.current !== state;
-    if (isNewSuccess) {
-      processedResultRef.current = state;
-      clearDraft(userId);
-    }
+  const handleDismissSuccessToast = useCallback(() => {
+    setDismissedSuccessState(stateRef.current);
+  }, []);
 
-    if (!isNewSuccess && !emailVerified && !phoneVerified) {
-      return;
-    }
-
-    setFormState((prev) => {
-      if (isNewSuccess) {
-        if (!state.values) {
-          return prev.hasDraft ? { ...prev, hasDraft: false } : prev;
-        }
-        const reconciledLevel =
-          state.values.experience_level ?? prev.values.experience_level;
-        const reconciledSkillsNone =
-          reconciledLevel === 'beginner'
-            ? typeof state.values.existing_skills_none === 'boolean'
-              ? state.values.existing_skills_none
-              : prev.values.existing_skills_none
-            : false;
-
-        return {
-          hasDraft: false,
-          skillsNoneTouched: false,
-          educationTouched: false,
-          values: {
-            full_name: state.values.full_name ?? prev.values.full_name,
-            email: emailVerified
-              ? contactEmailProp
-              : (state.values.email ?? prev.values.email),
-            phone: phoneVerified
-              ? contactPhoneProp
-              : (state.values.phone ?? prev.values.phone),
-            current_role: state.values.current_role ?? prev.values.current_role,
-            education: state.values.education ?? prev.values.education,
-            experience_level: reconciledLevel,
-            existing_skills_none: reconciledSkillsNone,
-            timezone:
-              sanitizeIanaTimezone(state.values.timezone) ??
-              sanitizeIanaTimezone(prev.values.timezone) ??
-              'Asia/Dhaka',
-            preferred_daily_hours:
-              state.values.preferred_daily_hours ??
-              prev.values.preferred_daily_hours,
-          },
-        };
-      }
-
-      const nextEmail = emailVerified ? contactEmailProp : prev.values.email;
-      const nextPhone = phoneVerified ? contactPhoneProp : prev.values.phone;
-      if (nextEmail === prev.values.email && nextPhone === prev.values.phone) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        values: {
-          ...prev.values,
-          email: nextEmail,
-          phone: nextPhone,
-        },
-      };
-    });
-  }, [
-    state,
-    userId,
-    emailVerified,
-    phoneVerified,
-    contactEmailProp,
-    contactPhoneProp,
-  ]);
-
-  // Effect 2: Error alert focus - focuses visible server alert when error occurs
+  // Error alert focus - focuses visible server alert when error occurs
   useEffect(() => {
     if (visibleAlertState?.error && errorAlertRef.current) {
       errorAlertRef.current.focus();
     }
   }, [visibleAlertState]);
 
-  const setFieldError = (field: ProfileSetupFieldKey, error?: string) => {
-    setClientErrors((prev) => {
-      if (!error) {
-        if (!prev[field]) return prev;
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      }
-      if (prev[field] === error) return prev;
-      return { ...prev, [field]: error };
-    });
-  };
+  const setFieldError = useCallback(
+    (field: ProfileSetupFieldKey, error?: string) => {
+      setClientErrors((prev) => {
+        if (!error) {
+          if (!prev[field]) return prev;
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        }
+        if (prev[field] === error) return prev;
+        return { ...prev, [field]: error };
+      });
+    },
+    [],
+  );
 
-  const dismissServerField = (field: ProfileSetupFieldKey) => {
+  const dismissServerField = useCallback((field: ProfileSetupFieldKey) => {
+    const currentState = stateRef.current;
     setDismissedServer((prev) => {
-      if (!state?.fieldErrors?.[field]) return prev;
-      if (prev?.ref === state && prev.fields.has(field)) return prev;
-      const fields = new Set(prev?.ref === state ? prev.fields : []);
+      if (!currentState?.fieldErrors?.[field]) return prev;
+      if (prev?.ref === currentState && prev.fields.has(field)) return prev;
+      const fields = new Set(prev?.ref === currentState ? prev.fields : []);
       fields.add(field);
-      return { ref: state, fields };
+      return { ref: currentState, fields };
     });
-  };
+  }, []);
 
   const getFieldError = (field: ProfileSetupFieldKey): string | undefined => {
     if (clientErrors[field]) return clientErrors[field];
@@ -620,82 +974,208 @@ function ProfileSetupFormInner({
   /**
    * Updates controlled field values, dismisses stale errors/success banners, and persists account-scoped draft.
    */
-  const commitFieldPatch = (
-    patch: Partial<ProfileSetupFormValues>,
-    options?: {
-      skillsNoneTouched?: boolean;
-      educationTouched?: boolean;
+  const commitFieldPatch = useCallback(
+    (
+      patch: Partial<ProfileSetupFormValues>,
+      options?: {
+        skillsNoneTouched?: boolean;
+        educationTouched?: boolean;
+      },
+    ) => {
+      dismissAlert();
+      const currentState = stateRef.current;
+      if (currentState.success) {
+        setDismissedSuccessState(currentState);
+      }
+      const current = formStateRef.current;
+      const nextSkillsNoneTouched =
+        options?.skillsNoneTouched ?? current.skillsNoneTouched;
+      const nextEducationTouched =
+        options?.educationTouched ?? current.educationTouched;
+      const updatedValues: ProfileSetupFormValues = {
+        ...current.values,
+        ...patch,
+        email: emailVerified
+          ? contactEmailProp
+          : (patch.email ?? current.values.email),
+        phone: phoneVerified
+          ? contactPhoneProp
+          : (patch.phone ?? current.values.phone),
+      };
+      const nextFormState = {
+        ...current,
+        values: updatedValues,
+        skillsNoneTouched: nextSkillsNoneTouched,
+        educationTouched: nextEducationTouched,
+      };
+      formStateRef.current = nextFormState;
+      draftVersionRef.current += 1;
+      setFormState(nextFormState);
+      saveDraft(
+        userId,
+        updatedValues,
+        nextSkillsNoneTouched,
+        nextEducationTouched,
+      );
     },
-  ) => {
-    dismissAlert();
-    if (state.success) {
-      setDismissedSuccessState(state);
-    }
-    const nextSkillsNoneTouched =
-      options?.skillsNoneTouched ?? skillsNoneTouched;
-    const nextEducationTouched =
-      options?.educationTouched ?? educationTouched;
-    const updatedValues: ProfileSetupFormValues = {
-      ...values,
-      ...patch,
-      email: emailVerified ? initialContact.email : (patch.email ?? values.email),
-      phone: phoneVerified ? initialContact.phone : (patch.phone ?? values.phone),
-    };
-    setFormState((prev) => ({
-      ...prev,
-      values: updatedValues,
-      skillsNoneTouched: nextSkillsNoneTouched,
-      educationTouched: nextEducationTouched,
-    }));
-    saveDraft(
+    [
+      dismissAlert,
+      emailVerified,
+      contactEmailProp,
+      phoneVerified,
+      contactPhoneProp,
       userId,
-      updatedValues,
-      nextSkillsNoneTouched,
-      nextEducationTouched,
-    );
-  };
+    ],
+  );
 
-  const handleFormActivity = (e: SyntheticEvent<HTMLFormElement>) => {
-    onFormActivity(e);
-  };
+  const handleFullNameChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      dismissServerField('full_name');
+      setFieldError('full_name', undefined);
+      commitFieldPatch({ full_name: v });
+    },
+    [commitFieldPatch, dismissServerField, setFieldError],
+  );
 
-  const handleToggleSkillsNone = () => {
-    if (isPending || !isBeginner) {
+  const handleFullNameBlur = useCallback(
+    (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const check = validateFullName(e.target.value);
+      if (check.ok && check.value !== formStateRef.current.values.full_name) {
+        commitFieldPatch({ full_name: check.value });
+      }
+    },
+    [commitFieldPatch],
+  );
+
+  const handleEmailChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (emailVerified) return;
+      const v = e.target.value;
+      dismissServerField('email');
+      setFieldError('email', undefined);
+      commitFieldPatch({ email: v });
+    },
+    [commitFieldPatch, dismissServerField, emailVerified, setFieldError],
+  );
+
+  const handleEmailBlur = useCallback(
+    (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (emailVerified || !e.target.value.trim()) return;
+      const check = validateOptionalEmail(e.target.value);
+      if (check.ok && check.value !== formStateRef.current.values.email) {
+        commitFieldPatch({ email: check.value });
+      }
+    },
+    [commitFieldPatch, emailVerified],
+  );
+
+  const handlePhoneChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (phoneVerified) return;
+      const v = e.target.value;
+      dismissServerField('phone');
+      setFieldError('phone', undefined);
+      if (
+        !emailVerified &&
+        !formStateRef.current.values.email.trim() &&
+        v.trim()
+      ) {
+        setFieldError('email', undefined);
+      }
+      commitFieldPatch({ phone: v });
+    },
+    [
+      commitFieldPatch,
+      dismissServerField,
+      emailVerified,
+      phoneVerified,
+      setFieldError,
+    ],
+  );
+
+  const handleEducationChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      dismissServerField('education');
+      setFieldError('education', undefined);
+      commitFieldPatch({ education: v }, { educationTouched: true });
+    },
+    [commitFieldPatch, dismissServerField, setFieldError],
+  );
+
+  const handleCurrentRoleChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      dismissServerField('current_role');
+      setFieldError('current_role', undefined);
+      commitFieldPatch({ current_role: v });
+    },
+    [commitFieldPatch, dismissServerField, setFieldError],
+  );
+
+  const handleDailyHoursChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      dismissServerField('preferred_daily_hours');
+      setFieldError('preferred_daily_hours', undefined);
+      commitFieldPatch({ preferred_daily_hours: v });
+    },
+    [commitFieldPatch, dismissServerField, setFieldError],
+  );
+
+  const handleToggleSkillsNone = useCallback(() => {
+    const current = formStateRef.current.values;
+    if (isPending || current.experience_level !== 'beginner') {
       return;
     }
     dismissServerField('existing_skills_none');
     setFieldError('existing_skills_none', undefined);
     commitFieldPatch(
-      { existing_skills_none: !values.existing_skills_none },
+      { existing_skills_none: !current.existing_skills_none },
       { skillsNoneTouched: true },
     );
-  };
+  }, [commitFieldPatch, dismissServerField, isPending, setFieldError]);
 
-  const handleExperienceLevelChange = (nextLevel: string) => {
-    if (isPending) {
-      return;
-    }
-    dismissServerField('experience_level');
-    setFieldError('experience_level', undefined);
+  const effectiveSkillsNoneBaseline = Boolean(
+    effectiveProfile?.existing_skills_none,
+  );
 
-    if (nextLevel !== 'beginner') {
-      dismissServerField('existing_skills_none');
-      setFieldError('existing_skills_none', undefined);
-      const mustClearBaseline =
-        Boolean(effectiveProfile?.existing_skills_none) ||
-        values.existing_skills_none;
-      commitFieldPatch(
-        {
-          experience_level: nextLevel,
-          existing_skills_none: false,
-        },
-        mustClearBaseline ? { skillsNoneTouched: true } : undefined,
-      );
-      return;
-    }
+  const handleExperienceLevelChange = useCallback(
+    (e: ChangeEvent<HTMLSelectElement>) => {
+      if (isPending) {
+        return;
+      }
+      const nextLevel = e.target.value;
+      dismissServerField('experience_level');
+      setFieldError('experience_level', undefined);
 
-    commitFieldPatch({ experience_level: nextLevel });
-  };
+      if (nextLevel !== 'beginner') {
+        dismissServerField('existing_skills_none');
+        setFieldError('existing_skills_none', undefined);
+        const mustClearBaseline =
+          effectiveSkillsNoneBaseline ||
+          formStateRef.current.values.existing_skills_none;
+        commitFieldPatch(
+          {
+            experience_level: nextLevel,
+            existing_skills_none: false,
+          },
+          mustClearBaseline ? { skillsNoneTouched: true } : undefined,
+        );
+        return;
+      }
+
+      commitFieldPatch({ experience_level: nextLevel });
+    },
+    [
+      commitFieldPatch,
+      dismissServerField,
+      effectiveSkillsNoneBaseline,
+      isPending,
+      setFieldError,
+    ],
+  );
 
   const handleSubmit = (e: SyntheticEvent<HTMLFormElement>) => {
     if (isPending) {
@@ -711,7 +1191,7 @@ function ProfileSetupFormInner({
     }
 
     const emailCheck = emailVerified
-      ? { ok: true as const, value: normalizeEmail(initialContact.email) }
+      ? { ok: true as const, value: normalizeEmail(contactEmailProp) }
       : validateOptionalEmail(displayedEmail);
     if (!emailCheck.ok) {
       errors.email = emailCheck.error;
@@ -721,8 +1201,7 @@ function ProfileSetupFormInner({
       ? {
           ok: true as const,
           value:
-            normalizeBdPhone(initialContact.phone) ??
-            initialContact.phone.trim(),
+            normalizeBdPhone(contactPhoneProp) ?? contactPhoneProp.trim(),
         }
       : validateOptionalBdPhone(displayedPhone);
     if (!phoneCheck.ok) {
@@ -789,11 +1268,22 @@ function ProfileSetupFormInner({
     }
   };
 
-  const baselineSkillsNone = Boolean(effectiveProfile?.existing_skills_none);
+  const baselineSkillsNone = effectiveSkillsNoneBaseline;
   const effectiveSkillsNoneTouched =
     skillsNoneTouched || values.existing_skills_none !== baselineSkillsNone;
-  const storedSkills = effectiveProfile?.existing_skills ?? [];
+  const storedSkills = effectiveProfile?.existing_skills ?? EMPTY_STORED_SKILLS;
   const showDraftRestored = hasDraft && !isSuccessVisible;
+
+  const alertResult = useMemo(
+    () =>
+      visibleAlertState?.error
+        ? {
+            ...visibleAlertState,
+            retryAfterSeconds: visibleAlertState.retryAfterSeconds ?? undefined,
+          }
+        : null,
+    [visibleAlertState],
+  );
 
   const fullNameError = getFieldError('full_name');
   const emailError = getFieldError('email');
@@ -805,73 +1295,15 @@ function ProfileSetupFormInner({
     getFieldError('existing_skills') ?? getFieldError('existing_skills_none');
   const dailyHoursError = getFieldError('preferred_daily_hours');
   const resolvedTimezone = sanitizeIanaTimezone(values.timezone) ?? 'Asia/Dhaka';
+  const isEmailRequired =
+    !emailVerified && !phoneVerified && !displayedPhone.trim();
+  const isPhoneRequired =
+    !emailVerified && !phoneVerified && !displayedEmail.trim();
 
   return (
     <div className="flex flex-col gap-6">
       {/* Step 1 of 5 Modern Multi-Step Header */}
-      <div
-        role="progressbar"
-        aria-valuenow={1}
-        aria-valuemin={1}
-        aria-valuemax={5}
-        aria-label="Onboarding progress: Step 1 of 5"
-        className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            <span className="text-label-lg font-semibold text-text-primary">
-              Profile Setup
-            </span>
-            <span className="inline-flex items-center rounded-full border border-border-default bg-surface-default px-2.5 py-0.5 text-caption font-medium text-text-secondary">
-              Step 1 of 5
-            </span>
-          </div>
-          <span className="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 font-mono text-caption font-semibold tabular-nums text-teal-700 dark:text-teal-300">
-            20% Complete
-          </span>
-        </div>
-
-        <ol className="grid grid-cols-5 items-start">
-          {ONBOARDING_STEPS.map((step, idx) => {
-            const isActive = idx === 0;
-            const isLast = idx === ONBOARDING_STEPS.length - 1;
-            return (
-              <li
-                key={step.label}
-                className="relative flex flex-col items-center px-1 text-center"
-              >
-                {!isLast && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
-                  />
-                )}
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all',
-                    isActive
-                      ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
-                      : 'border border-border-default bg-surface-default font-medium text-text-muted',
-                  )}
-                >
-                  {step.number}
-                </span>
-                <span
-                  className={cn(
-                    'sr-only mt-2.5 text-caption leading-tight sm:not-sr-only',
-                    isActive
-                      ? 'font-semibold text-text-brand'
-                      : 'text-text-muted',
-                  )}
-                >
-                  {step.label}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
+      <OnboardingProgressHeader />
 
       {/* Initial Profile Load Warning Banner (preserves form usability on failed GET /profile) */}
       {loadError && (
@@ -894,37 +1326,39 @@ function ProfileSetupFormInner({
         </p>
       )}
 
-      {visibleAlertState?.error && (
+      {alertResult && (
         <div
           ref={errorAlertRef}
           tabIndex={-1}
           className="outline-none focus:outline-none focus-visible:outline-none"
         >
-          <AuthAlert
-            result={{
-              ...visibleAlertState,
-              retryAfterSeconds: visibleAlertState.retryAfterSeconds ?? undefined,
-            }}
-          />
+          <AuthAlert result={alertResult} />
         </div>
       )}
 
-      {isSuccessVisible && state.message && (
-        <Alert variant="success" role="status" title={state.message}>
-          Your profile details and study preferences are saved. Next onboarding steps (Skills, Preferences, Career Goal) arrive in M05.
-        </Alert>
+      {isSuccessVisible && (
+        <Toast
+          variant="success"
+          position="top-center"
+          role="status"
+          ariaLive="polite"
+          autoDismissMs={4000}
+          onDismiss={handleDismissSuccessToast}
+        >
+          Profile saved.
+        </Toast>
       )}
 
       <form
         action={formAction}
         noValidate
-        onFocusCapture={handleFormActivity}
-        onChangeCapture={handleFormActivity}
+        onFocusCapture={onFormActivity}
+        onChangeCapture={onFormActivity}
         onSubmit={handleSubmit}
         className="flex flex-col gap-5"
       >
         {/* Full Name (Required, 2-100 chars) */}
-        <Input
+        <MemoizedInput
           id="full_name"
           name="full_name"
           variant="text"
@@ -936,70 +1370,39 @@ function ProfileSetupFormInner({
           value={values.full_name}
           error={fullNameError}
           placeholder="Enter your full name"
-          onChange={(e) => {
-            const v = e.target.value;
-            dismissServerField('full_name');
-            setFieldError('full_name', undefined);
-            commitFieldPatch({ full_name: v });
-          }}
-          onBlur={(e) => {
-            const check = validateFullName(e.target.value);
-            if (check.ok && check.value !== values.full_name) {
-              commitFieldPatch({ full_name: check.value });
-            }
-          }}
+          onChange={handleFullNameChange}
+          onBlur={handleFullNameBlur}
         />
 
         {/* Email & Phone Contacts (Prefilled Verified Contact = readOnly) */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input
+          <MemoizedInput
             id="email"
             name="email"
             variant="email"
             label="Email Address"
-            required={!emailVerified && !phoneVerified && !displayedPhone.trim()}
+            required={isEmailRequired}
             readOnly={emailVerified || isPending}
-            labelBadge={emailVerified ? <VerifiedBadge /> : undefined}
+            labelBadge={emailVerified ? VERIFIED_BADGE : undefined}
             value={displayedEmail}
             error={emailError}
             placeholder="Enter your email"
-            onChange={(e) => {
-              if (emailVerified) return;
-              const v = e.target.value;
-              dismissServerField('email');
-              setFieldError('email', undefined);
-              commitFieldPatch({ email: v });
-            }}
-            onBlur={(e) => {
-              if (emailVerified || !e.target.value.trim()) return;
-              const check = validateOptionalEmail(e.target.value);
-              if (check.ok && check.value !== values.email) {
-                commitFieldPatch({ email: check.value });
-              }
-            }}
+            onChange={handleEmailChange}
+            onBlur={handleEmailBlur}
           />
 
-          <Input
+          <MemoizedInput
             id="phone"
             name="phone"
             variant="phone_bd"
             label="Phone Number"
-            required={!emailVerified && !phoneVerified && !displayedEmail.trim()}
+            required={isPhoneRequired}
             readOnly={phoneVerified || isPending}
-            labelBadge={phoneVerified ? <VerifiedBadge /> : undefined}
+            labelBadge={phoneVerified ? VERIFIED_BADGE : undefined}
             value={displayedPhone}
             error={phoneError}
             placeholder="01XXXXXXXXX"
-            onChange={(e) => {
-              if (phoneVerified) return;
-              const v = e.target.value;
-              dismissServerField('phone');
-              setFieldError('phone', undefined);
-              if (!emailVerified && clientErrors.email && !displayedEmail.trim() && v.trim()) {
-                setFieldError('email', undefined);
-              }
-              commitFieldPatch({ phone: v });
-            }}
+            onChange={handlePhoneChange}
           />
         </div>
 
@@ -1016,7 +1419,7 @@ function ProfileSetupFormInner({
             name="timezone"
             value={resolvedTimezone}
           />
-          <Input
+          <MemoizedInput
             id="education"
             name="education"
             variant="text"
@@ -1026,19 +1429,14 @@ function ProfileSetupFormInner({
             value={values.education}
             error={educationError}
             placeholder="e.g. BSc in CSE, Diploma in Engineering"
-            onChange={(e) => {
-              const v = e.target.value;
-              dismissServerField('education');
-              setFieldError('education', undefined);
-              commitFieldPatch({ education: v }, { educationTouched: true });
-            }}
+            onChange={handleEducationChange}
           />
         </div>
 
         {/* Core Profile 2x2 Responsive Grid */}
         <div className="grid grid-cols-1 items-start gap-5 md:grid-cols-2">
           {/* Grid Cell 1 (Top-Left): Current Role / Profession (Required, 2-120 chars) */}
-          <Input
+          <MemoizedInput
             id="current_role"
             name="current_role"
             variant="text"
@@ -1049,177 +1447,31 @@ function ProfileSetupFormInner({
             value={values.current_role}
             error={currentRoleError}
             placeholder="e.g. Student, Frontend Developer, QA Engineer"
-            onChange={(e) => {
-              const v = e.target.value;
-              dismissServerField('current_role');
-              setFieldError('current_role', undefined);
-              commitFieldPatch({ current_role: v });
-            }}
+            onChange={handleCurrentRoleChange}
           />
 
           {/* Grid Cell 2 (Top-Right): Experience Level (Required, beginner | junior | mid | senior) */}
-          <FieldShell
-            id="experience_level"
-            label="Experience Level"
-            required
+          <ExperienceLevelField
+            selectRef={experienceSelectRef}
+            value={values.experience_level}
             error={experienceLevelError}
-          >
-            <div className="group relative">
-              <select
-                id="experience_level"
-                name="experience_level"
-                required
-                aria-disabled={isPending || undefined}
-                tabIndex={isPending ? -1 : undefined}
-                value={values.experience_level}
-                onChange={(e) => handleExperienceLevelChange(e.target.value)}
-                aria-invalid={experienceLevelError ? 'true' : undefined}
-                aria-describedby={
-                  experienceLevelError ? 'experience_level-error' : undefined
-                }
-                className={cn(
-                  SELECT_BASE_CLASS,
-                  selectBorderClass(Boolean(experienceLevelError)),
-                  isPending &&
-                    'pointer-events-none bg-surface-subtle opacity-(--opacity-disabled)',
-                )}
-              >
-                <option value="">Select your experience level</option>
-                <option value="beginner">
-                  Beginner — Complete newcomer or student
-                </option>
-                <option value="junior">
-                  Junior — Early-career developer (0–2 years)
-                </option>
-                <option value="mid">
-                  Mid-Level — Solid hands-on experience (2–5 years)
-                </option>
-                <option value="senior">
-                  Senior — Experienced engineer or lead (5+ years)
-                </option>
-              </select>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 transition-colors duration-200 group-hover:text-slate-600 group-focus-within:text-teal-500 dark:group-hover:text-slate-200"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
-                  className="transition-transform duration-200 ease-out group-hover:translate-y-0.5 group-focus-within:rotate-180"
-                >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </span>
-            </div>
-          </FieldShell>
+            isPending={isPending}
+            onChange={handleExperienceLevelChange}
+          />
 
           {/* Grid Cell 3 (Bottom-Left): Complete Beginner interactive switch */}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-label-lg text-text-primary">
-                Skill Baseline
-              </span>
-            </div>
-            <div
-              className={cn(
-                'flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors duration-(--duration-fast) ease-standard',
-                isBeginner && values.existing_skills_none
-                  ? 'border-teal-500/50 bg-teal-500/5'
-                  : 'border-border-default bg-surface-subtle hover:border-border-strong',
-                !isBeginner &&
-                  'cursor-not-allowed opacity-60 hover:border-border-default',
-              )}
-            >
-              <input
-                type="hidden"
-                name="existing_skills_none"
-                value={
-                  isBeginner && values.existing_skills_none ? 'true' : 'false'
-                }
-              />
-              <input
-                type="hidden"
-                name="existing_skills_none_touched"
-                value={effectiveSkillsNoneTouched ? 'true' : 'false'}
-              />
-              <span
-                id="existing_skills_none_label"
-                className={cn(
-                  'truncate text-body transition-colors',
-                  isBeginner && values.existing_skills_none
-                    ? 'font-medium text-teal-700 dark:text-teal-300'
-                    : 'font-normal text-slate-600 dark:text-slate-300',
-                )}
-              >
-                Complete Beginner
-              </span>
-              <button
-                type="button"
-                id="existing_skills_none_toggle"
-                role="switch"
-                aria-checked={isBeginner ? values.existing_skills_none : false}
-                aria-labelledby="existing_skills_none_label"
-                aria-invalid={skillsError ? 'true' : undefined}
-                aria-describedby={
-                  skillsError ? 'existing_skills_none-error' : undefined
-                }
-                disabled={isPending || !isBeginner}
-                onClick={handleToggleSkillsNone}
-                className={cn(
-                  'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-(--duration-fast) ease-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed',
-                  isBeginner && values.existing_skills_none
-                    ? 'bg-teal-500'
-                    : 'bg-neutral-300 dark:bg-slate-700',
-                )}
-              >
-                <span className="sr-only">
-                  {isBeginner && values.existing_skills_none
-                    ? 'Complete Beginner: On'
-                    : 'Complete Beginner: Off'}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-xs transition-transform duration-(--duration-fast) ease-standard',
-                    isBeginner && values.existing_skills_none
-                      ? 'translate-x-5'
-                      : 'translate-x-0.5',
-                  )}
-                />
-              </button>
-            </div>
-
-            {storedSkills.length > 0 &&
-              !(isBeginner && values.existing_skills_none) && (
-                <p className="text-caption text-text-secondary">
-                  <span>Stored skills preserved: </span>
-                  <span className="font-medium text-text-primary">
-                    {storedSkills.map((s) => s.name).join(', ')}
-                  </span>
-                </p>
-              )}
-
-            {skillsError && (
-              <p
-                id="existing_skills_none-error"
-                className="flex items-center gap-1.5 text-caption leading-snug text-text-danger"
-              >
-                <AlertCircleIcon className="h-3.5 w-3.5 shrink-0" />
-                <span>{skillsError}</span>
-              </p>
-            )}
-          </div>
+          <SkillBaselineField
+            isBeginner={isBeginner}
+            checked={values.existing_skills_none}
+            touched={effectiveSkillsNoneTouched}
+            isPending={isPending}
+            storedSkills={storedSkills}
+            error={skillsError}
+            onToggle={handleToggleSkillsNone}
+          />
 
           {/* Grid Cell 4 (Bottom-Right): Preferred Daily Hours (Required) */}
-          <Input
+          <MemoizedInput
             id="preferred_daily_hours"
             name="preferred_daily_hours"
             variant="number"
@@ -1232,48 +1484,12 @@ function ProfileSetupFormInner({
             value={values.preferred_daily_hours}
             error={dailyHoursError}
             placeholder="2"
-            onChange={(e) => {
-              const v = e.target.value;
-              dismissServerField('preferred_daily_hours');
-              setFieldError('preferred_daily_hours', undefined);
-              commitFieldPatch({ preferred_daily_hours: v });
-            }}
+            onChange={handleDailyHoursChange}
           />
         </div>
 
         {/* Footer Actions Bar */}
-        <div className="mt-8 flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800/80">
-          <Link
-            href="/dashboard"
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-transparent px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/70"
-          >
-            Go to Dashboard
-          </Link>
-
-          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-            <button
-              type="button"
-              disabled
-              aria-disabled="true"
-              className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-1.5 rounded-full border border-border-subtle bg-surface-subtle px-4 text-label-lg font-medium text-text-disabled"
-            >
-              <LockIcon className="h-3.5 w-3.5 shrink-0" />
-              <span>Next: Skills</span>
-            </button>
-
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              isLoading={isPending}
-              disabled={isPending}
-              loadingText="Saving profile..."
-              className="min-w-[160px]"
-            >
-              Save Profile
-            </Button>
-          </div>
-        </div>
+        <ProfileFormFooter isPending={isPending} />
       </form>
     </div>
   );

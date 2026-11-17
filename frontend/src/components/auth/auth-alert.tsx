@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type FocusEvent, type SyntheticEvent } from "react";
+import { memo, useCallback, useState, type FocusEvent, type SyntheticEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { mapActionResult, type ActionErrorLike } from "@/lib/api/error-mapper";
 
@@ -13,10 +13,10 @@ export function useDismissedActionState<T>(state: T) {
   const isDismissed = state !== null && state !== undefined && dismissedState === state;
 
   const dismiss = useCallback(() => {
-    if (state !== null && state !== undefined && dismissedState !== state) {
-      setDismissedState(state);
+    if (state !== null && state !== undefined) {
+      setDismissedState((prev) => (prev === state ? prev : state));
     }
-  }, [state, dismissedState]);
+  }, [state]);
 
   const onFormActivity = useCallback(
     (e: SyntheticEvent<HTMLFormElement>) => {
@@ -66,7 +66,7 @@ export function isCooldownWaitResult(
  * Renders a failed server-action result through the central error mapper.
  * Errors -> role="alert"; rate-limit/conflict tones -> role="status" with live countdown.
  */
-export function AuthAlert({
+export const AuthAlert = memo(function AuthAlert({
   result,
   message,
   action,
@@ -103,7 +103,7 @@ export function AuthAlert({
       {message ?? mapped.message}
     </Alert>
   );
-}
+});
 
 /**
  * Returns true when blur moves focus onto the password visibility toggle

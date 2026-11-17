@@ -1,6 +1,15 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import {
+  memo,
+  type ChangeEvent,
+  type KeyboardEvent,
+  useActionState,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AccountDeletionActionResult,
@@ -31,6 +40,59 @@ export interface AccountDeletionCardProps {
 }
 
 const INITIAL_ACTION_STATE: AccountDeletionActionResult = {};
+
+const DangerZoneOverview = memo(function DangerZoneOverview({
+  isSuspended,
+  canDeleteAccount,
+  onOpenModal,
+}: {
+  isSuspended: boolean;
+  canDeleteAccount: boolean;
+  onOpenModal: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className="rounded-md border border-feedback-danger-border bg-feedback-danger-background px-2.5 py-0.5 text-caption font-semibold text-feedback-danger-text"
+          role="status"
+        >
+          Danger Zone
+        </span>
+        <h2
+          id="danger-zone-heading"
+          className="text-heading-sm text-text-danger"
+        >
+          Account Deletion
+        </h2>
+      </div>
+
+      <p className="text-body-sm text-text-secondary">
+        Permanently delete your account, profile, learning roadmaps, and practice history. Raw
+        text and messages are retained for up to 90 days for safety compliance, and AI operational
+        logs are automatically purged within 30 days. This action cannot be undone.
+      </p>
+
+      {isSuspended && (
+        <p className="text-caption font-medium text-text-warning">
+          Account deletion remains available while your account is suspended.
+        </p>
+      )}
+
+      <div className="pt-1">
+        <Button
+          type="button"
+          variant="destructive"
+          size="md"
+          onClick={onOpenModal}
+          disabled={!canDeleteAccount}
+        >
+          Delete Account
+        </Button>
+      </div>
+    </div>
+  );
+});
 
 /**
  * Safely clears browser storage items during account deletion without throwing errors.
@@ -168,71 +230,52 @@ export function AccountDeletionCard({
     }
   }, [state.status, state.deletionReceipt, isPendingStatus, pollError, router]);
 
-  const handleOpenModal = () => {
+  const handleOpenModal = useCallback(() => {
     setPasswordInput('');
     setPollError(null);
     setIsModalOpen(true);
-  };
+  }, []);
 
-  const handleCloseModal = () => {
-    if (!isPending && !isPolling) {
+  const isBusy = isPending || isPolling;
+
+  const handleCloseModal = useCallback(() => {
+    if (!isBusy) {
       setIsModalOpen(false);
     }
-  };
+  }, [isBusy]);
 
-  const backdropDismiss = useBackdropDismiss(
-    handleCloseModal,
-    isPending || isPolling,
+  const handlePasswordChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setPasswordInput(e.target.value);
+    },
+    [],
   );
 
+  const handleModalKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        handleCloseModal();
+      }
+    },
+    [handleCloseModal],
+  );
+
+  const backdropDismiss = useBackdropDismiss(handleCloseModal, isBusy);
+
   const isSubmitDisabled =
-    isPending || isPolling || (hasPasswordAuth && !passwordInput.trim());
+    isBusy || (hasPasswordAuth && !passwordInput.trim());
 
   return (
     <section
       aria-labelledby="danger-zone-heading"
       className="rounded-xl border border-feedback-danger-border bg-surface-raised p-6 text-text-primary shadow-xs"
     >
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="rounded-md border border-feedback-danger-border bg-feedback-danger-background px-2.5 py-0.5 text-caption font-semibold text-feedback-danger-text"
-            role="status"
-          >
-            Danger Zone
-          </span>
-          <h2
-            id="danger-zone-heading"
-            className="text-heading-sm text-text-danger"
-          >
-            Account Deletion
-          </h2>
-        </div>
-
-        <p className="text-body-sm text-text-secondary">
-          Permanently delete your account, profile, learning roadmaps, and practice history. Raw
-          text and messages are retained for up to 90 days for safety compliance, and AI operational
-          logs are automatically purged within 30 days. This action cannot be undone.
-        </p>
-
-        {isSuspended && (
-          <p className="text-caption font-medium text-text-warning">
-            Account deletion remains available while your account is suspended.
-          </p>
-        )}
-
-        <div className="pt-1">
-          <Button
-            type="button"
-            variant="destructive"
-            size="md"
-            onClick={handleOpenModal}
-            disabled={!canDeleteAccount}
-          >
-            Delete Account
-          </Button>
-        </div>
-      </div>
+      <DangerZoneOverview
+        isSuspended={isSuspended}
+        canDeleteAccount={canDeleteAccount}
+        onOpenModal={handleOpenModal}
+      />
 
       {isModalOpen && (
         <div
@@ -244,12 +287,7 @@ export function AccountDeletionCard({
             aria-modal="true"
             aria-labelledby="delete-account-modal-title"
             aria-describedby="delete-account-modal-desc"
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.stopPropagation();
-                handleCloseModal();
-              }
-            }}
+            onKeyDown={handleModalKeyDown}
             className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl border border-border-default bg-surface-raised p-6 text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none sm:max-w-md sm:rounded-xl"
           >
             <h3
@@ -286,7 +324,7 @@ export function AccountDeletionCard({
                   label="Account Password"
                   required
                   value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onChange={handlePasswordChange}
                   placeholder="Password"
                   autoComplete="current-password"
                   readOnly={isPending}
@@ -305,7 +343,7 @@ export function AccountDeletionCard({
                   variant="secondary"
                   size="md"
                   onClick={handleCloseModal}
-                  disabled={isPending || isPolling}
+                  disabled={isBusy}
                 >
                   Cancel
                 </Button>
@@ -313,7 +351,7 @@ export function AccountDeletionCard({
                   type="submit"
                   variant="destructive"
                   size="md"
-                  isLoading={isPending || isPolling}
+                  isLoading={isBusy}
                   loadingText="Deleting..."
                   disabled={isSubmitDisabled}
                 >

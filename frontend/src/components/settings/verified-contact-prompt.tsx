@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
@@ -20,7 +21,7 @@ export interface VerifiedContactPromptProps {
  * Prompts users without a verified contact method to add and verify an email
  * or Bangladesh phone number before performing identity-sensitive actions.
  */
-export function VerifiedContactPrompt({
+export const VerifiedContactPrompt = memo(function VerifiedContactPrompt({
   verifiedContact,
   isSuspended = false,
   onAddContactClick,
@@ -61,4 +62,4 @@ export function VerifiedContactPrompt({
       </div>
     </Alert>
   );
-}
+});

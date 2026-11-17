@@ -1,10 +1,23 @@
 'use client';
 
-import { type SyntheticEvent, useActionState, useState, useEffect, useRef, Suspense } from 'react';
+import {
+  memo,
+  type ChangeEvent,
+  type FocusEvent,
+  type SyntheticEvent,
+  useActionState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  Suspense,
+} from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { verifyOtpAction, resendOtpAction, type AuthActionResult } from '@/lib/auth/actions';
 import { AuthAlert, useDismissedActionState } from '@/components/auth/auth-alert';
 import { Alert, formatCountdown } from '@/components/ui/alert';
+import { Toast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -40,6 +53,8 @@ export {
   type InitialCooldownResult,
 };
 
+const MemoizedInput = memo(Input);
+
 /**
  * Verification form content component enforcing R18 draft lifecycle and contact privacy.
  * Reads the verification draft exactly once on mount via a dedicated useEffect to avoid
@@ -74,11 +89,13 @@ function VerifyFormContent() {
   } | null>(null);
   const identifierBlurredRef = useRef(false);
 
-  const normalizedReentered =
-    channelParam === 'phone'
-      ? normalizeBdPhone(reenteredIdentifier) ?? reenteredIdentifier.trim()
-      : reenteredIdentifier.trim().toLowerCase();
-  const activeIdentifier = draft?.normalized_identifier || normalizedReentered || null;
+  const activeIdentifier = useMemo(() => {
+    const normalizedReentered =
+      channelParam === 'phone'
+        ? normalizeBdPhone(reenteredIdentifier) ?? reenteredIdentifier.trim()
+        : reenteredIdentifier.trim().toLowerCase();
+    return draft?.normalized_identifier || normalizedReentered || null;
+  }, [channelParam, draft?.normalized_identifier, reenteredIdentifier]);
   const activeContactKey =
     channelParam && activeIdentifier ? `${channelParam}:${activeIdentifier}` : null;
   const activeContactRef = useRef<string | null>(activeContactKey);
@@ -103,6 +120,16 @@ function VerifyFormContent() {
   const [resendSuccess, setResendSuccess] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
 
+  const stateRef = useRef(state);
+  const resendErrorRef = useRef(resendError);
+  const handledRedirectStateRef = useRef<AuthActionResult | null>(null);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+  useEffect(() => {
+    resendErrorRef.current = resendError;
+  }, [resendError]);
+
   /** Draft loading: single-responsibility mount effect, runs exactly once. */
   useEffect(() => {
     if (draftLoaded.current || !channelParam) return;
@@ -118,7 +145,12 @@ function VerifyFormContent() {
 
   /** Successful verification navigation & draft clearance. */
   useEffect(() => {
-    if (state?.success && state?.redirectTo) {
+    if (
+      state?.success &&
+      state?.redirectTo &&
+      handledRedirectStateRef.current !== state
+    ) {
+      handledRedirectStateRef.current = state;
       const { draft: currentDraft } = loadVerificationDraft(
         channelParam,
         Date.now(),
@@ -142,7 +174,7 @@ function VerifyFormContent() {
    * If updateVerificationDraftExpiry returns null (expired or cleared draft), falls back
    * to saveVerificationDraft while preserving the original draft context.
    */
-  const handleResend = async () => {
+  const handleResend = useCallback(async () => {
     if (!channelParam || cooldown > 0 || isResending || isPending) return;
 
     const requestChannel = channelParam;
@@ -167,7 +199,7 @@ function VerifyFormContent() {
           startCooldown(result.retryAfterSeconds, undefined, identifierToSend);
         }
       } else {
-        setResendSuccess('Verification code sent successfully.');
+        setResendSuccess('Verification code sent.');
         startCooldownFromIso(
           (result as { resendAvailableAt?: string }).resendAvailableAt,
           60,
@@ -207,7 +239,119 @@ function VerifyFormContent() {
     } finally {
       setIsResending(false);
     }
-  };
+  }, [
+    activeIdentifier,
+    channelParam,
+    cooldown,
+    draft,
+    isPending,
+    isResending,
+    startCooldown,
+    startCooldownFromIso,
+  ]);
+
+  const handleDismissResendSuccess = useCallback(() => {
+    setResendSuccess(null);
+  }, []);
+
+  const dismissServerField = useCallback(
+    (field: string) =>
+      setDismissedServer((prev) => {
+        const currentState = stateRef.current;
+        if (!currentState?.fieldErrors?.[field]) return prev;
+        if (prev?.ref === currentState && prev.fields.has(field)) return prev;
+        const fields = new Set(
+          prev?.ref === currentState ? prev.fields : [],
+        );
+        fields.add(field);
+        return { ref: currentState, fields };
+      }),
+    [],
+  );
+
+  const handleFormActivity = useCallback(
+    (e: SyntheticEvent<HTMLFormElement>) => {
+      onFormActivity(e);
+      if (
+        resendErrorRef.current &&
+        (e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          e.target instanceof HTMLSelectElement)
+      ) {
+        setResendError(null);
+      }
+    },
+    [onFormActivity],
+  );
+
+  const handleIdentifierChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      setReenteredIdentifier(v);
+      if (channelParam) {
+        const nextNormalized =
+          channelParam === 'phone'
+            ? normalizeBdPhone(v) ?? v.trim()
+            : v.trim().toLowerCase();
+        activeContactRef.current = nextNormalized
+          ? `${channelParam}:${nextNormalized}`
+          : null;
+      }
+      setResendError(null);
+      setResendSuccess(null);
+      dismissServerField('identifier');
+      if (channelParam === 'email') {
+        const check = validateEmailLive(v);
+        setIdentifierError(check.ok ? undefined : check.error);
+      } else {
+        const check = validateBdPhoneOnChange(v, identifierBlurredRef.current);
+        if (check.resetBlurred) identifierBlurredRef.current = false;
+        setIdentifierError(check.error);
+      }
+    },
+    [channelParam, dismissServerField],
+  );
+
+  const handleIdentifierBlur = useCallback(
+    (e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (!e.target.value.trim()) {
+        identifierBlurredRef.current = false;
+        return;
+      }
+      identifierBlurredRef.current = true;
+      const check =
+        channelParam === 'email'
+          ? validateEmail(e.target.value)
+          : validateBdPhone(e.target.value);
+      if (!check.ok) setIdentifierError(check.error);
+      else {
+        if (channelParam === 'email') {
+          setReenteredIdentifier(check.value);
+        }
+        setIdentifierError(undefined);
+      }
+    },
+    [channelParam],
+  );
+
+  const handleTokenChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      dismissServerField('token');
+      dismissServerField('code');
+      const check = validateOtpLive(e.target.value);
+      setCodeError(check.ok ? undefined : check.error);
+    },
+    [dismissServerField],
+  );
+
+  const handleTokenBlur = useCallback(
+    (e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (!e.target.value.trim()) return;
+      const check = validateOtp(e.target.value);
+      setCodeError(check.ok ? undefined : check.error);
+    },
+    [],
+  );
 
   if (!channelParam || !['email', 'phone'].includes(channelParam)) {
     return (
@@ -227,31 +371,10 @@ function VerifyFormContent() {
         ? `Enter the verification code sent to ${maskedDisplay} via SMS.`
         : 'Enter the verification code sent to your phone via SMS.';
 
-  const dismissServerField = (field: string) =>
-    setDismissedServer((prev) => {
-      if (!state?.fieldErrors?.[field]) return prev;
-      if (prev?.ref === state && prev.fields.has(field)) return prev;
-      const fields = new Set(prev?.ref === state ? prev.fields : []);
-      fields.add(field);
-      return { ref: state, fields };
-    });
-
   const serverFieldError = (field: string) =>
     dismissedServer?.ref === state && dismissedServer.fields.has(field)
       ? undefined
       : state?.fieldErrors?.[field];
-
-  const handleFormActivity = (e: SyntheticEvent<HTMLFormElement>) => {
-    onFormActivity(e);
-    if (
-      resendError &&
-      (e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement)
-    ) {
-      setResendError(null);
-    }
-  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -323,7 +446,7 @@ function VerifyFormContent() {
           />
         ) : (
           <div className="flex flex-col gap-1.5">
-            <Input
+            <MemoizedInput
               id="identifier"
               name="identifier"
               variant={channelParam === 'email' ? 'email' : 'phone_bd'}
@@ -331,48 +454,8 @@ function VerifyFormContent() {
               required
               value={reenteredIdentifier}
               error={identifierError ?? serverFieldError('identifier')}
-              onChange={(e) => {
-                const v = e.target.value;
-                setReenteredIdentifier(v);
-                if (channelParam) {
-                  const nextNormalized =
-                    channelParam === 'phone'
-                      ? normalizeBdPhone(v) ?? v.trim()
-                      : v.trim().toLowerCase();
-                  activeContactRef.current = nextNormalized
-                    ? `${channelParam}:${nextNormalized}`
-                    : null;
-                }
-                setResendError(null);
-                setResendSuccess(null);
-                dismissServerField('identifier');
-                if (channelParam === 'email') {
-                  const check = validateEmailLive(v);
-                  setIdentifierError(check.ok ? undefined : check.error);
-                } else {
-                  const check = validateBdPhoneOnChange(v, identifierBlurredRef.current);
-                  if (check.resetBlurred) identifierBlurredRef.current = false;
-                  setIdentifierError(check.error);
-                }
-              }}
-              onBlur={(e) => {
-                if (!e.target.value.trim()) {
-                  identifierBlurredRef.current = false;
-                  return;
-                }
-                identifierBlurredRef.current = true;
-                const check =
-                  channelParam === 'email'
-                    ? validateEmail(e.target.value)
-                    : validateBdPhone(e.target.value);
-                if (!check.ok) setIdentifierError(check.error);
-                else {
-                  if (channelParam === 'email') {
-                    setReenteredIdentifier(check.value);
-                  }
-                  setIdentifierError(undefined);
-                }
-              }}
+              onChange={handleIdentifierChange}
+              onBlur={handleIdentifierBlur}
               readOnly={isPending || isResending}
               placeholder={channelParam === 'email' ? 'Enter your email' : '01XXXXXXXXX'}
             />
@@ -385,7 +468,7 @@ function VerifyFormContent() {
           </div>
         )}
 
-        <Input
+        <MemoizedInput
           id="token"
           name="token"
           variant="otp_6"
@@ -393,17 +476,8 @@ function VerifyFormContent() {
           required
           readOnly={isPending}
           error={codeError ?? serverFieldError('token') ?? serverFieldError('code')}
-          onChange={(e) => {
-            dismissServerField('token');
-            dismissServerField('code');
-            const check = validateOtpLive(e.target.value);
-            setCodeError(check.ok ? undefined : check.error);
-          }}
-          onBlur={(e) => {
-            if (!e.target.value.trim()) return;
-            const check = validateOtp(e.target.value);
-            setCodeError(check.ok ? undefined : check.error);
-          }}
+          onChange={handleTokenChange}
+          onBlur={handleTokenBlur}
         />
 
         <AuthAlert result={visibleAlertState} />
@@ -421,7 +495,7 @@ function VerifyFormContent() {
             isLoading={isResending}
             loadingText="Sending…"
             disabled={!isCooldownHydrated || cooldown > 0 || isResending}
-            onClick={() => handleResend()}
+            onClick={handleResend}
             className={cooldown > 0 ? 'no-underline tabular-nums' : 'underline-offset-4'}
           >
             {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : 'Resend code'}
@@ -441,7 +515,18 @@ function VerifyFormContent() {
         </div>
 
         <AuthAlert result={resendError} />
-        {resendSuccess && <Alert variant="success">{resendSuccess}</Alert>}
+        {resendSuccess && (
+          <Toast
+            variant="success"
+            position="top-right"
+            role="status"
+            ariaLive="polite"
+            autoDismissMs={4000}
+            onDismiss={handleDismissResendSuccess}
+          >
+            {resendSuccess}
+          </Toast>
+        )}
       </div>
     </div>
   );

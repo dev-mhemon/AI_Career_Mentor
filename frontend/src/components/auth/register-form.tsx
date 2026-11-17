@@ -1,6 +1,14 @@
 "use client";
 
-import { useActionState, useState, useEffect, useRef } from "react";
+import {
+  memo,
+  type ChangeEvent,
+  useActionState,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
@@ -28,6 +36,37 @@ import {
 
 type Channel = "email" | "phone";
 
+const REGISTER_TAB_ITEMS = [
+  { id: "email", label: "Email", panel: null },
+  { id: "phone", label: "Phone", panel: null },
+];
+
+const SIGN_IN_INSTEAD_ACTION = { label: "Sign in instead", href: "/login" };
+
+const MemoizedTabs = memo(Tabs);
+const MemoizedInput = memo(Input);
+const MemoizedCheckbox = memo(Checkbox);
+
+const REGISTER_DIVIDER = (
+  <div className="relative flex items-center">
+    <div className="flex-1 border-t border-border-default" />
+    <span className="px-3 text-body-sm text-text-muted">or</span>
+    <div className="flex-1 border-t border-border-default" />
+  </div>
+);
+
+const SIGN_IN_FOOTER = (
+  <p className="text-center text-body-sm text-text-secondary">
+    Already have an account?{" "}
+    <Link
+      href="/login"
+      className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+    >
+      Sign in
+    </Link>
+  </p>
+);
+
 /**
  * Registration form component for email and phone account creation.
  * Saves sanitized R18 verification draft in sessionStorage before navigation.
@@ -41,13 +80,6 @@ export function RegisterForm() {
   const [emailValue, setEmailValue] = useState("");
   const [phoneValue, setPhoneValue] = useState("");
   const identifier = activeTab === "email" ? emailValue : phoneValue;
-  const setIdentifier = (value: string) => {
-    if (activeTab === "email") {
-      setEmailValue(value);
-    } else {
-      setPhoneValue(value);
-    }
-  };
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [acceptedPrivacyPolicy, setAcceptedPrivacyPolicy] = useState(false);
@@ -123,40 +155,96 @@ export function RegisterForm() {
     target.focus();
   }, [state]);
 
-  const setFieldError = (field: string, error?: string) =>
-    setClientErrors((prev) => {
-      if (!error) {
-        if (!prev[field]) return prev;
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      }
-      if (prev[field] === error) return prev;
-      return { ...prev, [field]: error };
-    });
+  const stateRef = useRef(state);
+  const confirmRef = useRef(confirm);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+  useEffect(() => {
+    confirmRef.current = confirm;
+  }, [confirm]);
 
-  const dismissServerField = (field: string) =>
-    setDismissedServer((prev) => {
-      if (!state?.fieldErrors?.[field]) return prev;
-      if (prev?.ref === state && prev.fields.has(field)) return prev;
-      const fields = new Set(prev?.ref === state ? prev.fields : []);
-      fields.add(field);
-      return { ref: state, fields };
-    });
+  const setFieldError = useCallback(
+    (field: string, error?: string) =>
+      setClientErrors((prev) => {
+        if (!error) {
+          if (!prev[field]) return prev;
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        }
+        if (prev[field] === error) return prev;
+        return { ...prev, [field]: error };
+      }),
+    [],
+  );
+
+  const dismissServerField = useCallback(
+    (field: string) =>
+      setDismissedServer((prev) => {
+        const currentState = stateRef.current;
+        if (!currentState?.fieldErrors?.[field]) return prev;
+        if (prev?.ref === currentState && prev.fields.has(field)) return prev;
+        const fields = new Set(
+          prev?.ref === currentState ? prev.fields : [],
+        );
+        fields.add(field);
+        return { ref: currentState, fields };
+      }),
+    [],
+  );
 
   const serverFieldError = (field: string) =>
     dismissedServer?.ref === state && dismissedServer.fields.has(field)
       ? undefined
       : state?.fieldErrors?.[field];
 
-  const handleContactChange = (channel: Channel, value: string) => {
-    setIdentifier(value);
-    if (channel === "email") {
+  const handleEmailContactChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setEmailValue(e.target.value);
       setEmailError(undefined);
-    } else {
+    },
+    [],
+  );
+
+  const handlePhoneContactChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setPhoneValue(e.target.value);
       setPhoneError(undefined);
-    }
-  };
+    },
+    [],
+  );
+
+  const handlePasswordChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const v = e.target.value;
+      setPassword(v);
+      dismissServerField("password");
+      setFieldError("password", undefined);
+      const currentConfirm = confirmRef.current;
+      if (currentConfirm && validatePasswordMatch(v, currentConfirm).ok) {
+        setFieldError("confirmPassword", undefined);
+      }
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const handleConfirmChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setConfirm(e.target.value);
+      dismissServerField("confirmPassword");
+      setFieldError("confirmPassword", undefined);
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const handleConsentChange = useCallback(
+    (checked: boolean) => {
+      setAcceptedPrivacyPolicy(checked);
+      setFieldError("consent", undefined);
+    },
+    [setFieldError],
+  );
 
   const identifierError = activeTab === "phone" ? phoneError : emailError;
   const passwordError = clientErrors.password ?? serverFieldError("password");
@@ -167,6 +255,15 @@ export function RegisterForm() {
     dismiss: dismissAlert,
     onFormActivity,
   } = useDismissedActionState(state);
+
+  const handleTabChange = useCallback(
+    (id: string) => {
+      setActiveTab(id as Channel);
+      dismissAlert();
+    },
+    [dismissAlert],
+  );
+
   const conflict = visibleAlertState?.status === 409;
   const isDuplicateContactConflict =
     state?.code === "CONTACT_ALREADY_REGISTERED";
@@ -181,21 +278,15 @@ export function RegisterForm() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Tabs
+      <MemoizedTabs
         aria-label="Sign-up method"
         variant="segmented_pill"
         idPrefix="register"
         hidePanels
         disabled={isPending}
         value={activeTab}
-        onValueChange={(id) => {
-          setActiveTab(id as Channel);
-          dismissAlert();
-        }}
-        items={[
-          { id: "email", label: "Email", panel: null },
-          { id: "phone", label: "Phone", panel: null },
-        ]}
+        onValueChange={handleTabChange}
+        items={REGISTER_TAB_ITEMS}
       />
 
       <div
@@ -263,7 +354,7 @@ export function RegisterForm() {
           <input type="hidden" name="type" value={activeTab} />
 
           {activeTab === "email" ? (
-            <Input
+            <MemoizedInput
               key="email"
               id="identifier"
               name="identifier"
@@ -273,11 +364,11 @@ export function RegisterForm() {
               readOnly={isPending}
               value={identifier}
               error={identifierError}
-              onChange={(e) => handleContactChange("email", e.target.value)}
+              onChange={handleEmailContactChange}
               placeholder="Enter your email"
             />
           ) : (
-            <Input
+            <MemoizedInput
               key="phone"
               id="identifier"
               name="identifier"
@@ -287,14 +378,14 @@ export function RegisterForm() {
               readOnly={isPending}
               value={identifier}
               error={identifierError}
-              onChange={(e) => handleContactChange("phone", e.target.value)}
+              onChange={handlePhoneContactChange}
               hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
               placeholder="01XXXXXXXXX"
             />
           )}
 
           <div className="flex flex-col gap-2">
-            <Input
+            <MemoizedInput
               id="password"
               name="password"
               variant="password"
@@ -306,21 +397,13 @@ export function RegisterForm() {
               readOnly={isPending}
               value={password}
               error={passwordError}
-              onChange={(e) => {
-                const v = e.target.value;
-                setPassword(v);
-                dismissServerField("password");
-                setFieldError("password", undefined);
-                if (confirm && validatePasswordMatch(v, confirm).ok) {
-                  setFieldError("confirmPassword", undefined);
-                }
-              }}
+              onChange={handlePasswordChange}
               placeholder="Password"
             />
             <PasswordStrengthHint password={password} />
           </div>
 
-          <Input
+          <MemoizedInput
             id="confirmPassword"
             name="confirmPassword"
             variant="password"
@@ -332,15 +415,11 @@ export function RegisterForm() {
             readOnly={isPending}
             value={confirm}
             error={confirmError}
-            onChange={(e) => {
-              setConfirm(e.target.value);
-              dismissServerField("confirmPassword");
-              setFieldError("confirmPassword", undefined);
-            }}
+            onChange={handleConfirmChange}
             placeholder="Confirm password"
           />
 
-          <Checkbox
+          <MemoizedCheckbox
             id="privacy_consent"
             name="privacy_consent"
             label="I agree to the privacy policy"
@@ -348,17 +427,14 @@ export function RegisterForm() {
             checked={acceptedPrivacyPolicy}
             readOnly={isPending}
             error={clientErrors.consent}
-            onChange={(checked) => {
-              setAcceptedPrivacyPolicy(checked);
-              setFieldError("consent", undefined);
-            }}
+            onChange={handleConsentChange}
           />
 
           <AuthAlert
             result={suppressBottomAlert ? null : visibleAlertState}
             action={
               conflict && !suppressBottomAlert
-                ? { label: "Sign in instead", href: "/login" }
+                ? SIGN_IN_INSTEAD_ACTION
                 : undefined
             }
           />
@@ -369,23 +445,11 @@ export function RegisterForm() {
         </form>
       </div>
 
-      <div className="relative flex items-center">
-        <div className="flex-1 border-t border-border-default" />
-        <span className="px-3 text-body-sm text-text-muted">or</span>
-        <div className="flex-1 border-t border-border-default" />
-      </div>
+      {REGISTER_DIVIDER}
 
       <OAuthButtons />
 
-      <p className="text-center text-body-sm text-text-secondary">
-        Already have an account?{" "}
-        <Link
-          href="/login"
-          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
-        >
-          Sign in
-        </Link>
-      </p>
+      {SIGN_IN_FOOTER}
     </div>
   );
 }

@@ -115,7 +115,7 @@ describe("LoginForm", () => {
     expect(alert).toHaveTextContent("Authentication failed. Please try again.");
   });
 
-  it("renders success alert and clears verification draft when successMessage is passed", () => {
+  it("renders success Toast and clears verification draft when successMessage is passed", () => {
     saveVerificationDraft({
       channel: "email",
       identifier: "user@example.com",
@@ -126,9 +126,9 @@ describe("LoginForm", () => {
       <LoginForm successMessage="Password reset successfully. Please sign in with your new password." />,
     );
 
-    expect(
-      screen.getByText(/password reset successfully/i),
-    ).toBeInTheDocument();
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveTextContent("Password updated.");
+    expect(toast.closest(".fixed")).toBeInTheDocument();
     expect(mockClearVerificationDraft).toHaveBeenCalled();
   });
 
@@ -143,9 +143,7 @@ describe("LoginForm", () => {
       <LoginForm successMessage="Password reset successfully. Please sign in with your new password." />,
     );
 
-    expect(
-      screen.getByText(/password reset successfully/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Password updated.")).toBeInTheDocument();
     expect(mockClearVerificationDraft).not.toHaveBeenCalled();
   });
 

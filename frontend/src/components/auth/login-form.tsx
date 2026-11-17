@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  memo,
+  type ChangeEvent,
+  type SyntheticEvent,
   useActionState,
   useCallback,
   useEffect,
@@ -59,6 +62,35 @@ import {
 
 type Channel = "email" | "phone";
 
+const LOGIN_TAB_ITEMS = [
+  { id: "email", label: "Email", panel: null },
+  { id: "phone", label: "Phone", panel: null },
+];
+
+const MemoizedTabs = memo(Tabs);
+const MemoizedInput = memo(Input);
+const MemoizedCheckbox = memo(Checkbox);
+
+const LOGIN_DIVIDER = (
+  <div className="relative flex items-center">
+    <div className="flex-1 border-t border-border-default" />
+    <span className="px-3 text-body-sm text-text-muted">or</span>
+    <div className="flex-1 border-t border-border-default" />
+  </div>
+);
+
+const SIGNUP_FOOTER = (
+  <p className="text-center text-body-sm text-text-secondary">
+    Don&apos;t have an account?{" "}
+    <Link
+      href="/register"
+      className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+    >
+      Sign up
+    </Link>
+  </p>
+);
+
 /**
  * Screen 02: Login form component using useActionState for pending and error states.
  * Supports Email and Bangladesh Phone (+880) tabs, preserves email/phone inputs across tab
@@ -81,24 +113,36 @@ export function LoginForm({
   clearSavedLogin?: boolean;
 }) {
   const router = useRouter();
-  const [urlDeletionToast] = useState<string | undefined>(() => {
-    if (typeof window === "undefined") return undefined;
+  const [urlDeletionState] = useState<{
+    toast?: string;
+    hasDeletionParam: boolean;
+  }>(() => {
+    if (typeof window === "undefined") return { hasDeletionParam: false };
     try {
       const params = new URLSearchParams(window.location.search);
       const deletedParam = params.get("deleted");
-      if (
+      const hasDeletionParam =
         deletedParam === "true" ||
         deletedParam === "1" ||
-        params.get("notice") === "account_deleted"
-      ) {
-        return "Your account has been permanently deleted.";
-      }
+        params.get("notice") === "account_deleted";
+      return {
+        hasDeletionParam,
+        toast: hasDeletionParam
+          ? "Your account has been permanently deleted."
+          : undefined,
+      };
     } catch {
       // Ignore URL search parsing errors
+      return { hasDeletionParam: false };
     }
-    return undefined;
   });
-  const effectiveToastSource = toastMessage ?? urlDeletionToast;
+  const urlDeletionToast = urlDeletionState.toast;
+  const normalizedSuccessToast =
+    successMessage && /password reset/i.test(successMessage)
+      ? "Password updated."
+      : successMessage;
+  const effectiveToastSource =
+    toastMessage ?? urlDeletionToast ?? normalizedSuccessToast;
   const [dismissedToastFor, setDismissedToastFor] = useState<
     string | undefined
   >(undefined);
@@ -128,27 +172,11 @@ export function LoginForm({
     getOAuthLoginHintClearedSnapshot,
     getOAuthLoginHintServerSnapshot,
   );
-  const shouldClearSavedLogin = useMemo(() => {
-    if (
-      clearSavedLogin ||
-      initialRememberedLogin === null ||
-      initialOAuthHint === null
-    ) {
-      return true;
-    }
-    if (typeof window === "undefined") return false;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const deletedParam = params.get("deleted");
-      return (
-        deletedParam === "true" ||
-        deletedParam === "1" ||
-        params.get("notice") === "account_deleted"
-      );
-    } catch {
-      return false;
-    }
-  }, [clearSavedLogin, initialRememberedLogin, initialOAuthHint]);
+  const shouldClearSavedLogin =
+    clearSavedLogin ||
+    initialRememberedLogin === null ||
+    initialOAuthHint === null ||
+    urlDeletionState.hasDeletionParam;
   const effectiveHint = useMemo(() => {
     if (shouldClearSavedLogin || storageCleared) return null;
     return parseRememberedLoginHint(storedHintRaw) ?? initialRememberedLogin;
@@ -357,26 +385,111 @@ export function LoginForm({
     }
   }, [state]);
 
-  const setFieldError = (field: string, error?: string) =>
-    setClientErrors((prev) => {
-      if (!error) {
-        if (!prev[field]) return prev;
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      }
-      if (prev[field] === error) return prev;
-      return { ...prev, [field]: error };
-    });
+  const setFieldError = useCallback(
+    (field: string, error?: string) =>
+      setClientErrors((prev) => {
+        if (!error) {
+          if (!prev[field]) return prev;
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        }
+        if (prev[field] === error) return prev;
+        return { ...prev, [field]: error };
+      }),
+    [],
+  );
 
-  const dismissServerField = (field: string) =>
-    setDismissedServer((prev) => {
-      if (!state?.fieldErrors?.[field]) return prev;
-      if (prev?.ref === state && prev.fields.has(field)) return prev;
-      const fields = new Set(prev?.ref === state ? prev.fields : []);
-      fields.add(field);
-      return { ref: state, fields };
-    });
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  const activeTabRef = useRef(activeTab);
+  const emailValueRef = useRef(emailValue);
+  const phoneValueRef = useRef(phoneValue);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+    emailValueRef.current = emailValue;
+    phoneValueRef.current = phoneValue;
+  }, [activeTab, emailValue, phoneValue]);
+
+  const dismissServerField = useCallback(
+    (field: string) =>
+      setDismissedServer((prev) => {
+        const currentState = stateRef.current;
+        if (!currentState?.fieldErrors?.[field]) return prev;
+        if (prev?.ref === currentState && prev.fields.has(field)) return prev;
+        const fields = new Set(
+          prev?.ref === currentState ? prev.fields : [],
+        );
+        fields.add(field);
+        return { ref: currentState, fields };
+      }),
+    [],
+  );
+
+  const handleTabChange = useCallback(
+    (id: string) => {
+      setTabOverride(id as Channel);
+      setClientErrors({});
+      const currentState = stateRef.current;
+      if (currentState?.fieldErrors) {
+        setDismissedServer({
+          ref: currentState,
+          fields: new Set(Object.keys(currentState.fieldErrors)),
+        });
+      }
+      dismissAlert();
+    },
+    [dismissAlert],
+  );
+
+  const handleFormReset = useCallback((e: SyntheticEvent<HTMLFormElement>) => {
+    // Prevent React 19 form transitions from wiping controlled login state or unchecking Keep Signed In
+    e.preventDefault();
+  }, []);
+
+  const handleEmailChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setEmailOverride(e.target.value);
+      dismissServerField("email");
+      dismissServerField("phone");
+      dismissServerField("identifier");
+      setFieldError("identifier", undefined);
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const handlePhoneChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setPhoneOverride(e.target.value);
+      dismissServerField("email");
+      dismissServerField("phone");
+      dismissServerField("identifier");
+      setFieldError("identifier", undefined);
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const handlePasswordChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setPassword(e.target.value);
+      dismissServerField("password");
+      setFieldError("password", undefined);
+    },
+    [dismissServerField, setFieldError],
+  );
+
+  const handleKeepSignedInChange = useCallback((checked: boolean) => {
+    setKeepSignedInOverride(checked);
+    if (!checked) {
+      setTabOverride(activeTabRef.current);
+      setEmailOverride(emailValueRef.current);
+      setPhoneOverride(phoneValueRef.current);
+      clearRememberedLogin();
+    }
+  }, []);
 
   const serverFieldError = (field: string) =>
     dismissedServer?.ref === state && dismissedServer.fields.has(field)
@@ -419,30 +532,15 @@ export function LoginForm({
         </Toast>
       )}
 
-      {successMessage && <Alert variant="success">{successMessage}</Alert>}
-
-      <Tabs
+      <MemoizedTabs
         aria-label="Sign-in method"
         variant="segmented_pill"
         idPrefix="login"
         hidePanels
         disabled={isPending}
         value={activeTab}
-        onValueChange={(id) => {
-          setTabOverride(id as Channel);
-          setClientErrors({});
-          if (state?.fieldErrors) {
-            setDismissedServer({
-              ref: state,
-              fields: new Set(Object.keys(state.fieldErrors)),
-            });
-          }
-          dismissAlert();
-        }}
-        items={[
-          { id: "email", label: "Email", panel: null },
-          { id: "phone", label: "Phone", panel: null },
-        ]}
+        onValueChange={handleTabChange}
+        items={LOGIN_TAB_ITEMS}
       />
 
       <div
@@ -455,10 +553,7 @@ export function LoginForm({
           noValidate
           onFocusCapture={onFormActivity}
           onChangeCapture={onFormActivity}
-          onReset={(e) => {
-            // Prevent React 19 form transitions from wiping controlled login state or unchecking Keep Signed In
-            e.preventDefault();
-          }}
+          onReset={handleFormReset}
           onSubmit={(e) => {
             const form = e.currentTarget;
             const errors: Record<string, string> = {};
@@ -504,7 +599,7 @@ export function LoginForm({
           className="flex flex-col gap-4"
         >
           {activeTab === "email" ? (
-            <Input
+            <MemoizedInput
               key="email"
               id="email"
               name="identifier"
@@ -515,17 +610,11 @@ export function LoginForm({
               readOnly={isPending}
               value={emailValue}
               error={identifierError}
-              onChange={(e) => {
-                setEmailOverride(e.target.value);
-                dismissServerField("email");
-                dismissServerField("phone");
-                dismissServerField("identifier");
-                setFieldError("identifier", undefined);
-              }}
+              onChange={handleEmailChange}
               placeholder="Enter your email"
             />
           ) : (
-            <Input
+            <MemoizedInput
               key="phone"
               id="phone"
               name="identifier"
@@ -536,20 +625,14 @@ export function LoginForm({
               readOnly={isPending}
               value={phoneValue}
               error={identifierError}
-              onChange={(e) => {
-                setPhoneOverride(e.target.value);
-                dismissServerField("email");
-                dismissServerField("phone");
-                dismissServerField("identifier");
-                setFieldError("identifier", undefined);
-              }}
+              onChange={handlePhoneChange}
               hint="Bangladesh mobile, e.g. 01XXXXXXXXX"
               placeholder="01XXXXXXXXX"
             />
           )}
 
           <div className="flex flex-col gap-1.5">
-            <Input
+            <MemoizedInput
               id="password"
               name="password"
               variant="password"
@@ -559,27 +642,15 @@ export function LoginForm({
               readOnly={isPending}
               value={password}
               error={passwordError}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                dismissServerField("password");
-                setFieldError("password", undefined);
-              }}
+              onChange={handlePasswordChange}
               placeholder="Password"
             />
             <div className="flex items-center justify-between gap-4">
-              <Checkbox
+              <MemoizedCheckbox
                 name="rememberMe"
                 label="Keep Signed In"
                 checked={keepSignedIn}
-                onChange={(checked) => {
-                  setKeepSignedInOverride(checked);
-                  if (!checked) {
-                    setTabOverride(activeTab);
-                    setEmailOverride(emailValue);
-                    setPhoneOverride(phoneValue);
-                    clearRememberedLogin();
-                  }
-                }}
+                onChange={handleKeepSignedInChange}
                 readOnly={isPending}
               />
               <Link
@@ -618,23 +689,11 @@ export function LoginForm({
         </form>
       </div>
 
-      <div className="relative flex items-center">
-        <div className="flex-1 border-t border-border-default" />
-        <span className="px-3 text-body-sm text-text-muted">or</span>
-        <div className="flex-1 border-t border-border-default" />
-      </div>
+      {LOGIN_DIVIDER}
 
       <OAuthButtons oauthHint={effectiveOAuthHint} />
 
-      <p className="text-center text-body-sm text-text-secondary">
-        Don&apos;t have an account?{" "}
-        <Link
-          href="/register"
-          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
-        >
-          Sign up
-        </Link>
-      </p>
+      {SIGNUP_FOOTER}
     </div>
   );
 }
