@@ -4013,10 +4013,15 @@ export class AuthService {
       !account.email.trim().toLowerCase().endsWith('@synthetic.mentor')
         ? account.email.trim().toLowerCase()
         : null;
-    const normalizedAccountPhone =
-      typeof account.phone === 'string' && account.phone.trim()
-        ? account.phone.trim()
-        : null;
+    const rawAccountPhone =
+      typeof account.phone === 'string' ? account.phone.trim() : '';
+    const normalizedAccountPhone = rawAccountPhone
+      ? rawAccountPhone.startsWith('+')
+        ? rawAccountPhone
+        : /^01[3-9][0-9]{8}$/.test(rawAccountPhone)
+          ? `+88${rawAccountPhone}`
+          : `+${rawAccountPhone}`
+      : null;
     const resolvedEmail =
       channel === 'email'
         ? identifier

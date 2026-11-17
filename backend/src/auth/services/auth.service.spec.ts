@@ -9396,5 +9396,89 @@ describe('AuthService session approval boundary', () => {
       expect(revokeAllowed).toHaveBeenCalledTimes(1);
       expect(fetchAllowed).toHaveBeenCalledTimes(1);
     });
+
+    it('normalizes GoTrue phone lacking leading + into canonical +8801... format when bootstrapping confirmed secondary phone during email recovery', async () => {
+      const recoveredEmail = 'email-with-digits-phone@example.com';
+      const unprefixedPhone = '8801712345678';
+      const confirmedAt = '2026-05-01T10:00:00Z';
+      const txQueries: Array<{ sql: string; params?: unknown[] }> = [];
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const authRow = {
+        id: userId,
+        email: recoveredEmail,
+        phone: unprefixedPhone,
+        email_confirmed_at: confirmedAt,
+        phone_confirmed_at: confirmedAt,
+        app_status: null,
+        oauth_provider: 'google',
+        oauth_subject: 'google-sub-unprefixed-phone',
+      };
+      const runner = {
+        query: vi.fn(async (sql: string, params?: unknown[]) => {
+          txQueries.push({ sql, params });
+          if (sql.includes('FROM auth.users u')) {
+            return [authRow];
+          }
+          if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+            return [{ status: 'active', suspended_at: null }];
+          }
+          return [];
+        }),
+      };
+
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM public.users u')) return [];
+          if (sql.includes('FROM auth.users u')) {
+            return [authRow];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_sub: unknown, fn: any) => fn(runner)),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          isReady: vi.fn().mockReturnValue(true),
+          clearSendCooldown: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          revokeAllUserSessions: vi.fn().mockResolvedValue(undefined),
+        } as unknown as SessionApprovalService,
+        {
+          verifyAndConsumeOtp: vi.fn(
+            async (
+              _u: string,
+              _i: string,
+              _c: string,
+              onSuccess: () => Promise<void>,
+            ) => onSuccess(),
+          ),
+        } as unknown as OtpSecretStore,
+      );
+
+      await expect(
+        service.resetPassword({
+          identifier: recoveredEmail,
+          code: '123456',
+          new_password: 'NormalizedPhonePassword1!',
+          confirm_new_password: 'NormalizedPhonePassword1!',
+        }),
+      ).resolves.toEqual({ password_reset: true });
+
+      const userInsert = txQueries.find((q) =>
+        q.sql.includes('INSERT INTO public.users('),
+      );
+      expect(userInsert?.params?.[1]).toBe(recoveredEmail);
+      expect(userInsert?.params?.[2]).toBe('+8801712345678');
+    });
   });
 });

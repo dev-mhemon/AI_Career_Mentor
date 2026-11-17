@@ -8,6 +8,8 @@ import {
 import {
   clearOAuthLoginHint,
   OAUTH_HINT_CLEARED_STORAGE_KEY,
+  OAUTH_HINT_COOKIE,
+  OAUTH_HINT_STORAGE_KEY,
 } from "@/lib/auth/remember-login";
 import { loginAction } from "@/lib/auth/actions";
 
@@ -888,7 +890,7 @@ describe("LoginForm", () => {
     );
   });
 
-  it("does not restore or seed stale initialOAuthHint when clearOAuthLoginHint ran in another tab", () => {
+  it("does not restore or seed stale initialOAuthHint when clearOAuthLoginHint ran prior to mount or in same tab", () => {
     const staleOAuthHint = {
       provider: "google" as const,
       displayName: "Mehedi",
@@ -896,7 +898,7 @@ describe("LoginForm", () => {
       avatarUrl: "https://lh3.googleusercontent.com/avatar.png",
     };
 
-    // Simulate another tab clearing the OAuth hint between SSR cookie read and client hydration
+    // Same-tab pre-mount clear sets cleared tombstone and suppresses stale SSR initialOAuthHint
     clearOAuthLoginHint();
     expect(window.localStorage.getItem(OAUTH_HINT_CLEARED_STORAGE_KEY)).toBe("1");
 
@@ -905,30 +907,66 @@ describe("LoginForm", () => {
       "data-oauth-hint",
       "",
     );
-    expect(window.localStorage.getItem("mentor_oauth_hint")).toBeNull();
+    expect(window.localStorage.getItem(OAUTH_HINT_STORAGE_KEY)).toBeNull();
     unmount();
 
-    // Also verifies live cross-tab StorageEvent clearing on mounted LoginForm
+    // Same-tab clearOAuthLoginHint notifies mounted subscribers directly
     window.localStorage.clear();
     render(<LoginForm initialOAuthHint={staleOAuthHint} />);
     expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
       "data-oauth-hint",
       JSON.stringify(staleOAuthHint),
     );
-
     act(() => {
       clearOAuthLoginHint();
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key: OAUTH_HINT_CLEARED_STORAGE_KEY,
-          newValue: "1",
-        }),
-      );
     });
     expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
       "data-oauth-hint",
       "",
     );
-    expect(window.localStorage.getItem("mentor_oauth_hint")).toBeNull();
+    expect(window.localStorage.getItem(OAUTH_HINT_STORAGE_KEY)).toBeNull();
+  });
+
+  it("clears mounted LoginForm OAuth hint and expires cookie via cross-tab StorageEvent without invoking local clearOAuthLoginHint subscribers", () => {
+    const staleOAuthHint = {
+      provider: "google" as const,
+      displayName: "Mehedi",
+      email: "mehediemon7@gmail.com",
+      avatarUrl: "https://lh3.googleusercontent.com/avatar.png",
+    };
+    const serializedHint = JSON.stringify(staleOAuthHint);
+
+    window.localStorage.clear();
+    document.cookie = `${OAUTH_HINT_COOKIE}=${encodeURIComponent(serializedHint)}; path=/`;
+
+    render(<LoginForm initialOAuthHint={staleOAuthHint} />);
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      serializedHint,
+    );
+    const oldValue = window.localStorage.getItem(OAUTH_HINT_STORAGE_KEY);
+    expect(oldValue).toBeTruthy();
+    expect(document.cookie).toContain(`${OAUTH_HINT_COOKIE}=`);
+
+    // Mutate backing storage directly to isolate cross-tab StorageEvent delivery from same-tab notifyOAuthHintListeners()
+    act(() => {
+      window.localStorage.removeItem(OAUTH_HINT_STORAGE_KEY);
+      window.localStorage.setItem(OAUTH_HINT_CLEARED_STORAGE_KEY, "1");
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: OAUTH_HINT_STORAGE_KEY,
+          oldValue,
+          newValue: null,
+          storageArea: window.localStorage,
+        }),
+      );
+    });
+
+    expect(screen.getByTestId("oauth-buttons")).toHaveAttribute(
+      "data-oauth-hint",
+      "",
+    );
+    expect(window.localStorage.getItem(OAUTH_HINT_STORAGE_KEY)).toBeNull();
+    expect(document.cookie).not.toContain(`${OAUTH_HINT_COOKIE}=`);
   });
 });
