@@ -301,13 +301,23 @@ export class AuthAbuseControl implements OnModuleDestroy {
     );
   }
 
+  private sendKeyScope(purpose?: string): string {
+    if (!purpose) return '';
+    const normalized = purpose.trim();
+    if (!/^[a-z0-9_-]+$/i.test(normalized)) {
+      throw new Error('Invalid abuse-control send purpose');
+    }
+    return `${normalized}:`;
+  }
+
   /** Reserve before provider delivery, including unknown contacts. Delivery failure does not refund quota. */
   async reserveSend(
     contact: Contact,
     ip: string,
-    options?: { ipOnly?: boolean },
+    options?: { ipOnly?: boolean; purpose?: string },
   ): Promise<{ retryAfterSeconds: number }> {
     const id = this.contactKey(contact);
+    const scope = this.sendKeyScope(options?.purpose);
     const address = this.ipKey(ip);
     if (!this.configuration) this.unavailable();
     const p = this.configuration.policy;
@@ -323,14 +333,46 @@ export class AuthAbuseControl implements OnModuleDestroy {
     const result = await this.evaluate(
       sendScript,
       [
-        `auth:v1:send:cooldown:${id}`,
-        `auth:v1:send:contact:${id}`,
+        `auth:v1:send:cooldown:${scope}${id}`,
+        `auth:v1:send:contact:${scope}${id}`,
         `auth:v1:send:ip:${address}`,
       ],
       args,
     );
     this.check(result);
     return { retryAfterSeconds: Math.ceil(result[1] / 1000) };
+  }
+
+  /** Best-effort cleanup of per-contact send cooldown when a verification or reset flow completes. */
+  async clearSendCooldown(contact: Contact, purpose?: string): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    let key: string;
+    try {
+      const trimmed =
+        typeof contact.identifier === 'string' ? contact.identifier.trim() : '';
+      if (!trimmed) return;
+      const canonical: Contact =
+        contact.channel === 'email'
+          ? { channel: 'email', identifier: trimmed.toLowerCase() }
+          : {
+              channel: 'phone',
+              identifier: trimmed.startsWith('+') ? trimmed : `+${trimmed}`,
+            };
+      key = `auth:v1:send:cooldown:${this.sendKeyScope(purpose)}${this.contactKey(canonical)}`;
+    } catch {
+      return;
+    }
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).del(key),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
   }
 
   /** Store only an opaque generation and attempt state, never the OTP or its digest. */
@@ -570,6 +612,10 @@ export class AuthAbuseControl implements OnModuleDestroy {
       keys.add(`auth:v1:challenge:verify_email:${id}`);
       keys.add(`auth:v1:challenge:verify_phone:${id}`);
       keys.add(`auth:v1:challenge:reset_password:${id}`);
+      if (includeSendLimits) {
+        keys.add(`auth:v1:send:cooldown:reset_password:${id}`);
+        keys.add(`auth:v1:send:contact:reset_password:${id}`);
+      }
     }
     return [...keys];
   }

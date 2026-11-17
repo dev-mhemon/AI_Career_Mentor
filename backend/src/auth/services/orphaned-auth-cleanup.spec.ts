@@ -62,6 +62,89 @@ describe('purgeOrphanedAuthByContact', () => {
       "COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'",
     );
     expect(lookupSql).toMatch(/u\.deleted_at IS NOT NULL\s+OR\s*\(/);
+    expect(lookupSql).toContain('u.email_confirmed_at IS NULL');
+    expect(lookupSql).toContain('u.phone_confirmed_at IS NULL');
+    expect(lookupSql).toContain("u.raw_app_meta_data->'providers'");
+    expect(lookupSql).toContain("IN ('google', 'facebook')");
+  });
+
+  it('does not purge confirmed rows even when created_at > 15m, while allowing unconfirmed >15m orphans with OAuth metadata to purge', async () => {
+    const oldCreatedAt = new Date(
+      Date.now() - (ORPHAN_ABANDONMENT_WINDOW_MS + 60_000),
+    ).toISOString();
+    const confirmedQuery = vi.fn().mockResolvedValueOnce([
+      {
+        id: staleId,
+        deleted_at: null,
+        has_app_user: false,
+        email_confirmed_at: '2026-10-01T00:00:00Z',
+        phone_confirmed_at: null,
+        created_at: oldCreatedAt,
+        raw_app_meta_data: {
+          provider: 'email',
+          providers: ['email', 'google'],
+        },
+        identities: [{ provider: 'google' }],
+      },
+    ]);
+    await expect(
+      purgeOrphanedAuthByContact({
+        channel: 'email',
+        identifier: email,
+        database: withTxMock(confirmedQuery),
+      }),
+    ).resolves.toBe(false);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+
+    const unconfirmedOAuthOrphan = {
+      id: staleId,
+      deleted_at: null,
+      has_app_user: false,
+      email_confirmed_at: null,
+      phone_confirmed_at: null,
+      created_at: oldCreatedAt,
+      email,
+      phone: null,
+      raw_app_meta_data: { provider: 'google', providers: ['google'] },
+      identities: [{ provider: 'google' }],
+    };
+    const managerQuery = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([unconfirmedOAuthOrphan])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ email, phone: null }]);
+    const database = {
+      query: vi.fn().mockResolvedValueOnce([unconfirmedOAuthOrphan]),
+      transaction: vi.fn(async (_uid: unknown, op: any) =>
+        op({ query: managerQuery }),
+      ),
+    } as unknown as DatabaseService;
+
+    await expect(
+      purgeOrphanedAuthByContact({
+        channel: 'email',
+        identifier: email,
+        database,
+        supabaseUrl: 'http://supabase.invalid',
+        serviceRoleKey: 'service-role-key',
+      }),
+    ).resolves.toBe(true);
+    const managerSqls = managerQuery.mock.calls.map(([sql]) => String(sql));
+    const recheckSql = managerSqls.find(
+      (sql) =>
+        sql.includes('FROM auth.users u') &&
+        sql.includes('WHERE u.id = $1::uuid'),
+    );
+    expect(recheckSql).toBeDefined();
+    expect(recheckSql).toContain('u.email_confirmed_at IS NULL');
+    expect(recheckSql).toContain('u.phone_confirmed_at IS NULL');
+    const authDeleteSql = managerSqls.find((sql) =>
+      sql.includes('DELETE FROM auth.users'),
+    );
+    expect(authDeleteSql).toBeDefined();
+    expect(authDeleteSql).toContain('u.email_confirmed_at IS NULL');
+    expect(authDeleteSql).toContain('u.phone_confirmed_at IS NULL');
   });
 
   it('does not purge a row with NULL created_at (treated defensively as 0 minutes old)', async () => {
@@ -275,21 +358,32 @@ describe('purgeOrphanedAuthByContact', () => {
       'SELECT pg_advisory_xact_lock(hashtext($1::text))',
       [staleId],
     );
-    expect(managerQuery.mock.calls[1]?.[0]).toContain('WHERE u.id = $1::uuid');
-
-    const publicDeleteSql = String(managerQuery.mock.calls[2]?.[0]).replace(
-      /\s+/g,
-      ' ',
+    const managerSqls = managerQuery.mock.calls.map(([sql]) => String(sql));
+    const recheckSql = managerSqls.find(
+      (sql) =>
+        sql.includes('FROM auth.users u') &&
+        sql.includes('WHERE u.id = $1::uuid'),
     );
+    expect(recheckSql).toBeDefined();
+
+    const rawPublicDeleteSql = managerSqls.find((sql) =>
+      sql.includes('DELETE FROM public.users'),
+    );
+    expect(rawPublicDeleteSql).toBeDefined();
+    const publicDeleteSql = String(rawPublicDeleteSql).replace(/\s+/g, ' ');
     expect(publicDeleteSql).toContain(
       'DELETE FROM public.users WHERE id = $1::uuid',
     );
     expect(publicDeleteSql).not.toContain('EXISTS');
 
-    expect(managerQuery.mock.calls[3]?.[0]).toContain(
+    const authDeleteSql = managerSqls.find((sql) =>
+      sql.includes('DELETE FROM auth.users'),
+    );
+    expect(authDeleteSql).toBeDefined();
+    expect(authDeleteSql).toContain(
       "COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'",
     );
-    expect(managerQuery.mock.calls[3]?.[0]).toContain('DELETE FROM auth.users');
+    expect(authDeleteSql).toContain('DELETE FROM auth.users');
 
     expect(clearChallengeState).toHaveBeenCalledTimes(1);
     expect(clearChallengeState).toHaveBeenCalledWith(

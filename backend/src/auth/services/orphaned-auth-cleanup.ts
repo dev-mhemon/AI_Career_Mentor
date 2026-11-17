@@ -7,7 +7,70 @@ import type { DatabaseService } from './database.service.js';
 export const ORPHAN_ABANDONMENT_WINDOW_MS = 15 * 60 * 1000;
 
 const ABANDONMENT_CUTOFF_SQL = `COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes'`;
-const ORPHANED_LOOKUP_CONDITION = `(u.deleted_at IS NOT NULL OR (pu.id IS NULL AND ${ABANDONMENT_CUTOFF_SQL}))`;
+export const OAUTH_PROVIDER_MATCH_SQL = `(
+  lower(COALESCE(u.raw_app_meta_data->>'provider', '')) IN ('google', 'facebook')
+  OR EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements_text(
+        CASE
+          WHEN jsonb_typeof(u.raw_app_meta_data->'providers') = 'array'
+            THEN u.raw_app_meta_data->'providers'
+          ELSE '[]'::jsonb
+        END
+      ) p_el
+     WHERE lower(p_el) IN ('google', 'facebook')
+  )
+  OR EXISTS (
+    SELECT 1
+      FROM auth.identities oi
+     WHERE oi.user_id = u.id
+       AND lower(oi.provider) IN ('google', 'facebook')
+  )
+)`;
+const OAUTH_PROTECTED_USER_SQL = `(
+  (u.email_confirmed_at IS NOT NULL OR u.phone_confirmed_at IS NOT NULL)
+  AND ${OAUTH_PROVIDER_MATCH_SQL}
+)`;
+const ORPHANED_LOOKUP_CONDITION = `(u.deleted_at IS NOT NULL OR (pu.id IS NULL AND u.email_confirmed_at IS NULL AND u.phone_confirmed_at IS NULL AND NOT ${OAUTH_PROTECTED_USER_SQL} AND ${ABANDONMENT_CUTOFF_SQL}))`;
+
+export function hasOAuthProviderMetadata(
+  row: Record<string, unknown>,
+): boolean {
+  if (row.is_oauth_user === true) {
+    return true;
+  }
+  const meta =
+    typeof row.raw_app_meta_data === 'object' && row.raw_app_meta_data !== null
+      ? (row.raw_app_meta_data as { provider?: unknown; providers?: unknown })
+      : undefined;
+  const metaProvider =
+    typeof meta?.provider === 'string'
+      ? meta.provider.trim().toLowerCase()
+      : '';
+  if (metaProvider === 'google' || metaProvider === 'facebook') {
+    return true;
+  }
+  if (
+    Array.isArray(meta?.providers) &&
+    meta.providers.some(
+      (p) =>
+        typeof p === 'string' &&
+        ['google', 'facebook'].includes(p.trim().toLowerCase()),
+    )
+  ) {
+    return true;
+  }
+  const identities = Array.isArray(row.identities) ? row.identities : [];
+  return identities.some(
+    (id) =>
+      typeof id === 'object' &&
+      id !== null &&
+      typeof (id as { provider?: unknown }).provider === 'string' &&
+      ['google', 'facebook'].includes(
+        (id as { provider: string }).provider.trim().toLowerCase(),
+      ),
+  );
+}
 
 export interface PurgeOrphanedAuthOptions {
   channel: 'email' | 'phone';
@@ -26,6 +89,8 @@ interface StaleAuthUserRow {
   id?: unknown;
   deleted_at?: unknown;
   created_at?: unknown;
+  email_confirmed_at?: unknown;
+  phone_confirmed_at?: unknown;
   has_app_user?: unknown;
   email?: unknown;
   phone?: unknown;
@@ -82,6 +147,8 @@ function buildLookupSql(channel: 'email' | 'phone'): string {
   return `SELECT DISTINCT u.id,
                  u.deleted_at,
                  u.created_at,
+                 u.email_confirmed_at,
+                 u.phone_confirmed_at,
                  (pu.id IS NOT NULL) AS has_app_user,
                  u.email,
                  u.phone,
@@ -100,6 +167,8 @@ function buildCandidateRecheckSql(): string {
   return `SELECT u.id,
                  u.deleted_at,
                  u.created_at,
+                 u.email_confirmed_at,
+                 u.phone_confirmed_at,
                  (pu.id IS NOT NULL) AS has_app_user,
                  u.email,
                  u.phone
@@ -121,6 +190,12 @@ function isAbandonedOrphanRow(
     return true;
   }
   if (row.has_app_user === true) {
+    return false;
+  }
+  if (
+    (row.email_confirmed_at !== undefined && row.email_confirmed_at !== null) ||
+    (row.phone_confirmed_at !== undefined && row.phone_confirmed_at !== null)
+  ) {
     return false;
   }
   if (row.created_at === null) {
@@ -288,6 +363,9 @@ export async function purgeOrphanedAuthByContact(
                   u.deleted_at IS NOT NULL
                   OR (
                     NOT EXISTS (SELECT 1 FROM public.users pu WHERE pu.id = u.id)
+                    AND u.email_confirmed_at IS NULL
+                    AND u.phone_confirmed_at IS NULL
+                    AND NOT ${OAUTH_PROTECTED_USER_SQL}
                     AND ${ABANDONMENT_CUTOFF_SQL}
                   )
                 )

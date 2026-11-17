@@ -50,12 +50,14 @@ vi.mock('@/components/auth/login-form', () => ({
     successMessage,
     toastMessage,
     initialRememberedLogin,
+    initialOAuthHint,
     clearSavedLogin,
   }: {
     initialError?: string;
     successMessage?: string;
     toastMessage?: string;
     initialRememberedLogin?: unknown;
+    initialOAuthHint?: unknown;
     clearSavedLogin?: boolean;
   }) => {
     mockLoginForm({
@@ -63,6 +65,7 @@ vi.mock('@/components/auth/login-form', () => ({
       successMessage,
       toastMessage,
       initialRememberedLogin,
+      initialOAuthHint,
       clearSavedLogin,
     });
     return (
@@ -305,7 +308,44 @@ describe('LoginPage Server Component', () => {
     expect(mockLoginForm).toHaveBeenLastCalledWith(
       expect.objectContaining({
         initialRememberedLogin: undefined,
+        initialOAuthHint: undefined,
         clearSavedLogin: false,
+      }),
+    );
+  });
+
+  it('forwards mentor_oauth_hint cookie to LoginForm and clears it to null when deleted=1', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    const oauthHint = {
+      provider: 'google',
+      displayName: 'Mehedi',
+      email: 'mehedi@example.com',
+      avatarUrl: 'https://lh3.googleusercontent.com/avatar.png',
+    };
+    mockCookieGet.mockImplementation((name: string) =>
+      name === 'mentor_oauth_hint'
+        ? { value: JSON.stringify(oauthHint) }
+        : undefined,
+    );
+
+    render(await LoginPage({}));
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialOAuthHint: oauthHint,
+        clearSavedLogin: false,
+      }),
+    );
+
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ deleted: '1' }),
+      }),
+    );
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialOAuthHint: null,
+        initialRememberedLogin: null,
+        clearSavedLogin: true,
       }),
     );
   });

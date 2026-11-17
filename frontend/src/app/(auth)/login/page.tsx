@@ -3,7 +3,10 @@ import { redirect } from "next/navigation";
 import { hasAuthenticatedAppSession } from "@/lib/auth/user";
 import {
   LOGIN_HINT_COOKIE,
+  OAUTH_HINT_COOKIE,
+  parseOAuthLoginCookieHint,
   parseRememberedLoginCookieHint,
+  type OAuthLoginHint,
   type RememberedLoginHint,
 } from "@/lib/auth/remember-login";
 import { LoginForm } from "@/components/auth/login-form";
@@ -29,6 +32,7 @@ export default async function LoginPage({
 
   let hasAccountDeletedCookie = false;
   let initialRememberedLogin: RememberedLoginHint | null | undefined = undefined;
+  let initialOAuthHint: OAuthLoginHint | null | undefined = undefined;
   try {
     const cookieStore = await cookies();
     hasAccountDeletedCookie =
@@ -36,8 +40,12 @@ export default async function LoginPage({
     initialRememberedLogin = parseRememberedLoginCookieHint(
       cookieStore.get(LOGIN_HINT_COOKIE)?.value,
     );
+    initialOAuthHint = parseOAuthLoginCookieHint(
+      cookieStore.get(OAUTH_HINT_COOKIE)?.value,
+    );
   } catch {
     initialRememberedLogin = undefined;
+    initialOAuthHint = undefined;
   }
 
   const hasDeletedParam =
@@ -47,6 +55,7 @@ export default async function LoginPage({
   const isDeleted = hasDeletedParam || hasAccountDeletedCookie;
   if (isDeleted) {
     initialRememberedLogin = null;
+    initialOAuthHint = null;
   }
 
   if (!hasErrorParam && !isDeleted) {
@@ -84,6 +93,7 @@ export default async function LoginPage({
         successMessage={successMessage}
         toastMessage={toastMessage}
         initialRememberedLogin={initialRememberedLogin}
+        initialOAuthHint={initialOAuthHint}
         clearSavedLogin={isDeleted}
       />
     </div>

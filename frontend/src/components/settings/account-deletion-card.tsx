@@ -7,7 +7,10 @@ import {
   pollAccountDeletionStatusAction,
   requestAccountDeletionAction,
 } from '@/lib/auth/actions';
-import { clearRememberedLogin } from '@/lib/auth/remember-login';
+import {
+  clearOAuthLoginHint,
+  clearRememberedLogin,
+} from '@/lib/auth/remember-login';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,12 +38,25 @@ const INITIAL_ACTION_STATE: AccountDeletionActionResult = {};
 function safeClearBrowserStorage(): void {
   try {
     clearRememberedLogin();
-    if (typeof window !== 'undefined') {
-      window.sessionStorage?.clear();
-      window.localStorage?.removeItem('supabase.auth.token');
-    }
   } catch {
     // Ignore storage access errors in restricted or sandboxed environments
+  }
+  try {
+    clearOAuthLoginHint();
+  } catch {
+    // Ignore storage access errors in restricted or sandboxed environments
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      window.sessionStorage?.clear();
+    } catch {
+      // Ignore sessionStorage errors in restricted or sandboxed environments
+    }
+    try {
+      window.localStorage?.removeItem('supabase.auth.token');
+    } catch {
+      // Ignore localStorage errors in restricted or sandboxed environments
+    }
   }
 }
 
@@ -63,7 +79,16 @@ export function AccountDeletionCard({
 
   const [state, formAction, isPending] = useActionState(
     async (prevState: AccountDeletionActionResult, formData: FormData) => {
-      clearRememberedLogin();
+      try {
+        clearRememberedLogin();
+      } catch {
+        // Ignore storage errors so deletion request proceeds
+      }
+      try {
+        clearOAuthLoginHint();
+      } catch {
+        // Ignore storage errors so deletion request proceeds
+      }
       const result = await requestAccountDeletionAction(prevState, formData);
       if (result.status === 'completed' || result.success) {
         safeClearBrowserStorage();

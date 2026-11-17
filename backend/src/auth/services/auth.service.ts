@@ -320,7 +320,9 @@ export class AuthService {
           ? typeof account?.contact_value === 'string' &&
             account.contact_value.replace(/^\+/, '') ===
               input.identifier.replace(/^\+/, '')
-          : account?.contact_value === input.identifier;
+          : typeof account?.contact_value === 'string' &&
+            account.contact_value.toLowerCase() ===
+              input.identifier.toLowerCase();
       if (!account?.verified_contact || !account.verified_at || !contactMatches)
         fail(403, 'UNVERIFIED_ACCOUNT', 'Verify the account before login');
       await this.approvals.approve(
@@ -696,6 +698,63 @@ export class AuthService {
             phoneCollisions,
           };
 
+          let clearedPendingPreHijackEmail = false;
+          if (
+            provider &&
+            incomingEmail &&
+            (!Array.isArray(emailCollisions) || emailCollisions.length === 0)
+          ) {
+            const pendingRows = await db.query(
+              `SELECT contact_value FROM public.user_auth_providers
+                WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
+              [user.id],
+            );
+            const pendingEmailBeforeRoleDrop = Array.isArray(pendingRows)
+              ? pendingRows[0]
+              : undefined;
+            const otherVerifiedRows = await db.query(
+              `SELECT 1 FROM public.user_auth_providers
+                WHERE provider = 'email'
+                  AND LOWER(contact_value) = $1
+                  AND verified_at IS NOT NULL
+                  AND user_id <> $2
+                LIMIT 1`,
+              [incomingEmail, user.id],
+            );
+            const otherVerifiedEmail = Array.isArray(otherVerifiedRows)
+              ? otherVerifiedRows[0]
+              : undefined;
+            if (
+              !otherVerifiedEmail &&
+              typeof pendingEmailBeforeRoleDrop?.contact_value === 'string' &&
+              pendingEmailBeforeRoleDrop.contact_value.trim().toLowerCase() ===
+                incomingEmail
+            ) {
+              // Pre-hijack safety: verified OAuth overrides an unverified password registration
+              // for the same email, clearing any attacker-supplied password and stale pending identity.
+              await db.query(
+                `UPDATE auth.users
+                    SET encrypted_password = NULL,
+                        updated_at = clock_timestamp()
+                  WHERE id = $1::uuid
+                    AND deleted_at IS NULL`,
+                [user.id],
+              );
+              await db.query(
+                `DELETE FROM auth.identities
+                  WHERE user_id = $1::uuid
+                    AND provider = 'email'`,
+                [user.id],
+              );
+              await db.query(
+                `DELETE FROM public.user_auth_providers
+                  WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
+                [user.id],
+              );
+              clearedPendingPreHijackEmail = true;
+            }
+          }
+
           await db.query('SET LOCAL ROLE service_role');
 
           if (needsDbOAuthProviderCheck) {
@@ -1019,17 +1078,35 @@ export class AuthService {
             }
             return this.meInTransaction(db, user.id);
           }
-          const [pendingEmail] = await db.query(
-            `SELECT 1 FROM public.user_auth_providers
-              WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
-            [user.id],
-          );
-          if (pendingEmail)
-            fail(
-              403,
-              'UNVERIFIED_ACCOUNT',
-              'Pending email registration must complete through verification',
+          if (!clearedPendingPreHijackEmail) {
+            const [pendingEmail] = await db.query(
+              `SELECT contact_value FROM public.user_auth_providers
+                WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
+              [user.id],
             );
+            if (pendingEmail) {
+              if (
+                provider &&
+                incomingEmail &&
+                typeof pendingEmail.contact_value === 'string' &&
+                pendingEmail.contact_value.trim().toLowerCase() ===
+                  incomingEmail
+              ) {
+                await db.query(
+                  `DELETE FROM public.user_auth_providers
+                    WHERE user_id=$1 AND provider='email' AND verified_at IS NULL`,
+                  [user.id],
+                );
+                clearedPendingPreHijackEmail = true;
+              } else {
+                fail(
+                  403,
+                  'UNVERIFIED_ACCOUNT',
+                  'Pending email registration must complete through verification',
+                );
+              }
+            }
+          }
 
           const verifiedContactMappings = await db.query(
             `SELECT provider, contact_value
@@ -1242,6 +1319,9 @@ export class AuthService {
           );
 
           for (const i of identities) {
+            if (clearedPendingPreHijackEmail && i.provider === 'email') {
+              continue;
+            }
             const isPhone = i.provider === 'phone';
             const isEmail = i.provider === 'email';
             const contactVal = isPhone ? phone : email;
@@ -1471,6 +1551,20 @@ export class AuthService {
     if (identity.sessionId && ['google', 'facebook'].includes(activeProvider)) {
       this.oauthSessionProviders.set(identity.sessionId, activeProvider);
     }
+    if ('user' in txResult && txResult.user?.verified_contact) {
+      if (incomingEmail) {
+        await this.abuse?.clearSendCooldown?.({
+          channel: 'email',
+          identifier: incomingEmail,
+        });
+      }
+      if (phone) {
+        await this.abuse?.clearSendCooldown?.({
+          channel: 'phone',
+          identifier: phone,
+        });
+      }
+    }
     return txResult;
   }
   async me(id: string) {
@@ -1699,6 +1793,11 @@ export class AuthService {
       );
     }
 
+    await this.abuse?.clearSendCooldown?.({
+      channel: 'email',
+      identifier: email,
+    });
+
     try {
       return await this.mintAndApproveSession(userId, email);
     } catch (error) {
@@ -1782,7 +1881,7 @@ export class AuthService {
     }
 
     const confirmedEmail = user.email_confirmed_at
-      ? user.email?.trim().toLowerCase() || null
+      ? nonSyntheticEmail(user.email)?.trim().toLowerCase() || null
       : null;
 
     return this.database
@@ -2305,6 +2404,11 @@ export class AuthService {
         error instanceof Error ? error.stack : String(error),
       );
     }
+
+    await this.abuse?.clearSendCooldown?.({
+      channel: 'phone',
+      identifier: phone,
+    });
 
     // EP-A12 secondary phone verification confirms contact without minting new session
     if (user.is_primary === false) {
@@ -3035,43 +3139,44 @@ export class AuthService {
     const rows =
       typeof this.database?.query === 'function'
         ? await this.database.query(
-            channel === 'phone'
-              ? `SELECT u.id, u.phone, u.status, u.verified_contact, p.provider_subject, p.verified_at
-                   FROM public.users u
-                   JOIN public.user_auth_providers p
-                     ON p.user_id = u.id AND p.provider = 'phone'
-                  WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
-                  LIMIT 1`
-              : `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject, p.verified_at
-                   FROM public.users u
-                   JOIN public.user_auth_providers p
-                     ON p.user_id = u.id AND p.provider = 'email'
-                  WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
-                  LIMIT 1`,
+            this.buildPrimaryRecoveryLookupSql(channel, false),
             [input.identifier],
           )
         : undefined;
 
-    const user = rows?.[0];
+    let user = rows?.[0];
+    if (
+      typeof this.database?.query === 'function' &&
+      Array.isArray(rows) &&
+      !user
+    ) {
+      const fallbackUser = await this.findFallbackRecoveryAccount(
+        channel,
+        input.identifier,
+      );
+      if (fallbackUser) {
+        user = fallbackUser;
+      }
+    }
+
     const notFoundMessage =
       channel === 'phone'
         ? 'No account found with this phone number.'
         : 'No account found with this email address.';
     if (Array.isArray(rows) && (!user || user.status === 'deleted')) {
-      await this.abuse.reserveSend(input, ip, { ipOnly: true });
+      await this.abuse.reserveSend(input, ip, {
+        ipOnly: true,
+        purpose: 'reset_password',
+      });
       fail(404, 'AUTH_USER_NOT_FOUND', notFoundMessage);
     }
 
-    await this.abuse.reserveSend(input, ip);
+    await this.abuse.reserveSend(input, ip, { purpose: 'reset_password' });
 
     if (!user || user.status === 'deleted') {
       fail(404, 'AUTH_USER_NOT_FOUND', notFoundMessage);
     }
-    if (
-      user.status === 'active' &&
-      user.verified_contact === true &&
-      user.verified_at !== null
-    ) {
+    if (user.status === 'active' && this.hasVerifiedRecoveryChannel(user)) {
       const challengePromise =
         channel === 'phone'
           ? this.smsProvider!.sendPasswordResetChallenge(
@@ -3129,24 +3234,21 @@ export class AuthService {
     }
 
     const rows = await this.database.query(
-      channel === 'phone'
-        ? `SELECT u.id, u.phone, u.status, u.verified_contact, p.provider_subject
-             FROM public.users u
-             JOIN public.user_auth_providers p
-               ON p.user_id = u.id AND p.provider = 'phone'
-            WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
-            LIMIT 1`
-        : `SELECT u.id, u.email, u.status, u.verified_contact, p.provider_subject
-             FROM public.users u
-             JOIN public.user_auth_providers p
-               ON p.user_id = u.id AND p.provider = 'email'
-            WHERE (lower(p.contact_value) = $1 OR lower(COALESCE(u.email, '')) = $1)
-            LIMIT 1`,
+      this.buildPrimaryRecoveryLookupSql(channel, true),
       [input.identifier],
     );
 
-    const user = rows?.[0];
-    if (!user) {
+    let user = rows?.[0];
+    if (!user && Array.isArray(rows)) {
+      const fallbackUser = await this.findFallbackRecoveryAccount(
+        channel,
+        input.identifier,
+      );
+      if (fallbackUser && fallbackUser.status !== 'deleted') {
+        user = fallbackUser;
+      }
+    }
+    if (!user || user.status === 'deleted') {
       fail(410, 'VERIFICATION_CODE_EXPIRED', 'Verification challenge expired');
     }
 
@@ -3164,11 +3266,134 @@ export class AuthService {
             await this.database.transaction(
               userId,
               async (db) => {
+                let currentUser: typeof user;
+                if (user.from_auth_fallback === true) {
+                  const liveFallback = await this.findFallbackRecoveryAccount(
+                    channel,
+                    input.identifier,
+                    db,
+                  );
+                  if (
+                    !liveFallback ||
+                    liveFallback.status === 'deleted' ||
+                    liveFallback.id !== userId ||
+                    liveFallback.verified_contact !== true
+                  ) {
+                    fail(
+                      410,
+                      'VERIFICATION_CODE_EXPIRED',
+                      'Verification challenge expired',
+                    );
+                  }
+                  if (liveFallback.status !== 'active') {
+                    fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+                  }
+                  currentUser = liveFallback;
+                } else {
+                  const livePrimaryRows = await db.query(
+                    this.buildPrimaryRecoveryLookupSql(channel, true),
+                    [input.identifier],
+                  );
+                  const livePrimary = Array.isArray(livePrimaryRows)
+                    ? livePrimaryRows[0]
+                    : undefined;
+                  if (
+                    !livePrimary ||
+                    livePrimary.status === 'deleted' ||
+                    livePrimary.id !== userId ||
+                    !this.hasVerifiedRecoveryChannel(livePrimary)
+                  ) {
+                    fail(
+                      410,
+                      'VERIFICATION_CODE_EXPIRED',
+                      'Verification challenge expired',
+                    );
+                  }
+                  if (livePrimary.status && livePrimary.status !== 'active') {
+                    fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+                  }
+                  currentUser = livePrimary;
+                }
+
                 await this.approvals.revokeAllUserSessions(userId, db);
-                await this.updateGoTrueUserPassword(userId, input.new_password);
+
+                let needsAuthContactSync =
+                  currentUser.needs_auth_contact_sync === true;
+                let needsAuthConfirm = currentUser.needs_auth_confirm === true;
+                if (
+                  currentUser &&
+                  ('auth_email_confirmed_at' in currentUser ||
+                    'auth_phone_confirmed_at' in currentUser ||
+                    'email_confirmed_at' in currentUser ||
+                    'phone_confirmed_at' in currentUser)
+                ) {
+                  const liveFlags = this.computeLiveAuthSyncFlags(
+                    channel,
+                    input.identifier,
+                    {
+                      email:
+                        'auth_email' in currentUser
+                          ? currentUser.auth_email
+                          : currentUser.email,
+                      phone:
+                        'auth_phone' in currentUser
+                          ? currentUser.auth_phone
+                          : currentUser.phone,
+                      email_confirmed_at:
+                        'auth_email_confirmed_at' in currentUser
+                          ? currentUser.auth_email_confirmed_at
+                          : currentUser.email_confirmed_at,
+                      phone_confirmed_at:
+                        'auth_phone_confirmed_at' in currentUser
+                          ? currentUser.auth_phone_confirmed_at
+                          : currentUser.phone_confirmed_at,
+                    },
+                  );
+                  needsAuthContactSync = liveFlags.needsContactSync;
+                  needsAuthConfirm = liveFlags.needsConfirm;
+                }
+
+                const needsChannelSync =
+                  currentUser.from_auth_fallback === true ||
+                  needsAuthContactSync ||
+                  needsAuthConfirm ||
+                  (this.hasVerifiedRecoveryChannel(currentUser) &&
+                    (currentUser.has_verified_channel_provider === false ||
+                      (channel === 'email' &&
+                        currentUser.has_verified_email_provider === false)));
+                if (currentUser.from_auth_fallback === true) {
+                  await this.bootstrapRecoveredAuthAccount(
+                    db,
+                    currentUser,
+                    channel,
+                    input.identifier,
+                    true,
+                  );
+                } else if (needsChannelSync) {
+                  await this.ensureVerifiedChannelProvider(
+                    db,
+                    userId,
+                    channel,
+                    input.identifier,
+                  );
+                }
+                await this.ensureAccountActiveBeforePasswordUpdate(db, userId);
+                const confirmChannel =
+                  needsAuthConfirm || needsAuthContactSync
+                    ? channel
+                    : undefined;
+                const syncContactIdentifier = confirmChannel
+                  ? input.identifier
+                  : undefined;
+                await this.updateGoTrueUserPassword(
+                  userId,
+                  input.new_password,
+                  confirmChannel,
+                  syncContactIdentifier,
+                );
                 passwordUpdated = true;
               },
-              true,
+              user.from_auth_fallback !== true,
             );
             committed = true;
           } catch (error) {
@@ -3198,15 +3423,792 @@ export class AuthService {
     }
 
     await this.revokeGoTrueUserSessions(userId);
+    await this.abuse?.clearSendCooldown?.(
+      { channel, identifier: input.identifier },
+      'reset_password',
+    );
 
     return {
       password_reset: true as const,
     };
   }
 
+  private buildPrimaryRecoveryLookupSql(
+    channel: 'email' | 'phone',
+    includeChannelFlag: boolean,
+  ): string {
+    if (channel === 'phone') {
+      const flagSql = includeChannelFlag
+        ? `,
+                  EXISTS (
+                    SELECT 1
+                      FROM public.user_auth_providers ep
+                     WHERE ep.user_id = u.id
+                       AND ep.provider = 'phone'
+                       AND ep.verified_at IS NOT NULL
+                  ) AS has_verified_channel_provider,
+                  EXISTS (
+                    SELECT 1
+                      FROM auth.users au
+                     WHERE au.id = u.id
+                       AND (
+                         au.phone_confirmed_at IS NULL
+                         OR COALESCE(au.phone, '') NOT IN ($1, ltrim($1, '+'))
+                       )
+                  ) AS needs_auth_confirm,
+                  EXISTS (
+                    SELECT 1
+                      FROM auth.users au
+                     WHERE au.id = u.id
+                       AND COALESCE(au.phone, '') NOT IN ($1, ltrim($1, '+'))
+                  ) AS needs_auth_contact_sync,
+                  (SELECT au.phone FROM auth.users au WHERE au.id = u.id LIMIT 1) AS auth_phone,
+                  (SELECT au.phone_confirmed_at FROM auth.users au WHERE au.id = u.id LIMIT 1) AS auth_phone_confirmed_at`
+        : '';
+      return `SELECT u.id,
+                     u.phone,
+                     u.status,
+                     u.verified_contact,
+                     p.provider_subject,
+                     p.verified_at,
+                     (p.provider IN ('google', 'facebook')) AS is_oauth_provider${flagSql}
+                FROM public.users u
+                LEFT JOIN public.user_auth_providers p
+                  ON p.user_id = u.id
+                 AND p.provider IN ('phone', 'google', 'facebook')
+                 AND (
+                   p.contact_value IN ($1, ltrim($1, '+'))
+                   OR (
+                     (p.contact_value IS NULL OR p.contact_value IN ($1, ltrim($1, '+')))
+                     AND COALESCE(u.phone, '') IN ($1, ltrim($1, '+'))
+                   )
+                   OR (p.verified_at IS NOT NULL AND COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
+                 )
+               WHERE (p.contact_value IN ($1, ltrim($1, '+')) OR COALESCE(u.phone, '') IN ($1, ltrim($1, '+')))
+               ORDER BY
+                 (p.verified_at IS NOT NULL) DESC,
+                 (p.provider = 'phone') DESC,
+                 p.created_at ASC NULLS LAST
+               LIMIT 1`;
+    }
+
+    const flagSql = includeChannelFlag
+      ? `,
+                  EXISTS (
+                    SELECT 1
+                      FROM public.user_auth_providers ep
+                     WHERE ep.user_id = u.id
+                       AND ep.provider = 'email'
+                       AND ep.verified_at IS NOT NULL
+                  ) AS has_verified_channel_provider,
+                  EXISTS (
+                    SELECT 1
+                      FROM auth.users au
+                     WHERE au.id = u.id
+                       AND (
+                         au.email_confirmed_at IS NULL
+                         OR lower(COALESCE(au.email, '')) <> $1
+                       )
+                  ) AS needs_auth_confirm,
+                  EXISTS (
+                    SELECT 1
+                      FROM auth.users au
+                     WHERE au.id = u.id
+                       AND lower(COALESCE(au.email, '')) <> $1
+                  ) AS needs_auth_contact_sync,
+                  (SELECT au.email FROM auth.users au WHERE au.id = u.id LIMIT 1) AS auth_email,
+                  (SELECT au.email_confirmed_at FROM auth.users au WHERE au.id = u.id LIMIT 1) AS auth_email_confirmed_at`
+      : '';
+    return `SELECT u.id,
+                   u.email,
+                   u.status,
+                   u.verified_contact,
+                   p.provider_subject,
+                   p.verified_at,
+                   (p.provider IN ('google', 'facebook')) AS is_oauth_provider${flagSql}
+              FROM public.users u
+              LEFT JOIN public.user_auth_providers p
+                ON p.user_id = u.id
+               AND p.provider IN ('email', 'google', 'facebook')
+               AND (
+                 lower(COALESCE(p.contact_value, '')) = $1
+                 OR (
+                   (p.contact_value IS NULL OR lower(p.contact_value) = $1)
+                   AND lower(COALESCE(u.email, '')) = $1
+                 )
+                 OR (p.verified_at IS NOT NULL AND lower(COALESCE(u.email, '')) = $1)
+               )
+             WHERE (lower(COALESCE(p.contact_value, '')) = $1 OR lower(COALESCE(u.email, '')) = $1)
+             ORDER BY
+               (p.verified_at IS NOT NULL) DESC,
+               (p.provider = 'email') DESC,
+               p.created_at ASC NULLS LAST
+             LIMIT 1`;
+  }
+
+  private async findFallbackRecoveryAccount(
+    channel: 'email' | 'phone',
+    identifier: string,
+    queryExecutor: {
+      query: (sql: string, params?: unknown[]) => Promise<unknown>;
+    } = this.database,
+  ): Promise<{
+    id: string;
+    email?: string | null;
+    phone?: string | null;
+    status: 'active' | 'suspended' | 'deleted';
+    verified_contact: boolean;
+    verified_at: string | null;
+    email_confirmed_at?: string | null;
+    phone_confirmed_at?: string | null;
+    oauth_confirmed_at?: string | null;
+    oauth_provider?: 'google' | 'facebook' | null;
+    oauth_subject?: string | null;
+    is_oauth_provider: boolean;
+    has_verified_channel_provider: boolean;
+    needs_auth_confirm: boolean;
+    needs_auth_contact_sync: boolean;
+    from_auth_fallback: true;
+  } | null> {
+    if (typeof queryExecutor?.query !== 'function') {
+      return null;
+    }
+    const isPhone = channel === 'phone';
+    const contactMatch = isPhone
+      ? `u.phone IN ($1, ltrim($1, '+'))`
+      : `lower(COALESCE(u.email, '')) = $1`;
+    const confirmedExpr = isPhone
+      ? 'u.phone_confirmed_at IS NOT NULL'
+      : 'u.email_confirmed_at IS NOT NULL';
+
+    const rows = await queryExecutor.query(
+      `SELECT u.id,
+              u.email,
+              u.phone,
+              u.email_confirmed_at,
+              u.phone_confirmed_at,
+              pu.status::text AS app_status,
+              COALESCE(
+                (
+                  SELECT lower(i.provider)
+                    FROM auth.identities i
+                   WHERE i.user_id = u.id
+                     AND lower(i.provider) IN ('google', 'facebook')
+                   ORDER BY i.created_at ASC NULLS LAST
+                   LIMIT 1
+                ),
+                CASE
+                  WHEN lower(COALESCE(u.raw_app_meta_data->>'provider', '')) IN ('google', 'facebook')
+                  THEN lower(u.raw_app_meta_data->>'provider')
+                  ELSE NULL
+                END,
+                (
+                  SELECT lower(p_el)
+                    FROM jsonb_array_elements_text(
+                      CASE
+                        WHEN jsonb_typeof(u.raw_app_meta_data->'providers') = 'array'
+                          THEN u.raw_app_meta_data->'providers'
+                        ELSE '[]'::jsonb
+                      END
+                    ) p_el
+                   WHERE lower(p_el) IN ('google', 'facebook')
+                   LIMIT 1
+                )
+              ) AS oauth_provider,
+              (
+                SELECT COALESCE(NULLIF(trim(i.identity_data->>'sub'), ''), i.id::text)
+                  FROM auth.identities i
+                 WHERE i.user_id = u.id
+                   AND lower(i.provider) IN ('google', 'facebook')
+                 ORDER BY i.created_at ASC NULLS LAST
+                 LIMIT 1
+              ) AS oauth_subject
+         FROM auth.users u
+         LEFT JOIN public.users pu ON pu.id = u.id
+        WHERE u.deleted_at IS NULL
+          AND COALESCE(u.is_anonymous, false) = false
+          AND ${contactMatch}
+          AND (
+            ${confirmedExpr}
+            OR (
+              (u.email_confirmed_at IS NOT NULL OR u.phone_confirmed_at IS NOT NULL)
+              AND (
+                lower(COALESCE(u.raw_app_meta_data->>'provider', '')) IN ('google', 'facebook')
+                OR EXISTS (
+                  SELECT 1
+                    FROM jsonb_array_elements_text(
+                      CASE
+                        WHEN jsonb_typeof(u.raw_app_meta_data->'providers') = 'array'
+                          THEN u.raw_app_meta_data->'providers'
+                        ELSE '[]'::jsonb
+                      END
+                    ) p_el
+                   WHERE lower(p_el) IN ('google', 'facebook')
+                )
+                OR EXISTS (
+                  SELECT 1
+                    FROM auth.identities i
+                   WHERE i.user_id = u.id
+                     AND lower(i.provider) IN ('google', 'facebook')
+                )
+              )
+            )
+          )
+        ORDER BY
+          COALESCE(pu.status::text = 'deleted', false) ASC,
+          COALESCE(${confirmedExpr}, false) DESC,
+          u.created_at DESC NULLS LAST
+        LIMIT 1`,
+      [identifier],
+    );
+
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (!row?.id) {
+      return null;
+    }
+    if (row.app_status === 'deleted') {
+      return {
+        id: String(row.id),
+        status: 'deleted',
+        verified_contact: false,
+        verified_at: null,
+        email_confirmed_at: null,
+        phone_confirmed_at: null,
+        oauth_confirmed_at: null,
+        is_oauth_provider: false,
+        has_verified_channel_provider: false,
+        needs_auth_confirm: false,
+        needs_auth_contact_sync: false,
+        from_auth_fallback: true,
+      };
+    }
+
+    const oauthProvider =
+      row.oauth_provider === 'google' || row.oauth_provider === 'facebook'
+        ? row.oauth_provider
+        : null;
+    const toIsoTimestamp = (value: unknown): string | null => {
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+      return null;
+    };
+    const emailConfirmedAtIso = toIsoTimestamp(row.email_confirmed_at);
+    const phoneConfirmedAtIso = toIsoTimestamp(row.phone_confirmed_at);
+    const channelConfirmedAtIso = isPhone
+      ? phoneConfirmedAtIso
+      : emailConfirmedAtIso;
+    const rawAuthEmail =
+      typeof row.email === 'string' && row.email.trim()
+        ? row.email.trim().toLowerCase()
+        : '';
+    const nonSyntheticAuthEmail =
+      rawAuthEmail && !rawAuthEmail.endsWith('@synthetic.mentor')
+        ? rawAuthEmail
+        : null;
+    const authEmailMatches = Boolean(
+      nonSyntheticAuthEmail &&
+      nonSyntheticAuthEmail === identifier.trim().toLowerCase(),
+    );
+    const rawAuthPhone = typeof row.phone === 'string' ? row.phone.trim() : '';
+    const identifierDigits = identifier.replace(/^\+/, '');
+    const authPhoneMatches = Boolean(
+      rawAuthPhone &&
+      (rawAuthPhone === identifier || rawAuthPhone === identifierDigits),
+    );
+    const confirmedSecondaryEmail =
+      emailConfirmedAtIso && nonSyntheticAuthEmail
+        ? nonSyntheticAuthEmail
+        : null;
+    const confirmedSecondaryPhone =
+      phoneConfirmedAtIso && rawAuthPhone ? rawAuthPhone : null;
+    return {
+      id: String(row.id),
+      email: !isPhone
+        ? (nonSyntheticAuthEmail ?? identifier)
+        : confirmedSecondaryEmail,
+      phone: isPhone ? rawAuthPhone || identifier : confirmedSecondaryPhone,
+      status: row.app_status === 'suspended' ? 'suspended' : 'active',
+      verified_contact: Boolean(channelConfirmedAtIso),
+      verified_at: channelConfirmedAtIso,
+      email_confirmed_at: emailConfirmedAtIso,
+      phone_confirmed_at: phoneConfirmedAtIso,
+      oauth_confirmed_at: !isPhone
+        ? emailConfirmedAtIso
+        : confirmedSecondaryEmail
+          ? emailConfirmedAtIso
+          : null,
+      oauth_provider: oauthProvider,
+      oauth_subject:
+        typeof row.oauth_subject === 'string' && row.oauth_subject.trim()
+          ? row.oauth_subject.trim()
+          : null,
+      is_oauth_provider: Boolean(oauthProvider),
+      has_verified_channel_provider: false,
+      needs_auth_confirm: isPhone
+        ? !(channelConfirmedAtIso && authPhoneMatches)
+        : !(channelConfirmedAtIso && authEmailMatches),
+      needs_auth_contact_sync: isPhone ? !authPhoneMatches : !authEmailMatches,
+      from_auth_fallback: true,
+    };
+  }
+
+  private computeLiveAuthSyncFlags(
+    channel: 'email' | 'phone',
+    identifier: string,
+    authRow: {
+      email?: string | null;
+      phone?: string | null;
+      email_confirmed_at?: unknown;
+      phone_confirmed_at?: unknown;
+    },
+  ): { needsContactSync: boolean; needsConfirm: boolean } {
+    if (channel === 'phone') {
+      const currentPhone =
+        typeof authRow.phone === 'string' ? authRow.phone.trim() : '';
+      const digits = identifier.replace(/^\+/, '');
+      const phoneMatches = Boolean(
+        currentPhone &&
+        (currentPhone === identifier || currentPhone === digits),
+      );
+      return {
+        needsContactSync: !phoneMatches,
+        needsConfirm: !phoneMatches || !authRow.phone_confirmed_at,
+      };
+    }
+    const currentEmail =
+      typeof authRow.email === 'string'
+        ? authRow.email.trim().toLowerCase()
+        : '';
+    const emailMatches =
+      Boolean(currentEmail) && currentEmail === identifier.trim().toLowerCase();
+    return {
+      needsContactSync: !emailMatches,
+      needsConfirm: !emailMatches || !authRow.email_confirmed_at,
+    };
+  }
+
+  private contactsMatch(
+    channel: 'email' | 'phone',
+    existingValue: string | null | undefined,
+    incomingValue: string,
+  ): boolean {
+    if (typeof existingValue !== 'string' || !existingValue.trim()) {
+      return true;
+    }
+    const existingTrimmed = existingValue.trim();
+    const incomingTrimmed = incomingValue.trim();
+    if (channel === 'phone') {
+      return (
+        existingTrimmed.replace(/^\+/, '') ===
+        incomingTrimmed.replace(/^\+/, '')
+      );
+    }
+    return existingTrimmed.toLowerCase() === incomingTrimmed.toLowerCase();
+  }
+
+  private failVerifiedContactConflict(channel: 'email' | 'phone'): never {
+    if (channel === 'phone') {
+      fail(
+        409,
+        'PHONE_CONFLICT',
+        'A different verified phone number is already linked to this account.',
+      );
+    }
+    fail(
+      409,
+      'IDENTITY_LINK_CONFLICT',
+      'A different verified email address is already linked to this account.',
+    );
+  }
+
+  private hasVerifiedRecoveryChannel(user: {
+    verified_contact?: boolean | null;
+    verified_at?: string | Date | null;
+    is_oauth_provider?: boolean | null;
+  }): boolean {
+    return (
+      user.verified_contact === true &&
+      (user.verified_at !== null || user.is_oauth_provider === true)
+    );
+  }
+
+  private async ensureAccountActiveBeforePasswordUpdate(
+    db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+    userId: string,
+  ): Promise<void> {
+    const liveStatusRows = (await db.query(
+      `SELECT status::text AS status,
+              suspended_at,
+              (SELECT au.deleted_at FROM auth.users au WHERE au.id = public.users.id LIMIT 1) AS auth_deleted_at
+         FROM public.users
+        WHERE id = $1::uuid
+        FOR UPDATE`,
+      [userId],
+    )) as
+      | Array<{
+          status?: string | null;
+          suspended_at?: string | Date | null;
+          auth_deleted_at?: string | Date | null;
+        }>
+      | undefined;
+    const liveStatusRow = Array.isArray(liveStatusRows)
+      ? liveStatusRows[0]
+      : undefined;
+    if (!liveStatusRow) {
+      fail(401, 'AUTH_REQUIRED', 'Application account not found');
+    }
+    if (
+      liveStatusRow.status === 'deleted' ||
+      (liveStatusRow.auth_deleted_at !== undefined &&
+        liveStatusRow.auth_deleted_at !== null)
+    ) {
+      fail(410, 'VERIFICATION_CODE_EXPIRED', 'Verification challenge expired');
+    }
+    if (
+      liveStatusRow.status !== 'active' ||
+      (liveStatusRow.suspended_at !== undefined &&
+        liveStatusRow.suspended_at !== null)
+    ) {
+      fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+    }
+  }
+
+  private async ensureVerifiedChannelProvider(
+    db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+    userId: string,
+    channel: 'email' | 'phone',
+    identifier: string,
+  ): Promise<void> {
+    const column = channel === 'phone' ? 'phone' : 'email';
+    const provider = channel === 'phone' ? 'phone' : 'email';
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+      userId,
+    ]);
+    const existingUsers = (await db.query(
+      `SELECT status, suspended_at, verified_contact, ${column} AS current_contact
+         FROM public.users
+        WHERE id = $1::uuid
+        FOR UPDATE`,
+      [userId],
+    )) as
+      | Array<{
+          status?: string;
+          suspended_at?: string | Date | null;
+          verified_contact?: boolean;
+          current_contact?: string | null;
+        }>
+      | undefined;
+    const existingUser = Array.isArray(existingUsers)
+      ? existingUsers[0]
+      : undefined;
+    if (
+      (existingUser?.status && existingUser.status !== 'active') ||
+      (existingUser?.suspended_at !== undefined &&
+        existingUser.suspended_at !== null)
+    ) {
+      fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+    }
+    if (
+      existingUser?.verified_contact === true &&
+      typeof existingUser.current_contact === 'string' &&
+      existingUser.current_contact.trim() &&
+      !this.contactsMatch(channel, existingUser.current_contact, identifier)
+    ) {
+      this.failVerifiedContactConflict(channel);
+    }
+
+    const existingProviders = (await db.query(
+      `SELECT contact_value, verified_at
+         FROM public.user_auth_providers
+        WHERE user_id = $1::uuid
+          AND provider = '${provider}'
+        FOR UPDATE`,
+      [userId],
+    )) as
+      | Array<{
+          contact_value?: string | null;
+          verified_at?: string | Date | null;
+        }>
+      | undefined;
+    const existingProvider = Array.isArray(existingProviders)
+      ? existingProviders[0]
+      : undefined;
+    if (
+      existingProvider?.verified_at !== undefined &&
+      existingProvider.verified_at !== null &&
+      typeof existingProvider.contact_value === 'string' &&
+      existingProvider.contact_value.trim() &&
+      !this.contactsMatch(channel, existingProvider.contact_value, identifier)
+    ) {
+      this.failVerifiedContactConflict(channel);
+    }
+
+    await db.query(
+      `INSERT INTO public.users
+         (id, ${column}, verified_contact, last_active_at, last_login_at)
+       VALUES ($2::uuid, $1, true, clock_timestamp(), clock_timestamp())
+       ON CONFLICT (id) DO UPDATE
+         SET ${column} = CASE
+               WHEN public.users.verified_contact = true
+                AND public.users.${column} IS NOT NULL
+                 THEN public.users.${column}
+               ELSE EXCLUDED.${column}
+             END,
+             verified_contact = true,
+             updated_at = now()`,
+      [identifier, userId],
+    );
+    await db.query(
+      `INSERT INTO public.user_auth_providers
+         (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+       VALUES (
+         $1::uuid,
+         '${provider}',
+         $1::text,
+         $2,
+         now(),
+         NOT EXISTS (SELECT 1 FROM public.user_auth_providers WHERE user_id = $1::uuid AND is_primary = true)
+       )
+       ON CONFLICT (user_id, provider) DO UPDATE
+         SET contact_value = CASE
+               WHEN public.user_auth_providers.verified_at IS NOT NULL
+                AND public.user_auth_providers.contact_value IS NOT NULL
+                 THEN public.user_auth_providers.contact_value
+               ELSE EXCLUDED.contact_value
+             END,
+             provider_subject = CASE
+               WHEN public.user_auth_providers.verified_at IS NOT NULL
+                 THEN public.user_auth_providers.provider_subject
+               ELSE EXCLUDED.provider_subject
+             END,
+             verified_at = COALESCE(public.user_auth_providers.verified_at, EXCLUDED.verified_at),
+             updated_at = now()`,
+      [userId, identifier],
+    );
+  }
+
+  private async bootstrapRecoveredAuthAccount(
+    db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+    account: {
+      id: string;
+      email?: string | null;
+      phone?: string | null;
+      email_confirmed_at?: string | null;
+      phone_confirmed_at?: string | null;
+      oauth_confirmed_at?: string | null;
+      oauth_provider?: 'google' | 'facebook' | null;
+      oauth_subject?: string | null;
+    },
+    channel: 'email' | 'phone',
+    identifier: string,
+    includeChannelProvider: boolean,
+  ): Promise<void> {
+    const normalizedAccountEmail =
+      typeof account.email === 'string' &&
+      account.email.trim() &&
+      !account.email.trim().toLowerCase().endsWith('@synthetic.mentor')
+        ? account.email.trim().toLowerCase()
+        : null;
+    const rawAccountPhone =
+      typeof account.phone === 'string' ? account.phone.trim() : '';
+    const normalizedAccountPhone = rawAccountPhone
+      ? rawAccountPhone.startsWith('+')
+        ? rawAccountPhone
+        : /^01[3-9][0-9]{8}$/.test(rawAccountPhone)
+          ? `+88${rawAccountPhone}`
+          : `+${rawAccountPhone}`
+      : null;
+    const resolvedEmail =
+      channel === 'email'
+        ? identifier
+        : account.email_confirmed_at
+          ? normalizedAccountEmail
+          : null;
+    const resolvedPhone =
+      channel === 'phone'
+        ? identifier
+        : account.phone_confirmed_at
+          ? normalizedAccountPhone
+          : null;
+
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+      account.id,
+    ]);
+    const existingRows = (await db.query(
+      'SELECT status, suspended_at, verified_contact, email, phone FROM public.users WHERE id = $1::uuid FOR UPDATE',
+      [account.id],
+    )) as
+      | Array<{
+          status?: string;
+          suspended_at?: string | Date | null;
+          verified_contact?: boolean;
+          email?: string | null;
+          phone?: string | null;
+        }>
+      | undefined;
+    const existingRow = Array.isArray(existingRows)
+      ? existingRows[0]
+      : undefined;
+    if (
+      (existingRow?.status && existingRow.status !== 'active') ||
+      (existingRow?.suspended_at !== undefined &&
+        existingRow.suspended_at !== null)
+    ) {
+      fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+    }
+    if (existingRow?.verified_contact === true) {
+      const existingContact =
+        channel === 'phone' ? existingRow.phone : existingRow.email;
+      if (
+        typeof existingContact === 'string' &&
+        existingContact.trim() &&
+        !this.contactsMatch(channel, existingContact, identifier)
+      ) {
+        this.failVerifiedContactConflict(channel);
+      }
+    }
+    await db.query(
+      `INSERT INTO public.users(id, email, phone, verified_contact, last_active_at, last_login_at)
+       VALUES($1::uuid, $2, $3, true, clock_timestamp(), clock_timestamp())
+       ON CONFLICT(id) DO UPDATE SET
+         email = CASE
+           WHEN public.users.verified_contact = true AND public.users.email IS NOT NULL
+             THEN public.users.email
+           ELSE COALESCE(EXCLUDED.email, public.users.email)
+         END,
+         phone = CASE
+           WHEN public.users.verified_contact = true AND public.users.phone IS NOT NULL
+             THEN public.users.phone
+           ELSE COALESCE(EXCLUDED.phone, public.users.phone)
+         END,
+         verified_contact = true,
+         updated_at = now()`,
+      [account.id, resolvedEmail, resolvedPhone],
+    );
+    if (account.oauth_provider) {
+      const oauthEmail =
+        channel === 'email'
+          ? identifier
+          : account.email_confirmed_at
+            ? normalizedAccountEmail
+            : null;
+      const oauthContactChannel: 'email' | 'phone' | null = oauthEmail
+        ? 'email'
+        : null;
+      const oauthContactValue = oauthEmail;
+
+      const existingOAuthRows = (await db.query(
+        `SELECT contact_value, verified_at
+           FROM public.user_auth_providers
+          WHERE user_id = $1::uuid
+            AND provider = $2::public.auth_provider
+          FOR UPDATE`,
+        [account.id, account.oauth_provider],
+      )) as
+        | Array<{
+            contact_value?: string | null;
+            verified_at?: string | Date | null;
+          }>
+        | undefined;
+      const existingOAuthRow = Array.isArray(existingOAuthRows)
+        ? existingOAuthRows[0]
+        : undefined;
+      const existingOAuthContact =
+        typeof existingOAuthRow?.contact_value === 'string'
+          ? existingOAuthRow.contact_value.trim()
+          : '';
+      const existingOAuthIsEmail = existingOAuthContact.includes('@');
+      const incomingOAuthIsEmail = oauthContactChannel === 'email';
+      const comparableOAuthTypes =
+        oauthContactChannel !== null &&
+        (!existingOAuthContact ||
+          existingOAuthIsEmail === incomingOAuthIsEmail);
+      const effectiveOAuthContactValue = comparableOAuthTypes
+        ? oauthContactValue
+        : null;
+
+      if (
+        comparableOAuthTypes &&
+        oauthContactChannel !== null &&
+        oauthContactValue &&
+        existingOAuthRow?.verified_at !== undefined &&
+        existingOAuthRow.verified_at !== null &&
+        existingOAuthContact &&
+        !this.contactsMatch(
+          oauthContactChannel,
+          existingOAuthContact,
+          oauthContactValue,
+        )
+      ) {
+        this.failVerifiedContactConflict(oauthContactChannel);
+      }
+
+      const oauthProviderVerifiedAt = !comparableOAuthTypes
+        ? null
+        : (account.email_confirmed_at ??
+          (channel === 'email' ? (account.oauth_confirmed_at ?? null) : null));
+
+      await db.query(
+        `INSERT INTO public.user_auth_providers
+           (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+         VALUES (
+           $1::uuid,
+           $2::public.auth_provider,
+           $3::text,
+           $4,
+           $5::timestamptz,
+           NOT EXISTS (SELECT 1 FROM public.user_auth_providers WHERE user_id = $1::uuid AND is_primary = true)
+         )
+         ON CONFLICT (user_id, provider) DO UPDATE
+           SET contact_value = CASE
+                 WHEN public.user_auth_providers.verified_at IS NOT NULL
+                  AND public.user_auth_providers.contact_value IS NOT NULL
+                   THEN public.user_auth_providers.contact_value
+                 ELSE COALESCE(EXCLUDED.contact_value, public.user_auth_providers.contact_value)
+               END,
+               provider_subject = CASE
+                 WHEN public.user_auth_providers.verified_at IS NOT NULL
+                   THEN public.user_auth_providers.provider_subject
+                 ELSE EXCLUDED.provider_subject
+               END,
+               verified_at = COALESCE(public.user_auth_providers.verified_at, EXCLUDED.verified_at),
+               updated_at = now()`,
+        [
+          account.id,
+          account.oauth_provider,
+          account.oauth_subject || account.id,
+          effectiveOAuthContactValue,
+          oauthProviderVerifiedAt,
+        ],
+      );
+    }
+    if (includeChannelProvider) {
+      await this.ensureVerifiedChannelProvider(
+        db,
+        account.id,
+        channel,
+        identifier,
+      );
+    }
+    await db.query(
+      'INSERT INTO public.user_profiles(user_id) VALUES($1::uuid) ON CONFLICT(user_id) DO NOTHING',
+      [account.id],
+    );
+    await db.query(
+      'INSERT INTO public.user_preferences(user_id) VALUES($1::uuid) ON CONFLICT(user_id) DO NOTHING',
+      [account.id],
+    );
+  }
+
   private async updateGoTrueUserPassword(
     userId: string,
     newPassword: string,
+    confirmChannel?: 'email' | 'phone',
+    contactIdentifier?: string,
   ): Promise<void> {
     const supabaseUrl = this.config
       .getOrThrow<string>('SUPABASE_URL')
@@ -3214,6 +4216,19 @@ export class AuthService {
     const serviceRoleKey =
       this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
       this.config.get<string>('SERVICE_ROLE_KEY');
+
+    const payload: Record<string, unknown> = { password: newPassword };
+    if (confirmChannel === 'email') {
+      if (contactIdentifier) {
+        payload.email = contactIdentifier;
+      }
+      payload.email_confirm = true;
+    } else if (confirmChannel === 'phone') {
+      if (contactIdentifier) {
+        payload.phone = contactIdentifier;
+      }
+      payload.phone_confirm = true;
+    }
 
     let response: Response;
     try {
@@ -3224,7 +4239,7 @@ export class AuthService {
           Authorization: `Bearer ${serviceRoleKey || ''}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ password: newPassword }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       });
     } catch (error) {

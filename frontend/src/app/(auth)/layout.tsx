@@ -48,13 +48,6 @@ export default function AuthLayout({
         >
           {children}
         </main>
-        <Link
-          href="/"
-          className="mx-auto inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-label-lg text-text-secondary transition-colors hover:text-text-brand hover:underline"
-        >
-          <span aria-hidden="true">←</span>
-          Back to Home
-        </Link>
       </div>
     </div>
   );

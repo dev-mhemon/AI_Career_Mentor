@@ -19,9 +19,6 @@ import { Button } from '@/components/ui/button';
 const primaryLinkClass =
   'inline-flex h-10 min-h-11 items-center justify-center rounded-md bg-action-primary-background px-5 text-label-lg font-medium text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active';
 
-const secondaryLinkClass =
-  'inline-flex h-10 min-h-11 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-5 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active';
-
 function SuspendedAccountShell() {
   return (
     <>
@@ -38,9 +35,6 @@ function SuspendedAccountShell() {
           <div className="flex flex-wrap items-center gap-3">
             <Link href="/settings" className={primaryLinkClass}>
               অ্যাকাউন্ট ও সেটিংস (Settings)
-            </Link>
-            <Link href="/" className={secondaryLinkClass}>
-              Back to Home
             </Link>
             <form action={logoutAction}>
               <Button type="submit" variant="secondary" size="md">

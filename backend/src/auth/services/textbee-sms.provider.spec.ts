@@ -328,8 +328,9 @@ describe('TextBeeSmsProvider', () => {
         vi.mocked(database.query).mock.calls[0]?.[0] as string
       ).replace(/\s+/g, ' ');
       expect(sql).toContain(
-        "AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')",
+        "NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes') OR ( u.phone_confirmed_at IS NOT NULL AND (",
       );
+      expect(sql).toContain("IN ('google', 'facebook')");
     });
 
     it('findByPhone excludes unconfirmed 15m+ orphans while keeping recent (<15m) registrations blocked', async () => {
@@ -441,6 +442,64 @@ describe('TextBeeSmsProvider', () => {
         subject: TEST_USER_ID,
         phone: '+8801712345678',
         verified: true,
+      });
+
+      const oldCreatedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      vi.mocked(database.query)
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: '8801712345678',
+            phone_confirmed_at: null,
+            created_at: oldCreatedAt,
+            verified_contact: false,
+            has_app_user: false,
+            is_deleted: false,
+            raw_app_meta_data: { provider: 'email' },
+            identities: [{ provider: 'facebook' }],
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: '8801712345678',
+            phone_confirmed_at: '2026-10-01T00:00:00Z',
+            created_at: oldCreatedAt,
+            verified_contact: false,
+            has_app_user: false,
+            is_deleted: false,
+            raw_app_meta_data: {
+              provider: 'email',
+              providers: ['email', 'facebook'],
+            },
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: '8801712345678',
+            phone_confirmed_at: '2026-10-01T00:00:00Z',
+            created_at: oldCreatedAt,
+            verified_contact: false,
+            provider_verified_at: null,
+            has_app_user: true,
+            is_deleted: false,
+            is_oauth_user: true,
+          },
+        ]);
+
+      await expect(provider.findByPhone(TEST_PHONE)).resolves.toBeNull();
+      await expect(provider.findByPhone(TEST_PHONE)).resolves.toEqual({
+        id: TEST_USER_ID,
+        subject: TEST_USER_ID,
+        phone: '+8801712345678',
+        verified: true,
+      });
+      await expect(provider.findByPhone(TEST_PHONE)).resolves.toEqual({
+        id: TEST_USER_ID,
+        subject: TEST_USER_ID,
+        phone: '+8801712345678',
+        verified: false,
       });
     });
 
@@ -785,6 +844,60 @@ describe('TextBeeSmsProvider', () => {
         600,
         'reset_password',
       );
+    });
+
+    it('findByPhone never treats Google or Facebook OAuth auth.users older than 15 minutes without public.users as abandoned orphans', async () => {
+      const staleCreatedAt = new Date(
+        Date.now() - 2 * 60 * 60 * 1000,
+      ).toISOString();
+      const database = {
+        query: vi.fn(),
+        transaction: vi.fn(),
+      };
+      const config = {
+        get: vi.fn((key: string) => {
+          if (key === 'TEXTBEE_API_KEY') return 'test_key';
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return '01234567890123456789012345678901';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'sb-service-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const provider = new TextBeeSmsProvider(
+        config,
+        database as unknown as DatabaseService,
+        {
+          generateOtp: vi.fn(),
+          storeOtp: vi.fn(),
+        } as unknown as OtpSecretStore,
+      );
+
+      for (const providerName of ['google', 'facebook'] as const) {
+        database.query.mockResolvedValueOnce([
+          {
+            id: TEST_USER_ID,
+            phone: TEST_PHONE,
+            phone_confirmed_at: staleCreatedAt,
+            created_at: staleCreatedAt,
+            verified_contact: null,
+            provider_verified_at: null,
+            has_app_user: false,
+            is_deleted: false,
+            is_oauth_user: true,
+            raw_app_meta_data: { provider: providerName },
+          },
+        ]);
+
+        const identity = await provider.findByPhone(TEST_PHONE);
+        expect(identity).toEqual({
+          id: TEST_USER_ID,
+          subject: TEST_USER_ID,
+          phone: TEST_PHONE,
+          verified: true,
+        });
+      }
     });
   });
 });

@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/actions";
 import {
   AuthAlert,
+  isCooldownWaitResult,
   useDismissedActionState,
 } from "@/components/auth/auth-alert";
 import { PasswordStrengthHint } from "@/components/auth/password-strength-hint";
@@ -149,9 +150,20 @@ export function ResetPasswordForm() {
       }
 
       if (result?.error) {
-        setResendError(result);
-        if (typeof result.retryAfterSeconds === "number" && result.retryAfterSeconds > 0) {
-          startCooldown(result.retryAfterSeconds, undefined, requestContact.identifier);
+        if (isCooldownWaitResult(result)) {
+          setResendError(null);
+          startCooldown(
+            typeof result.retryAfterSeconds === "number" && result.retryAfterSeconds > 0
+              ? result.retryAfterSeconds
+              : 60,
+            undefined,
+            requestContact.identifier,
+          );
+        } else {
+          setResendError(result);
+          if (typeof result.retryAfterSeconds === "number" && result.retryAfterSeconds > 0) {
+            startCooldown(result.retryAfterSeconds, undefined, requestContact.identifier);
+          }
         }
       } else {
         setResendSuccess("Verification code sent successfully.");
@@ -396,9 +408,18 @@ export function ResetPasswordForm() {
               >
                 {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : "Resend code"}
               </Button>
-              <span className="sr-only" aria-live="polite">
-                {isCooldownHydrated && cooldown === 0 ? "You can now resend the verification code." : ""}
-              </span>
+              <div
+                role="region"
+                aria-live="polite"
+                aria-label="Resend code cooldown status"
+                className="sr-only"
+              >
+                {isCooldownHydrated && cooldown > 0
+                  ? "Verification code cooldown started. You must wait until the timer finishes before resending a code."
+                  : isCooldownHydrated && cooldown === 0
+                    ? "You can now resend the verification code."
+                    : ""}
+              </div>
             </div>
             <AuthAlert
               result={

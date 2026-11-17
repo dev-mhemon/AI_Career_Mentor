@@ -41,6 +41,28 @@ export function useDismissedActionState<T>(state: T) {
 }
 
 /**
+ * Returns true when an action error represents an explicit resend/rate-limit cooldown
+ * (as opposed to an invalid code or transient 5xx failure).
+ */
+export function isCooldownWaitResult(
+  result: ActionErrorLike | null | undefined,
+): boolean {
+  if (!result?.error) return false;
+  if (
+    result.code === "RESEND_COOLDOWN_ACTIVE" ||
+    /wait before requesting another code/i.test(result.error)
+  ) {
+    return true;
+  }
+  return (
+    result.status === 429 &&
+    result.code !== "OTP_LIMIT_EXCEEDED" &&
+    typeof result.retryAfterSeconds === "number" &&
+    result.retryAfterSeconds > 0
+  );
+}
+
+/**
  * Renders a failed server-action result through the central error mapper.
  * Errors -> role="alert"; rate-limit/conflict tones -> role="status" with live countdown.
  */
@@ -58,13 +80,23 @@ export function AuthAlert({
 }) {
   const mapped = mapActionResult(result);
   if (!mapped) return null;
-  const hasWait = mapped.retryAfterSeconds !== null && mapped.retryAfterSeconds > 0;
+  const isRateLimitWait =
+    mapped.status === 423 ||
+    mapped.status === 429 ||
+    mapped.code === "RESEND_COOLDOWN_ACTIVE" ||
+    mapped.code === "RATE_LIMITED" ||
+    mapped.code === "OTP_LIMIT_EXCEEDED" ||
+    mapped.code === "ACCOUNT_LOCKED";
+  const hasWait =
+    isRateLimitWait &&
+    mapped.retryAfterSeconds !== null &&
+    mapped.retryAfterSeconds > 0;
   const variant = mapped.tone === "error" && !hasWait ? "error_retryable" : "warning";
   return (
     <Alert
       variant={variant}
       role={hasWait ? "status" : "alert"}
-      retryAfterSeconds={mapped.retryAfterSeconds}
+      retryAfterSeconds={hasWait ? mapped.retryAfterSeconds : null}
       resetKey={resetKey ?? result}
       action={action}
     >
@@ -116,10 +148,11 @@ export function handleAuthBlur(
 export function focusFirstInvalidControl(form: HTMLFormElement): void {
   setTimeout(() => {
     if (!form.isConnected) return;
-    form
-      .querySelector<HTMLElement>(
-        'input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"], [data-invalid="true"]',
-      )
-      ?.focus();
+    const target = form.querySelector<HTMLElement>(
+      'input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"], [data-invalid="true"]',
+    );
+    if (!target) return;
+    target.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    target.focus();
   }, 0);
 }

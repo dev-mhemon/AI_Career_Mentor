@@ -194,8 +194,9 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         'WHERE u.deleted_at IS NULL AND (lower(u.email) = $1 OR lower(p.contact_value) = $1)',
       );
       expect(normalizedSql).toContain(
-        "AND NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes')",
+        "NOT (pu.id IS NULL AND COALESCE(u.created_at, NOW()) < NOW() - INTERVAL '15 minutes') OR ( u.email_confirmed_at IS NOT NULL AND (",
       );
+      expect(normalizedSql).toContain("IN ('google', 'facebook')");
       expect(normalizedSql).toContain('ORDER BY');
       expect(normalizedSql).toContain(
         'COALESCE(lower(p.contact_value) = $1, false) DESC',
@@ -304,6 +305,66 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
         id: userId,
         subject: userId,
         email: 'staged-different@example.invalid',
+        verified: false,
+      });
+    });
+
+    it('excludes old unconfirmed OAuth-metadata rows without public.users and never flips verified when has_app_user is true and verified_contact is false', async () => {
+      const oldCreatedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: null,
+          created_at: oldCreatedAt,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+          raw_app_meta_data: { provider: 'email' },
+          identities: [{ provider: 'google' }],
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toBeNull();
+
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: '2026-10-01T00:00:00Z',
+          created_at: oldCreatedAt,
+          verified_contact: false,
+          has_app_user: false,
+          is_deleted: false,
+          raw_app_meta_data: {
+            provider: 'email',
+            providers: ['email', 'google'],
+          },
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toEqual({
+        id: userId,
+        subject: userId,
+        email,
+        verified: true,
+      });
+
+      database.query.mockResolvedValueOnce([
+        {
+          id: userId,
+          email,
+          email_confirmed_at: '2026-10-01T00:00:00Z',
+          created_at: oldCreatedAt,
+          verified_contact: false,
+          provider_verified_at: null,
+          has_app_user: true,
+          is_deleted: false,
+          is_oauth_user: true,
+        },
+      ]);
+      await expect(provider.findByEmail(email)).resolves.toEqual({
+        id: userId,
+        subject: userId,
+        email,
         verified: false,
       });
     });
@@ -996,6 +1057,37 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       const delivery = await autoWiredProvider.sendChallenge(identity);
       expect(delivery).toEqual({ expiresInSeconds: 580 });
       expect(otpStore.storeOtp).toHaveBeenCalledWith(userId, email, '123456');
+    });
+
+    it('never treats Google or Facebook OAuth auth.users older than 15 minutes without public.users as abandoned orphans', async () => {
+      const staleOAuthCreatedAt = new Date(
+        Date.now() - 2 * 60 * 60 * 1000,
+      ).toISOString();
+
+      for (const providerName of ['google', 'facebook'] as const) {
+        database.query.mockResolvedValueOnce([
+          {
+            id: userId,
+            email,
+            email_confirmed_at: staleOAuthCreatedAt,
+            created_at: staleOAuthCreatedAt,
+            verified_contact: null,
+            provider_verified_at: null,
+            has_app_user: false,
+            is_deleted: false,
+            is_oauth_user: true,
+            raw_app_meta_data: { provider: providerName },
+          },
+        ]);
+
+        const identity = await provider.findByEmail(email);
+        expect(identity).toEqual({
+          id: userId,
+          subject: userId,
+          email,
+          verified: true,
+        });
+      }
     });
   });
 });

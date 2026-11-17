@@ -38,7 +38,7 @@ describe("mapApiError", () => {
           "AUTH_INVALID_CREDENTIALS",
         ),
       ).message,
-    ).toBe("Invalid credentials. Please try again.");
+    ).toBe("Please verify your credentials. The password entered is incorrect.");
     expect(mapApiError(new UnauthorizedError()).requiresSignIn).toBe(true);
     const missing401 = mapApiError(
       new ApiError(
@@ -81,6 +81,20 @@ describe("mapApiError", () => {
     const c = mapApiError(new ApiError(409, "Account exists"));
     expect(c.message).toBe("Account exists");
     expect(c.tone).toBe("warning");
+
+    const emailDup = mapApiError(
+      new ApiError(409, "Contact already registered", "CONTACT_ALREADY_REGISTERED"),
+      { channel: "email" },
+    );
+    expect(emailDup.message).toBe("This email is already registered.");
+    expect(emailDup.tone).toBe("warning");
+
+    const phoneDup = mapApiError(
+      new ApiError(409, "Contact already registered", "CONTACT_ALREADY_REGISTERED"),
+      { channel: "phone" },
+    );
+    expect(phoneDup.message).toBe("This phone number is already registered.");
+    expect(phoneDup.tone).toBe("warning");
   });
 
   it("preserves retryAfterSeconds on 423/429", () => {

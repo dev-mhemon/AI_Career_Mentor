@@ -13,13 +13,6 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
           {error.digest && <p className="font-mono text-caption text-text-muted">Reference: {error.digest}</p>}
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Button onClick={reset}>Try again</Button>
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- root layout fallback renders outside Next App Router */}
-            <a
-              href="/"
-              className="inline-flex h-10 min-h-11 items-center justify-center rounded-md border border-action-secondary-border bg-action-secondary-background px-5 text-label-lg font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active"
-            >
-              Back to Home
-            </a>
           </div>
         </main>
       </body>

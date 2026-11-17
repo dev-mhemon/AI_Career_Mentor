@@ -29,14 +29,25 @@ import {
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
 import {
+  clearOAuthLoginHint,
+  clearOAuthLoginHintCookie,
   clearRememberedLogin,
   clearRememberedLoginCookie,
+  getOAuthLoginHintClearedSnapshot,
+  getOAuthLoginHintServerSnapshot,
+  getOAuthLoginHintSnapshot,
   getRememberedLoginServerSnapshot,
   getRememberedLoginSnapshot,
+  isOAuthLoginHintCleared,
+  loadOAuthLoginHint,
   loadRememberedLogin,
+  parseOAuthLoginHint,
   parseRememberedLoginHint,
+  saveOAuthLoginHint,
   saveRememberedLogin,
+  subscribeOAuthLoginHint,
   subscribeRememberedLogin,
+  type OAuthLoginHint,
   type RememberedLoginHint,
 } from "@/lib/auth/remember-login";
 import {
@@ -59,12 +70,14 @@ export function LoginForm({
   successMessage,
   toastMessage,
   initialRememberedLogin,
+  initialOAuthHint,
   clearSavedLogin = false,
 }: {
   initialError?: string;
   successMessage?: string;
   toastMessage?: string;
   initialRememberedLogin?: RememberedLoginHint | null;
+  initialOAuthHint?: OAuthLoginHint | null;
   clearSavedLogin?: boolean;
 }) {
   const router = useRouter();
@@ -99,13 +112,30 @@ export function LoginForm({
   );
 
   const [storageCleared, setStorageCleared] = useState(false);
+  const [oauthStorageCleared, setOAuthStorageCleared] = useState(false);
   const storedHintRaw = useSyncExternalStore(
     subscribeRememberedLogin,
     getRememberedLoginSnapshot,
     getRememberedLoginServerSnapshot,
   );
+  const storedOAuthHintRaw = useSyncExternalStore(
+    subscribeOAuthLoginHint,
+    getOAuthLoginHintSnapshot,
+    getOAuthLoginHintServerSnapshot,
+  );
+  const storedOAuthClearedRaw = useSyncExternalStore(
+    subscribeOAuthLoginHint,
+    getOAuthLoginHintClearedSnapshot,
+    getOAuthLoginHintServerSnapshot,
+  );
   const shouldClearSavedLogin = useMemo(() => {
-    if (clearSavedLogin || initialRememberedLogin === null) return true;
+    if (
+      clearSavedLogin ||
+      initialRememberedLogin === null ||
+      initialOAuthHint === null
+    ) {
+      return true;
+    }
     if (typeof window === "undefined") return false;
     try {
       const params = new URLSearchParams(window.location.search);
@@ -118,11 +148,27 @@ export function LoginForm({
     } catch {
       return false;
     }
-  }, [clearSavedLogin, initialRememberedLogin]);
+  }, [clearSavedLogin, initialRememberedLogin, initialOAuthHint]);
   const effectiveHint = useMemo(() => {
     if (shouldClearSavedLogin || storageCleared) return null;
     return parseRememberedLoginHint(storedHintRaw) ?? initialRememberedLogin;
   }, [initialRememberedLogin, shouldClearSavedLogin, storageCleared, storedHintRaw]);
+  const effectiveOAuthHint = useMemo(() => {
+    if (
+      shouldClearSavedLogin ||
+      oauthStorageCleared ||
+      storedOAuthClearedRaw !== null
+    ) {
+      return null;
+    }
+    return parseOAuthLoginHint(storedOAuthHintRaw) ?? initialOAuthHint;
+  }, [
+    initialOAuthHint,
+    oauthStorageCleared,
+    shouldClearSavedLogin,
+    storedOAuthClearedRaw,
+    storedOAuthHintRaw,
+  ]);
 
   const [tabOverride, setTabOverride] = useState<Channel | null>(null);
   const [emailOverride, setEmailOverride] = useState<string | null>(null);
@@ -204,6 +250,7 @@ export function LoginForm({
     }
     if (shouldClearSavedLogin) {
       clearRememberedLogin();
+      clearOAuthLoginHint();
       return;
     }
     if (!didInitialSeedRef.current) {
@@ -214,9 +261,15 @@ export function LoginForm({
           initialRememberedLogin.identifier,
         );
       }
+      if (isOAuthLoginHintCleared()) {
+        clearOAuthLoginHintCookie();
+      } else if (initialOAuthHint && !loadOAuthLoginHint()) {
+        saveOAuthLoginHint(initialOAuthHint);
+      }
     }
   }, [
     clearSavedLogin,
+    initialOAuthHint,
     initialRememberedLogin,
     shouldClearSavedLogin,
     toastMessage,
@@ -233,7 +286,21 @@ export function LoginForm({
         clearRememberedLoginCookie();
       }
     };
-    return subscribeRememberedLogin(syncClearState);
+    const unsubscribeRemember = subscribeRememberedLogin(syncClearState);
+    const syncOAuthClearState = () => {
+      const cleared =
+        !parseOAuthLoginHint(getOAuthLoginHintSnapshot()) ||
+        isOAuthLoginHintCleared();
+      setOAuthStorageCleared(cleared);
+      if (cleared) {
+        clearOAuthLoginHintCookie();
+      }
+    };
+    const unsubscribeOAuth = subscribeOAuthLoginHint(syncOAuthClearState);
+    return () => {
+      unsubscribeRemember();
+      unsubscribeOAuth();
+    };
   }, []);
 
   useEffect(() => {
@@ -533,7 +600,7 @@ export function LoginForm({
               result={visibleAlertState}
               message={
                 visibleAlertState?.status === 401 && !isAccountNotFound401
-                  ? "Invalid credentials. Please try again."
+                  ? "Please verify your credentials. The password entered is incorrect."
                   : undefined
               }
             />
@@ -557,7 +624,7 @@ export function LoginForm({
         <div className="flex-1 border-t border-border-default" />
       </div>
 
-      <OAuthButtons />
+      <OAuthButtons oauthHint={effectiveOAuthHint} />
 
       <p className="text-center text-body-sm text-text-secondary">
         Don&apos;t have an account?{" "}

@@ -582,7 +582,7 @@ describe('Auth Actions', () => {
 
       const invalidCredResult = await loginAction({}, shortPwForm);
       expect(invalidCredResult).toEqual({
-        error: 'Invalid credentials. Please try again.',
+        error: 'Please verify your credentials. The password entered is incorrect.',
         status: 401,
         code: 'AUTH_INVALID_CREDENTIALS',
       });
@@ -822,6 +822,42 @@ describe('Auth Actions', () => {
       });
       expect(mockCookieStore.delete).toHaveBeenCalledWith('account_deleted');
       expect(redirect).toHaveBeenCalledWith('/verify?channel=phone');
+    });
+
+    it('returns channel-specific 409 CONTACT_ALREADY_REGISTERED fieldErrors for email and phone registration without top-level alert error', async () => {
+      const emailForm = new FormData();
+      emailForm.set('type', 'email');
+      emailForm.set('identifier', 'dup@example.com');
+      emailForm.set('password', 'password123');
+      emailForm.set('confirmPassword', 'password123');
+      emailForm.set('privacy_consent', 'on');
+
+      vi.mocked(registerUser).mockRejectedValueOnce(
+        new ApiError(409, 'Contact already registered', 'CONTACT_ALREADY_REGISTERED'),
+      );
+      const emailConflict = await registerAction({}, emailForm);
+      expect(emailConflict).toEqual({
+        status: 409,
+        code: 'CONTACT_ALREADY_REGISTERED',
+        fieldErrors: { email: 'This email is already registered.' },
+      });
+
+      const phoneForm = new FormData();
+      phoneForm.set('type', 'phone');
+      phoneForm.set('identifier', '01712345678');
+      phoneForm.set('password', 'password123');
+      phoneForm.set('confirmPassword', 'password123');
+      phoneForm.set('privacy_consent', 'on');
+
+      vi.mocked(registerUser).mockRejectedValueOnce(
+        new ApiError(409, 'Contact already registered', 'CONTACT_ALREADY_REGISTERED'),
+      );
+      const phoneConflict = await registerAction({}, phoneForm);
+      expect(phoneConflict).toEqual({
+        status: 409,
+        code: 'CONTACT_ALREADY_REGISTERED',
+        fieldErrors: { phone: 'This phone number is already registered.' },
+      });
     });
   });
 
@@ -2796,9 +2832,15 @@ describe('Auth Actions', () => {
       });
       expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
       expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_login_hint');
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_oauth_hint');
       expect(mockCookieStore.delete).toHaveBeenCalledWith('mentor_remember_me');
       expect(mockCookieStore.set).toHaveBeenCalledWith(
         'mentor_login_hint',
+        '',
+        expect.objectContaining({ path: '/', maxAge: 0 }),
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_oauth_hint',
         '',
         expect.objectContaining({ path: '/', maxAge: 0 }),
       );
@@ -2861,7 +2903,7 @@ describe('Auth Actions', () => {
         code: 'AUTH_REQUIRED',
       });
 
-      // Active account wrong password still returns generic invalid credentials
+      // Active account wrong password returns specific credential message
       mockSignOut.mockClear();
       vi.mocked(loginUser).mockRejectedValueOnce(
         new ApiError(
@@ -2873,7 +2915,7 @@ describe('Auth Actions', () => {
       const wrongPassResult = await loginAction({}, phoneForm);
       expect(mockSignOut).not.toHaveBeenCalled();
       expect(wrongPassResult).toEqual({
-        error: 'Invalid credentials. Please try again.',
+        error: 'Please verify your credentials. The password entered is incorrect.',
         status: 401,
         code: 'AUTH_INVALID_CREDENTIALS',
       });

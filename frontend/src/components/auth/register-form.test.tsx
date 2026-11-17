@@ -425,4 +425,177 @@ describe("RegisterForm", () => {
       expect(document.activeElement).toBe(consentCheckbox);
     });
   });
+
+  it("shows 409 CONTACT_ALREADY_REGISTERED inline under Email/Phone input without Sign in instead link and scrolls/focuses the field", async () => {
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const scrollIntoViewMock = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+
+    try {
+      vi.mocked(registerAction)
+        .mockResolvedValueOnce({
+          status: 409,
+          code: "CONTACT_ALREADY_REGISTERED",
+          fieldErrors: { email: "This email is already registered." },
+        })
+        .mockResolvedValueOnce({
+          status: 409,
+          code: "CONTACT_ALREADY_REGISTERED",
+          fieldErrors: { phone: "This phone number is already registered." },
+        });
+
+      render(<RegisterForm />);
+
+      const emailInput = screen.getByLabelText(/^email$/i);
+      fireEvent.change(emailInput, {
+        target: { value: "dup@example.com" },
+      });
+      fireEvent.change(screen.getByLabelText(/^password$/i), {
+        target: { value: "Password123!" },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: "Password123!" },
+      });
+      fireEvent.click(screen.getByLabelText(/agree to the privacy policy/i));
+
+      const form = emailInput.closest("form")!;
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+
+      expect(
+        screen.getByText("This email is already registered."),
+      ).toBeInTheDocument();
+      expect(emailInput).toHaveAttribute("aria-invalid", "true");
+      expect(document.activeElement).toBe(emailInput);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "center",
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: /sign in instead/i }),
+      ).not.toBeInTheDocument();
+
+      // Switch to Phone tab and trigger conflict
+      scrollIntoViewMock.mockClear();
+      fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+      const phoneInput = screen.getByLabelText(/^phone number$/i);
+      fireEvent.change(phoneInput, {
+        target: { value: "01712345678" },
+      });
+      await act(async () => {
+        fireEvent.submit(phoneInput.closest("form")!);
+      });
+
+      expect(
+        screen.getByText("This phone number is already registered."),
+      ).toBeInTheDocument();
+      expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+      expect(document.activeElement).toBe(phoneInput);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "center",
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: /sign in instead/i }),
+      ).not.toBeInTheDocument();
+
+      // Editing clears the inline conflict error
+      fireEvent.change(phoneInput, {
+        target: { value: "01812345678" },
+      });
+      expect(
+        screen.queryByText("This phone number is already registered."),
+      ).not.toBeInTheDocument();
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it("isolates contact field errors and duplicate-conflict dismissal independently between Email and Phone tabs", async () => {
+    vi.mocked(registerAction)
+      .mockResolvedValueOnce({
+        status: 409,
+        code: "CONTACT_ALREADY_REGISTERED",
+        fieldErrors: { email: "This email is already registered." },
+      })
+      .mockResolvedValueOnce({
+        status: 409,
+        code: "CONTACT_ALREADY_REGISTERED",
+        fieldErrors: { phone: "This phone number is already registered." },
+      });
+
+    render(<RegisterForm />);
+
+    const emailInput = screen.getByLabelText(/^email$/i);
+    fireEvent.change(emailInput, { target: { value: "dup@example.com" } });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "Password123!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm password/i), {
+      target: { value: "Password123!" },
+    });
+    fireEvent.click(screen.getByLabelText(/agree to the privacy policy/i));
+
+    await act(async () => {
+      fireEvent.submit(emailInput.closest("form")!);
+    });
+    expect(
+      screen.getByText("This email is already registered."),
+    ).toBeInTheDocument();
+
+    // Switch to Phone tab and edit Phone -> must NOT dismiss Email conflict
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    const phoneInput = screen.getByLabelText(/^phone number$/i);
+    expect(
+      screen.queryByText("This email is already registered."),
+    ).not.toBeInTheDocument();
+    fireEvent.change(phoneInput, { target: { value: "01712345678" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(
+      screen.getByText("This email is already registered."),
+    ).toBeInTheDocument();
+
+    // Submitting Phone overwrites useActionState result, yet Email conflict must persist until Email is edited/re-submitted
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText(/^phone number$/i).closest("form")!);
+    });
+    expect(
+      screen.getByText("This phone number is already registered."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(
+      screen.getByText("This email is already registered."),
+    ).toBeInTheDocument();
+
+    // Editing Email clears ONLY Email conflict; Phone conflict remains intact
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
+      target: { value: "fresh@example.com" },
+    });
+    expect(
+      screen.queryByText("This email is already registered."),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    expect(
+      screen.getByText("This phone number is already registered."),
+    ).toBeInTheDocument();
+
+    // Re-validating invalid Phone on submit preserves valid Email state cleanly, and clears only on Phone edit
+    fireEvent.change(screen.getByLabelText(/^phone number$/i), {
+      target: { value: "012" },
+    });
+    expect(
+      screen.queryByText("This phone number is already registered."),
+    ).not.toBeInTheDocument();
+    fireEvent.submit(screen.getByLabelText(/^phone number$/i).closest("form")!);
+    expect(
+      screen.getByText(/enter a valid bangladesh mobile number/i),
+    ).toBeInTheDocument();
+  });
 });
