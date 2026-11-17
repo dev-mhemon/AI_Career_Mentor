@@ -233,7 +233,6 @@ export function IdentityLinkingCards({
       {normalizedSuccess && (
         <Toast
           variant="success"
-          position="top-right"
           role="status"
           ariaLive="polite"
           autoDismissMs={4000}
