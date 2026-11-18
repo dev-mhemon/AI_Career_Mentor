@@ -1,10 +1,11 @@
 import { HttpException, Inject, Injectable, Optional } from '@nestjs/common';
-import type { OnModuleDestroy } from '@nestjs/common';
+import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'node:crypto';
 import { createClient } from 'redis';
 import { fail } from '../../common/http.js';
 import {
+  readOptionalPositiveInteger,
   resolveFirstNonBlankValue,
   validateOptionalRedisUrl,
 } from '../../config.js';
@@ -19,10 +20,10 @@ export const IDEMPOTENCY_REDIS_CLIENT = Symbol('IDEMPOTENCY_REDIS_CLIENT');
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** 24-hour default TTL for `H-IDEM` keys in seconds (`C05` §13.1 / `ADR-017` / `R14`). */
+/** Default TTL for `H-IDEM` keys in seconds (`C05` §13.1 / `ADR-017` / `R14`: 24 hours / 86,400 seconds). */
 export const DEFAULT_IDEMPOTENCY_TTL_SECONDS = 86_400;
 
-/** 24-hour default TTL for `H-IDEM` keys in milliseconds (`86400000ms`). */
+/** Default TTL for `H-IDEM` keys in milliseconds (`86400000ms`). */
 export const DEFAULT_IDEMPOTENCY_TTL_MS =
   DEFAULT_IDEMPOTENCY_TTL_SECONDS * 1_000;
 
@@ -50,6 +51,9 @@ end
 local existing = redis.call('GET', KEYS[2])
 if existing then
   local pttl = redis.call('PTTL', KEYS[2])
+  if not pttl or pttl <= 0 then
+    return {'CORRUPT_TTL', '', tostring(pttl or -2)}
+  end
   return {'EXISTING', existing, tostring(pttl)}
 end
 redis.call('SET', KEYS[2], ARGV[2], 'PX', tonumber(ARGV[3]))
@@ -59,7 +63,7 @@ return {'ACQUIRED', ARGV[2], ARGV[3]}
 /**
  * Atomic Lua script verifying `idempotency:epoch`, `'in_flight'` state, per-invocation
  * `reservationToken` ownership, and remaining `PTTL > 0` before writing `'completed'`
- * without extending the original 24h deadline (`R14`).
+ * without extending the original configured acquisition deadline (`R14`).
  *
  * KEYS[1]: idempotency:epoch
  * KEYS[2]: idempotency:v1:{userId}:{idempotencyKey}
@@ -101,16 +105,10 @@ export interface IdempotencyConfiguration {
   ttlMs: number;
   timeoutMs: number;
   retryAfterSeconds: number;
-  /**
-   * When `true`, automatically seeds `idempotency:epoch` on initial connection if missing.
-   * Defaults to `false` so an uninitialized or wiped Redis after a flush/restart fails closed (`R14`)
-   * until explicitly acknowledged via `acknowledgeEpoch()`.
-   */
-  autoInitializeEpoch?: boolean;
 }
 
 /**
- * Stored Redis record for a 24h `H-IDEM` key (`R14`).
+ * Stored Redis record for an `H-IDEM` key (`R14`).
  */
 export interface IdempotencyRecord<T = unknown> {
   userId: string;
@@ -137,7 +135,7 @@ export interface IdempotencyOperationContext {
 }
 
 /**
- * Result returned when an `H-IDEM` operation executes or is replayed from the 24h Redis store.
+ * Result returned when an `H-IDEM` operation executes or is replayed from the configured Redis store.
  */
 export interface IdempotencyExecutionResult<T = unknown> {
   statusCode: number;
@@ -257,6 +255,10 @@ function isStoredIdempotencyRecord<T>(
     return false;
   }
   if (
+    typeof rec.userId !== 'string' ||
+    rec.userId.length === 0 ||
+    typeof rec.idempotencyKey !== 'string' ||
+    rec.idempotencyKey.length === 0 ||
     typeof rec.method !== 'string' ||
     rec.method.length === 0 ||
     typeof rec.route !== 'string' ||
@@ -270,7 +272,10 @@ function isStoredIdempotencyRecord<T>(
   }
   if (
     rec.state === 'completed' &&
-    (typeof rec.statusCode !== 'number' || !Number.isFinite(rec.statusCode))
+    (typeof rec.statusCode !== 'number' ||
+      !Number.isInteger(rec.statusCode) ||
+      rec.statusCode < 100 ||
+      rec.statusCode > 599)
   ) {
     return false;
   }
@@ -354,68 +359,74 @@ export function readIdempotencyConfiguration(
       ? rawEpoch.trim()
       : DEFAULT_IDEMPOTENCY_EPOCH;
 
-  const rawTtl = getVal('IDEMPOTENCY_TTL_SECONDS');
   const ttlSeconds =
-    rawTtl !== undefined && rawTtl !== null && String(rawTtl).trim() !== ''
-      ? Number(rawTtl)
-      : DEFAULT_IDEMPOTENCY_TTL_SECONDS;
+    readOptionalPositiveInteger(
+      getVal('IDEMPOTENCY_TTL_SECONDS'),
+      'IDEMPOTENCY_TTL_SECONDS',
+    ) ?? DEFAULT_IDEMPOTENCY_TTL_SECONDS;
 
-  const rawTimeout = resolveFirstNonBlankValue(
-    (key) => {
-      const value = getVal(key);
-      return value === undefined || value === null ? undefined : String(value);
-    },
-    ['IDEMPOTENCY_REDIS_TIMEOUT_MS', 'AUTH_REDIS_TIMEOUT_MS'],
-  );
-  const timeoutMs = rawTimeout !== undefined ? Number(rawTimeout) : 1_000;
+  const timeoutMs =
+    readOptionalPositiveInteger(
+      getVal('IDEMPOTENCY_REDIS_TIMEOUT_MS'),
+      'IDEMPOTENCY_REDIS_TIMEOUT_MS',
+    ) ??
+    readOptionalPositiveInteger(
+      getVal('AUTH_REDIS_TIMEOUT_MS'),
+      'AUTH_REDIS_TIMEOUT_MS',
+    ) ??
+    1_000;
 
-  const rawRetry = resolveFirstNonBlankValue(
-    (key) => {
-      const value = getVal(key);
-      return value === undefined || value === null ? undefined : String(value);
-    },
-    ['IDEMPOTENCY_REDIS_RETRY_SECONDS', 'AUTH_REDIS_RETRY_SECONDS'],
-  );
-  const retryAfterSeconds = rawRetry !== undefined ? Number(rawRetry) : 5;
+  const retryAfterSeconds =
+    readOptionalPositiveInteger(
+      getVal('IDEMPOTENCY_REDIS_RETRY_SECONDS'),
+      'IDEMPOTENCY_REDIS_RETRY_SECONDS',
+    ) ??
+    readOptionalPositiveInteger(
+      getVal('AUTH_REDIS_RETRY_SECONDS'),
+      'AUTH_REDIS_RETRY_SECONDS',
+    ) ??
+    5;
+
+  const ttlMs = ttlSeconds * 1_000;
+  if (ttlMs <= timeoutMs) {
+    throw new Error(
+      'IDEMPOTENCY_TTL_SECONDS * 1000 must be greater than IDEMPOTENCY_REDIS_TIMEOUT_MS',
+    );
+  }
 
   return {
     url: rawUrl,
     expectedEpoch,
-    ttlSeconds:
-      Number.isSafeInteger(ttlSeconds) && ttlSeconds > 0
-        ? ttlSeconds
-        : DEFAULT_IDEMPOTENCY_TTL_SECONDS,
-    ttlMs:
-      (Number.isSafeInteger(ttlSeconds) && ttlSeconds > 0
-        ? ttlSeconds
-        : DEFAULT_IDEMPOTENCY_TTL_SECONDS) * 1_000,
-    timeoutMs:
-      Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1_000,
-    retryAfterSeconds:
-      Number.isSafeInteger(retryAfterSeconds) && retryAfterSeconds > 0
-        ? retryAfterSeconds
-        : 5,
+    ttlSeconds,
+    ttlMs,
+    timeoutMs,
+    retryAfterSeconds,
   };
 }
 
 /**
- * Service implementing Redis 24h `H-IDEM` Replay Controls and the `R14` Loss-Epoch Fail-Closed Barrier.
+ * Service implementing Redis `H-IDEM` Replay Controls (`IDEMPOTENCY_TTL_SECONDS`, default 24h / `86400s`)
+ * and the `R14` Loss-Epoch Fail-Closed Barrier.
  *
  * Key invariants (`C05` §13.1, §13.9, `SAD` `R14`):
  * 1. Scoped by `(userId, idempotencyKey)` where `Idempotency-Key` must be a canonical UUID (`400 INVALID_FORMAT` otherwise).
- * 2. Binds `{ method, route, bodyHash, state: 'in_flight' | 'completed', statusCode, responseBody, createdAtMs }` with 24h (`86400s` / `86400000ms`) TTL.
+ * 2. Binds `{ method, route, bodyHash, state: 'in_flight' | 'completed', statusCode, responseBody, createdAtMs }` for the configured `IDEMPOTENCY_TTL_SECONDS` lifetime (default `86400s` / 24h).
  * 3. Same `(userId, idempotencyKey)` + identical `(method, route, bodyHash)`:
  *    - `'completed'` -> replays `{ statusCode, responseBody }` without re-running the handler.
  *    - `'in_flight'` -> fails closed with retryable `503 SERVICE_UNAVAILABLE` (NEVER clears an in-flight lock or re-executes).
  * 4. Same `(userId, idempotencyKey)` + different `method`, `route`, or `bodyHash` -> rejects with `409 IDEMPOTENCY_KEY_REUSED`.
  * 5. Maps PostgreSQL `23505` on `uq_ai_requests_idempotency` to `409 IDEMPOTENCY_KEY_REUSED`.
  * 6. **Loss-Epoch Fail-Closed Barrier (`R14`)**:
- *    - Verifies Redis key `idempotency:epoch` matches the expected runtime epoch before every `H-IDEM` operation.
- *    - If Redis is unreachable, or `idempotency:epoch` is missing/mismatched after a Redis restart/flush (even when `PING` succeeds),
- *      fails closed with retryable `503 SERVICE_UNAVAILABLE` until the recovery barrier is satisfied or explicitly acknowledged.
+ *    - Verifies Redis key `idempotency:epoch` matches configured `IDEMPOTENCY_REDIS_EPOCH` before every `H-IDEM` operation.
+ *    - Never silently self-seeds `idempotency:epoch` inside `execute()` or `onModuleInit()`.
+ *    - If Redis is unreachable, or `idempotency:epoch` is missing/mismatched after a Redis flush/restart/restore
+ *      (even when `PING` succeeds), fails closed with retryable `503 SERVICE_UNAVAILABLE` until either durable
+ *      `public.ai_requests` reconciliation completes or the longest configured reservation lifetime
+ *      (`IDEMPOTENCY_TTL_SECONDS`, default `86400`s / 24h; e.g. 48h if `IDEMPOTENCY_TTL_SECONDS=172800`) elapses
+ *      and an operator explicitly acknowledges recovery via `acknowledgeEpoch()`.
  */
 @Injectable()
-export class IdempotencyService implements OnModuleDestroy {
+export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
   private readonly configuration?: IdempotencyConfiguration;
   private readonly hasInjectedClient: boolean;
   private client?: IdempotencyRedisClient;
@@ -437,6 +448,29 @@ export class IdempotencyService implements OnModuleDestroy {
       injectedConfig ?? readIdempotencyConfiguration(this.configService);
     this.client = injectedClient;
     this.hasInjectedClient = injectedClient !== undefined;
+  }
+
+  /**
+   * Executes one-time `bootstrapInitialEpoch()` (`SET ... NX`) ONLY when explicit clean-deployment
+   * provisioning (`IDEMPOTENCY_BOOTSTRAP_ON_INIT === 'true'`) is set; normal restarts and runtime
+   * instances leave `idempotency:epoch` untouched so lost/mismatched Redis state fails closed (`503`).
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.isBootstrapOnInitEnabled()) {
+      return;
+    }
+    await this.bootstrapInitialEpoch();
+  }
+
+  private isBootstrapOnInitEnabled(): boolean {
+    const configured = this.configService?.get<unknown>(
+      'IDEMPOTENCY_BOOTSTRAP_ON_INIT',
+    );
+    const raw =
+      configured !== undefined
+        ? configured
+        : process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT;
+    return raw === 'true';
   }
 
   /**
@@ -495,15 +529,59 @@ export class IdempotencyService implements OnModuleDestroy {
   }
 
   /**
-   * Explicitly initializes or acknowledges the expected Redis epoch in `idempotency:epoch`
-   * so all service instances sharing Redis immediately observe the restored epoch.
+   * Provisions the initial `idempotency:epoch` marker using `SET ... NX` during clean
+   * deployment setup before live traffic opens (never invoked on runtime request paths).
+   *
+   * Returns `'INITIALIZED'` if created cleanly, `'ALREADY_SET'` if Redis already holds
+   * the matching epoch, or fails closed (`503 SERVICE_UNAVAILABLE`) if Redis holds a
+   * mismatched epoch (e.g. a restored snapshot requiring explicit recovery and
+   * `acknowledgeEpoch(E_new)` rotation).
+   */
+  async bootstrapInitialEpoch(
+    epochOverride?: string,
+  ): Promise<'INITIALIZED' | 'ALREADY_SET'> {
+    const expectedEpoch =
+      epochOverride?.trim() ||
+      this.configuration?.expectedEpoch ||
+      DEFAULT_IDEMPOTENCY_EPOCH;
+    const client = await this.getActiveClient();
+    try {
+      const setResult = await this.withDeadline(
+        client.set(IDEMPOTENCY_EPOCH_KEY, expectedEpoch, { NX: true }),
+      );
+      if (setResult === 'OK') {
+        return 'INITIALIZED';
+      }
+      const existingEpoch = await this.withDeadline(
+        client.get(IDEMPOTENCY_EPOCH_KEY),
+      );
+      if (existingEpoch === expectedEpoch) {
+        return 'ALREADY_SET';
+      }
+      this.unavailable(
+        'Existing Redis idempotency epoch mismatches expected configuration; rotate IDEMPOTENCY_REDIS_EPOCH and use acknowledgeEpoch() after recovery verification',
+      );
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.retireClient(client);
+      this.unavailable('Idempotency Redis store unreachable');
+    }
+  }
+
+  /**
+   * Explicitly acknowledges a rotated or restored Redis epoch in `idempotency:epoch`
+   * after clean recovery verification or elapsing the longest configured `IDEMPOTENCY_TTL_SECONDS`
+   * reservation lifetime (default `86400`s / 24h; e.g. 48h when `IDEMPOTENCY_TTL_SECONDS=172800`),
+   * so all service instances sharing Redis immediately resume `H-IDEM` execution.
    */
   async acknowledgeEpoch(epochOverride?: string): Promise<void> {
     const expectedEpoch =
       epochOverride?.trim() ||
       this.configuration?.expectedEpoch ||
       DEFAULT_IDEMPOTENCY_EPOCH;
-    const client = await this.getConnectedClient();
+    const client = await this.getActiveClient();
     try {
       await this.withDeadline(client.set(IDEMPOTENCY_EPOCH_KEY, expectedEpoch));
     } catch (error) {
@@ -521,17 +599,18 @@ export class IdempotencyService implements OnModuleDestroy {
    * Flow:
    * 1. Validates `userId`, `Idempotency-Key` UUID format, HTTP method, and concrete route path (`400 INVALID_FORMAT`).
    * 2. Atomically checks `idempotency:epoch == expectedEpoch` and acquires `'in_flight'` with a unique
-   *    per-invocation `reservationToken` in a single Lua `EVAL` (`503 SERVICE_UNAVAILABLE` on mismatch/outage).
+   *    per-invocation `reservationToken` in a single Lua `EVAL` (`503 SERVICE_UNAVAILABLE` on mismatch/outage/`CORRUPT_TTL`).
    * 3. If the key already exists:
+   *    - Validates stored shape (`userId`, `idempotencyKey`, valid HTTP `statusCode`) and live `PTTL > 0` (`503` on corruption).
    *    - If `method`, `route`, or `bodyHash` differs -> `409 IDEMPOTENCY_KEY_REUSED`.
    *    - If `state === 'completed'` -> returns cached `{ statusCode, responseBody, replayed: true }` without invoking `handler`.
    *    - If `state === 'in_flight'` -> fails closed with retryable `503 SERVICE_UNAVAILABLE` (never clears lock or re-runs).
-   * 4. If acquired, invokes `handler()`:
+   * 4. If acquired, rechecks `!stopped` and elapsed acquisition duration `< ttlMs` before invoking `handler()`:
    *    - On PostgreSQL `23505` (`uq_ai_requests_idempotency`), throws `409 IDEMPOTENCY_KEY_REUSED`.
    *    - On any other handler error/crash, leaves `'in_flight'` intact (`R14`).
-   *    - On success, executes atomic ownership-verified completion Lua `EVAL` checking `epoch`,
-   *      `state === 'in_flight' && reservationToken === expectedToken`, and `PTTL > 0` without extending TTL.
-   *      If expired (`PTTL <= 0`) or owned by another attempt, fails closed with `503 SERVICE_UNAVAILABLE` without overwriting.
+   *    - On success, obtains the currently active client via `getActiveClient()` and executes atomic
+   *      ownership-verified completion Lua `EVAL` (`epoch`, `reservationToken`, and `PTTL > 0` without extending TTL).
+   *      Never reruns `handler()` or retries unknown completion outcomes.
    */
   async execute<T>(
     context: IdempotencyOperationContext,
@@ -554,7 +633,7 @@ export class IdempotencyService implements OnModuleDestroy {
     const route = normalizeConcreteRoute(context.route);
     const bodyHash = computeCanonicalBodyHash(context.body ?? null);
 
-    const client = await this.getConnectedClient();
+    const client = await this.getActiveClient();
     if (typeof client.eval !== 'function') {
       this.unavailable('Idempotency Redis client missing atomic EVAL support');
     }
@@ -577,6 +656,7 @@ export class IdempotencyService implements OnModuleDestroy {
       createdAtMs: nowMs,
     };
 
+    const acquireStartedMs = performance.now();
     let acquireResult: unknown;
     try {
       acquireResult = await this.withDeadline(
@@ -617,10 +697,18 @@ export class IdempotencyService implements OnModuleDestroy {
       );
     }
 
+    if (acquireStatus === 'CORRUPT_TTL') {
+      this.unavailable(
+        'Idempotency record has missing or expired TTL in Redis; failing closed',
+      );
+    }
+
     if (acquireStatus === 'EXISTING') {
       return this.resolveExistingPayload<T>(
         rawExistingPayload,
         rawPttl,
+        userId,
+        idempotencyKey,
         method,
         route,
         bodyHash,
@@ -630,6 +718,12 @@ export class IdempotencyService implements OnModuleDestroy {
     if (acquireStatus !== 'ACQUIRED') {
       this.unavailable(
         'Unexpected idempotency store state; failing closed to prevent duplicate execution',
+      );
+    }
+
+    if (this.stopped || performance.now() - acquireStartedMs >= ttlMs) {
+      this.unavailable(
+        'Idempotency reservation expired or service stopped before mutation dispatch',
       );
     }
 
@@ -648,6 +742,11 @@ export class IdempotencyService implements OnModuleDestroy {
       throw error;
     }
 
+    const activeClient = await this.getActiveClient();
+    if (typeof activeClient.eval !== 'function') {
+      this.unavailable('Idempotency Redis client missing atomic EVAL support');
+    }
+
     const completedRecord: IdempotencyRecord<T> = {
       ...inFlightRecord,
       state: 'completed',
@@ -658,7 +757,7 @@ export class IdempotencyService implements OnModuleDestroy {
     let completeStatus: unknown;
     try {
       completeStatus = await this.withDeadline(
-        client.eval(COMPLETE_IDEMPOTENCY_SCRIPT, {
+        activeClient.eval(COMPLETE_IDEMPOTENCY_SCRIPT, {
           keys: [IDEMPOTENCY_EPOCH_KEY, redisKey],
           arguments: [
             expectedEpoch,
@@ -671,7 +770,7 @@ export class IdempotencyService implements OnModuleDestroy {
       if (error instanceof HttpException) {
         throw error;
       }
-      this.retireClient(client);
+      this.retireClient(activeClient);
       this.unavailable(
         'Idempotency store unavailable during completion; failing closed',
       );
@@ -696,6 +795,8 @@ export class IdempotencyService implements OnModuleDestroy {
   private resolveExistingPayload<T>(
     rawExisting: unknown,
     rawPttl: unknown,
+    userId: string,
+    idempotencyKey: string,
     method: string,
     route: string,
     bodyHash: string,
@@ -715,6 +816,22 @@ export class IdempotencyService implements OnModuleDestroy {
 
     if (!isStoredIdempotencyRecord<T>(parsed)) {
       this.unavailable('Corrupted idempotency record in Redis; failing closed');
+    }
+
+    if (
+      parsed.userId.toLowerCase() !== userId ||
+      parsed.idempotencyKey.toLowerCase() !== idempotencyKey
+    ) {
+      this.unavailable(
+        'Idempotency record identity mismatch in Redis; failing closed',
+      );
+    }
+
+    const pttl = Number(rawPttl);
+    if (!Number.isFinite(pttl) || pttl <= 0) {
+      this.unavailable(
+        'Idempotency record has missing or expired TTL in Redis; failing closed',
+      );
     }
 
     if (
@@ -738,7 +855,7 @@ export class IdempotencyService implements OnModuleDestroy {
     }
 
     // state === 'in_flight': R14 fail-closed rule — never clear lock or re-execute
-    const retrySeconds = this.resolveRetrySecondsFromPttl(rawPttl);
+    const retrySeconds = this.resolveRetrySecondsFromPttl(pttl);
     this.unavailable(
       'An operation with this Idempotency-Key is currently in flight or in an ambiguous crash state',
       retrySeconds,
@@ -801,7 +918,7 @@ export class IdempotencyService implements OnModuleDestroy {
     }
   }
 
-  private async getConnectedClient(): Promise<IdempotencyRedisClient> {
+  private async getActiveClient(): Promise<IdempotencyRedisClient> {
     if (this.stopped) {
       this.unavailable();
     }
@@ -842,16 +959,6 @@ export class IdempotencyService implements OnModuleDestroy {
       }
 
       this.assertClientActiveAfterConnect(created);
-
-      if (this.configuration.autoInitializeEpoch) {
-        await this.withDeadline(
-          created.set(IDEMPOTENCY_EPOCH_KEY, this.configuration.expectedEpoch, {
-            NX: true,
-          }),
-        );
-        this.assertClientActiveAfterConnect(created);
-      }
-
       return created;
     } catch (error) {
       if (error instanceof HttpException) {

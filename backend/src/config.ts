@@ -119,14 +119,25 @@ export function validateOptionalRedisUrl(
   }
 }
 
-function validateOptionalPositiveInteger(
+/**
+ * Parses and validates an optional positive integer environment override (1..2147483647).
+ * Whitespace-only values (`"   "`) return `undefined` so callers fall back to defaults cleanly;
+ * non-blank invalid strings throw `Invalid ${keyName}`.
+ */
+export function readOptionalPositiveInteger(
   rawValue: unknown,
   keyName: string,
-): void {
-  if (rawValue === undefined || rawValue === null || rawValue === '') {
-    return;
+): number | undefined {
+  if (rawValue === undefined || rawValue === null) {
+    return undefined;
   }
-  const str = String(rawValue);
+  if (typeof rawValue !== 'string' && typeof rawValue !== 'number') {
+    throw new Error(`Invalid ${keyName}`);
+  }
+  const str = String(rawValue).trim();
+  if (str === '') {
+    return undefined;
+  }
   const num = Number(str);
   if (
     !/^[1-9][0-9]*$/.test(str) ||
@@ -135,6 +146,7 @@ function validateOptionalPositiveInteger(
   ) {
     throw new Error(`Invalid ${keyName}`);
   }
+  return num;
 }
 
 function validateOptionalEpoch(rawEpoch: unknown, keyName: string): void {
@@ -239,27 +251,45 @@ export function validateConfiguration(raw: Record<string, unknown>) {
       throw new Error('AUTH_OTP_HMAC_SECRET requires at least 32 secret bytes');
   }
   validateOptionalRedisUrl(raw.IDEMPOTENCY_REDIS_URL, 'IDEMPOTENCY_REDIS_URL');
-  validateOptionalRedisUrl(raw.REDIS_URL, 'REDIS_URL');
+  const hasIdempotencyUrl =
+    typeof raw.IDEMPOTENCY_REDIS_URL === 'string' &&
+    raw.IDEMPOTENCY_REDIS_URL.trim().length > 0;
+  const hasAuthRedisUrl =
+    typeof raw.AUTH_REDIS_URL === 'string' &&
+    raw.AUTH_REDIS_URL.trim().length > 0;
+  if (!hasIdempotencyUrl && !hasAuthRedisUrl) {
+    validateOptionalRedisUrl(raw.REDIS_URL, 'REDIS_URL');
+  }
   validateOptionalEpoch(raw.IDEMPOTENCY_REDIS_EPOCH, 'IDEMPOTENCY_REDIS_EPOCH');
-  validateOptionalPositiveInteger(
-    raw.IDEMPOTENCY_TTL_SECONDS,
-    'IDEMPOTENCY_TTL_SECONDS',
-  );
-  validateOptionalPositiveInteger(
+  const idempotencyTtlSeconds =
+    readOptionalPositiveInteger(
+      raw.IDEMPOTENCY_TTL_SECONDS,
+      'IDEMPOTENCY_TTL_SECONDS',
+    ) ?? 86_400;
+  const idempotencyTimeoutMs = readOptionalPositiveInteger(
     raw.IDEMPOTENCY_REDIS_TIMEOUT_MS,
     'IDEMPOTENCY_REDIS_TIMEOUT_MS',
   );
-  validateOptionalPositiveInteger(
+  readOptionalPositiveInteger(
     raw.IDEMPOTENCY_REDIS_RETRY_SECONDS,
     'IDEMPOTENCY_REDIS_RETRY_SECONDS',
   );
-  if (
-    typeof raw.AUTH_REDIS_URL === 'string' &&
-    raw.AUTH_REDIS_URL.trim().length > 0
-  ) {
+  if (hasAuthRedisUrl) {
     validateOptionalRedisUrl(raw.AUTH_REDIS_URL, 'AUTH_REDIS_URL');
   }
   readAbuseConfiguration(raw);
+  const effectiveIdempotencyTimeoutMs =
+    idempotencyTimeoutMs ??
+    readOptionalPositiveInteger(
+      raw.AUTH_REDIS_TIMEOUT_MS,
+      'AUTH_REDIS_TIMEOUT_MS',
+    ) ??
+    1_000;
+  if (idempotencyTtlSeconds * 1_000 <= effectiveIdempotencyTimeoutMs) {
+    throw new Error(
+      'IDEMPOTENCY_TTL_SECONDS * 1000 must be greater than IDEMPOTENCY_REDIS_TIMEOUT_MS',
+    );
+  }
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;
 }

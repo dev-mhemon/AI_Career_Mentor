@@ -28,8 +28,9 @@ export interface AuthenticatedJobRequest {
 /**
  * Controller exposing `C05` §14.13 Jobs API (`EP-J01` `GET /api/v1/jobs/:id`).
  *
- * Protected by `SupabaseAuthGuard` and `AccessGuard` (`AZ-USER`, `Gate: none` so users
- * can poll existing jobs even when generation feature flags are disabled).
+ * Explicitly binds `@UseGuards(SupabaseAuthGuard, AccessGuard)` (`SupabaseAuthGuard` first,
+ * `AccessGuard` second) with `@Policy({})` (`AZ-USER`, `Gate: none` so authenticated owners
+ * can poll existing jobs even when AI generation feature flags are disabled).
  */
 @Controller('jobs')
 @UseGuards(SupabaseAuthGuard, AccessGuard)

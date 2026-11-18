@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACQUIRE_IDEMPOTENCY_SCRIPT,
   COMPLETE_IDEMPOTENCY_SCRIPT,
@@ -22,6 +22,7 @@ const EXPECTED_EPOCH = 'epoch-2026-11-18-v1';
 interface MockRedisEntry {
   value: string;
   pttl: number;
+  expiresAtMs: number | null;
 }
 
 function expectContractError(
@@ -46,18 +47,37 @@ function expectContractError(
 
 /**
  * Deterministic in-memory Redis simulator executing the exact atomic Lua semantics of
- * `ACQUIRE_IDEMPOTENCY_SCRIPT` and `COMPLETE_IDEMPOTENCY_SCRIPT`.
+ * `ACQUIRE_IDEMPOTENCY_SCRIPT` and `COMPLETE_IDEMPOTENCY_SCRIPT`, including passive TTL
+ * expiration before existence/read checks while preserving persistent entries (`expiresAtMs === null`).
  */
 function createSimulatedRedisClient(
   redisStore: Map<string, MockRedisEntry>,
   options: {
     isDown: () => boolean;
+    now?: () => number;
     onBeforeEval?: (
       script: string,
       evalOpts: { keys: string[]; arguments: string[] },
     ) => void;
   },
 ) {
+  const now = () => options.now?.() ?? Date.now();
+  const expireIfNeeded = (key: string): MockRedisEntry | undefined => {
+    const entry = redisStore.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAtMs !== null && now() >= entry.expiresAtMs) {
+      redisStore.delete(key);
+      return undefined;
+    }
+    return entry;
+  };
+  const resolveRemainingPttl = (entry: MockRedisEntry): number =>
+    entry.expiresAtMs !== null
+      ? Math.max(0, entry.expiresAtMs - now())
+      : entry.pttl;
+
   const pingMock = vi.fn<() => Promise<string>>(async () => {
     if (options.isDown()) {
       throw new Error('Redis connection refused');
@@ -69,7 +89,7 @@ function createSimulatedRedisClient(
     if (options.isDown()) {
       throw new Error('Redis connection refused');
     }
-    return redisStore.get(key)?.value ?? null;
+    return expireIfNeeded(key)?.value ?? null;
   });
 
   const setMock = vi.fn<IdempotencyRedisClient['set']>(
@@ -81,28 +101,46 @@ function createSimulatedRedisClient(
       if (options.isDown()) {
         throw new Error('Redis connection refused');
       }
-      const exists = redisStore.has(key);
+      const existing = expireIfNeeded(key);
+      const exists = existing !== undefined;
       if (setOpts?.NX && exists) {
         return null;
       }
       if (setOpts?.XX && !exists) {
         return null;
       }
+      const hasExplicitExpiry = Boolean(setOpts?.PX || setOpts?.EX);
       const pttl =
         setOpts?.PX ??
         (setOpts?.EX ? setOpts.EX * 1000 : DEFAULT_IDEMPOTENCY_TTL_MS);
-      redisStore.set(key, { value, pttl });
+      redisStore.set(key, {
+        value,
+        pttl: hasExplicitExpiry ? pttl : -1,
+        expiresAtMs: hasExplicitExpiry ? now() + pttl : null,
+      });
       return 'OK';
     },
   );
+
+  const delMock = vi.fn(async (key: string) => {
+    if (options.isDown()) {
+      throw new Error('Redis connection refused');
+    }
+    const existing = expireIfNeeded(key);
+    if (!existing) {
+      return 0;
+    }
+    redisStore.delete(key);
+    return 1;
+  });
 
   const pTTLMock = vi.fn<NonNullable<IdempotencyRedisClient['pTTL']>>(
     async (key: string) => {
       if (options.isDown()) {
         throw new Error('Redis connection refused');
       }
-      const entry = redisStore.get(key);
-      return entry ? entry.pttl : -2;
+      const entry = expireIfNeeded(key);
+      return entry ? resolveRemainingPttl(entry) : -2;
     },
   );
 
@@ -117,7 +155,7 @@ function createSimulatedRedisClient(
       options.onBeforeEval?.(script, evalOpts);
 
       const [epochKey, redisKey] = evalOpts.keys;
-      const epochValue = redisStore.get(epochKey)?.value ?? null;
+      const epochValue = expireIfNeeded(epochKey)?.value ?? null;
 
       if (script === ACQUIRE_IDEMPOTENCY_SCRIPT) {
         const [expectedEpoch, serializedInFlight, ttlMsStr] =
@@ -125,13 +163,19 @@ function createSimulatedRedisClient(
         if (!epochValue || epochValue !== expectedEpoch) {
           return ['EPOCH_MISMATCH', '', '-2'];
         }
-        const existing = redisStore.get(redisKey);
+        const existing = expireIfNeeded(redisKey);
         if (existing) {
-          return ['EXISTING', existing.value, String(existing.pttl)];
+          const remainingPttl = resolveRemainingPttl(existing);
+          if (remainingPttl <= 0) {
+            return ['CORRUPT_TTL', '', String(remainingPttl)];
+          }
+          return ['EXISTING', existing.value, String(remainingPttl)];
         }
+        const ttlMs = Number(ttlMsStr);
         redisStore.set(redisKey, {
           value: serializedInFlight,
-          pttl: Number(ttlMsStr),
+          pttl: ttlMs,
+          expiresAtMs: now() + ttlMs,
         });
         return ['ACQUIRED', serializedInFlight, ttlMsStr];
       }
@@ -142,7 +186,7 @@ function createSimulatedRedisClient(
         if (!epochValue || epochValue !== expectedEpoch) {
           return 'EPOCH_MISMATCH';
         }
-        const existing = redisStore.get(redisKey);
+        const existing = expireIfNeeded(redisKey);
         if (!existing) {
           return 'RESERVATION_LOST';
         }
@@ -163,12 +207,17 @@ function createSimulatedRedisClient(
         ) {
           return 'OWNERSHIP_MISMATCH';
         }
-        if (existing.pttl <= 0) {
+        const remainingPttl = resolveRemainingPttl(existing);
+        if (remainingPttl <= 0) {
           return 'RESERVATION_LOST';
         }
         redisStore.set(redisKey, {
           value: serializedCompleted,
-          pttl: existing.pttl,
+          pttl: remainingPttl,
+          expiresAtMs:
+            existing.expiresAtMs !== null
+              ? existing.expiresAtMs
+              : now() + remainingPttl,
         });
         return 'COMPLETED';
       }
@@ -179,17 +228,19 @@ function createSimulatedRedisClient(
 
   const client: IdempotencyRedisClient & {
     ping: () => Promise<string>;
+    del: (key: string) => Promise<number>;
   } = {
     isReady: true,
     isOpen: true,
     get: getMock,
     set: setMock,
+    del: delMock,
     pTTL: pTTLMock,
     eval: evalMock,
     ping: pingMock,
   };
 
-  return { client, getMock, setMock, pTTLMock, evalMock, pingMock };
+  return { client, getMock, setMock, delMock, pTTLMock, evalMock, pingMock };
 }
 
 describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Closed Barrier)', () => {
@@ -222,6 +273,7 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     redisStore.set(IDEMPOTENCY_EPOCH_KEY, {
       value: EXPECTED_EPOCH,
       pttl: -1,
+      expiresAtMs: null,
     });
 
     const sim = createSimulatedRedisClient(redisStore, {
@@ -248,6 +300,10 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     service = new IdempotencyService(undefined, config, redisClientMock);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('rejects missing or non-UUID Idempotency-Key header with 400 INVALID_FORMAT', async () => {
     const handler = vi.fn();
 
@@ -272,6 +328,9 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
   });
 
   it('executes first H-IDEM call with 24h TTL (86400000ms) and replays cached 202/200 response on identical (user, key, method, route, bodyHash)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-19T00:00:00.000Z'));
+
     const handler = vi.fn().mockResolvedValue({
       statusCode: 202,
       responseBody: {
@@ -599,6 +658,7 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     redisStore.set(IDEMPOTENCY_EPOCH_KEY, {
       value: 'stale-or-unacknowledged-epoch',
       pttl: -1,
+      expiresAtMs: null,
     });
 
     await expect(
@@ -878,6 +938,7 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
       redisStore.set(redisKey, {
         value: corruptedPayload,
         pttl: 30_000,
+        expiresAtMs: Date.now() + 30_000,
       });
       const handler = vi.fn();
 
@@ -904,7 +965,9 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     const redisKey = `idempotency:v1:${USER_A}:${IDEM_KEY_1}`;
     const handler = vi.fn().mockImplementation(async () => {
       // Simulate key expiring at the completion boundary (PTTL == 0)
-      redisStore.get(redisKey)!.pttl = 0;
+      const current = redisStore.get(redisKey)!;
+      current.pttl = 0;
+      current.expiresAtMs = null;
       return {
         statusCode: 202,
         responseBody: { status: 'preparing' },
@@ -1068,49 +1131,55 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('bounds onModuleDestroy() shutdown wait and calls client.destroy() when quit() hangs', async () => {
-    const hangClient: IdempotencyRedisClient = {
-      isReady: true,
-      isOpen: true,
-      get: vi.fn(),
-      set: vi.fn(),
-      eval: vi.fn(),
-      quit: vi.fn(() => new Promise<void>(() => undefined)),
-      destroy: vi.fn(() => {
-        hangClient.isOpen = false;
-      }),
-    };
-    const svc = new IdempotencyService(
-      undefined,
-      { ...config, timeoutMs: 25 },
-      hangClient,
-    );
+  it('bounds onModuleDestroy() shutdown wait with deterministic fake timers and calls client.destroy() when quit() hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const hangClient: IdempotencyRedisClient = {
+        isReady: true,
+        isOpen: true,
+        get: vi.fn(),
+        set: vi.fn(),
+        eval: vi.fn(),
+        quit: vi.fn(() => new Promise<void>(() => undefined)),
+        destroy: vi.fn(() => {
+          hangClient.isOpen = false;
+        }),
+      };
+      const svc = new IdempotencyService(
+        undefined,
+        { ...config, timeoutMs: 25 },
+        hangClient,
+      );
 
-    const startedAt = Date.now();
-    await svc.onModuleDestroy();
-    const elapsedMs = Date.now() - startedAt;
+      const destroyPromise = svc.onModuleDestroy();
+      expect(hangClient.quit).toHaveBeenCalledTimes(1);
+      expect(hangClient.destroy).not.toHaveBeenCalled();
 
-    expect(elapsedMs).toBeLessThan(200);
-    expect(hangClient.quit).toHaveBeenCalledTimes(1);
-    expect(hangClient.destroy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(25);
+      await destroyPromise;
 
-    const handler = vi.fn();
-    await expect(
-      svc.execute(
-        {
-          userId: USER_A,
-          idempotencyKey: IDEM_KEY_1,
-          method: 'POST',
-          route: '/api/v1/roadmaps/generate',
-          body: {},
-        },
-        handler,
-      ),
-    ).rejects.toSatisfy((err) => {
-      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
-      return true;
-    });
-    expect(handler).not.toHaveBeenCalled();
+      expect(hangClient.destroy).toHaveBeenCalledTimes(1);
+
+      const handler = vi.fn();
+      await expect(
+        svc.execute(
+          {
+            userId: USER_A,
+            idempotencyKey: IDEM_KEY_1,
+            method: 'POST',
+            route: '/api/v1/roadmaps/generate',
+            body: {},
+          },
+          handler,
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('destroys a late-resolving Redis client immediately when connect() settles after timeout deadline', async () => {
@@ -1168,5 +1237,515 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     });
     expect(delayedClient.eval).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('preserves original acquisition expiration deadline when simulated clock advances between acquire and complete', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-19T00:00:00.000Z'));
+      const acquiredAtMs = Date.now();
+      const redisKey = `idempotency:v1:${USER_A}:${IDEM_KEY_1}`;
+
+      const handler = vi.fn().mockImplementation(async () => {
+        const inFlightEntry = redisStore.get(redisKey);
+        expect(inFlightEntry?.expiresAtMs).toBe(
+          acquiredAtMs + DEFAULT_IDEMPOTENCY_TTL_MS,
+        );
+        await vi.advanceTimersByTimeAsync(15_000);
+        return {
+          statusCode: 202,
+          responseBody: { status: 'queued' },
+        };
+      });
+
+      const res = await service.execute(
+        {
+          userId: USER_A,
+          idempotencyKey: IDEM_KEY_1,
+          method: 'POST',
+          route: '/api/v1/roadmaps/generate',
+          body: { target_level: 'mid' },
+        },
+        handler,
+      );
+
+      expect(res.statusCode).toBe(202);
+      const completedEntry = redisStore.get(redisKey);
+      expect(completedEntry?.pttl).toBe(DEFAULT_IDEMPOTENCY_TTL_MS - 15_000);
+      expect(completedEntry?.expiresAtMs).toBe(
+        acquiredAtMs + DEFAULT_IDEMPOTENCY_TTL_MS,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never auto-seeds idempotency:epoch when missing until acknowledgeEpoch() is explicitly invoked', async () => {
+    redisStore.clear();
+    const handler = vi.fn();
+
+    await expect(
+      service.execute(
+        {
+          userId: USER_A,
+          idempotencyKey: IDEM_KEY_1,
+          method: 'POST',
+          route: '/api/v1/roadmaps/generate',
+          body: {},
+        },
+        handler,
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+      return true;
+    });
+
+    expect(setMock).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with 503 on persistent record (PTTL = -1), non-positive EXISTING PTTL, invalid statusCode (0 / 600), or stored identity mismatch', async () => {
+    const redisKey = `idempotency:v1:${USER_A}:${IDEM_KEY_1}`;
+    const firstHandler = vi.fn().mockResolvedValue({
+      statusCode: 202,
+      responseBody: { job_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+    });
+    await service.execute(
+      {
+        userId: USER_A,
+        idempotencyKey: IDEM_KEY_1,
+        method: 'POST',
+        route: '/api/v1/roadmaps/generate',
+        body: { target_level: 'mid' },
+      },
+      firstHandler,
+    );
+    const validRecord = JSON.parse(redisStore.get(redisKey)!.value) as Record<
+      string,
+      unknown
+    >;
+
+    const replayHandler = vi.fn();
+    const ctx = {
+      userId: USER_A,
+      idempotencyKey: IDEM_KEY_1,
+      method: 'POST',
+      route: '/api/v1/roadmaps/generate',
+      body: { target_level: 'mid' },
+    };
+
+    // 1. PTTL = -1 (persistent key without expiry) -> 503 without clearing key or running handler
+    redisStore.set(redisKey, {
+      value: JSON.stringify(validRecord),
+      pttl: -1,
+      expiresAtMs: null,
+    });
+    await expect(service.execute(ctx, replayHandler)).rejects.toSatisfy(
+      (err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      },
+    );
+    expect(redisStore.has(redisKey)).toBe(true);
+
+    // 2. Defense-in-depth: 'EXISTING' response with non-positive rawPttl (0) -> 503
+    evalMock.mockResolvedValueOnce([
+      'EXISTING',
+      JSON.stringify(validRecord),
+      '0',
+    ]);
+    await expect(service.execute(ctx, replayHandler)).rejects.toSatisfy(
+      (err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      },
+    );
+
+    // 3. Invalid completed statusCode (0, 600) -> 503
+    for (const badStatus of [0, 99, 600]) {
+      redisStore.set(redisKey, {
+        value: JSON.stringify({ ...validRecord, statusCode: badStatus }),
+        pttl: 30_000,
+        expiresAtMs: Date.now() + 30_000,
+      });
+      await expect(service.execute(ctx, replayHandler)).rejects.toSatisfy(
+        (err) => {
+          expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+          return true;
+        },
+      );
+    }
+
+    // 4. Stored userId mismatch -> 503
+    redisStore.set(redisKey, {
+      value: JSON.stringify({ ...validRecord, userId: USER_B }),
+      pttl: 30_000,
+      expiresAtMs: Date.now() + 30_000,
+    });
+    await expect(service.execute(ctx, replayHandler)).rejects.toSatisfy(
+      (err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      },
+    );
+
+    // 5. Stored idempotencyKey mismatch -> 503
+    redisStore.set(redisKey, {
+      value: JSON.stringify({
+        ...validRecord,
+        idempotencyKey: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      }),
+      pttl: 30_000,
+      expiresAtMs: Date.now() + 30_000,
+    });
+    await expect(service.execute(ctx, replayHandler)).rejects.toSatisfy(
+      (err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      },
+    );
+
+    expect(replayHandler).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with 503 before invoking handler() when stopped or when acquisition elapsed time >= ttlMs', async () => {
+    // 1. Stopped right after ACQUIRE succeeds, before handler() runs
+    const stopSim = createSimulatedRedisClient(redisStore, {
+      isDown: () => false,
+    });
+    const stopService = new IdempotencyService(
+      undefined,
+      config,
+      stopSim.client,
+    );
+    const originalStopEval = stopSim.evalMock.getMockImplementation()!;
+    stopSim.evalMock.mockImplementationOnce(async (script, evalOpts) => {
+      const res = await originalStopEval(script, evalOpts);
+      void stopService.onModuleDestroy();
+      return res;
+    });
+
+    const stoppedHandler = vi.fn();
+    await expect(
+      stopService.execute(
+        {
+          userId: USER_A,
+          idempotencyKey: IDEM_KEY_1,
+          method: 'POST',
+          route: '/api/v1/roadmaps/generate',
+          body: {},
+        },
+        stoppedHandler,
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+      return true;
+    });
+    expect(stoppedHandler).not.toHaveBeenCalled();
+
+    // 2. Acquisition latency reaches >= ttlMs before handler() runs
+    vi.useFakeTimers();
+    try {
+      const shortTtlConfig: IdempotencyConfiguration = {
+        ...config,
+        ttlSeconds: 2,
+        ttlMs: 2_000,
+      };
+      const slowAcquireSim = createSimulatedRedisClient(redisStore, {
+        isDown: () => false,
+      });
+      const slowAcquireSvc = new IdempotencyService(
+        undefined,
+        shortTtlConfig,
+        slowAcquireSim.client,
+      );
+      const originalAcquireEval =
+        slowAcquireSim.evalMock.getMockImplementation()!;
+      slowAcquireSim.evalMock.mockImplementationOnce(
+        async (script, evalOpts) => {
+          const res = await originalAcquireEval(script, evalOpts);
+          vi.advanceTimersByTime(2_000);
+          return res;
+        },
+      );
+
+      const expiredHandler = vi.fn();
+      await expect(
+        slowAcquireSvc.execute(
+          {
+            userId: USER_A,
+            idempotencyKey: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            method: 'POST',
+            route: '/api/v1/roadmaps/generate',
+            body: {},
+          },
+          expiredHandler,
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      expect(expiredHandler).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses replacement active client C2 for completion when C1 retires mid-handler and never re-runs handler on unknown completion failure', async () => {
+    const sim1 = createSimulatedRedisClient(redisStore, {
+      isDown: () => false,
+    });
+    const sim2 = createSimulatedRedisClient(redisStore, {
+      isDown: () => false,
+    });
+    sim1.client.destroy = vi.fn(() => {
+      sim1.client.isOpen = false;
+    });
+    sim2.client.destroy = vi.fn(() => {
+      sim2.client.isOpen = false;
+    });
+
+    const managedSvc = new IdempotencyService(undefined, config);
+    const internals = managedSvc as unknown as {
+      client?: IdempotencyRedisClient;
+      retireClient: (failed?: IdempotencyRedisClient) => void;
+    };
+    internals.client = sim1.client;
+
+    const handler = vi.fn().mockImplementation(async () => {
+      internals.retireClient(sim1.client);
+      internals.client = sim2.client;
+      return {
+        statusCode: 202,
+        responseBody: { status: 'preparing' },
+      };
+    });
+
+    const res = await managedSvc.execute(
+      {
+        userId: USER_A,
+        idempotencyKey: IDEM_KEY_1,
+        method: 'POST',
+        route: '/api/v1/roadmaps/generate',
+        body: { target_level: 'mid' },
+      },
+      handler,
+    );
+
+    expect(res.statusCode).toBe(202);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(sim1.evalMock).toHaveBeenCalledTimes(1);
+    expect(sim2.evalMock).toHaveBeenCalledTimes(1);
+    expect(sim2.evalMock).toHaveBeenCalledWith(
+      COMPLETE_IDEMPOTENCY_SCRIPT,
+      expect.any(Object),
+    );
+
+    // Unknown completion failure retires active client and fails closed without rerunning handler
+    const failKey = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    sim2.evalMock.mockImplementationOnce(
+      async (script, opts) =>
+        await sim1.evalMock.getMockImplementation()!(script, opts),
+    );
+    sim2.evalMock.mockRejectedValueOnce(new Error('ECONNRESET'));
+
+    const singleShotHandler = vi.fn().mockResolvedValue({
+      statusCode: 202,
+      responseBody: { status: 'preparing' },
+    });
+
+    await expect(
+      managedSvc.execute(
+        {
+          userId: USER_A,
+          idempotencyKey: failKey,
+          method: 'POST',
+          route: '/api/v1/roadmaps/generate',
+          body: {},
+        },
+        singleShotHandler,
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+      return true;
+    });
+    expect(singleShotHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('passively expires timed-out keys after IDEMPOTENCY_TTL_SECONDS * 1000 so a fresh acquisition succeeds cleanly instead of returning CORRUPT_TTL', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-19T00:00:00.000Z'));
+
+    const firstHandler = vi.fn().mockResolvedValue({
+      statusCode: 202,
+      responseBody: { attempt: 1 },
+    });
+    const ctx = {
+      userId: USER_A,
+      idempotencyKey: IDEM_KEY_1,
+      method: 'POST',
+      route: '/api/v1/roadmaps/generate',
+      body: { target_level: 'mid' },
+    };
+
+    const first = await service.execute(ctx, firstHandler);
+    expect(first.replayed).toBe(false);
+    expect(first.responseBody).toEqual({ attempt: 1 });
+
+    // Advance clock past full IDEMPOTENCY_TTL_SECONDS * 1000 lifetime
+    await vi.advanceTimersByTimeAsync(DEFAULT_IDEMPOTENCY_TTL_MS + 1);
+
+    const secondHandler = vi.fn().mockResolvedValue({
+      statusCode: 202,
+      responseBody: { attempt: 2 },
+    });
+    const second = await service.execute(ctx, secondHandler);
+    expect(second.replayed).toBe(false);
+    expect(second.responseBody).toEqual({ attempt: 2 });
+    expect(secondHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports one-time SET NX bootstrapInitialEpoch() for clean deployments while failing closed on mismatched snapshot epochs and runtime misses', async () => {
+    redisStore.clear();
+    const handler = vi.fn().mockResolvedValue({
+      statusCode: 202,
+      responseBody: { ok: true },
+    });
+    const ctx = {
+      userId: USER_A,
+      idempotencyKey: IDEM_KEY_1,
+      method: 'POST',
+      route: '/api/v1/roadmaps/generate',
+      body: {},
+    };
+
+    // Runtime execute() stays fail-closed when idempotency:epoch is missing
+    await expect(service.execute(ctx, handler)).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+      return true;
+    });
+    expect(handler).not.toHaveBeenCalled();
+
+    // Clean initial deployment bootstrap initializes epoch via SET NX
+    expect(await service.bootstrapInitialEpoch()).toBe('INITIALIZED');
+    expect(setMock).toHaveBeenCalledWith(
+      IDEMPOTENCY_EPOCH_KEY,
+      EXPECTED_EPOCH,
+      {
+        NX: true,
+      },
+    );
+
+    // Subsequent bootstrap calls are idempotent when epoch already matches
+    expect(await service.bootstrapInitialEpoch()).toBe('ALREADY_SET');
+
+    const okResult = await service.execute(ctx, handler);
+    expect(okResult.statusCode).toBe(202);
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // Restored snapshot containing a stale epoch refuses silent NX overwrite during bootstrap
+    redisStore.set(IDEMPOTENCY_EPOCH_KEY, {
+      value: 'stale-snapshot-epoch',
+      pttl: -1,
+      expiresAtMs: null,
+    });
+    await expect(
+      service.bootstrapInitialEpoch('rotated-epoch-v2'),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+      return true;
+    });
+    expect(redisStore.get(IDEMPOTENCY_EPOCH_KEY)?.value).toBe(
+      'stale-snapshot-epoch',
+    );
+
+    // Runtime execute() stays fenced at 503 until explicit operator acknowledgeEpoch()
+    await expect(service.execute(ctx, handler)).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+      return true;
+    });
+    await service.acknowledgeEpoch(EXPECTED_EPOCH);
+    const replayed = await service.execute(ctx, handler);
+    expect(replayed.replayed).toBe(true);
+  });
+
+  it('onModuleInit() does not write idempotency:epoch by default when IDEMPOTENCY_BOOTSTRAP_ON_INIT is unset or false', async () => {
+    const prevEnv = process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT;
+    try {
+      redisStore.clear();
+      delete process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT;
+      await service.onModuleInit();
+
+      expect(setMock).not.toHaveBeenCalled();
+      expect(redisStore.has(IDEMPOTENCY_EPOCH_KEY)).toBe(false);
+
+      process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT = 'false';
+      await service.onModuleInit();
+
+      expect(setMock).not.toHaveBeenCalled();
+      expect(redisStore.has(IDEMPOTENCY_EPOCH_KEY)).toBe(false);
+
+      const handler = vi.fn();
+      await expect(
+        service.execute(
+          {
+            userId: USER_A,
+            idempotencyKey: IDEM_KEY_1,
+            method: 'POST',
+            route: '/api/v1/roadmaps/generate',
+            body: {},
+          },
+          handler,
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT;
+      } else {
+        process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT = prevEnv;
+      }
+    }
+  });
+
+  it('onModuleInit() runs bootstrapInitialEpoch() (SET NX) only when IDEMPOTENCY_BOOTSTRAP_ON_INIT === "true" and fails closed on conflicting epoch', async () => {
+    const prevEnv = process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT;
+    try {
+      redisStore.clear();
+      process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT = 'true';
+      await service.onModuleInit();
+
+      expect(setMock).toHaveBeenCalledWith(
+        IDEMPOTENCY_EPOCH_KEY,
+        EXPECTED_EPOCH,
+        {
+          NX: true,
+        },
+      );
+      expect(redisStore.get(IDEMPOTENCY_EPOCH_KEY)?.value).toBe(EXPECTED_EPOCH);
+
+      // Conflicting snapshot epoch during explicit bootstrap must fail closed without overwriting
+      redisStore.set(IDEMPOTENCY_EPOCH_KEY, {
+        value: 'conflicting-snapshot-epoch',
+        pttl: -1,
+        expiresAtMs: null,
+      });
+      await expect(service.onModuleInit()).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      expect(redisStore.get(IDEMPOTENCY_EPOCH_KEY)?.value).toBe(
+        'conflicting-snapshot-epoch',
+      );
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT;
+      } else {
+        process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT = prevEnv;
+      }
+    }
   });
 });
