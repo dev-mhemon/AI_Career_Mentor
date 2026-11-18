@@ -7,6 +7,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AccountModule } from './account/account.module.js';
+import { JobsModule } from './jobs/jobs.module.js';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AccountModule } from './account/account.module.js';
     }),
     AuthModule,
     AccountModule,
+    JobsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -63,6 +63,93 @@ export function validateAuthEmailFrom(fromAddress: string): void {
   }
 }
 
+/**
+ * Returns the first non-blank trimmed string across the given candidate keys, or `undefined`.
+ */
+export function resolveFirstNonBlankValue(
+  lookup: (key: string) => unknown,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const raw = lookup(key);
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      return raw.trim();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Validates an optional Redis connection URL (`redis:` or `rediss:`), verifying percent-encoded
+ * username/password credentials can be decoded cleanly to match `node-redis` startup behavior.
+ */
+export function validateOptionalRedisUrl(
+  rawUrl: unknown,
+  keyName: string,
+): void {
+  if (
+    rawUrl === undefined ||
+    rawUrl === null ||
+    (typeof rawUrl === 'string' && rawUrl.trim() === '')
+  ) {
+    return;
+  }
+  if (typeof rawUrl !== 'string') {
+    throw new Error(`Invalid ${keyName}`);
+  }
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (
+      !['redis:', 'rediss:'].includes(parsed.protocol) ||
+      !parsed.hostname ||
+      !/^\/(0|[1-9][0-9]*)?$|^$/.test(parsed.pathname) ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error();
+    }
+    if (parsed.username) {
+      decodeURIComponent(parsed.username);
+    }
+    if (parsed.password) {
+      decodeURIComponent(parsed.password);
+    }
+  } catch {
+    throw new Error(`Invalid ${keyName}`);
+  }
+}
+
+function validateOptionalPositiveInteger(
+  rawValue: unknown,
+  keyName: string,
+): void {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return;
+  }
+  const str = String(rawValue);
+  const num = Number(str);
+  if (
+    !/^[1-9][0-9]*$/.test(str) ||
+    !Number.isSafeInteger(num) ||
+    num > 2_147_483_647
+  ) {
+    throw new Error(`Invalid ${keyName}`);
+  }
+}
+
+function validateOptionalEpoch(rawEpoch: unknown, keyName: string): void {
+  if (rawEpoch === undefined) {
+    return;
+  }
+  if (
+    typeof rawEpoch !== 'string' ||
+    !rawEpoch.trim() ||
+    rawEpoch.trim().startsWith('replace_')
+  ) {
+    throw new Error(`Invalid ${keyName}`);
+  }
+}
+
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
   const required = [
@@ -150,6 +237,27 @@ export function validateConfiguration(raw: Record<string, unknown>) {
       raw.AUTH_OTP_HMAC_SECRET.startsWith('replace_')
     )
       throw new Error('AUTH_OTP_HMAC_SECRET requires at least 32 secret bytes');
+  }
+  validateOptionalRedisUrl(raw.IDEMPOTENCY_REDIS_URL, 'IDEMPOTENCY_REDIS_URL');
+  validateOptionalRedisUrl(raw.REDIS_URL, 'REDIS_URL');
+  validateOptionalEpoch(raw.IDEMPOTENCY_REDIS_EPOCH, 'IDEMPOTENCY_REDIS_EPOCH');
+  validateOptionalPositiveInteger(
+    raw.IDEMPOTENCY_TTL_SECONDS,
+    'IDEMPOTENCY_TTL_SECONDS',
+  );
+  validateOptionalPositiveInteger(
+    raw.IDEMPOTENCY_REDIS_TIMEOUT_MS,
+    'IDEMPOTENCY_REDIS_TIMEOUT_MS',
+  );
+  validateOptionalPositiveInteger(
+    raw.IDEMPOTENCY_REDIS_RETRY_SECONDS,
+    'IDEMPOTENCY_REDIS_RETRY_SECONDS',
+  );
+  if (
+    typeof raw.AUTH_REDIS_URL === 'string' &&
+    raw.AUTH_REDIS_URL.trim().length > 0
+  ) {
+    validateOptionalRedisUrl(raw.AUTH_REDIS_URL, 'AUTH_REDIS_URL');
   }
   readAbuseConfiguration(raw);
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
