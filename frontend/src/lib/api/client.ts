@@ -720,6 +720,11 @@ export function withIdempotencyKey(
     }
   }
   if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    for (const existingKey of Object.keys(merged)) {
+      if (existingKey.toLowerCase() === 'idempotency-key') {
+        delete merged[existingKey];
+      }
+    }
     merged['Idempotency-Key'] = idempotencyKey.trim();
   }
   return merged;

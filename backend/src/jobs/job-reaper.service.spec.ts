@@ -56,6 +56,12 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
         sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE SKIP LOCKED')
       ) {
+        if (
+          sql.includes("status = 'queued'") ||
+          sql.includes('is_async = false')
+        ) {
+          return [];
+        }
         expect(sql).toContain("status = 'preparing'");
         expect(params).toEqual([5, 3600, 120, 20]);
         return [
@@ -76,7 +82,7 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
         expect(sql).toContain("AND status = 'preparing'");
         expect(params).toEqual([JOB_A, 'dead-worker-1', 2]);
         transitions.push('preparing->failed');
-        return [{ id: JOB_A }];
+        return [[{ id: JOB_A }], 1];
       }
 
       if (
@@ -88,7 +94,7 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
         expect(sql).not.toContain("status = 'preparing'");
         expect(params).toEqual([JOB_A, 4, 5, 3600]);
         transitions.push('failed->queued');
-        return [{ id: JOB_A }];
+        return [[{ id: JOB_A }], 1];
       }
 
       return [];
@@ -116,6 +122,12 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
         sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE SKIP LOCKED')
       ) {
+        if (
+          sql.includes("status = 'queued'") ||
+          sql.includes('is_async = false')
+        ) {
+          return [];
+        }
         return [
           {
             id: JOB_A,
@@ -138,7 +150,7 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
       ) {
         expect(sql).toContain('retryable = false');
         expect(sql).toContain('input_payload = NULL');
-        return [{ id: String(params?.[0]) }];
+        return [[{ id: String(params?.[0]) }], 1];
       }
 
       return [];
@@ -189,5 +201,133 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
     service.onModuleDestroy();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(transactionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs terminal cleanup when TypeORM step2 UPDATE returns [[], 0] and terminalizes expired queued jobs', async () => {
+    let terminalCleanupCount = 0;
+    let queuedTerminalCount = 0;
+
+    queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('is_async = true') &&
+        sql.includes("status = 'preparing'") &&
+        sql.includes('FOR UPDATE SKIP LOCKED')
+      ) {
+        return [
+          {
+            id: JOB_A,
+            locked_by: 'worker-1',
+            attempt_count: 2,
+            can_retry: true,
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes("status = 'queued'") &&
+        sql.includes('FOR UPDATE SKIP LOCKED')
+      ) {
+        return [{ id: JOB_B }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('is_async = false') &&
+        sql.includes("status = 'preparing'") &&
+        sql.includes('FOR UPDATE SKIP LOCKED')
+      ) {
+        return [];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'failed'") &&
+        sql.includes("AND status = 'preparing'")
+      ) {
+        return [[{ id: JOB_A }], 1];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'queued'")
+      ) {
+        // Missed step2 UPDATE -> TypeORM Postgres tuple [[], 0]
+        return [[], 0];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes('SET retryable = false') &&
+        sql.includes('input_payload = NULL')
+      ) {
+        terminalCleanupCount += 1;
+        return [[{ id: JOB_A }], 1];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'failed'") &&
+        sql.includes("AND status = 'queued'")
+      ) {
+        // Verify all 015_functions.sql & 010_ai_operations.sql preconditions for queued -> failed
+        expect(sql).toContain("error_code = 'WORKER_LEASE_EXPIRED'");
+        expect(sql).toContain('retryable = false');
+        expect(sql).toContain('finished_at = clock_timestamp()');
+        expect(sql).toContain('input_payload = NULL');
+        queuedTerminalCount += 1;
+        return [[{ id: JOB_B }], 1];
+      }
+      return [];
+    });
+
+    const summary = await service.reapExpiredLeases(20);
+    expect(summary).toEqual({
+      inspected: 2,
+      requeued: 0,
+      failedTerminal: 2,
+    });
+    expect(terminalCleanupCount).toBe(1);
+    expect(queuedTerminalCount).toBe(1);
+  });
+
+  it('terminalizes abandoned synchronous (is_async = false) preparing quota reservations without ever requeuing them', async () => {
+    const SYNC_RESERVATION_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    let syncTerminalized = false;
+
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('is_async = false') &&
+        sql.includes("status = 'preparing'") &&
+        sql.includes('FOR UPDATE SKIP LOCKED')
+      ) {
+        expect(params).toEqual([120, 20]);
+        return [{ id: SYNC_RESERVATION_ID }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'failed'") &&
+        sql.includes('AND is_async = false') &&
+        sql.includes("AND status = 'preparing'")
+      ) {
+        expect(sql).toContain("error_code = 'WORKER_LEASE_EXPIRED'");
+        expect(sql).toContain('retryable = false');
+        expect(sql).toContain('finished_at = clock_timestamp()');
+        expect(sql).toContain('input_payload = NULL');
+        expect(params).toEqual([SYNC_RESERVATION_ID]);
+        syncTerminalized = true;
+        return [[{ id: SYNC_RESERVATION_ID }], 1];
+      }
+      return [];
+    });
+
+    const summary = await service.reapExpiredLeases(20);
+    expect(summary).toEqual({
+      inspected: 1,
+      requeued: 0,
+      failedTerminal: 1,
+    });
+    expect(syncTerminalized).toBe(true);
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        String(sql).includes("SET status = 'queued'"),
+      ),
+    ).toBe(false);
   });
 });

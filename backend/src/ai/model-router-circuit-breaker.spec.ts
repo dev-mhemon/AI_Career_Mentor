@@ -407,6 +407,24 @@ describe('ModelRouterService & CircuitBreakerService (Approval Gate, Fallback & 
     expect(admissionNext.canaryToken).not.toBeNull();
   });
 
+  it('prevents a late pre-open CLOSED success (canaryToken = null) from prematurely closing an OPEN quarantine', () => {
+    const preOpenAdmission = circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
+    expect(preOpenAdmission).toEqual({ allowed: true, canaryToken: null });
+
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD; i += 1) {
+      circuitBreaker.recordFailure(PRIMARY_MODEL_ID, null);
+    }
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('OPEN');
+
+    // Late success from pre-open request must NOT end the 60s quarantine
+    circuitBreaker.recordSuccess(
+      PRIMARY_MODEL_ID,
+      preOpenAdmission.canaryToken,
+    );
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('OPEN');
+    expect(circuitBreaker.isAvailable(PRIMARY_MODEL_ID)).toBe(false);
+  });
+
   it('never leaks provider_key, model_identifier, or model_id in client-facing errors', async () => {
     modelsFromDb = [PRIMARY_APPROVED];
     syntheticAdapter.setModelRule(PRIMARY_MODEL_ID, 'provider_error');

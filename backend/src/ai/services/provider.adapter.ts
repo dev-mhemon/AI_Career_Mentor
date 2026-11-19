@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
+  AiExecutionMode,
   AiModelRecord,
   AiTask,
   GoalInterpretationOutput,
@@ -27,6 +28,7 @@ export interface ProviderInvocationRequest {
   outputSchemaId: string;
   maxOutputUnits: number;
   timeoutMs: number;
+  mode?: AiExecutionMode;
   signal?: AbortSignal;
 }
 
@@ -430,9 +432,9 @@ export class SyntheticProviderAdapter implements ProviderAdapter {
       10,
       Math.ceil(Buffer.byteLength(request.userEnvelope, 'utf8') / 4),
     );
-    const outputUnits = Math.min(
-      request.maxOutputUnits,
-      Math.max(20, Math.ceil(Buffer.byteLength(JSON.stringify(output)) / 4)),
+    const outputUnits = Math.max(
+      20,
+      Math.ceil(Buffer.byteLength(JSON.stringify(output), 'utf8') / 4),
     );
     return {
       output,
@@ -446,5 +448,21 @@ export class SyntheticProviderAdapter implements ProviderAdapter {
         },
       ],
     };
+  }
+}
+
+/**
+ * Fail-closed provider adapter bound when `AI_EXECUTION_MODE=real_user` and no live provider
+ * adapter is configured, ensuring simulated synthetic output is never returned as real model output.
+ */
+export class UnconfiguredRealUserProviderAdapter implements ProviderAdapter {
+  invoke(): Promise<ProviderInvocationResult> {
+    return Promise.reject(
+      new ProviderInvocationError(
+        'provider_error',
+        'No real-user AI provider adapter is configured',
+        503,
+      ),
+    );
   }
 }

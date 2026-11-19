@@ -108,6 +108,50 @@ interface OwnerAccessRow {
   feature_allowed: boolean;
 }
 
+interface PreCommitRecheckRow {
+  within_deadline: boolean;
+  user_status: string;
+  feature_allowed: boolean;
+}
+
+const KINDS_REQUIRING_EXPECTED_REFS: ReadonlySet<string> = new Set([
+  'roadmap_generate',
+  'roadmap_revision',
+  'merge_proposal',
+  'topic_content',
+  'practice_review',
+]);
+
+/**
+ * Unwraps TypeORM PostgreSQL `UPDATE ... RETURNING` tuple `[rows, rowCount]` into a plain row array.
+ */
+function extractReturningRows<T>(raw: unknown): T[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  if (
+    raw.length === 2 &&
+    Array.isArray(raw[0]) &&
+    (typeof raw[1] === 'number' || raw[1] === null || raw[1] === undefined)
+  ) {
+    return raw[0] as T[];
+  }
+  return raw as T[];
+}
+
+function jobRequiresExpectedRefCheck(job: ClaimedJobRow): boolean {
+  if (KINDS_REQUIRING_EXPECTED_REFS.has(job.job_kind)) {
+    return true;
+  }
+  const refs = job.input_payload?.expected_refs;
+  return (
+    typeof refs === 'object' &&
+    refs !== null &&
+    !Array.isArray(refs) &&
+    Object.keys(refs as Record<string, unknown>).length > 0
+  );
+}
+
 const SAFE_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   AI_TIMEOUT: 'AI generation timed out. Please try again.',
   AI_SERVICE_ERROR: 'AI service encountered an error. Please try again later.',
@@ -234,8 +278,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
    */
   async claimBatch(batchSize = 1): Promise<ClaimedJobRow[]> {
     const boundedLimit = Math.max(1, Math.min(50, Math.floor(batchSize)));
-    return this.runTx((tx) =>
-      tx.query<ClaimedJobRow[]>(
+    const raw = await this.runTx((tx) =>
+      tx.query<unknown>(
         `WITH candidates AS (
            SELECT id
              FROM public.ai_requests
@@ -272,26 +316,33 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         [this.maxAttempts, this.maxAgeSeconds, boundedLimit, this.workerId],
       ),
     );
+    return extractReturningRows<ClaimedJobRow>(raw);
   }
 
   /**
    * Renews lease timestamp strictly while the attempt fence `(id, locked_by, attempt_count)`
-   * still owns `'preparing'`. Zero updated rows indicates fence loss.
+   * still owns `'preparing'` AND the job has not exceeded `maxAgeSeconds`. Zero updated rows indicates fence loss or deadline expiry.
    */
   async sendHeartbeat(fence: JobAttemptFence): Promise<boolean> {
-    const rows = await this.runTx((tx) =>
-      tx.query<Array<{ id: string }>>(
+    const raw = await this.runTx((tx) =>
+      tx.query<unknown>(
         `UPDATE public.ai_requests
             SET locked_at = clock_timestamp()
           WHERE id = $1
             AND status = 'preparing'
             AND locked_by = $2
             AND attempt_count = $3
+            AND created_at > clock_timestamp() - ($4 * interval '1 second')
          RETURNING id`,
-        [fence.requestId, fence.lockedBy, fence.attemptCount],
+        [
+          fence.requestId,
+          fence.lockedBy,
+          fence.attemptCount,
+          this.maxAgeSeconds,
+        ],
       ),
     );
-    return Array.isArray(rows) && rows.length > 0;
+    return extractReturningRows<{ id: string }>(raw).length > 0;
   }
 
   /**
@@ -330,9 +381,9 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
           abortController.abort(new Error('Attempt fence lost'));
           stopHeartbeat();
         }
-      } catch (err) {
+      } catch {
         this.logger.warn(
-          `Heartbeat failed for job ${job.id}: ${err instanceof Error ? err.message : 'unknown'}`,
+          `Heartbeat failed for job ${job.id} (HEARTBEAT_ERROR)`,
         );
         fenceLost = true;
         abortController.abort(new Error('Heartbeat error'));
@@ -370,13 +421,11 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
     try {
       return await this.commitSucceededJob(job, fence, handler, execResult);
     } catch (commitError) {
+      const classified = classifyExecutionError(commitError);
       this.logger.warn(
-        `Commit gate aborted for job ${job.id}: ${commitError instanceof Error ? commitError.message : 'unknown'}`,
+        `Commit gate aborted for job ${job.id} (${classified.errorCode})`,
       );
-      return this.recordExecutionFailure(
-        fence,
-        classifyExecutionError(commitError),
-      );
+      return this.recordExecutionFailure(fence, classified);
     }
   }
 
@@ -434,7 +483,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
                   ELSE private.effective_feature_access($1, $2::public.feature_key)
                 END AS feature_allowed
            FROM public.users u
-          WHERE u.id = $1`,
+          WHERE u.id = $1
+          FOR SHARE OF u`,
         [locked.user_id, locked.feature_key],
       );
       const access = Array.isArray(accessRows) ? accessRows[0] : undefined;
@@ -465,6 +515,24 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         };
       }
 
+      const requiresRefCheck = jobRequiresExpectedRefCheck(job);
+      if (
+        requiresRefCheck &&
+        typeof handler.verifyExpectedRefs !== 'function'
+      ) {
+        await this.markTerminalFailureInTx(
+          tx,
+          fence,
+          'STALE_JOB_INPUT',
+          SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
+        );
+        return {
+          outcome: 'failed_terminal',
+          jobId: fence.requestId,
+          errorCode: 'STALE_JOB_INPUT',
+        };
+      }
+
       if (typeof handler.verifyExpectedRefs === 'function') {
         const refCheck = await handler.verifyExpectedRefs(tx, job);
         if (!refCheck.ok) {
@@ -478,6 +546,67 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             outcome: 'failed_terminal',
             jobId: fence.requestId,
             errorCode: 'STALE_JOB_INPUT',
+          };
+        }
+      }
+
+      // Unconditionally recheck deadline & live owner/feature access under row locks immediately before persistArtifact
+      const recheckRows = await tx.query<PreCommitRecheckRow[]>(
+        `SELECT (r.created_at > clock_timestamp() - ($2 * interval '1 second')) AS within_deadline,
+                u.status::text AS user_status,
+                CASE
+                  WHEN $4::public.feature_key IS NULL THEN true
+                  ELSE private.effective_feature_access($3, $4::public.feature_key)
+                END AS feature_allowed
+           FROM public.ai_requests r
+           JOIN public.users u ON u.id = $3
+          WHERE r.id = $1`,
+        [
+          fence.requestId,
+          this.maxAgeSeconds,
+          locked.user_id,
+          locked.feature_key,
+        ],
+      );
+      const recheck = Array.isArray(recheckRows) ? recheckRows[0] : undefined;
+      if (recheck) {
+        if (recheck.within_deadline === false) {
+          await this.markTerminalFailureInTx(
+            tx,
+            fence,
+            'WORKER_LEASE_EXPIRED',
+            SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+          );
+          return {
+            outcome: 'failed_terminal',
+            jobId: fence.requestId,
+            errorCode: 'WORKER_LEASE_EXPIRED',
+          };
+        }
+        if (recheck.user_status !== 'active') {
+          await this.markTerminalFailureInTx(
+            tx,
+            fence,
+            'ACCOUNT_SUSPENDED',
+            SAFE_FAILURE_MESSAGES.ACCOUNT_SUSPENDED,
+          );
+          return {
+            outcome: 'failed_terminal',
+            jobId: fence.requestId,
+            errorCode: 'ACCOUNT_SUSPENDED',
+          };
+        }
+        if (recheck.feature_allowed === false) {
+          await this.markTerminalFailureInTx(
+            tx,
+            fence,
+            'FEATURE_DISABLED',
+            SAFE_FAILURE_MESSAGES.FEATURE_DISABLED,
+          );
+          return {
+            outcome: 'failed_terminal',
+            jobId: fence.requestId,
+            errorCode: 'FEATURE_DISABLED',
           };
         }
       }
@@ -536,7 +665,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         ],
       );
 
-      const finalized = await tx.query<Array<{ id: string }>>(
+      const finalizedRaw = await tx.query<unknown>(
         `UPDATE public.ai_requests
             SET status = 'succeeded',
                 result_type = $4,
@@ -574,8 +703,9 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
           Math.max(0, Math.trunc(execResult.latencyMs)),
         ],
       );
+      const finalized = extractReturningRows<{ id: string }>(finalizedRaw);
 
-      if (!Array.isArray(finalized) || finalized.length === 0) {
+      if (finalized.length === 0) {
         throw new Error('Attempt fence lost during final status update');
       }
 
@@ -594,7 +724,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
     errorCode: string,
     safeMessage: string,
   ): Promise<boolean> {
-    const rows = await tx.query<Array<{ id: string }>>(
+    const raw = await tx.query<unknown>(
       `UPDATE public.ai_requests
           SET status = 'failed',
               error_code = $4,
@@ -615,7 +745,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         safeMessage,
       ],
     );
-    return Array.isArray(rows) && rows.length > 0;
+    return extractReturningRows<{ id: string }>(raw).length > 0;
   }
 
   private async recordExecutionFailure(
@@ -643,7 +773,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       }
 
       // Step 1: preparing -> failed (retryable = true, preserving input_payload within deadline)
-      const failedRows = await tx.query<Array<{ id: string }>>(
+      const failedRaw = await tx.query<unknown>(
         `UPDATE public.ai_requests
             SET status = 'failed',
                 error_code = $4,
@@ -663,7 +793,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
           failure.safeMessage,
         ],
       );
-      if (!Array.isArray(failedRows) || failedRows.length === 0) {
+      const failedRows = extractReturningRows<{ id: string }>(failedRaw);
+      if (failedRows.length === 0) {
         return { outcome: 'fence_lost', jobId: fence.requestId };
       }
 
@@ -672,7 +803,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         fence.attemptCount,
         this.randomFn,
       );
-      const requeuedRows = await tx.query<Array<{ id: string }>>(
+      const requeuedRaw = await tx.query<unknown>(
         `UPDATE public.ai_requests
             SET status = 'queued',
                 available_at = clock_timestamp() + ($2 * interval '1 second')
@@ -684,7 +815,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
          RETURNING id`,
         [fence.requestId, delaySeconds, this.maxAttempts, this.maxAgeSeconds],
       );
-      if (!Array.isArray(requeuedRows) || requeuedRows.length === 0) {
+      const requeuedRows = extractReturningRows<{ id: string }>(requeuedRaw);
+      if (requeuedRows.length === 0) {
         await tx.query(
           `UPDATE public.ai_requests
               SET retryable = false,
@@ -711,16 +843,34 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
   }
 
   /**
-   * Claims and processes one batch of queued jobs using the supplied handler.
+   * Claims and starts processing up to `batchSize` queued jobs concurrently, waiting for EVERY
+   * started job to settle (`Promise.allSettled`) before returning or rethrowing so `pollingInFlight`
+   * cannot clear while sibling jobs are still running.
    */
   async pollOnce(
     handler: JobHandler,
     batchSize = 1,
   ): Promise<JobProcessOutcome[]> {
     const claimed = await this.claimBatch(batchSize);
+    if (claimed.length === 0) {
+      return [];
+    }
+    const settled = await Promise.allSettled(
+      claimed.map((job) => this.processClaimedJob(job, handler)),
+    );
     const outcomes: JobProcessOutcome[] = [];
-    for (const job of claimed) {
-      outcomes.push(await this.processClaimedJob(job, handler));
+    let firstError: unknown;
+    let hasError = false;
+    for (const item of settled) {
+      if (item.status === 'fulfilled') {
+        outcomes.push(item.value);
+      } else if (!hasError) {
+        hasError = true;
+        firstError = item.reason;
+      }
+    }
+    if (hasError) {
+      throw firstError;
     }
     return outcomes;
   }
@@ -736,10 +886,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       }
       this.pollingInFlight = true;
       void this.pollOnce(handler, batchSize)
-        .catch((err) => {
-          this.logger.warn(
-            `Queue poll failed: ${err instanceof Error ? err.message : 'unknown'}`,
-          );
+        .catch(() => {
+          this.logger.warn('Queue poll failed (JOB_QUEUE_POLL_ERROR)');
         })
         .finally(() => {
           this.pollingInFlight = false;

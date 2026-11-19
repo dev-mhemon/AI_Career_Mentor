@@ -42,11 +42,14 @@ export interface AILoadingStateProps {
 
 interface PolledSnapshot {
   jobId: string;
+  sourceJob: JobAcceptedDTO | JobStatusDTO;
+  sourceStatus: JobStatusDTO['status'];
   status: JobStatusDTO;
 }
 
 interface PollFailureSnapshot {
   jobId: string;
+  accessToken: string | undefined;
   message: string;
 }
 
@@ -94,22 +97,40 @@ export function AILoadingState({
 
   const onJobSucceededRef = useRef(onJobSucceeded);
   const pollJobStatusRef = useRef(pollJobStatus);
+  const jobRef = useRef(job);
 
   useEffect(() => {
     onJobSucceededRef.current = onJobSucceeded;
     pollJobStatusRef.current = pollJobStatus;
+    jobRef.current = job;
   });
 
   const activePolled =
-    polled && polled.jobId === job.job_id ? polled.status : null;
-  const activePollFailure =
-    pollFailure && pollFailure.jobId === job.job_id ? pollFailure.message : null;
+    polled && polled.jobId === job.job_id ? polled : null;
+  const usePropOverPolled =
+    !activePolled ||
+    job.status !== activePolled.sourceStatus ||
+    (activePolled.status.status === 'failed' &&
+      job !== activePolled.sourceJob &&
+      (job.status === 'queued' ||
+        job.status === 'preparing' ||
+        job.status === 'succeeded'));
+  const effectiveJob = usePropOverPolled ? job : activePolled.status;
 
-  const effectiveRawStatus = activePolled?.status ?? job.status;
-  const effectiveError =
-    activePolled?.error ?? ('error' in job ? job.error : null);
+  const effectiveRawStatus = effectiveJob.status;
+  const effectiveError = 'error' in effectiveJob ? effectiveJob.error : null;
   const effectiveRetryable =
-    activePolled?.retryable ?? ('retryable' in job ? job.retryable : false);
+    'retryable' in effectiveJob ? effectiveJob.retryable : false;
+
+  const isServerTerminal =
+    effectiveRawStatus === 'succeeded' || effectiveRawStatus === 'failed';
+  const activePollFailure =
+    !isServerTerminal &&
+    pollFailure &&
+    pollFailure.jobId === job.job_id &&
+    pollFailure.accessToken === accessToken
+      ? pollFailure.message
+      : null;
 
   const uiState: AILoadingUIState = activePollFailure
     ? 'failed_retryable'
@@ -155,7 +176,12 @@ export function AILoadingState({
           return;
         }
         setPollFailure(null);
-        setPolled({ jobId: job.job_id, status: nextStatus });
+        setPolled({
+          jobId: job.job_id,
+          sourceJob: jobRef.current,
+          sourceStatus: jobRef.current.status,
+          status: nextStatus,
+        });
 
         if (nextStatus.status === 'succeeded') {
           if (nextStatus.result_ref) {
@@ -176,6 +202,7 @@ export function AILoadingState({
         const mapped = mapApiError(error);
         setPollFailure({
           jobId: job.job_id,
+          accessToken,
           message: mapped.message,
         });
       }
@@ -212,12 +239,20 @@ export function AILoadingState({
           ? 'Completed'
           : 'Needs retry';
 
+  const isPollRecovery = Boolean(activePollFailure);
   const canRetry =
-    Boolean(onRetryJob) &&
     uiState === 'failed_retryable' &&
-    (Boolean(activePollFailure) ||
-      effectiveRetryable ||
-      Boolean(effectiveError?.retryable));
+    (isPollRecovery ||
+      (Boolean(onRetryJob) &&
+        (effectiveRetryable || Boolean(effectiveError?.retryable))));
+
+  const handleRetry = () => {
+    if (isPollRecovery) {
+      setPollFailure(null);
+      return;
+    }
+    onRetryJob?.();
+  };
 
   const clampedSkeletonCount = Math.max(1, Math.min(8, skeletonCount));
 
@@ -279,8 +314,8 @@ export function AILoadingState({
           </div>
         </div>
 
-        {uiState === 'failed_retryable' && canRetry && onRetryJob && (
-          <Button size="sm" variant="secondary" onClick={onRetryJob}>
+        {uiState === 'failed_retryable' && canRetry && (
+          <Button size="sm" variant="secondary" onClick={handleRetry}>
             Retry
           </Button>
         )}

@@ -232,8 +232,29 @@ describe('JobProducerService (R12 Durable Producer)', () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
-  it('rejects oversized (>32KB), unknown fields, unsupported version, and secret refs before INSERT', async () => {
-    // >32KB instruction
+  it('rejects oversized (>32KB), missing/unknown expected_refs, NUL bytes, unsupported version, and secret refs before INSERT', async () => {
+    // Missing required expected_refs for topic_content
+    await expect(
+      service.enqueue({
+        userId: USER_ID,
+        kind: 'topic_content',
+        envelope: {
+          v: 1,
+          args: {
+            topic_id: TOPIC_ID,
+            skill_id: SKILL_ID,
+            career_level: 'junior',
+            content_version: 1,
+          },
+          expected_refs: {},
+        },
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
+
+    // Unknown expected_refs field on roadmap_revision
     await expect(
       service.enqueue({
         userId: USER_ID,
@@ -247,7 +268,31 @@ describe('JobProducerService (R12 Durable Producer)', () => {
             refresh_stale: true,
           },
           expected_refs: {
-            huge_ref: 'x'.repeat(33_000),
+            roadmap_version: 1,
+            unknown_extra_ref: 'bad',
+          },
+        },
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
+
+    // Embedded NUL byte rejected (Postgres jsonb rejects \u0000)
+    await expect(
+      service.enqueue({
+        userId: USER_ID,
+        kind: 'roadmap_revision',
+        envelope: {
+          v: 1,
+          args: {
+            roadmap_id: ROADMAP_ID,
+            base_version_no: 1,
+            instruction: 'bad\u0000instruction',
+            refresh_stale: false,
+          },
+          expected_refs: {
+            roadmap_version: 1,
           },
         },
       }),
@@ -340,7 +385,7 @@ describe('JobProducerService (R12 Durable Producer)', () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
-  it('maps PostgreSQL 23505 on uq_ai_requests_idempotency to 409 IDEMPOTENCY_KEY_REUSED', async () => {
+  it('maps PostgreSQL 23505 on uq_ai_requests_idempotency to 409 and rethrows unidentified 23505; maps ck_ai_requests_input_payload 23514 to 422', async () => {
     queryMock.mockRejectedValueOnce({
       code: '23505',
       constraint: 'uq_ai_requests_idempotency',
@@ -364,9 +409,76 @@ describe('JobProducerService (R12 Durable Producer)', () => {
       expectContractError(err, 409, 'IDEMPOTENCY_KEY_REUSED');
       return true;
     });
+
+    // TypeORM QueryFailedError wrapping driverError with 23505 + uq_ai_requests_idempotency also maps to 409
+    queryMock.mockRejectedValueOnce({
+      driverError: {
+        code: '23505',
+        constraint: 'uq_ai_requests_idempotency',
+      },
+    });
+    await expect(
+      service.enqueue({
+        userId: USER_ID,
+        kind: 'roadmap_generate',
+        idempotencyKey: IDEM_KEY,
+        envelope: {
+          v: 1,
+          args: { career_goal_id: GOAL_ID },
+          expected_refs: {
+            goal_updated_at: '2026-11-18T10:00:00.000Z',
+            profile_updated_at: '2026-11-18T10:00:00.000Z',
+          },
+        },
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 409, 'IDEMPOTENCY_KEY_REUSED');
+      return true;
+    });
+
+    // Unidentified 23505 without uq_ai_requests_idempotency must NOT be misclassified as 409
+    const unknownUnique = { code: '23505', message: 'duplicate key violation' };
+    queryMock.mockRejectedValueOnce(unknownUnique);
+    await expect(
+      service.enqueue({
+        userId: USER_ID,
+        kind: 'roadmap_generate',
+        envelope: {
+          v: 1,
+          args: { career_goal_id: GOAL_ID },
+          expected_refs: {
+            goal_updated_at: '2026-11-18T10:00:00.000Z',
+            profile_updated_at: '2026-11-18T10:00:00.000Z',
+          },
+        },
+      }),
+    ).rejects.toBe(unknownUnique);
+
+    // ck_ai_requests_input_payload 23514 maps cleanly to 422 VALIDATION_FAILED
+    queryMock.mockRejectedValueOnce({
+      code: '23514',
+      constraint: 'ck_ai_requests_input_payload',
+    });
+    await expect(
+      service.enqueue({
+        userId: USER_ID,
+        kind: 'roadmap_generate',
+        envelope: {
+          v: 1,
+          args: { career_goal_id: GOAL_ID },
+          expected_refs: {
+            goal_updated_at: '2026-11-18T10:00:00.000Z',
+            profile_updated_at: '2026-11-18T10:00:00.000Z',
+          },
+        },
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
   });
 
-  it('never logs input_payload contents during enqueue', async () => {
+  it('never logs input_payload contents during enqueue and permits literal backslash-u0000 text', async () => {
     const logSpy = vi.spyOn(Logger.prototype, 'log');
     const debugSpy = vi.spyOn(Logger.prototype, 'debug');
     const warnSpy = vi.spyOn(Logger.prototype, 'warn');
@@ -380,10 +492,10 @@ describe('JobProducerService (R12 Durable Producer)', () => {
         args: {
           roadmap_id: ROADMAP_ID,
           base_version_no: 1,
-          instruction: 'SENTINEL_PRIVATE_REVISION_TEXT',
+          instruction: 'SENTINEL_PRIVATE_REVISION_TEXT \\u0000',
           refresh_stale: false,
         },
-        expected_refs: { version: 1 },
+        expected_refs: { roadmap_version: 1 },
       },
     });
 

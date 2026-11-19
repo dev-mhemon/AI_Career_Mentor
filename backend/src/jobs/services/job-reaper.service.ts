@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { OnModuleDestroy } from '@nestjs/common';
+import type { OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../../auth/services/database.service.js';
 import { readJobWorkerConfiguration } from '../../config.js';
@@ -20,6 +20,27 @@ interface ExpiredLeaseRow {
   locked_by: string | null;
   attempt_count: number | string;
   can_retry: boolean;
+}
+
+interface ExpiredQueuedRow {
+  id: string;
+}
+
+/**
+ * Unwraps TypeORM PostgreSQL `UPDATE ... RETURNING` tuple `[rows, rowCount]` into a plain row array.
+ */
+function extractReturningRows<T>(raw: unknown): T[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  if (
+    raw.length === 2 &&
+    Array.isArray(raw[0]) &&
+    (typeof raw[1] === 'number' || raw[1] === null || raw[1] === undefined)
+  ) {
+    return raw[0] as T[];
+  }
+  return raw as T[];
 }
 
 /**
@@ -50,12 +71,15 @@ export function computeRetryBackoffSeconds(
  * Exhausted or expired jobs are marked terminal (`retryable = false`, `input_payload = NULL`).
  */
 @Injectable()
-export class JobReaperService implements OnModuleDestroy {
+export class JobReaperService
+  implements OnApplicationBootstrap, OnModuleDestroy
+{
   private readonly logger = new Logger(JobReaperService.name);
   readonly leaseSeconds: number;
   readonly maxAttempts: number;
   readonly maxAgeSeconds: number;
   readonly reaperIntervalSeconds: number;
+  private readonly autoStart: boolean;
   private readonly randomFn: () => number;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
@@ -70,7 +94,19 @@ export class JobReaperService implements OnModuleDestroy {
     this.maxAttempts = cfg.maxAttempts;
     this.maxAgeSeconds = cfg.maxAgeSeconds;
     this.reaperIntervalSeconds = cfg.reaperIntervalSeconds;
+    const nodeEnv =
+      configService?.get<string>('NODE_ENV') ?? process.env.NODE_ENV;
+    const rawAutoStart =
+      configService?.get<string>('JOB_REAPER_AUTO_START') ??
+      process.env.JOB_REAPER_AUTO_START;
+    this.autoStart = nodeEnv !== 'test' && rawAutoStart !== 'false';
     this.randomFn = randomFn ?? Math.random;
+  }
+
+  onApplicationBootstrap(): void {
+    if (this.autoStart) {
+      this.start();
+    }
   }
 
   private async runTx<T>(
@@ -89,7 +125,8 @@ export class JobReaperService implements OnModuleDestroy {
   }
 
   /**
-   * Sweeps up to `batchSize` stalled `'preparing'` jobs whose lease has expired (`locked_at <= clock_timestamp() - lease`).
+   * Sweeps up to `batchSize` stalled or over-age `'preparing'` jobs and up to `batchSize`
+   * over-age `'queued'` jobs (`R13`).
    */
   async reapExpiredLeases(batchSize = 20): Promise<ReaperSweepResult> {
     const boundedLimit = Math.max(1, Math.min(100, Math.floor(batchSize)));
@@ -102,7 +139,10 @@ export class JobReaperService implements OnModuleDestroy {
            FROM public.ai_requests
           WHERE is_async = true
             AND status = 'preparing'
-            AND locked_at <= clock_timestamp() - ($3 * interval '1 second')
+            AND (
+              locked_at <= clock_timestamp() - ($3 * interval '1 second')
+              OR created_at <= clock_timestamp() - ($2 * interval '1 second')
+            )
           ORDER BY locked_at ASC, id ASC
           LIMIT $4
           FOR UPDATE SKIP LOCKED`,
@@ -119,7 +159,7 @@ export class JobReaperService implements OnModuleDestroy {
 
         if (row.can_retry) {
           // Step 1: preparing -> failed (required by private.validate_ai_request_status trigger)
-          const step1 = await tx.query<Array<{ id: string }>>(
+          const step1Raw = await tx.query<unknown>(
             `UPDATE public.ai_requests
                 SET status = 'failed',
                     error_code = 'WORKER_LEASE_EXPIRED',
@@ -133,8 +173,9 @@ export class JobReaperService implements OnModuleDestroy {
              RETURNING id`,
             [row.id, row.locked_by, attemptCount],
           );
+          const step1 = extractReturningRows<{ id: string }>(step1Raw);
 
-          if (!Array.isArray(step1) || step1.length === 0) {
+          if (step1.length === 0) {
             continue;
           }
 
@@ -143,7 +184,7 @@ export class JobReaperService implements OnModuleDestroy {
             attemptCount,
             this.randomFn,
           );
-          const step2 = await tx.query<Array<{ id: string }>>(
+          const step2Raw = await tx.query<unknown>(
             `UPDATE public.ai_requests
                 SET status = 'queued',
                     available_at = clock_timestamp() + ($2 * interval '1 second')
@@ -155,8 +196,9 @@ export class JobReaperService implements OnModuleDestroy {
              RETURNING id`,
             [row.id, delaySeconds, this.maxAttempts, this.maxAgeSeconds],
           );
+          const step2 = extractReturningRows<{ id: string }>(step2Raw);
 
-          if (Array.isArray(step2) && step2.length > 0) {
+          if (step2.length > 0) {
             requeued += 1;
           } else {
             await tx.query(
@@ -172,7 +214,7 @@ export class JobReaperService implements OnModuleDestroy {
           }
         } else {
           // Terminal failure: max attempts reached or 1h total age deadline exceeded; purge input_payload
-          const terminalRows = await tx.query<Array<{ id: string }>>(
+          const terminalRaw = await tx.query<unknown>(
             `UPDATE public.ai_requests
                 SET status = 'failed',
                     error_code = 'WORKER_LEASE_EXPIRED',
@@ -187,9 +229,82 @@ export class JobReaperService implements OnModuleDestroy {
              RETURNING id`,
             [row.id, row.locked_by, attemptCount],
           );
-          if (Array.isArray(terminalRows) && terminalRows.length > 0) {
+          const terminalRows = extractReturningRows<{ id: string }>(
+            terminalRaw,
+          );
+          if (terminalRows.length > 0) {
             failedTerminal += 1;
           }
+        }
+      }
+
+      // Bounded sweep for queued jobs that exceeded maxAgeSeconds while never claimed (queued -> failed, permitted by 015_functions.sql)
+      const expiredQueued = await tx.query<ExpiredQueuedRow[]>(
+        `SELECT id
+           FROM public.ai_requests
+          WHERE is_async = true
+            AND status = 'queued'
+            AND created_at <= clock_timestamp() - ($1 * interval '1 second')
+          ORDER BY created_at ASC, id ASC
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED`,
+        [this.maxAgeSeconds, boundedLimit],
+      );
+
+      for (const row of expiredQueued ?? []) {
+        inspected += 1;
+        const terminalRaw = await tx.query<unknown>(
+          `UPDATE public.ai_requests
+              SET status = 'failed',
+                  error_code = 'WORKER_LEASE_EXPIRED',
+                  error_message = 'Job exceeded total age limit before execution',
+                  retryable = false,
+                  finished_at = clock_timestamp(),
+                  input_payload = NULL
+            WHERE id = $1
+              AND status = 'queued'
+           RETURNING id`,
+          [row.id],
+        );
+        const terminalRows = extractReturningRows<{ id: string }>(terminalRaw);
+        if (terminalRows.length > 0) {
+          failedTerminal += 1;
+        }
+      }
+
+      // Bounded sweep for abandoned synchronous quota reservations (is_async = false, status = 'preparing'):
+      // terminalize directly (preparing -> failed, retryable = false, NEVER requeued) so they stop consuming daily quota.
+      const abandonedSync = await tx.query<ExpiredQueuedRow[]>(
+        `SELECT id
+           FROM public.ai_requests
+          WHERE is_async = false
+            AND status = 'preparing'
+            AND COALESCE(locked_at, started_at, created_at) <= clock_timestamp() - ($1 * interval '1 second')
+          ORDER BY created_at ASC, id ASC
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED`,
+        [this.leaseSeconds, boundedLimit],
+      );
+
+      for (const row of abandonedSync ?? []) {
+        inspected += 1;
+        const terminalRaw = await tx.query<unknown>(
+          `UPDATE public.ai_requests
+              SET status = 'failed',
+                  error_code = 'WORKER_LEASE_EXPIRED',
+                  error_message = 'Synchronous AI reservation expired before completion',
+                  retryable = false,
+                  finished_at = clock_timestamp(),
+                  input_payload = NULL
+            WHERE id = $1
+              AND is_async = false
+              AND status = 'preparing'
+           RETURNING id`,
+          [row.id],
+        );
+        const terminalRows = extractReturningRows<{ id: string }>(terminalRaw);
+        if (terminalRows.length > 0) {
+          failedTerminal += 1;
         }
       }
 
@@ -208,10 +323,8 @@ export class JobReaperService implements OnModuleDestroy {
       }
       this.inFlight = true;
       void this.reapExpiredLeases(batchSize)
-        .catch((err) => {
-          this.logger.warn(
-            `Job reaper sweep failed: ${err instanceof Error ? err.message : 'unknown'}`,
-          );
+        .catch(() => {
+          this.logger.warn('Job reaper sweep failed (JOB_REAPER_SWEEP_ERROR)');
         })
         .finally(() => {
           this.inFlight = false;

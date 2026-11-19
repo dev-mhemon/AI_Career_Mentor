@@ -151,6 +151,10 @@ export class CircuitBreakerService {
     const entry = this.getOrCreate(modelId);
     this.syncState(entry, this.nowFn());
 
+    if (entry.state === 'OPEN' && canaryToken !== undefined) {
+      return;
+    }
+
     if (
       entry.state === 'HALF_OPEN' &&
       canaryToken !== undefined &&

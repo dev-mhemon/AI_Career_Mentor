@@ -840,5 +840,33 @@ describe('EP-J01 getJobStatus and withIdempotencyKey', () => {
     ).toEqual({
       'x-trace': 'trace-1',
     });
+
+    // Replaces existing case-insensitive idempotency-key without duplicating
+    expect(
+      withIdempotencyKey('22222222-2222-4222-8222-222222222222', {
+        'idempotency-key': 'old-key',
+        'X-Custom': 'keep',
+      }),
+    ).toEqual({
+      'X-Custom': 'keep',
+      'Idempotency-Key': '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(
+      withIdempotencyKey(
+        '33333333-3333-4333-8333-333333333333',
+        new Headers({ 'idempotency-key': 'old-key', 'X-Trace': 't1' }),
+      ),
+    ).toEqual({
+      'x-trace': 't1',
+      'Idempotency-Key': '33333333-3333-4333-8333-333333333333',
+    });
+
+    // Blank key preserves existing caller idempotency-key header
+    expect(
+      withIdempotencyKey('  ', { 'idempotency-key': 'keep-existing' }),
+    ).toEqual({
+      'idempotency-key': 'keep-existing',
+    });
   });
 });

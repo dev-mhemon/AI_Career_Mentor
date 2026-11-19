@@ -2991,13 +2991,34 @@ components:
         status:
           $ref: '#/components/schemas/JobStatus'
         result_ref:
-          allOf:
-            - $ref: '#/components/schemas/JobResultRefDTO'
+          type: object
           nullable: true
+          additionalProperties: false
+          required:
+            - type
+            - id
+          properties:
+            type:
+              type: string
+            id:
+              type: string
+              format: uuid
         error:
-          allOf:
-            - $ref: '#/components/schemas/JobErrorDTO'
+          type: object
           nullable: true
+          additionalProperties: false
+          required:
+            - code
+            - message
+            - retryable
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+              description: Safe canonical dictionary message; raw error_message and provider/model details never exposed.
+            retryable:
+              type: boolean
         retryable:
           type: boolean
         created_at:

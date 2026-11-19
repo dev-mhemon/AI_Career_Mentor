@@ -157,39 +157,233 @@ export class QuotaGuardService {
   }
 
   /**
-   * Verifies 24h rolling quota for `(userId, task)` against `public.system_configurations`.
+   * Atomically serializes 24h rolling quota admission for `(userId, task)` using a canonicalized
+   * per-user/task transaction advisory lock (`($1::uuid)::text`). When `existingRequestId` is
+   * supplied, verifies in SQL that an owned, active `'preparing'` `public.ai_requests` row already
+   * exists for `(id, userId, task)` before skipping a new reservation; unpersisted, foreign, or
+   * already-completed (`'succeeded'`) UUIDs NEVER bypass quota reservation.
+   * Returns both `reservationId` (set only when this call created a new sync reservation row) and
+   * `telemetryRequestId` (the verified persisted `public.ai_requests.id` safe for FK binding, or `null`).
    * Throws `503 AI_BUDGET_EXHAUSTED` when exceeded (`PRD` §47: existing reads stay unaffected).
    */
-  async enforceUserQuota(userId: string, task: AiTask): Promise<void> {
+  async reserveUserQuota(
+    userId: string,
+    task: AiTask,
+    language: UiLanguage | null = null,
+    existingRequestId: string | null = null,
+  ): Promise<{
+    reservationId: string | null;
+    telemetryRequestId: string | null;
+  }> {
+    const normalizedUserId = userId.trim().toLowerCase();
+    const normalizedExistingId =
+      typeof existingRequestId === 'string' &&
+      UUID_PATTERN.test(existingRequestId.trim())
+        ? existingRequestId.trim().toLowerCase()
+        : null;
+
     const configKey = TASK_TO_QUOTA_KEY[task];
     if (!configKey) {
-      return;
+      return {
+        reservationId: null,
+        telemetryRequestId: normalizedExistingId,
+      };
     }
 
     const limit = await this.getBoundedConfigInteger(configKey);
-    const rows = await this.runTx((db) =>
-      db.query<Array<{ used_count: number | string }>>(
+
+    return this.runTx(async (db) => {
+      await db.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('ai_quota:' || ($1::uuid)::text || ':' || $2, 0))",
+        [normalizedUserId, task],
+      );
+
+      let verifiedExistingId: string | null = null;
+      if (normalizedExistingId !== null) {
+        const existingRows = await db.query<Array<{ id?: string }>>(
+          `SELECT id
+             FROM public.ai_requests
+            WHERE id = $1
+              AND user_id = $2
+              AND task = $3::public.ai_task
+              AND status = 'preparing'
+              AND created_at > clock_timestamp() - interval '24 hours'
+            LIMIT 1`,
+          [normalizedExistingId, normalizedUserId, task],
+        );
+        if (Array.isArray(existingRows) && existingRows.length > 0) {
+          verifiedExistingId = normalizedExistingId;
+        }
+      }
+
+      const rows = await db.query<Array<{ used_count: number | string }>>(
         `SELECT count(*)::int AS used_count
            FROM public.ai_requests
           WHERE user_id = $1
             AND task = $2::public.ai_task
             AND status <> 'failed'
-            AND created_at > clock_timestamp() - interval '24 hours'`,
-        [userId, task],
-      ),
-    );
-    const usedCount = Number(
-      Array.isArray(rows) ? (rows[0]?.used_count ?? 0) : 0,
-    );
-    if (Number.isFinite(usedCount) && usedCount >= limit) {
-      fail(
-        503,
-        'AI_BUDGET_EXHAUSTED',
-        'AI capacity is temporarily unavailable. Existing data remains accessible.',
-        undefined,
-        true,
+            AND created_at > clock_timestamp() - interval '24 hours'
+            AND ($3::uuid IS NULL OR id <> $3::uuid)`,
+        [normalizedUserId, task, verifiedExistingId],
       );
+      const usedCount = Number(
+        Array.isArray(rows) ? (rows[0]?.used_count ?? 0) : 0,
+      );
+      if (Number.isFinite(usedCount) && usedCount >= limit) {
+        fail(
+          503,
+          'AI_BUDGET_EXHAUSTED',
+          'AI capacity is temporarily unavailable. Existing data remains accessible.',
+          undefined,
+          true,
+        );
+      }
+
+      if (verifiedExistingId !== null) {
+        return {
+          reservationId: null,
+          telemetryRequestId: verifiedExistingId,
+        };
+      }
+
+      const inserted = await db.query<Array<{ id: string }>>(
+        `INSERT INTO public.ai_requests (
+           user_id,
+           task,
+           is_async,
+           status,
+           language,
+           started_at
+         )
+         VALUES (
+           $1,
+           $2::public.ai_task,
+           false,
+           'preparing'::public.job_status,
+           $3::public.ui_language,
+           clock_timestamp()
+         )
+         RETURNING id`,
+        [normalizedUserId, task, language],
+      );
+      const reservationId = Array.isArray(inserted)
+        ? (inserted[0]?.id ?? null)
+        : null;
+      return {
+        reservationId,
+        telemetryRequestId: reservationId,
+      };
+    });
+  }
+
+  /** Marks a synchronous quota reservation row `'succeeded'` after validated gateway completion. */
+  async completeQuotaReservation(
+    reservationId: string | null,
+    tx?: TelemetryQueryExecutor,
+  ): Promise<void> {
+    if (!reservationId || !UUID_PATTERN.test(reservationId)) {
+      return;
     }
+    const runUpdate = async (
+      executor: TelemetryQueryExecutor,
+    ): Promise<void> => {
+      await executor.query(
+        `UPDATE public.ai_requests
+            SET status = 'succeeded',
+                finished_at = clock_timestamp()
+          WHERE id = $1
+            AND is_async = false
+            AND status = 'preparing'`,
+        [reservationId],
+      );
+    };
+    if (tx) {
+      await runUpdate(tx);
+      return;
+    }
+    await this.runTx(runUpdate);
+  }
+
+  /** Marks a synchronous quota reservation row `'failed'` so failed calls stop counting toward 24h quota. */
+  async failQuotaReservation(
+    reservationId: string | null,
+    errorCode = 'AI_GENERATION_FAILED',
+    tx?: TelemetryQueryExecutor,
+  ): Promise<void> {
+    if (!reservationId || !UUID_PATTERN.test(reservationId)) {
+      return;
+    }
+    const runUpdate = async (
+      executor: TelemetryQueryExecutor,
+    ): Promise<void> => {
+      await executor.query(
+        `UPDATE public.ai_requests
+            SET status = 'failed',
+                error_code = $2,
+                error_message = 'AI request failed before completion',
+                retryable = false,
+                finished_at = clock_timestamp()
+          WHERE id = $1
+            AND is_async = false
+            AND status = 'preparing'`,
+        [reservationId, errorCode],
+      );
+    };
+    if (tx) {
+      await runUpdate(tx);
+      return;
+    }
+    await this.runTx(runUpdate);
+  }
+
+  /**
+   * Atomically persists optional `public.ai_generations` telemetry and completes the synchronous
+   * quota reservation row in a single database transaction so neither write can commit alone.
+   */
+  async finalizeGenerationSuccess(
+    telemetry: GenerationTelemetryInput | null,
+    reservationId: string | null,
+  ): Promise<string | null> {
+    const hasReservation = Boolean(
+      reservationId && UUID_PATTERN.test(reservationId),
+    );
+    if (!telemetry && !hasReservation) {
+      return null;
+    }
+    return this.runTx(async (tx) => {
+      const generationId = telemetry
+        ? await this.recordGenerationTelemetry(telemetry, tx)
+        : null;
+      if (hasReservation) {
+        await this.completeQuotaReservation(reservationId, tx);
+      }
+      return generationId;
+    });
+  }
+
+  /**
+   * Atomically persists optional failed-validation telemetry and marks the synchronous quota
+   * reservation row `'failed'` in a single database transaction.
+   */
+  async finalizeGenerationFailure(
+    telemetry: GenerationTelemetryInput | null,
+    reservationId: string | null,
+    errorCode = 'AI_GENERATION_FAILED',
+  ): Promise<void> {
+    const hasReservation = Boolean(
+      reservationId && UUID_PATTERN.test(reservationId),
+    );
+    if (!telemetry && !hasReservation) {
+      return;
+    }
+    await this.runTx(async (tx) => {
+      if (telemetry) {
+        await this.recordGenerationTelemetry(telemetry, tx);
+      }
+      if (hasReservation) {
+        await this.failQuotaReservation(reservationId, errorCode, tx);
+      }
+    });
   }
 
   /**

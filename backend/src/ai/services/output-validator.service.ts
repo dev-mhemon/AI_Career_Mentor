@@ -86,6 +86,10 @@ function asStringArray(value: unknown): string[] {
   return value.map((item) => asNonEmptyString(item, 4_000));
 }
 
+function isEnumValue(set: ReadonlySet<string>, value: unknown): boolean {
+  return typeof value === 'string' && set.has(value);
+}
+
 function assertDagAcyclic(edges: Map<string, string[]>): void {
   // 0 = unvisited, 1 = visiting, 2 = visited
   const state = new Map<string, number>();
@@ -142,14 +146,14 @@ function validateGoalInterpretation(raw: Record<string, unknown>): void {
   }
   if (
     raw.suggestedLevel !== null &&
-    !CAREER_LEVELS.has(String(raw.suggestedLevel))
+    !isEnumValue(CAREER_LEVELS, raw.suggestedLevel)
   ) {
     validationFail();
   }
 }
 
 function validateRoadmap(raw: Record<string, unknown>): void {
-  if (!CAREER_LEVELS.has(String(raw.targetLevel))) {
+  if (!isEnumValue(CAREER_LEVELS, raw.targetLevel)) {
     validationFail();
   }
   const summary = asRecord(raw.summary);
@@ -176,10 +180,10 @@ function validateRoadmap(raw: Record<string, unknown>): void {
       asNonEmptyString(item.topic_id, 128);
       asNonEmptyString(item.skill_id, 128);
       asNonEmptyString(item.title, 300);
-      if (!ITEM_PRIORITIES.has(String(item.priority))) {
+      if (!isEnumValue(ITEM_PRIORITIES, item.priority)) {
         validationFail();
       }
-      if (!GAP_TYPES.has(String(item.gap_type))) {
+      if (!isEnumValue(GAP_TYPES, item.gap_type)) {
         validationFail();
       }
       asNonEmptyString(item.required_depth, 100);
@@ -212,6 +216,9 @@ function validateRoadmap(raw: Record<string, unknown>): void {
         typeof item.lineage_id === 'string' && item.lineage_id.trim()
           ? item.lineage_id.trim()
           : `${phase.phase_no}:${item.sequence_no}:${item.topic_id}`;
+      if (dagEdges.has(nodeId)) {
+        validationFail();
+      }
       const deps = item.depends_on_lineage_ids.map((d) =>
         asNonEmptyString(d, 128),
       );
@@ -236,7 +243,7 @@ function validateMergeProposal(raw: Record<string, unknown>): void {
   asNonEmptyString(raw.reason, 1_000);
   if (
     raw.target_level !== null &&
-    !CAREER_LEVELS.has(String(raw.target_level))
+    !isEnumValue(CAREER_LEVELS, raw.target_level)
   ) {
     validationFail();
   }
@@ -248,7 +255,7 @@ function validateMergeProposal(raw: Record<string, unknown>): void {
     if (typeof op.sort_order !== 'number' || op.sort_order < 1) {
       validationFail();
     }
-    if (!MERGE_OPS.has(String(op.op))) {
+    if (!isEnumValue(MERGE_OPS, op.op)) {
       validationFail();
     }
     if (op.op === 'add_topic') {
@@ -256,7 +263,7 @@ function validateMergeProposal(raw: Record<string, unknown>): void {
     } else {
       asNonEmptyString(op.lineage_id, 128);
     }
-    if (op.priority !== null && !ITEM_PRIORITIES.has(String(op.priority))) {
+    if (op.priority !== null && !isEnumValue(ITEM_PRIORITIES, op.priority)) {
       validationFail();
     }
     asNonEmptyString(op.reason, 1_000);
@@ -274,7 +281,7 @@ function validateMergeProposal(raw: Record<string, unknown>): void {
 
 function validateTopicContent(raw: Record<string, unknown>): void {
   asNonEmptyString(raw.explanation_markdown, 50_000);
-  if (!UI_LANGUAGES.has(String(raw.language))) {
+  if (!isEnumValue(UI_LANGUAGES, raw.language)) {
     validationFail();
   }
   if (!Array.isArray(raw.important_questions) || !Array.isArray(raw.sources)) {
@@ -293,7 +300,7 @@ function validateTopicContent(raw: Record<string, unknown>): void {
     if (!HTTP_URL_PATTERN.test(url)) {
       validationFail();
     }
-    if (!RESOURCE_TYPES.has(String(src.resource_type))) {
+    if (!isEnumValue(RESOURCE_TYPES, src.resource_type)) {
       validationFail();
     }
   }
@@ -322,7 +329,7 @@ function validateQuizGenerate(raw: Record<string, unknown>): void {
     const mcq = asRecord(rawMcq);
     if (
       typeof mcq.sort_order !== 'number' ||
-      !QUESTION_DIFFICULTIES.has(String(mcq.difficulty)) ||
+      !isEnumValue(QUESTION_DIFFICULTIES, mcq.difficulty) ||
       typeof mcq.allow_i_dont_know !== 'boolean'
     ) {
       validationFail();
@@ -352,8 +359,8 @@ function validateQuizGenerate(raw: Record<string, unknown>): void {
     const fr = asRecord(rawFr);
     if (
       typeof fr.sort_order !== 'number' ||
-      !QUESTION_DIFFICULTIES.has(String(fr.difficulty)) ||
-      !RESPONSE_HINTS.has(String(fr.response_hint)) ||
+      !isEnumValue(QUESTION_DIFFICULTIES, fr.difficulty) ||
+      !isEnumValue(RESPONSE_HINTS, fr.response_hint) ||
       typeof fr.allow_i_dont_know !== 'boolean' ||
       typeof fr.max_length !== 'number' ||
       fr.max_length < 1 ||
@@ -392,9 +399,9 @@ function validatePracticeReview(raw: Record<string, unknown>): void {
     }
     const dims = asRecord(raw.dimensions);
     if (
-      !REVIEW_RATINGS.has(String(dims.correctness)) ||
-      !REVIEW_RATINGS.has(String(dims.understanding)) ||
-      !REVIEW_RATINGS.has(String(dims.reasoning))
+      !isEnumValue(REVIEW_RATINGS, dims.correctness) ||
+      !isEnumValue(REVIEW_RATINGS, dims.understanding) ||
+      !isEnumValue(REVIEW_RATINGS, dims.reasoning)
     ) {
       validationFail();
     }
@@ -415,7 +422,7 @@ function validateMentorChat(raw: Record<string, unknown>): void {
     validationFail();
   }
   if (
-    !UI_LANGUAGES.has(String(raw.language)) ||
+    !isEnumValue(UI_LANGUAGES, raw.language) ||
     typeof raw.safety_mode !== 'boolean' ||
     typeof raw.learning_claim_recorded !== 'boolean'
   ) {
@@ -440,9 +447,9 @@ function validateTechnologyUpdate(raw: Record<string, unknown>): void {
       validationFail();
     }
     if (
-      !RELEASE_STATUSES.has(String(raw.release_status)) ||
-      !RELEVANCE_LEVELS.has(String(raw.relevance)) ||
-      !ACTION_TIMINGS.has(String(raw.action_timing))
+      !isEnumValue(RELEASE_STATUSES, raw.release_status) ||
+      !isEnumValue(RELEVANCE_LEVELS, raw.relevance) ||
+      !isEnumValue(ACTION_TIMINGS, raw.action_timing)
     ) {
       validationFail();
     }

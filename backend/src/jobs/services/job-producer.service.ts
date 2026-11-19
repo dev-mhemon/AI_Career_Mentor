@@ -4,6 +4,7 @@ import { DatabaseService } from '../../auth/services/database.service.js';
 import { fail } from '../../common/http.js';
 import { readJobWorkerConfiguration } from '../../config.js';
 import type { JobAcceptedDto, JobKind } from '../dto/job-status.dto.js';
+import { isIdempotencyUniqueViolation } from './idempotency.service.js';
 
 /** Strict UUID matcher (`EP-J01` / `R12`). */
 const UUID_PATTERN =
@@ -127,7 +128,14 @@ export interface EnqueuedJobAcceptedDto extends JobAcceptedDto {
   status: 'queued';
 }
 
-/** Minimal query executor allowing participation in an existing caller DB transaction. */
+/**
+ * Minimal query executor allowing participation in an existing caller DB transaction.
+ *
+ * SECURITY CONTRACT: Callers supplying `tx` to `JobProducerService.enqueue(request, tx)`
+ * MUST have opened `tx` via `DatabaseService.transaction(request.userId, ..., active = true)`
+ * so the owner's `public.users` row is already locked (`FOR UPDATE`) and verified `status = 'active'`
+ * in the same transaction prior to inserting into `public.ai_requests`.
+ */
 export interface JobQueryExecutor {
   query<T = unknown>(query: string, parameters?: unknown[]): Promise<T>;
 }
@@ -191,6 +199,23 @@ function assertPositiveIntegerField(value: unknown, field: string): number {
   return value;
 }
 
+function assertNoNulByte(value: string, field: string): void {
+  if (value.includes('\u0000')) {
+    fail(
+      422,
+      'VALIDATION_FAILED',
+      `${field} contains an unsupported NUL byte`,
+      [
+        {
+          field,
+          code: 'VALIDATION_FAILED',
+          message: `${field} cannot contain NUL characters`,
+        },
+      ],
+    );
+  }
+}
+
 function assertNonEmptyStringField(
   value: unknown,
   field: string,
@@ -214,6 +239,7 @@ function assertNonEmptyStringField(
       ],
     );
   }
+  assertNoNulByte(value, field);
   return value.trim();
 }
 
@@ -502,41 +528,112 @@ function validateExpectedRefs(
         `expected_refs.${key} must be a finite number`,
       );
     }
+    if (typeof value === 'string') {
+      assertNoNulByte(value, `expected_refs.${key}`);
+    }
     normalized[key] = typeof value === 'string' ? value.trim() : value;
   }
 
-  if (kind === 'roadmap_generate') {
-    assertAllowedKeys(
-      rawRefs,
-      ['goal_updated_at', 'profile_updated_at'],
-      'expected_refs',
-    );
-    normalized.goal_updated_at = assertNonEmptyStringField(
-      rawRefs.goal_updated_at,
-      'expected_refs.goal_updated_at',
-      128,
-    );
-    normalized.profile_updated_at = assertNonEmptyStringField(
-      rawRefs.profile_updated_at,
-      'expected_refs.profile_updated_at',
-      128,
-    );
-  } else if (kind === 'practice_review') {
-    assertAllowedKeys(
-      rawRefs,
-      ['submitted_at', 'answer_saved_at'],
-      'expected_refs',
-    );
-    normalized.submitted_at = assertNonEmptyStringField(
-      rawRefs.submitted_at,
-      'expected_refs.submitted_at',
-      128,
-    );
-    normalized.answer_saved_at = assertNonEmptyStringField(
-      rawRefs.answer_saved_at,
-      'expected_refs.answer_saved_at',
-      128,
-    );
+  switch (kind) {
+    case 'roadmap_generate': {
+      assertAllowedKeys(
+        rawRefs,
+        ['goal_updated_at', 'profile_updated_at'],
+        'expected_refs',
+      );
+      normalized.goal_updated_at = assertNonEmptyStringField(
+        rawRefs.goal_updated_at,
+        'expected_refs.goal_updated_at',
+        128,
+      );
+      normalized.profile_updated_at = assertNonEmptyStringField(
+        rawRefs.profile_updated_at,
+        'expected_refs.profile_updated_at',
+        128,
+      );
+      break;
+    }
+    case 'roadmap_revision': {
+      assertAllowedKeys(rawRefs, ['roadmap_version'], 'expected_refs');
+      normalized.roadmap_version = assertPositiveIntegerField(
+        rawRefs.roadmap_version,
+        'expected_refs.roadmap_version',
+      );
+      break;
+    }
+    case 'merge_proposal': {
+      assertAllowedKeys(rawRefs, ['base_version_no'], 'expected_refs');
+      normalized.base_version_no = assertPositiveIntegerField(
+        rawRefs.base_version_no,
+        'expected_refs.base_version_no',
+      );
+      break;
+    }
+    case 'topic_content': {
+      assertAllowedKeys(
+        rawRefs,
+        ['content_version', 'roadmap_version'],
+        'expected_refs',
+      );
+      normalized.content_version = assertPositiveIntegerField(
+        rawRefs.content_version,
+        'expected_refs.content_version',
+      );
+      if (
+        rawRefs.roadmap_version !== undefined &&
+        rawRefs.roadmap_version !== null
+      ) {
+        normalized.roadmap_version = assertPositiveIntegerField(
+          rawRefs.roadmap_version,
+          'expected_refs.roadmap_version',
+        );
+      }
+      break;
+    }
+    case 'quiz_generate': {
+      assertAllowedKeys(
+        rawRefs,
+        ['content_version', 'roadmap_version'],
+        'expected_refs',
+      );
+      if (
+        rawRefs.content_version !== undefined &&
+        rawRefs.content_version !== null
+      ) {
+        normalized.content_version = assertPositiveIntegerField(
+          rawRefs.content_version,
+          'expected_refs.content_version',
+        );
+      }
+      if (
+        rawRefs.roadmap_version !== undefined &&
+        rawRefs.roadmap_version !== null
+      ) {
+        normalized.roadmap_version = assertPositiveIntegerField(
+          rawRefs.roadmap_version,
+          'expected_refs.roadmap_version',
+        );
+      }
+      break;
+    }
+    case 'practice_review': {
+      assertAllowedKeys(
+        rawRefs,
+        ['submitted_at', 'answer_saved_at'],
+        'expected_refs',
+      );
+      normalized.submitted_at = assertNonEmptyStringField(
+        rawRefs.submitted_at,
+        'expected_refs.submitted_at',
+        128,
+      );
+      normalized.answer_saved_at = assertNonEmptyStringField(
+        rawRefs.answer_saved_at,
+        'expected_refs.answer_saved_at',
+        128,
+      );
+      break;
+    }
   }
 
   return normalized;
@@ -575,8 +672,23 @@ export function assertAsyncJobKind(kind: unknown): AsyncJobKind {
   return kind as AsyncJobKind;
 }
 
+/** Formats a JSON value matching PostgreSQL `jsonb::text` spacing (`": "` and `", "`) to mirror `ck_ai_requests_input_payload`. */
+function serializePostgresJsonbText(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => serializePostgresJsonbText(item)).join(', ')}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}: ${serializePostgresJsonbText(v)}`).join(', ')}}`;
+}
+
 /**
- * Validates and normalizes a `v: 1` producer payload envelope (`R12`) and enforces `<= 32768` UTF-8 bytes.
+ * Validates and normalizes a `v: 1` producer payload envelope (`R12`) and enforces `<= 32768` UTF-8 bytes
+ * in PostgreSQL's `jsonb::text` representation (`ck_ai_requests_input_payload`).
  */
 export function validateProducerEnvelope(
   kind: AsyncJobKind,
@@ -610,7 +722,11 @@ export function validateProducerEnvelope(
     expected_refs: normalizedRefs,
   };
   const serializedJson = JSON.stringify(validated);
-  if (Buffer.byteLength(serializedJson, 'utf8') > MAX_JOB_INPUT_PAYLOAD_BYTES) {
+  const pgJsonbText = serializePostgresJsonbText(validated);
+  if (
+    Buffer.byteLength(serializedJson, 'utf8') > MAX_JOB_INPUT_PAYLOAD_BYTES ||
+    Buffer.byteLength(pgJsonbText, 'utf8') > MAX_JOB_INPUT_PAYLOAD_BYTES
+  ) {
     fail(
       422,
       'VALIDATION_FAILED',
@@ -628,7 +744,7 @@ export function validateProducerEnvelope(
   return { validated, serializedJson };
 }
 
-function isIdempotencyUniqueViolation(error: unknown): boolean {
+function isInputPayloadCheckViolation(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
   }
@@ -637,26 +753,30 @@ function isIdempotencyUniqueViolation(error: unknown): boolean {
     constraint?: unknown;
     detail?: unknown;
     message?: unknown;
+    driverError?: {
+      code?: unknown;
+      constraint?: unknown;
+      detail?: unknown;
+      message?: unknown;
+    };
   };
-  if (pgErr.code !== '23505') {
+  const code = pgErr.code ?? pgErr.driverError?.code;
+  if (code !== '23514') {
     return false;
   }
-  if (typeof pgErr.constraint === 'string') {
-    return pgErr.constraint === 'uq_ai_requests_idempotency';
+  const constraint =
+    typeof pgErr.constraint === 'string' && pgErr.constraint.trim().length > 0
+      ? pgErr.constraint
+      : pgErr.driverError?.constraint;
+  if (typeof constraint === 'string' && constraint.trim().length > 0) {
+    return constraint.trim() === 'ck_ai_requests_input_payload';
   }
-  if (
-    typeof pgErr.detail === 'string' &&
-    pgErr.detail.includes('uq_ai_requests_idempotency')
-  ) {
-    return true;
-  }
-  if (
-    typeof pgErr.message === 'string' &&
-    pgErr.message.includes('uq_ai_requests_idempotency')
-  ) {
-    return true;
-  }
-  return true;
+  const detail = String(pgErr.detail ?? pgErr.driverError?.detail ?? '');
+  const message = String(pgErr.message ?? pgErr.driverError?.message ?? '');
+  return (
+    detail.includes('ck_ai_requests_input_payload') ||
+    message.includes('ck_ai_requests_input_payload')
+  );
 }
 
 /**
@@ -797,6 +917,20 @@ export class JobProducerService {
             409,
             'IDEMPOTENCY_KEY_REUSED',
             'Idempotency key has already been used for another job',
+          );
+        }
+        if (isInputPayloadCheckViolation(error)) {
+          fail(
+            422,
+            'VALIDATION_FAILED',
+            `Job input_payload exceeds ${MAX_JOB_INPUT_PAYLOAD_BYTES} bytes`,
+            [
+              {
+                field: 'input_payload',
+                code: 'VALIDATION_FAILED',
+                message: `Payload size must not exceed ${MAX_JOB_INPUT_PAYLOAD_BYTES} bytes`,
+              },
+            ],
           );
         }
         throw error;
