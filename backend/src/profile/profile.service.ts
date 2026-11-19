@@ -9,19 +9,30 @@ import type {
   LearningPatch,
   PreferencesPatch,
   ProfilePatch,
+  ProfileResponseDTO,
+  ProgressInitializationStatus,
+  RoleOptionDTO,
+  SkillAliasInterpretationResponseDTO,
+  UnresolvedSkillCandidateDTO,
+  UnresolvedSkillDTO,
 } from './profile.dto.js';
+
+export interface TransactionalQueryExecutor {
+  query: EntityManager['query'];
+}
+
 @Injectable()
 export class ProfileService {
   constructor(private readonly database: DatabaseService) {}
-  async read(id: string) {
+  async read(id: string): Promise<ProfileResponseDTO> {
     return this.database.transaction(id, (db) => this.view(db, id));
   }
   private async view(
-    db: EntityManager,
+    db: TransactionalQueryExecutor,
     id: string,
-    progress?: string,
-    unresolved_skills: unknown[] = [],
-  ) {
+    progress?: ProgressInitializationStatus,
+    unresolved_skills: UnresolvedSkillDTO[] = [],
+  ): Promise<ProfileResponseDTO> {
     const [p] = await db.query(
       'SELECT p.*,pr.learning_preference FROM public.user_profiles p JOIN public.user_preferences pr USING(user_id) WHERE p.user_id=$1',
       [id],
@@ -32,57 +43,77 @@ export class ProfileService {
       EXISTS(SELECT 1 FROM public.user_skill_aliases a WHERE a.user_id=$2 AND a.skill_id=s.id) AS alias_resolved,
       COALESCE((SELECT sp.learning_state::text FROM public.skill_progress sp WHERE sp.user_id=$2 AND sp.skill_id=s.id ORDER BY CASE sp.learning_state WHEN 'proficient' THEN 3 WHEN 'practicing' THEN 2 WHEN 'learning' THEN 1 ELSE 0 END DESC LIMIT 1),'learning') AS learning_state,
       CASE WHEN EXISTS(SELECT 1 FROM public.skill_progress sp WHERE sp.user_id=$2 AND sp.skill_id=s.id AND sp.evidence_count>0) THEN 'evidence' ELSE 'self_reported' END AS source FROM public.skills s WHERE s.id=ANY($1::uuid[]) ORDER BY s.canonical_name`,
-      [p.self_reported_skill_ids, id],
+      [p.self_reported_skill_ids ?? [], id],
     );
     const goals = await db.query(
       "SELECT id FROM public.career_goals WHERE user_id=$1 AND status='confirmed'",
       [id],
     );
     return {
-      current_role: p.current_role_title,
-      education: p.education,
-      education_level: p.education,
-      experience_level: p.experience_level,
-      existing_skills: skills,
-      existing_skills_none: p.existing_skills_none,
-      learning_preference: p.learning_preference,
+      current_role: p.current_role_title ?? null,
+      education: p.education ?? null,
+      education_level: p.education ?? null,
+      experience_level: p.experience_level ?? null,
+      existing_skills: (skills ?? []).map((skill: any) => ({
+        skill_id: String(skill.skill_id),
+        name: String(skill.name),
+        alias_resolved: Boolean(skill.alias_resolved),
+        learning_state: skill.learning_state ?? 'learning',
+        source: skill.source === 'evidence' ? 'evidence' : 'self_reported',
+      })),
+      existing_skills_none: Boolean(p.existing_skills_none),
+      learning_preference: p.learning_preference ?? null,
       preferred_daily_hours:
-        p.preferred_daily_hours === null
+        p.preferred_daily_hours === null ||
+        p.preferred_daily_hours === undefined
           ? null
           : Number(p.preferred_daily_hours),
-      timezone: p.timezone,
-      timezone_detected: p.timezone_detected,
-      active_career_goal_ids: goals.map((g: any) => g.id),
-      profile_complete: missingFields(p, goals.length > 0).length === 0,
-      missing_fields: missingFields(p, goals.length > 0),
-      unresolved_skills,
+      timezone: p.timezone ?? null,
+      timezone_detected: Boolean(p.timezone_detected),
+      active_career_goal_ids: (goals ?? []).map((g: any) => String(g.id)),
+      profile_complete: missingFields(p, (goals ?? []).length > 0).length === 0,
+      missing_fields: missingFields(p, (goals ?? []).length > 0),
+      unresolved_skills: unresolved_skills.map((item) => ({
+        input: String(item.input),
+        candidates: (item.candidates ?? []).map(
+          (candidate: UnresolvedSkillCandidateDTO) => ({
+            skill_id: String(candidate.skill_id),
+            name: String(candidate.name),
+          }),
+        ),
+      })),
       progress_initialization:
         progress ||
-        (goals.length ? 'unchanged' : 'deferred_until_level_confirmation'),
+        ((goals ?? []).length
+          ? 'unchanged'
+          : 'deferred_until_level_confirmation'),
       updated_at: p.updated_at,
     };
   }
-  async initializeProgress(db: EntityManager, id: string) {
+  async initializeProgress(
+    db: TransactionalQueryExecutor,
+    id: string,
+  ): Promise<ProgressInitializationStatus> {
     const levels = await db.query(
-      "SELECT DISTINCT target_level FROM public.career_goals WHERE user_id=$1 AND status='confirmed'",
+      "SELECT DISTINCT target_level FROM public.career_goals WHERE user_id=$1 AND status='confirmed' AND target_level IS NOT NULL",
       [id],
     );
-    if (!levels.length) return 'deferred_until_level_confirmation';
+    if (!levels || !levels.length) return 'deferred_until_level_confirmation';
     let changed = false;
     for (const { target_level } of levels) {
       const rows = await db.query(
         `INSERT INTO public.skill_progress(user_id,skill_id,career_level,learning_state,state_reason)
         SELECT user_id,unnest(self_reported_skill_ids),$2,'learning','Self-reported skill; confirmed goal level'
-        FROM public.user_profiles WHERE user_id=$1
+        FROM public.user_profiles WHERE user_id=$1 AND NOT existing_skills_none AND cardinality(self_reported_skill_ids) > 0
         ON CONFLICT(user_id,skill_id,career_level) DO UPDATE SET learning_state='learning',state_reason=CASE WHEN skill_progress.state_reason IS DISTINCT FROM 'Self-reported skill; confirmed goal level' THEN 'Self-reported skill; confirmed goal level' ELSE 'Reconfirmed self-reported skill; confirmed goal level' END
         WHERE skill_progress.learning_state='not_started' RETURNING id`,
         [id, target_level],
       );
-      changed ||= rows.length > 0;
+      changed ||= Array.isArray(rows) && rows.length > 0;
     }
     return changed ? 'initialized' : 'unchanged';
   }
-  async patch(id: string, input: ProfilePatch) {
+  async patch(id: string, input: ProfilePatch): Promise<ProfileResponseDTO> {
     return this.database.transaction(
       id,
       async (db) => {
@@ -90,26 +121,15 @@ export class ProfileService {
           'SELECT * FROM public.user_profiles WHERE user_id=$1 FOR UPDATE',
           [id],
         );
-        let skillIds: string[] = old.self_reported_skill_ids;
-        const unresolved: unknown[] = [];
-        if (input.existing_skills) {
-          skillIds = [];
-          for (const { name } of input.existing_skills) {
-            const resolved = await db.query(
-              `SELECT DISTINCT s.id FROM public.skills s WHERE s.status='approved' AND s.deleted_at IS NULL AND (
-          lower(s.canonical_name)=lower($2) OR EXISTS(SELECT 1 FROM public.skill_aliases a WHERE a.skill_id=s.id AND a.status='validated' AND a.alias_normalized=lower($2)) OR EXISTS(SELECT 1 FROM public.user_skill_aliases a WHERE a.user_id=$1 AND a.skill_id=s.id AND a.alias_normalized=lower($2)))`,
-              [id, name],
-            );
-            if (resolved.length === 1) skillIds.push(resolved[0].id);
-            else {
-              const candidates = await db.query(
-                "SELECT id AS skill_id,canonical_name AS name FROM public.skills WHERE status='approved' AND deleted_at IS NULL AND canonical_name ILIKE $1 ORDER BY canonical_name LIMIT 5",
-                [`%${name.replace(/[%_\\]/g, '\\$&')}%`],
-              );
-              unresolved.push({ input: name, candidates });
-            }
-          }
-          skillIds = [...new Set(skillIds)];
+        if (!old) fail(404, 'RESOURCE_NOT_FOUND', 'Profile not found');
+        if (input.existing_skills && input.existing_skills.length > 100) {
+          fail(422, 'VALIDATION_FAILED', 'At most 100 skills', [
+            {
+              field: 'existing_skills',
+              code: 'VALIDATION_FAILED',
+              message: 'At most 100 skills',
+            },
+          ]);
         }
         if (input.existing_skills_none && input.existing_skills?.length)
           fail(
@@ -124,10 +144,71 @@ export class ProfileService {
               },
             ],
           );
+        let skillIds: string[] = Array.isArray(old.self_reported_skill_ids)
+          ? [...old.self_reported_skill_ids]
+          : [];
+        const unresolved: UnresolvedSkillDTO[] = [];
+        if (input.existing_skills) {
+          skillIds = [];
+          for (const rawSkill of input.existing_skills) {
+            const name =
+              typeof rawSkill?.name === 'string' ? rawSkill.name.trim() : '';
+            if (!name || Array.from(name).length > 80) {
+              fail(
+                422,
+                'VALIDATION_FAILED',
+                'Skill name must be between 1 and 80 characters',
+                [
+                  {
+                    field: 'existing_skills',
+                    code: 'VALIDATION_FAILED',
+                    message: 'Skill name must be between 1 and 80 characters',
+                  },
+                ],
+              );
+            }
+            const resolved = await db.query(
+              `SELECT DISTINCT s.id FROM public.skills s WHERE s.status='approved' AND s.deleted_at IS NULL AND (
+          lower(s.canonical_name)=lower($2) OR EXISTS(SELECT 1 FROM public.skill_aliases a WHERE a.skill_id=s.id AND a.status='validated' AND a.alias_normalized=lower($2)) OR EXISTS(SELECT 1 FROM public.user_skill_aliases a WHERE a.user_id=$1 AND a.skill_id=s.id AND a.alias_normalized=lower($2)))`,
+              [id, name],
+            );
+            if (Array.isArray(resolved) && resolved.length === 1) {
+              skillIds.push(String(resolved[0].id));
+            } else {
+              const candidates = await db.query(
+                "SELECT id AS skill_id,canonical_name AS name FROM public.skills WHERE status='approved' AND deleted_at IS NULL AND canonical_name ILIKE $1 ORDER BY canonical_name LIMIT 5",
+                [`%${name.replace(/[%_\\]/g, '\\$&')}%`],
+              );
+              unresolved.push({
+                input: name,
+                candidates: (Array.isArray(candidates) ? candidates : []).map(
+                  (c: any) => ({
+                    skill_id: String(c.skill_id),
+                    name: String(c.name),
+                  }),
+                ),
+              });
+            }
+          }
+          skillIds = [...new Set(skillIds)];
+        }
         if (input.existing_skills_none) skillIds = [];
+        if (skillIds.length > 100) {
+          fail(422, 'VALIDATION_FAILED', 'At most 100 skills', [
+            {
+              field: 'existing_skills',
+              code: 'VALIDATION_FAILED',
+              message: 'At most 100 skills',
+            },
+          ]);
+        }
         const none =
-          input.existing_skills_none ??
-          (input.existing_skills?.length ? false : old.existing_skills_none);
+          skillIds.length > 0
+            ? false
+            : (input.existing_skills_none ??
+              (input.existing_skills !== undefined
+                ? false
+                : Boolean(old.existing_skills_none)));
         const educationInput = input.education ?? input.education_level;
         const education =
           educationInput !== undefined
@@ -153,7 +234,10 @@ export class ProfileService {
       true,
     );
   }
-  async preferences(id: string, input: PreferencesPatch) {
+  async preferences(
+    id: string,
+    input: PreferencesPatch,
+  ): Promise<ProfileResponseDTO> {
     return this.database.transaction(
       id,
       async (db) => {
@@ -167,7 +251,10 @@ export class ProfileService {
       true,
     );
   }
-  async learning(id: string, input: LearningPatch) {
+  async learning(
+    id: string,
+    input: LearningPatch,
+  ): Promise<ProfileResponseDTO> {
     return this.database.transaction(
       id,
       async (db) => {
@@ -181,10 +268,29 @@ export class ProfileService {
       true,
     );
   }
-  async alias(id: string, input: AliasInput) {
+  async alias(
+    id: string,
+    input: AliasInput,
+  ): Promise<SkillAliasInterpretationResponseDTO> {
     return this.database.transaction(
       id,
       async (db) => {
+        const trimmedInput =
+          typeof input?.input === 'string' ? input.input.trim() : '';
+        if (!trimmedInput || Array.from(trimmedInput).length > 80) {
+          fail(
+            422,
+            'VALIDATION_FAILED',
+            'Alias input must be between 1 and 80 characters',
+            [
+              {
+                field: 'input',
+                code: 'VALIDATION_FAILED',
+                message: 'Alias input must be between 1 and 80 characters',
+              },
+            ],
+          );
+        }
         const [skill] = await db.query(
           "SELECT id FROM public.skills WHERE id=$1 AND status='approved' AND deleted_at IS NULL",
           [input.skill_id],
@@ -194,8 +300,14 @@ export class ProfileService {
           'SELECT self_reported_skill_ids FROM public.user_profiles WHERE user_id=$1 FOR UPDATE',
           [id],
         );
+        if (!p) fail(404, 'RESOURCE_NOT_FOUND', 'Profile not found');
         const ids = [
-          ...new Set<string>([...p.self_reported_skill_ids, input.skill_id]),
+          ...new Set<string>([
+            ...(Array.isArray(p.self_reported_skill_ids)
+              ? p.self_reported_skill_ids
+              : []),
+            input.skill_id,
+          ]),
         ];
         if (ids.length > 100)
           fail(422, 'VALIDATION_FAILED', 'At most 100 skills', [
@@ -207,14 +319,14 @@ export class ProfileService {
           ]);
         await db.query(
           `INSERT INTO public.user_skill_aliases(user_id,input_alias,alias_normalized,skill_id) VALUES($1,$2,lower($2),$3) ON CONFLICT(user_id,alias_normalized) DO UPDATE SET skill_id=excluded.skill_id,input_alias=excluded.input_alias`,
-          [id, input.input, input.skill_id],
+          [id, trimmedInput, input.skill_id],
         );
         await db.query(
           'UPDATE public.user_profiles SET self_reported_skill_ids=$2,existing_skills_none=false WHERE user_id=$1',
           [id, ids],
         );
         return {
-          input: input.input,
+          input: trimmedInput,
           skill_id: input.skill_id,
           scope: 'user',
           added_to_profile: true,
@@ -225,7 +337,7 @@ export class ProfileService {
       true,
     );
   }
-  async goal(db: EntityManager, id: string, goalId: string) {
+  async goal(db: TransactionalQueryExecutor, id: string, goalId: string) {
     const [g] = await db.query(
       `SELECT g.*,r.name AS role_name,(SELECT id FROM public.roadmaps WHERE career_goal_id=g.id LIMIT 1) AS roadmap_id FROM public.career_goals g LEFT JOIN public.career_roles r ON r.id=g.proposed_role_id WHERE g.user_id=$1 AND g.id=$2`,
       [id, goalId],
@@ -233,28 +345,29 @@ export class ProfileService {
     if (!g) fail(404, 'RESOURCE_NOT_FOUND', 'Career goal not found');
     const alternatives = await db.query(
       'SELECT id AS canonical_role_id,name FROM public.career_roles WHERE id=ANY($1::uuid[])',
-      [g.alternative_role_ids],
+      [g.alternative_role_ids ?? []],
     );
+    const alternativeRoles: RoleOptionDTO[] = (
+      Array.isArray(alternatives) ? alternatives : []
+    ).map((role: { canonical_role_id: string; name: string }) => ({
+      canonical_role_id: String(role.canonical_role_id),
+      name: String(role.name),
+      // The role catalog has no authoritative goal-specific rationale.
+      rationale: null,
+    }));
     return {
       id: g.id,
       goal_text: g.goal_text,
       status: g.status,
       clarification_round: g.clarification_round,
-      clarification_question: g.clarification_question,
+      clarification_question: g.clarification_question ?? null,
       proposed_role: g.proposed_role_id
         ? { canonical_role_id: g.proposed_role_id, name: g.role_name }
         : null,
-      alternative_roles: alternatives.map(
-        (role: { canonical_role_id: string; name: string }) => ({
-          canonical_role_id: role.canonical_role_id,
-          name: role.name,
-          // The role catalog has no authoritative goal-specific rationale.
-          rationale: null,
-        }),
-      ),
-      suggested_level: g.suggested_level,
-      target_level: g.target_level,
-      roadmap_id: g.roadmap_id,
+      alternative_roles: alternativeRoles,
+      suggested_level: g.suggested_level ?? null,
+      target_level: g.target_level ?? null,
+      roadmap_id: g.roadmap_id ?? null,
       created_at: g.created_at,
     };
   }
@@ -281,11 +394,20 @@ export class ProfileService {
           [id, goalId],
         );
         if (!g) fail(404, 'RESOURCE_NOT_FOUND', 'Career goal not found');
+        if (g.status === 'confirmed')
+          fail(
+            409,
+            'GOAL_ALREADY_CONFIRMED',
+            'Career goal is already confirmed',
+          );
         if (g.status !== 'awaiting_confirmation')
           fail(409, 'INVALID_STATE_TRANSITION', 'Goal must await confirmation');
         if (
           g.proposed_role_id !== input.canonical_role_id &&
-          !g.alternative_role_ids.includes(input.canonical_role_id)
+          !(
+            Array.isArray(g.alternative_role_ids) &&
+            g.alternative_role_ids.includes(input.canonical_role_id)
+          )
         )
           fail(422, 'ROLE_MISMATCH', 'Choose a proposed role');
         const [count] = await db.query(
@@ -295,8 +417,8 @@ export class ProfileService {
         if (count.count >= 3)
           fail(409, 'ROADMAP_LIMIT_REACHED', 'At most 3 active career goals');
         await db.query(
-          "UPDATE public.career_goals SET confirmed_role_id=$2,target_level=$3,status='confirmed',confirmed_at=now() WHERE id=$1",
-          [goalId, input.canonical_role_id, input.target_level],
+          "UPDATE public.career_goals SET confirmed_role_id=$2,target_level=$3,status='confirmed',confirmed_at=clock_timestamp() WHERE id=$1 AND user_id=$4",
+          [goalId, input.canonical_role_id, input.target_level, id],
         );
         await this.initializeProgress(db, id);
         return this.goal(db, id, goalId);
