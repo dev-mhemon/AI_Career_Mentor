@@ -8,6 +8,7 @@ import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AccountModule } from './account/account.module.js';
 import { AiModule } from './ai/ai.module.js';
+import { CareerModule } from './career/career.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 
 @Module({
@@ -39,6 +40,7 @@ import { JobsModule } from './jobs/jobs.module.js';
     AuthModule,
     AccountModule,
     AiModule,
+    CareerModule,
     JobsModule,
   ],
   controllers: [AppController],

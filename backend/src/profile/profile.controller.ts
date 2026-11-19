@@ -2,23 +2,26 @@ import {
   Body,
   Controller,
   Get,
-  Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Req,
   HttpCode,
+  UseGuards,
 } from '@nestjs/common';
+import { AccessGuard } from '../auth/guards/access.guard.js';
+import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard.js';
 import { Policy } from '../auth/policy.js';
 import { ProfileService } from './profile.service.js';
 import {
   AliasInput,
-  ConfirmGoal,
   LearningPatch,
   PreferencesPatch,
   ProfilePatch,
 } from './profile.dto.js';
+
 @Controller()
+@UseGuards(SupabaseAuthGuard, AccessGuard)
+@Policy({})
 export class ProfileController {
   constructor(private readonly profiles: ProfileService) {}
   @Get('profile') read(@Req() req: any) {
@@ -39,26 +42,9 @@ export class ProfileController {
   ) {
     return this.profiles.learning(req.user.sub, input);
   }
-  @Post('profile/skill-alias-interpretations') alias(
-    @Req() req: any,
-    @Body() input: AliasInput,
-  ) {
+  @Post('profile/skill-alias-interpretations')
+  @HttpCode(201)
+  alias(@Req() req: any, @Body() input: AliasInput) {
     return this.profiles.alias(req.user.sub, input);
-  }
-  @Get('career/goals/:id') goal(
-    @Req() req: any,
-    @Param('id', new ParseUUIDPipe({ errorHttpStatusCode: 400 })) id: string,
-  ) {
-    return this.profiles.readGoal(req.user.sub, id);
-  }
-  @Post('career/goals/:id/confirm')
-  @HttpCode(200)
-  @Policy({ feature: 'roadmap_generator' })
-  confirm(
-    @Req() req: any,
-    @Param('id', new ParseUUIDPipe({ errorHttpStatusCode: 400 })) id: string,
-    @Body() input: ConfirmGoal,
-  ) {
-    return this.profiles.confirm(req.user.sub, id, input);
   }
 }
