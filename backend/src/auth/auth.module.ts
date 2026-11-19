@@ -63,9 +63,11 @@ import { OtpSecretStore } from './services/otp-secret-store.service.js';
     SessionApprovalService,
     DatabaseService,
     ProfileService,
-    { provide: APP_GUARD, useClass: SupabaseAuthGuard },
-    { provide: APP_GUARD, useClass: AccessGuard },
+    SupabaseAuthGuard,
+    AccessGuard,
+    { provide: APP_GUARD, useExisting: SupabaseAuthGuard },
+    { provide: APP_GUARD, useExisting: AccessGuard },
   ],
-  exports: [OtpSecretStore],
+  exports: [OtpSecretStore, DatabaseService, SupabaseAuthGuard, AccessGuard],
 })
 export class AuthModule {}

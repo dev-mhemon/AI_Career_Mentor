@@ -1,4 +1,5 @@
 import { validateConfiguration } from './config.js';
+import { readIdempotencyConfiguration } from './jobs/services/idempotency.service.js';
 const base = {
   SUPABASE_URL: 'http://127.0.0.1:56321',
   SUPABASE_ANON_KEY: 'sb_publishable_synthetic',
@@ -292,5 +293,209 @@ describe('Public runtime key boundary', () => {
         AUTH_EMAIL_FROM: '"Career Mentor" <mentor@example.com>',
       }),
     ).not.toThrow();
+  });
+
+  it('validates optional idempotency Redis configuration keys', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: 'http://127.0.0.1:6379',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_URL');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        REDIS_URL: 'redis://127.0.0.1:6379?foo=bar',
+      }),
+    ).toThrow('Invalid REDIS_URL');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_EPOCH: '   ',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_EPOCH');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_EPOCH: 'replace_with_epoch',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_EPOCH');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_TTL_SECONDS: '0',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_TTL_SECONDS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_TIMEOUT_MS: '-100',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_TIMEOUT_MS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_RETRY_SECONDS: 'abc',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_RETRY_SECONDS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: 'redis://127.0.0.1:56379',
+        IDEMPOTENCY_REDIS_EPOCH: 'epoch-2026-11-18',
+        IDEMPOTENCY_TTL_SECONDS: '86400',
+        IDEMPOTENCY_REDIS_TIMEOUT_MS: '1000',
+        IDEMPOTENCY_REDIS_RETRY_SECONDS: '5',
+      }),
+    ).not.toThrow();
+  });
+
+  it('ignores blank idempotency Redis URL strings and preserves non-blank fallback precedence', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: '',
+        AUTH_REDIS_URL: 'redis://127.0.0.1:56379',
+        AUTH_HMAC_SECRET: 'synthetic-auth-hmac-secret-32byt',
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: '   ',
+        REDIS_URL: '   ',
+      }),
+    ).not.toThrow();
+
+    expect(
+      readIdempotencyConfiguration({
+        IDEMPOTENCY_REDIS_URL: '',
+        AUTH_REDIS_URL: 'redis://auth-fallback:6379',
+        REDIS_URL: 'redis://generic-fallback:6379',
+        IDEMPOTENCY_REDIS_EPOCH: 'epoch-1',
+      })?.url,
+    ).toBe('redis://auth-fallback:6379');
+
+    expect(
+      readIdempotencyConfiguration({
+        IDEMPOTENCY_REDIS_URL: '   ',
+        AUTH_REDIS_URL: '  ',
+        REDIS_URL: 'redis://generic-fallback:6379',
+        IDEMPOTENCY_REDIS_EPOCH: 'epoch-1',
+      })?.url,
+    ).toBe('redis://generic-fallback:6379');
+
+    expect(
+      readIdempotencyConfiguration({
+        IDEMPOTENCY_REDIS_URL: '  redis://explicit-idempotency:6379  ',
+        AUTH_REDIS_URL: 'redis://auth-fallback:6379',
+        REDIS_URL: 'redis://generic-fallback:6379',
+        IDEMPOTENCY_REDIS_EPOCH: 'epoch-1',
+      })?.url,
+    ).toBe('redis://explicit-idempotency:6379');
+  });
+
+  it('rejects malformed percent-encoded credentials in Redis URLs at startup', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: 'redis://user:bad%ZZpass@127.0.0.1:6379',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_URL');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        REDIS_URL: 'redis://bad%ZZuser:pass@127.0.0.1:6379',
+      }),
+    ).toThrow('Invalid REDIS_URL');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AUTH_REDIS_URL: 'redis://user:bad%ZZpass@127.0.0.1:6379',
+      }),
+    ).toThrow('Invalid AUTH_REDIS_URL');
+  });
+
+  it('treats whitespace-only numeric H-IDEM overrides as unset and validates timeout vs TTL invariant', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_TTL_SECONDS: '   ',
+        IDEMPOTENCY_REDIS_TIMEOUT_MS: '   ',
+        IDEMPOTENCY_REDIS_RETRY_SECONDS: '   ',
+        AUTH_REDIS_TIMEOUT_MS: '1500',
+        AUTH_REDIS_RETRY_SECONDS: '9',
+        AUTH_REDIS_URL: 'redis://127.0.0.1:56379',
+        AUTH_HMAC_SECRET: 'synthetic-auth-hmac-secret-32byt',
+      }),
+    ).not.toThrow();
+
+    const parsed = readIdempotencyConfiguration({
+      IDEMPOTENCY_REDIS_URL: 'redis://127.0.0.1:56379',
+      IDEMPOTENCY_TTL_SECONDS: '   ',
+      IDEMPOTENCY_REDIS_TIMEOUT_MS: '   ',
+      IDEMPOTENCY_REDIS_RETRY_SECONDS: '   ',
+      AUTH_REDIS_TIMEOUT_MS: '1500',
+      AUTH_REDIS_RETRY_SECONDS: '9',
+    });
+    expect(parsed?.ttlSeconds).toBe(86_400);
+    expect(parsed?.timeoutMs).toBe(1_500);
+    expect(parsed?.retryAfterSeconds).toBe(9);
+
+    // Non-blank invalid numeric override still fails fast
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_TIMEOUT_MS: '1.5',
+      }),
+    ).toThrow('Invalid IDEMPOTENCY_REDIS_TIMEOUT_MS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_TTL_SECONDS: '1',
+        IDEMPOTENCY_REDIS_TIMEOUT_MS: '1000',
+      }),
+    ).toThrow(
+      'IDEMPOTENCY_TTL_SECONDS * 1000 must be greater than IDEMPOTENCY_REDIS_TIMEOUT_MS',
+    );
+  });
+
+  it('validates only the selected H-IDEM Redis URL so unselected REDIS_URL with query params does not fail startup', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: 'redis://127.0.0.1:56379',
+        REDIS_URL: 'redis://127.0.0.1:6379?foo=bar',
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: '   ',
+        AUTH_REDIS_URL: 'redis://127.0.0.1:56379',
+        AUTH_HMAC_SECRET: 'synthetic-auth-hmac-secret-32byt',
+        REDIS_URL: 'redis://127.0.0.1:6379?foo=bar',
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        IDEMPOTENCY_REDIS_URL: '   ',
+        REDIS_URL: 'redis://127.0.0.1:6379?foo=bar',
+      }),
+    ).toThrow('Invalid REDIS_URL');
   });
 });
