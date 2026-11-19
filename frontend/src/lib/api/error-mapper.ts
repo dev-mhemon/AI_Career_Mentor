@@ -35,10 +35,10 @@ export const INVALID_CREDENTIALS_MESSAGE =
   'Please verify your credentials. The password entered is incorrect.';
 
 /**
- * Curated user-facing mappings for M04 AI & Job error codes (`C05` §16.4 / §16.5).
- * Never echoes raw `error.message` so provider/model internals cannot leak to the UI.
+ * Curated user-facing mappings for M04 AI/Job and M06 Roadmap domain error codes (`C05` §16.4 / §16.5 / §16.6).
+ * Never echoes raw `error.message` so provider/model/internal details cannot leak to the UI.
  */
-const AI_AND_JOB_SAFE_ERRORS: Readonly<
+const SAFE_CODE_ERRORS: Readonly<
   Record<string, { message: string; tone: ErrorTone; retryable: boolean }>
 > = {
   AI_TIMEOUT: {
@@ -88,6 +88,82 @@ const AI_AND_JOB_SAFE_ERRORS: Readonly<
     tone: 'warning',
     retryable: false,
   },
+  DRAFT_STALE: {
+    message:
+      'Your profile or career goal changed after this draft was generated. Refresh the draft before locking.',
+    tone: 'warning',
+    retryable: false,
+  },
+  STALE_VERSION: {
+    message:
+      'A newer version of this roadmap exists. Reload the latest version before continuing.',
+    tone: 'warning',
+    retryable: false,
+  },
+  LARGE_ROADMAP_CONFIRMATION_REQUIRED: {
+    message:
+      'This roadmap exceeds 45 active topics. Confirm that you want to lock a large roadmap before continuing.',
+    tone: 'warning',
+    retryable: false,
+  },
+  RESOURCE_CONFLICT: {
+    message:
+      'A roadmap already exists for this career goal, or an active update is already in progress.',
+    tone: 'warning',
+    retryable: false,
+  },
+  ROADMAP_LIMIT_REACHED: {
+    message:
+      'You have reached the maximum of 3 active roadmaps. Archive an existing roadmap before generating a new one.',
+    tone: 'warning',
+    retryable: false,
+  },
+  INVALID_STATE_TRANSITION: {
+    message:
+      'This action is not allowed in the roadmap’s current state. Refresh to inspect the latest status.',
+    tone: 'warning',
+    retryable: false,
+  },
+  RESOURCE_NOT_FOUND: {
+    message: 'The requested roadmap or resource could not be found.',
+    tone: 'warning',
+    retryable: false,
+  },
+  VERSION_NOT_FOUND: {
+    message: 'The requested roadmap version could not be found.',
+    tone: 'warning',
+    retryable: false,
+  },
+  NO_OPEN_DRAFT: {
+    message:
+      'There is no open draft for this roadmap. View the current locked version instead.',
+    tone: 'warning',
+    retryable: false,
+  },
+  PROFILE_INCOMPLETE: {
+    message:
+      'Complete your profile and confirm a career goal before generating a roadmap.',
+    tone: 'warning',
+    retryable: false,
+  },
+  LEVEL_NOT_CONFIRMED: {
+    message:
+      'Confirm your target career level (Junior, Mid, or Senior) before generating a roadmap.',
+    tone: 'warning',
+    retryable: false,
+  },
+  FEATURE_DISABLED: {
+    message:
+      'Roadmap generation is currently unavailable. Your existing roadmaps, versions, and progress remain accessible.',
+    tone: 'info',
+    retryable: false,
+  },
+  RATE_LIMIT_EXCEEDED: {
+    message:
+      'Roadmap generation limit reached. Your existing roadmaps remain accessible. Please wait before trying again.',
+    tone: 'warning',
+    retryable: true,
+  },
 };
 
 /**
@@ -129,7 +205,7 @@ const M05_SAFE_ERRORS: Readonly<
   },
   ROADMAP_LIMIT_REACHED: {
     message:
-      'You already have 3 active goals or roadmaps. Archive or discontinue one before adding another.',
+      'You have reached the maximum of 3 active goals or roadmaps. Archive or discontinue one before adding another.',
     tone: 'warning',
     retryable: false,
   },
@@ -141,24 +217,24 @@ const M05_SAFE_ERRORS: Readonly<
   },
   FEATURE_DISABLED: {
     message:
-      'This feature is currently unavailable. Your existing goals, roadmaps and progress remain accessible.',
+      'This feature is currently unavailable. Your existing goals, roadmaps, versions, and progress remain accessible.',
     tone: 'warning',
     retryable: false,
   },
   INVALID_STATE_TRANSITION: {
     message:
-      'This goal has already moved to a different step. Refresh to see its current state.',
+      'This action is not allowed in the current state, or this goal has already moved to a different step. Refresh to see the latest status.',
     tone: 'warning',
     retryable: false,
   },
   STALE_VERSION: {
     message:
-      'This goal changed while your edit was being processed. Refresh and try again.',
+      'A newer version exists or this item changed while your update was being processed. Reload the latest version before continuing.',
     tone: 'warning',
     retryable: false,
   },
   RESOURCE_NOT_FOUND: {
-    message: 'We could not find that item. It may have been removed.',
+    message: 'We could not find that item or roadmap. It may have been removed.',
     tone: 'warning',
     retryable: false,
   },
@@ -198,8 +274,8 @@ export function mapApiError(
     requestId: error.requestId,
   };
 
-  if (error.code && Object.hasOwn(AI_AND_JOB_SAFE_ERRORS, error.code)) {
-    const safe = AI_AND_JOB_SAFE_ERRORS[error.code];
+  if (error.code && Object.hasOwn(M05_SAFE_ERRORS, error.code)) {
+    const safe = M05_SAFE_ERRORS[error.code];
     return {
       ...m,
       message: safe.message,
@@ -208,8 +284,8 @@ export function mapApiError(
     };
   }
 
-  if (error.code && Object.hasOwn(M05_SAFE_ERRORS, error.code)) {
-    const safe = M05_SAFE_ERRORS[error.code];
+  if (error.code && Object.hasOwn(SAFE_CODE_ERRORS, error.code)) {
+    const safe = SAFE_CODE_ERRORS[error.code];
     return {
       ...m,
       message: safe.message,

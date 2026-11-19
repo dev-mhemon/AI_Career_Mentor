@@ -37,6 +37,12 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         lockedWhenSuspended: true,
       },
       {
+        href: '/roadmaps',
+        label: 'Roadmaps',
+        icon: CompassIcon,
+        lockedWhenSuspended: true,
+      },
+      {
         href: '/profile',
         label: 'Profile',
         icon: UserCheckIcon,
