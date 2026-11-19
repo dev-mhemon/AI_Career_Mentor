@@ -172,11 +172,25 @@ export function createTimedAbortSignal(
   };
 }
 
+/** Success envelope pieces: `data` plus optional top-level `meta` (e.g. EP-C02 `PageMetaDTO`). */
+interface ApiEnvelope<T> {
+  data: T;
+  meta: unknown;
+}
+
 async function apiFetch<T>(
   path: string,
   accessToken: string | null,
   options: ApiFetchOptions = {},
 ): Promise<T> {
+  return (await apiFetchEnvelope<T>(path, accessToken, options)).data;
+}
+
+async function apiFetchEnvelope<T>(
+  path: string,
+  accessToken: string | null,
+  options: ApiFetchOptions = {},
+): Promise<ApiEnvelope<T>> {
   const url = `${getApiBaseUrl()}${path}`;
   const { timeoutMs, signal: callerSignal, ...fetchOptions } = options;
 
@@ -265,7 +279,7 @@ async function apiFetch<T>(
   }
   if (body?.success !== true || !('data' in body))
     throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');
-  return body.data as T;
+  return { data: body.data as T, meta: body.meta ?? null };
 }
 
 // ─── Auth API Functions ──────────────────────────────────────
@@ -583,6 +597,371 @@ export function updateLearningSettings(
     method: 'PATCH',
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Request payload for EP-P03 (`ProfilePreferencesDTO`).
+ */
+export interface UpdatePreferencesBody {
+  learning_preference: LearningPreference;
+}
+
+/**
+ * PATCH /profile/preferences (EP-P03)
+ * Saves the learning preference (`reading` | `hands_on` | `visual` | `mixed`).
+ */
+export function updatePreferences(
+  accessToken: string,
+  body: UpdatePreferencesBody,
+): Promise<ProfileResponse> {
+  return apiFetch<ProfileResponse>('/profile/preferences', accessToken, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Explicit skill selection for Screen 08: a list of skill names, OR the explicit beginner `None` (`R07`).
+ * Maps onto EP-P02 (`existing_skills` / `existing_skills_none`); the backend rejects both together.
+ */
+export type SkillSelection = { none: true } | { none?: false; names: string[] };
+
+/**
+ * PATCH /profile (EP-P02) restricted to the skills sub-section.
+ * `{ none: true }` sends `existing_skills_none: true` with no skills (never both, `R07`).
+ */
+export function updateSkills(
+  accessToken: string,
+  selection: SkillSelection,
+): Promise<ProfileResponse> {
+  return updateProfile(
+    accessToken,
+    selection.none
+      ? { existing_skills_none: true }
+      : {
+          existing_skills_none: false,
+          existing_skills: selection.names.map((name) => ({ name })),
+        },
+  );
+}
+
+/**
+ * Request payload for EP-P05 (`SkillAliasInterpretationDTO`).
+ */
+export interface SkillAliasBody {
+  input: string;
+  skill_id: string;
+}
+
+export interface SkillAliasInterpretationResponse {
+  input: string;
+  skill_id: string;
+  scope: 'user';
+  added_to_profile: boolean;
+  progress_initialization:
+    | 'deferred_until_level_confirmation'
+    | 'initialized'
+    | 'unchanged';
+}
+
+/**
+ * POST /profile/skill-alias-interpretations (EP-P05)
+ * Resolves an uncertain skill alias for this user only.
+ */
+export function interpretSkillAlias(
+  accessToken: string,
+  body: SkillAliasBody,
+): Promise<SkillAliasInterpretationResponse> {
+  return apiFetch<SkillAliasInterpretationResponse>(
+    '/profile/skill-alias-interpretations',
+    accessToken,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
+// ─── Career Goal API Types & Functions (C05 §14.4 / §15.4 EP-C01–EP-C07) ───
+
+export type CareerLevel = 'junior' | 'mid' | 'senior';
+
+export type GoalStatus =
+  | 'clarifying'
+  | 'awaiting_confirmation'
+  | 'confirmed'
+  | 'discontinued';
+
+/** `R29` complete consuming schema: `rationale` is always present, explicitly `null` when absent. */
+export interface RoleOptionDTO {
+  canonical_role_id: string;
+  name: string;
+  rationale: string | null;
+}
+
+export interface ProposedRoleDTO {
+  canonical_role_id: string;
+  name: string;
+}
+
+export interface CareerGoalResponse {
+  id: string;
+  goal_text: string;
+  status: GoalStatus;
+  clarification_round: number;
+  clarification_question: string | null;
+  proposed_role: ProposedRoleDTO | null;
+  alternative_roles: RoleOptionDTO[];
+  suggested_level: CareerLevel | null;
+  target_level: CareerLevel | null;
+  roadmap_id: string | null;
+  created_at: string;
+}
+
+export interface PageMetaDTO {
+  limit: number;
+  next_cursor: string | null;
+}
+
+export interface CareerGoalListResponse {
+  items: CareerGoalResponse[];
+  meta: PageMetaDTO;
+}
+
+export interface ListCareerGoalsQuery {
+  status?: GoalStatus;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface CareerGoalBody {
+  goal_text: string;
+}
+
+export interface GoalClarificationBody {
+  answer: string;
+}
+
+export interface GoalConfirmBody {
+  canonical_role_id: string;
+  target_level: CareerLevel;
+}
+
+export interface DiscontinueCareerGoalResponse {
+  id: string;
+  status: 'discontinued';
+  archived_roadmap_id: string | null;
+  new_focus_roadmap_id: string | null;
+}
+
+function goalPath(goalId: string, suffix = ''): string {
+  return `/career/goals/${encodeURIComponent(goalId.trim())}${suffix}`;
+}
+
+/**
+ * POST /career/goals (EP-C01)
+ * Submits a free-text goal; the backend interprets it synchronously.
+ */
+export function createCareerGoal(
+  accessToken: string,
+  body: CareerGoalBody,
+): Promise<CareerGoalResponse> {
+  return apiFetch<CareerGoalResponse>('/career/goals', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * GET /career/goals (EP-C02)
+ * Lists the caller's goals. The array arrives in `data`; pagination arrives in top-level `meta`.
+ */
+export async function listCareerGoals(
+  accessToken: string,
+  query: ListCareerGoalsQuery = {},
+): Promise<CareerGoalListResponse> {
+  const params = new URLSearchParams();
+  if (query.status) params.set('status', query.status);
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.cursor) params.set('cursor', query.cursor);
+  const qs = params.toString();
+  const { data, meta } = await apiFetchEnvelope<CareerGoalResponse[]>(
+    `/career/goals${qs ? `?${qs}` : ''}`,
+    accessToken,
+  );
+  const m = meta as Partial<PageMetaDTO> | null;
+  if (
+    !Array.isArray(data) ||
+    !m ||
+    typeof m.limit !== 'number' ||
+    !(m.next_cursor === null || typeof m.next_cursor === 'string')
+  ) {
+    throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');
+  }
+  return {
+    items: data,
+    meta: {
+      limit: m.limit,
+      next_cursor: m.next_cursor,
+    },
+  };
+}
+
+/** GET /career/goals/:id (EP-C03) */
+export function getCareerGoal(
+  accessToken: string,
+  goalId: string,
+): Promise<CareerGoalResponse> {
+  return apiFetch<CareerGoalResponse>(goalPath(goalId), accessToken);
+}
+
+/** POST /career/goals/:id/clarifications (EP-C04) */
+export function submitGoalClarification(
+  accessToken: string,
+  goalId: string,
+  body: GoalClarificationBody,
+): Promise<CareerGoalResponse> {
+  return apiFetch<CareerGoalResponse>(
+    goalPath(goalId, '/clarifications'),
+    accessToken,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
+/** POST /career/goals/:id/confirm (EP-C05) */
+export function confirmCareerGoal(
+  accessToken: string,
+  goalId: string,
+  body: GoalConfirmBody,
+): Promise<CareerGoalResponse> {
+  return apiFetch<CareerGoalResponse>(goalPath(goalId, '/confirm'), accessToken, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** PATCH /career/goals/:id (EP-C06) — rewords an unconfirmed goal. */
+export function updateCareerGoal(
+  accessToken: string,
+  goalId: string,
+  body: CareerGoalBody,
+): Promise<CareerGoalResponse> {
+  return apiFetch<CareerGoalResponse>(goalPath(goalId), accessToken, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE /career/goals/:id (EP-C07) — discontinues a goal; history and progress are retained. */
+export function deleteCareerGoal(
+  accessToken: string,
+  goalId: string,
+): Promise<DiscontinueCareerGoalResponse> {
+  return apiFetch<DiscontinueCareerGoalResponse>(goalPath(goalId), accessToken, {
+    method: 'DELETE',
+  });
+}
+
+// ─── M05 operation dispatcher (shared by server-action glue) ─────
+
+/**
+ * Typed operation table so a single server-action wrapper per page can invoke any
+ * allowed profile/career endpoint without exposing the raw access token to the browser.
+ */
+export interface M05OperationMap {
+  getProfile: { input: undefined; output: ProfileResponse };
+  updateProfile: { input: UpdateProfileBody; output: ProfileResponse };
+  updateSkills: { input: SkillSelection; output: ProfileResponse };
+  updatePreferences: { input: UpdatePreferencesBody; output: ProfileResponse };
+  updateLearningSettings: {
+    input: UpdateLearningSettingsBody;
+    output: ProfileResponse;
+  };
+  interpretSkillAlias: {
+    input: SkillAliasBody;
+    output: SkillAliasInterpretationResponse;
+  };
+  createCareerGoal: { input: CareerGoalBody; output: CareerGoalResponse };
+  listCareerGoals: {
+    input: ListCareerGoalsQuery | undefined;
+    output: CareerGoalListResponse;
+  };
+  getCareerGoal: { input: { id: string }; output: CareerGoalResponse };
+  submitGoalClarification: {
+    input: { id: string; body: GoalClarificationBody };
+    output: CareerGoalResponse;
+  };
+  confirmCareerGoal: {
+    input: { id: string; body: GoalConfirmBody };
+    output: CareerGoalResponse;
+  };
+  updateCareerGoal: {
+    input: { id: string; body: CareerGoalBody };
+    output: CareerGoalResponse;
+  };
+  deleteCareerGoal: {
+    input: { id: string };
+    output: DiscontinueCareerGoalResponse;
+  };
+}
+
+export type M05OperationName = keyof M05OperationMap;
+export type M05OperationInput<K extends M05OperationName> =
+  M05OperationMap[K]['input'];
+export type M05OperationOutput<K extends M05OperationName> =
+  M05OperationMap[K]['output'];
+
+/**
+ * Executes one M05 operation with an access token. Pure dispatch; throws `ApiError`/`NetworkError`.
+ * Unknown operation names are rejected so callers cannot reach arbitrary functions.
+ */
+export async function dispatchM05Operation<K extends M05OperationName>(
+  accessToken: string,
+  op: K,
+  input: M05OperationInput<K>,
+): Promise<M05OperationOutput<K>> {
+  const run = async (): Promise<unknown> => {
+    switch (op as M05OperationName) {
+      case 'getProfile':
+        return getProfile(accessToken);
+      case 'updateProfile':
+        return updateProfile(accessToken, input as UpdateProfileBody);
+      case 'updateSkills':
+        return updateSkills(accessToken, input as SkillSelection);
+      case 'updatePreferences':
+        return updatePreferences(accessToken, input as UpdatePreferencesBody);
+      case 'updateLearningSettings':
+        return updateLearningSettings(
+          accessToken,
+          input as UpdateLearningSettingsBody,
+        );
+      case 'interpretSkillAlias':
+        return interpretSkillAlias(accessToken, input as SkillAliasBody);
+      case 'createCareerGoal':
+        return createCareerGoal(accessToken, input as CareerGoalBody);
+      case 'listCareerGoals':
+        return listCareerGoals(
+          accessToken,
+          (input as ListCareerGoalsQuery | undefined) ?? {},
+        );
+      case 'getCareerGoal':
+        return getCareerGoal(accessToken, (input as { id: string }).id);
+      case 'submitGoalClarification': {
+        const v = input as { id: string; body: GoalClarificationBody };
+        return submitGoalClarification(accessToken, v.id, v.body);
+      }
+      case 'confirmCareerGoal': {
+        const v = input as { id: string; body: GoalConfirmBody };
+        return confirmCareerGoal(accessToken, v.id, v.body);
+      }
+      case 'updateCareerGoal': {
+        const v = input as { id: string; body: CareerGoalBody };
+        return updateCareerGoal(accessToken, v.id, v.body);
+      }
+      case 'deleteCareerGoal':
+        return deleteCareerGoal(accessToken, (input as { id: string }).id);
+      default:
+        throw new ApiError(400, 'Unsupported operation', 'INVALID_OPERATION');
+    }
+  };
+  return (await run()) as M05OperationOutput<K>;
 }
 
 // ─── Account Deletion API Types & Functions (C05 §14.2 / §15.2 EP-X01 / EP-X02) ───

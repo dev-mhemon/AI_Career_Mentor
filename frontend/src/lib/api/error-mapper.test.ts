@@ -1,6 +1,51 @@
 import { describe, it, expect } from "vitest";
 import { ApiError, NetworkError, UnauthorizedError } from "@/lib/api/client";
-import { mapActionResult, mapApiError, preserveInput } from "@/lib/api/error-mapper";
+import { mapActionResult, mapApiError, preserveInput, toActionFailure } from "@/lib/api/error-mapper";
+
+describe("M05 curated error codes", () => {
+  const cases: Array<[string, number, RegExp, string]> = [
+    ["OUT_OF_SCOPE_GOAL", 422, /technology careers only/i, "warning"],
+    ["CLARIFICATION_LIMIT_REACHED", 409, /clarification limit/i, "info"],
+    ["GOAL_ALREADY_CONFIRMED", 409, /already confirmed/i, "warning"],
+    ["ROLE_MISMATCH", 422, /not one of the proposed/i, "error"],
+    ["ROADMAP_LIMIT_REACHED", 409, /3 active goals/i, "warning"],
+    ["SKILL_NOT_FOUND", 404, /could not find that skill/i, "warning"],
+    ["FEATURE_DISABLED", 403, /currently unavailable/i, "warning"],
+    ["INVALID_STATE_TRANSITION", 409, /different step/i, "warning"],
+    ["RESOURCE_NOT_FOUND", 404, /could not find that item/i, "warning"],
+  ];
+
+  it.each(cases)("maps %s (%i) to curated safe copy", (code, status, pattern, tone) => {
+    const m = mapApiError(new ApiError(status, "RAW gpt-4 stack trace at db.ts:12", code, "req-1"));
+    expect(m.message).toMatch(pattern);
+    expect(m.message).not.toMatch(/gpt|stack|db\.ts/i);
+    expect(m.tone).toBe(tone);
+    expect(m.code).toBe(code);
+    expect(m.status).toBe(status);
+    expect(m.retryable).toBe(false);
+  });
+
+  it("keeps field errors for coded failures", () => {
+    const m = mapApiError(
+      new ApiError(422, "x", "ROLE_MISMATCH", undefined, [
+        { field: "canonical_role_id", code: "ROLE_MISMATCH", message: "bad role" },
+      ]),
+    );
+    expect(m.fieldErrors).toEqual({ canonical_role_id: "bad role" });
+  });
+
+  it("does not let prototype keys hijack the table", () => {
+    const m = mapApiError(new ApiError(409, "plain", "constructor"));
+    expect(m.message).toBe("plain");
+  });
+
+  it("toActionFailure returns a serializable UI-safe failure", () => {
+    const failure = toActionFailure(new ApiError(422, "raw", "OUT_OF_SCOPE_GOAL"));
+    expect(failure.ok).toBe(false);
+    expect(JSON.parse(JSON.stringify(failure)).error.code).toBe("OUT_OF_SCOPE_GOAL");
+    expect(toActionFailure(new NetworkError()).error.tone).toBe("warning");
+  });
+});
 
 describe("mapApiError", () => {
   it("maps NetworkError to retryable warning", () => {

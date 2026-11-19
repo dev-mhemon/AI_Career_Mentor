@@ -5,6 +5,7 @@ import type { ComponentType, RefObject, SVGProps } from 'react';
 import { cn } from './cn';
 import {
   CloseIcon,
+  CompassIcon,
   LayoutDashboardIcon,
   LockIcon,
   SettingsIcon,
@@ -39,6 +40,12 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         href: '/onboarding/profile',
         label: 'Profile Setup',
         icon: UserCheckIcon,
+        lockedWhenSuspended: true,
+      },
+      {
+        href: '/career-profile',
+        label: 'Career Profile',
+        icon: CompassIcon,
         lockedWhenSuspended: true,
       },
     ],

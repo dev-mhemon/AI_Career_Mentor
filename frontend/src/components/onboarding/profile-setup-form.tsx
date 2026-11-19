@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { FieldShell, Input } from '@/components/ui/input';
 import { AlertCircleIcon, CheckCircleIcon } from '@/components/ui/icons';
 import { cn } from '@/components/ui/cn';
+import { OnboardingStepHeader } from '@/components/ui/multi-step-form-wrapper';
 import {
   normalizeBdPhone,
   normalizeEmail,
@@ -56,14 +57,6 @@ function selectBorderClass(hasError: boolean): string {
 }
 
 const DRAFT_STORAGE_KEY = 'mentor_onboarding_profile_draft';
-
-const ONBOARDING_STEPS = [
-  { number: 1, label: '1. Profile' },
-  { number: 2, label: '2. Skills' },
-  { number: 3, label: '3. Preferences' },
-  { number: 4, label: '4. Career Goal' },
-  { number: 5, label: '5. Confirm Level' },
-] as const;
 
 const FIELD_ORDER: readonly ProfileSetupFieldKey[] = [
   'full_name',
@@ -155,78 +148,6 @@ const VERIFIED_BADGE = (
     <span>Verified</span>
   </span>
 );
-
-/**
- * Static Step 1 of 5 onboarding progress header isolated via `React.memo`
- * so typing in form fields never re-renders stepper DOM nodes.
- */
-const OnboardingProgressHeader = memo(function OnboardingProgressHeader() {
-  return (
-    <div
-      role="progressbar"
-      aria-valuenow={1}
-      aria-valuemin={1}
-      aria-valuemax={5}
-      aria-label="Onboarding progress: Step 1 of 5"
-      className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <span className="text-label-lg font-semibold text-text-primary">
-            Profile Setup
-          </span>
-          <span className="inline-flex items-center rounded-full border border-border-default bg-surface-default px-2.5 py-0.5 text-caption font-medium text-text-secondary">
-            Step 1 of 5
-          </span>
-        </div>
-        <span className="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 font-mono text-caption font-semibold tabular-nums text-teal-700 dark:text-teal-300">
-          20% Complete
-        </span>
-      </div>
-
-      <ol className="grid grid-cols-5 items-start">
-        {ONBOARDING_STEPS.map((step, idx) => {
-          const isActive = idx === 0;
-          const isLast = idx === ONBOARDING_STEPS.length - 1;
-          return (
-            <li
-              key={step.label}
-              className="relative flex flex-col items-center px-1 text-center"
-            >
-              {!isLast && (
-                <span
-                  aria-hidden="true"
-                  className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
-                />
-              )}
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all',
-                  isActive
-                    ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
-                    : 'border border-border-default bg-surface-default font-medium text-text-muted',
-                )}
-              >
-                {step.number}
-              </span>
-              <span
-                className={cn(
-                  'sr-only mt-2.5 text-caption leading-tight sm:not-sr-only',
-                  isActive
-                    ? 'font-semibold text-text-brand'
-                    : 'text-text-muted',
-                )}
-              >
-                {step.label}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-});
 
 const ExperienceLevelField = memo(function ExperienceLevelField({
   selectRef,
@@ -394,8 +315,10 @@ const SkillBaselineField = memo(function SkillBaselineField({
 
 const ProfileFormFooter = memo(function ProfileFormFooter({
   isPending,
+  canProceed,
 }: {
   isPending: boolean;
+  canProceed: boolean;
 }) {
   return (
     <div className="mt-8 flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800/80">
@@ -407,15 +330,24 @@ const ProfileFormFooter = memo(function ProfileFormFooter({
       </Link>
 
       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-1.5 rounded-full border border-border-subtle bg-surface-subtle px-4 text-label-lg font-medium text-text-disabled"
-        >
-          <LockIcon className="h-3.5 w-3.5 shrink-0" />
-          <span>Next: Skills</span>
-        </button>
+        {canProceed && !isPending ? (
+          <Link
+            href="/onboarding/skills"
+            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-border-default bg-surface-default px-4 text-label-lg font-medium text-text-primary transition-colors hover:border-border-strong hover:bg-surface-subtle"
+          >
+            <span>Next: Skills</span>
+          </Link>
+        ) : (
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-1.5 rounded-full border border-border-subtle bg-surface-subtle px-4 text-label-lg font-medium text-text-disabled"
+          >
+            <LockIcon className="h-3.5 w-3.5 shrink-0" />
+            <span>Next: Skills</span>
+          </button>
+        )}
 
         <Button
           type="submit"
@@ -1303,7 +1235,7 @@ function ProfileSetupFormInner({
   return (
     <div className="flex flex-col gap-6">
       {/* Step 1 of 5 Modern Multi-Step Header */}
-      <OnboardingProgressHeader />
+      <OnboardingStepHeader currentStep={1} />
 
       {/* Initial Profile Load Warning Banner (preserves form usability on failed GET /profile) */}
       {loadError && (
@@ -1489,7 +1421,15 @@ function ProfileSetupFormInner({
         </div>
 
         {/* Footer Actions Bar */}
-        <ProfileFormFooter isPending={isPending} />
+        <ProfileFormFooter
+          isPending={isPending}
+          canProceed={
+            Boolean(state.success) ||
+            Boolean(
+              initialProfile?.current_role && initialProfile?.experience_level,
+            )
+          }
+        />
       </form>
     </div>
   );
