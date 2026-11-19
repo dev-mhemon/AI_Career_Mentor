@@ -121,6 +121,12 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
       if (sql.includes('INSERT INTO public.ai_generations')) {
         return [{ id: GENERATION_ID }];
       }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'succeeded'")
+      ) {
+        return [[{ id: String(params?.[0] ?? '') }], 1];
+      }
       return [];
     });
 
@@ -194,7 +200,7 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
         idempotency_key: `idem-${task}`,
         budget: {
           max_input_units: 4_000,
-          max_output_units: 2_000,
+          max_output_units: 4_000,
           timeout_ms: 10_000,
         },
       };
@@ -278,7 +284,9 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
       return true;
     });
 
-    // Roadmap DAG cycle check
+    // Roadmap DAG cycle check (valid UUIDs, including mixed-case equivalence)
+    const NODE_A_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+    const NODE_B_UUID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
     syntheticAdapter.setModelRule(MODEL_ID, async () => ({
       inputUnits: 100,
       outputUnits: 100,
@@ -298,7 +306,7 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
             milestones: [],
             items: [
               {
-                lineage_id: 'node-a',
+                lineage_id: NODE_A_UUID,
                 topic_id: USER_ID,
                 skill_id: USER_ID,
                 title: 'A',
@@ -307,12 +315,12 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
                 required_depth: 'basic',
                 estimated_effort_hours: 2,
                 sequence_no: 1,
-                depends_on_lineage_ids: ['node-b'],
+                depends_on_lineage_ids: [NODE_B_UUID.toUpperCase()],
                 reason: 'Needed',
                 sources: [{ publisher: 'Docs', url: 'https://example.com' }],
               },
               {
-                lineage_id: 'node-b',
+                lineage_id: NODE_B_UUID,
                 topic_id: MODEL_ID,
                 skill_id: MODEL_ID,
                 title: 'B',
@@ -321,7 +329,7 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
                 required_depth: 'basic',
                 estimated_effort_hours: 2,
                 sequence_no: 2,
-                depends_on_lineage_ids: ['node-a'],
+                depends_on_lineage_ids: [NODE_A_UUID.toUpperCase()],
                 reason: 'Cycle',
                 sources: [{ publisher: 'Docs', url: 'https://example.com' }],
               },
@@ -685,7 +693,7 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
       }),
     ).rejects.toBeInstanceOf(ProviderInvocationError);
     await syntheticModule.close();
-  });
+  }, 15_000);
 
   it('serializes mentor_chat quota admission with advisory lock + reservation row and marks failed reservations failed', async () => {
     const reservationId = '88888888-8888-4888-8888-888888888888';
@@ -737,9 +745,11 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
     expect((failRelease?.[1] as unknown[])[0]).toBe(reservationId);
   });
 
-  it('rejects duplicate roadmap lineage_id nodes and non-scalar array enums in OutputValidatorService', () => {
+  it('rejects duplicate roadmap lineage_id (including mixed-case UUIDs), invalid non-UUID lineage/deps, and non-scalar array enums while accepting unique UUIDs', () => {
+    const LINEAGE_UUID_1 = '11111111-1111-4111-8111-111111111111';
+    const LINEAGE_UUID_2 = '22222222-2222-4222-8222-222222222222';
     const baseItem = {
-      lineage_id: 'dup-node',
+      lineage_id: LINEAGE_UUID_1,
       topic_id: USER_ID,
       skill_id: USER_ID,
       title: 'Node',
@@ -748,66 +758,97 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
       required_depth: 'basic',
       estimated_effort_hours: 2,
       sequence_no: 1,
-      depends_on_lineage_ids: ['dup-node'],
-      reason: 'Self cycle',
+      depends_on_lineage_ids: [] as string[],
+      reason: 'Core topic',
       sources: [{ publisher: 'Docs', url: 'https://example.com' }],
     };
 
+    const makeRoadmap = (
+      items: unknown[],
+      targetLevel: unknown = 'junior',
+    ) => ({
+      targetLevel,
+      summary: {
+        current_situation: 'Start',
+        target_interpretation: 'Backend',
+        expected_career_impact: 'Growth',
+        next_steps: ['Step 1'],
+      },
+      phases: [
+        {
+          phase_no: 1,
+          title: 'P1',
+          milestones: [],
+          items,
+        },
+      ],
+      level_outline: [],
+      warnings: [],
+      size_guardrail: {
+        active_topic_count: items.length,
+        materially_large: false,
+        warning: null,
+      },
+    });
+
+    // Unique valid UUIDs pass cleanly (isolated baseline proving duplicate check is the sole cause below)
     expect(() =>
-      outputValidator.validate('roadmap_generate', 'roadmap.v1', {
-        targetLevel: 'junior',
-        summary: {
-          current_situation: 'Start',
-          target_interpretation: 'Backend',
-          expected_career_impact: 'Growth',
-          next_steps: ['Step 1'],
-        },
-        phases: [
+      outputValidator.validate(
+        'roadmap_generate',
+        'roadmap.v1',
+        makeRoadmap([
+          baseItem,
           {
-            phase_no: 1,
-            title: 'P1',
-            milestones: [],
-            items: [
-              baseItem,
-              { ...baseItem, sequence_no: 2, depends_on_lineage_ids: [] },
-            ],
+            ...baseItem,
+            lineage_id: LINEAGE_UUID_2,
+            sequence_no: 2,
+            depends_on_lineage_ids: [LINEAGE_UUID_1.toUpperCase()],
           },
-        ],
-        level_outline: [],
-        warnings: [],
-        size_guardrail: {
-          active_topic_count: 2,
-          materially_large: false,
-          warning: null,
-        },
-      }),
+        ]),
+      ),
+    ).not.toThrow();
+
+    // Isolated duplicate lineage_id (same UUID in uppercase, zero depends_on_lineage_ids) -> rejected
+    expect(() =>
+      outputValidator.validate(
+        'roadmap_generate',
+        'roadmap.v1',
+        makeRoadmap([
+          baseItem,
+          {
+            ...baseItem,
+            lineage_id: LINEAGE_UUID_1.toUpperCase(),
+            sequence_no: 2,
+            depends_on_lineage_ids: [],
+          },
+        ]),
+      ),
+    ).toThrow(HttpException);
+
+    // Non-UUID lineage_id or depends_on_lineage_ids -> rejected
+    expect(() =>
+      outputValidator.validate(
+        'roadmap_generate',
+        'roadmap.v1',
+        makeRoadmap([{ ...baseItem, lineage_id: 'not-a-uuid' }]),
+      ),
     ).toThrow(HttpException);
 
     expect(() =>
-      outputValidator.validate('roadmap_generate', 'roadmap.v1', {
-        targetLevel: ['junior'],
-        summary: {
-          current_situation: 'Start',
-          target_interpretation: 'Backend',
-          expected_career_impact: 'Growth',
-          next_steps: ['Step 1'],
-        },
-        phases: [
-          {
-            phase_no: 1,
-            title: 'P1',
-            milestones: [],
-            items: [{ ...baseItem, depends_on_lineage_ids: [] }],
-          },
-        ],
-        level_outline: [],
-        warnings: [],
-        size_guardrail: {
-          active_topic_count: 1,
-          materially_large: false,
-          warning: null,
-        },
-      }),
+      outputValidator.validate(
+        'roadmap_generate',
+        'roadmap.v1',
+        makeRoadmap([{ ...baseItem, depends_on_lineage_ids: ['not-a-uuid'] }]),
+      ),
+    ).toThrow(HttpException);
+
+    // Non-scalar array enum -> rejected
+    expect(() =>
+      outputValidator.validate(
+        'roadmap_generate',
+        'roadmap.v1',
+        makeRoadmap([baseItem], ['junior']),
+      ),
     ).toThrow(HttpException);
   });
 
@@ -885,7 +926,30 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
     const reservationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const unpersistedCorrelationId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const verifiedPreparingRowId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-    const activePreparingIds = new Set<string>([verifiedPreparingRowId]);
+    const foreignOwnerRowId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const completedRowId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const OTHER_USER_ID = '99999999-9999-4999-8999-999999999999';
+
+    const persistedRows = [
+      {
+        id: verifiedPreparingRowId,
+        user_id: USER_ID,
+        task: 'mentor_chat',
+        status: 'preparing',
+      },
+      {
+        id: foreignOwnerRowId,
+        user_id: OTHER_USER_ID,
+        task: 'mentor_chat',
+        status: 'preparing',
+      },
+      {
+        id: completedRowId,
+        user_id: USER_ID,
+        task: 'mentor_chat',
+        status: 'succeeded',
+      },
+    ];
 
     const baseImpl = queryMock.getMockImplementation() as (
       sql: string,
@@ -897,10 +961,23 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
         sql.includes('FROM public.ai_requests') &&
         sql.includes('WHERE id = $1')
       ) {
-        // Must restrict exemption strictly to active 'preparing' rows (never completed 'succeeded' rows)
+        // Must restrict exemption strictly to owned active 'preparing' rows for the same task
+        expect(sql).toContain('AND user_id = $2');
+        expect(sql).toContain('AND task = $3::public.ai_task');
         expect(sql).toContain("AND status = 'preparing'");
-        const candidateId = String(params?.[0] ?? '');
-        return activePreparingIds.has(candidateId) ? [{ id: candidateId }] : [];
+        const [candidateId, candidateUser, candidateTask] = (params ?? []) as [
+          string,
+          string,
+          string,
+        ];
+        const matched = persistedRows.find(
+          (r) =>
+            r.id === candidateId &&
+            r.user_id === candidateUser &&
+            r.task === candidateTask &&
+            r.status === 'preparing',
+        );
+        return matched ? [{ id: matched.id }] : [];
       }
       if (sql.includes('INSERT INTO public.ai_requests')) {
         return [{ id: reservationId }];
@@ -908,17 +985,23 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
       return baseImpl(sql, params);
     });
 
-    // 1. Unpersisted correlation UUID must NOT bypass quota reservation -> creates reservationId & binds telemetry to reservationId
-    const unpersistedRes = await quotaGuard.reserveUserQuota(
-      USER_ID.toUpperCase(),
-      'mentor_chat',
-      'en',
+    // 1. Unpersisted, foreign-owner, and completed UUIDs must NOT bypass quota reservation
+    for (const candidateId of [
       unpersistedCorrelationId,
-    );
-    expect(unpersistedRes).toEqual({
-      reservationId,
-      telemetryRequestId: reservationId,
-    });
+      foreignOwnerRowId,
+      completedRowId,
+    ]) {
+      const res = await quotaGuard.reserveUserQuota(
+        USER_ID.toUpperCase(),
+        'mentor_chat',
+        'en',
+        candidateId,
+      );
+      expect(res).toEqual({
+        reservationId,
+        telemetryRequestId: reservationId,
+      });
+    }
     const lockCall = queryMock.mock.calls.find(([sql]) =>
       String(sql).includes('pg_advisory_xact_lock'),
     );
@@ -946,19 +1029,20 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
     );
     expect((genInsert?.[1] as unknown[])[0]).toBe(reservationId);
 
-    // 2. Unpersisted or completed UUID at quota limit still rejects with 503 AI_BUDGET_EXHAUSTED
+    // 2. Unpersisted, foreign, or completed UUID at quota limit still rejects with 503 AI_BUDGET_EXHAUSTED
     usedQuotaCount = 50;
-    await expect(
-      quotaGuard.reserveUserQuota(
-        USER_ID,
-        'mentor_chat',
-        'en',
-        unpersistedCorrelationId,
-      ),
-    ).rejects.toSatisfy((err) => {
-      expectContractError(err, 503, 'AI_BUDGET_EXHAUSTED');
-      return true;
-    });
+    for (const candidateId of [
+      unpersistedCorrelationId,
+      foreignOwnerRowId,
+      completedRowId,
+    ]) {
+      await expect(
+        quotaGuard.reserveUserQuota(USER_ID, 'mentor_chat', 'en', candidateId),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'AI_BUDGET_EXHAUSTED');
+        return true;
+      });
+    }
 
     // 3. Verified active 'preparing' owned row skips duplicate reservation insert and retains verified telemetryRequestId
     usedQuotaCount = 1;
@@ -978,5 +1062,244 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
         String(sql).includes('INSERT INTO public.ai_requests'),
       ),
     ).toBe(false);
+
+    // 4. Unmetered task (goal_interpretation) also verifies existingRequestId before binding telemetryRequestId
+    const unmeteredUnpersisted = await quotaGuard.reserveUserQuota(
+      USER_ID,
+      'goal_interpretation',
+      'en',
+      unpersistedCorrelationId,
+    );
+    expect(unmeteredUnpersisted).toEqual({
+      reservationId: null,
+      telemetryRequestId: null,
+    });
+    const unmeteredForeign = await quotaGuard.reserveUserQuota(
+      USER_ID,
+      'goal_interpretation',
+      'en',
+      foreignOwnerRowId,
+    );
+    expect(unmeteredForeign).toEqual({
+      reservationId: null,
+      telemetryRequestId: null,
+    });
+  });
+
+  it('rolls back telemetry and fails with 503 AI_SERVICE_ERROR when completeQuotaReservation affects 0 rows (e.g. reaped mid-flight)', async () => {
+    const reservationId = '99999999-9999-4999-8999-999999999998';
+    let commitCount = 0;
+    let rollbackCount = 0;
+
+    const qrManagerQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('INSERT INTO public.ai_generations')) {
+        return [{ id: GENERATION_ID }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'succeeded'")
+      ) {
+        expect(sql).toContain('RETURNING id');
+        return [[], 0];
+      }
+      return [];
+    });
+
+    const realDb = new DatabaseService({
+      createQueryRunner: vi.fn(() => ({
+        connect: vi.fn().mockResolvedValue(undefined),
+        startTransaction: vi.fn().mockResolvedValue(undefined),
+        commitTransaction: vi.fn(async () => {
+          commitCount += 1;
+        }),
+        rollbackTransaction: vi.fn(async () => {
+          rollbackCount += 1;
+        }),
+        release: vi.fn().mockResolvedValue(undefined),
+        manager: { query: qrManagerQuery },
+      })),
+    } as unknown as DataSource);
+
+    const atomicQuotaGuard = new QuotaGuardService(realDb, configMock);
+    await expect(
+      atomicQuotaGuard.finalizeGenerationSuccess(
+        {
+          requestId: reservationId,
+          task: 'mentor_chat',
+          providerKey: 'google-gemini',
+          modelId: MODEL_ID,
+          promptVersionId: PROMPT_ID,
+          outputSchemaId: 'mentor_chat.v1',
+          validationStatus: 'passed',
+          fallbackUsed: false,
+          language: 'en',
+          inputUnits: 10,
+          outputUnits: 20,
+          latencyMs: 15,
+          output: { ok: true },
+        },
+        reservationId,
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'AI_SERVICE_ERROR');
+      return true;
+    });
+    expect(commitCount).toBe(0);
+    expect(rollbackCount).toBe(1);
+  });
+
+  it('preserves the original request error when failQuotaReservation cleanup throws and enforces SyntheticProviderAdapter max_output_units without tripping circuit breaker', async () => {
+    const reservationId = '88888888-8888-4888-8888-888888888889';
+    const baseImpl = queryMock.getMockImplementation() as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<unknown>;
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('INSERT INTO public.ai_requests')) {
+        return [{ id: reservationId }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'failed'")
+      ) {
+        throw new Error('DB connection dropped during cleanup');
+      }
+      return baseImpl(sql, params);
+    });
+
+    syntheticAdapter.setModelRule(MODEL_ID, 'timeout');
+    await expect(
+      gateway.execute({
+        task: 'mentor_chat',
+        user_id: USER_ID,
+        context: {},
+        output_schema: 'mentor_chat.v1',
+        language: 'en',
+        idempotency_key: 'idem-cleanup-failure-preserves-error',
+        budget: {
+          max_input_units: 2000,
+          max_output_units: 500,
+          timeout_ms: 5000,
+        },
+      }),
+    ).rejects.toSatisfy((err) => {
+      // Original 504 AI_TIMEOUT must be rethrown rather than masked by cleanup DB error
+      expectContractError(err, 504, 'AI_TIMEOUT');
+      return true;
+    });
+
+    // SyntheticProviderAdapter output exceeding max_output_units throws 503 AI_BUDGET_EXHAUSTED without tripping circuit breaker
+    syntheticAdapter.clearModelRules();
+    circuitBreaker.reset();
+    queryMock.mockImplementation(baseImpl);
+    const quizSchemaId = getBuiltInPromptTemplates().find(
+      (t) => t.task === 'quiz_generate',
+    )!.outputSchemaId;
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD + 1; i += 1) {
+      await expect(
+        gateway.execute({
+          task: 'quiz_generate',
+          user_id: USER_ID,
+          context: {},
+          output_schema: quizSchemaId,
+          language: 'en',
+          idempotency_key: `idem-max-output-over-${i}`,
+          budget: {
+            max_input_units: 2000,
+            max_output_units: 50,
+            timeout_ms: 5000,
+          },
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'AI_BUDGET_EXHAUSTED');
+        return true;
+      });
+    }
+    expect(circuitBreaker.getState(MODEL_ID)).toBe('CLOSED');
+  });
+
+  it('releases HALF_OPEN canary without recording a model failure when touchQuotaReservation rejects before fallback', async () => {
+    vi.useFakeTimers();
+    const FALLBACK_MODEL_ID = '55555555-5555-4555-8555-555555555555';
+    const RESERVATION_ID = '66666666-6666-4666-8666-666666666666';
+    const FALLBACK_MODEL: AiModelRecord = {
+      ...APPROVED_MODEL,
+      id: FALLBACK_MODEL_ID,
+      provider_key: 'openai',
+      model_identifier: 'gpt-4o-mini-fallback',
+      display_name: 'Fallback Model',
+      fallback_rank: 2,
+    };
+
+    // Trip fallback model to OPEN and advance 60s into HALF_OPEN
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD; i += 1) {
+      circuitBreaker.recordFailure(FALLBACK_MODEL_ID);
+    }
+    expect(circuitBreaker.getState(FALLBACK_MODEL_ID)).toBe('OPEN');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(circuitBreaker.getState(FALLBACK_MODEL_ID)).toBe('HALF_OPEN');
+
+    const baseImpl = queryMock.getMockImplementation() as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<unknown>;
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM public.ai_models')) {
+        return [APPROVED_MODEL, FALLBACK_MODEL];
+      }
+      if (sql.includes('INSERT INTO public.ai_requests')) {
+        return [{ id: RESERVATION_ID }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes('SET locked_at = clock_timestamp()')
+      ) {
+        throw new Error('Simulated touchQuotaReservation DB failure');
+      }
+      return baseImpl(sql, params);
+    });
+
+    syntheticAdapter.setModelRule(MODEL_ID, 'provider_error');
+    const acquireSpy = vi.spyOn(circuitBreaker, 'acquireAttempt');
+    const releaseSpy = vi.spyOn(circuitBreaker, 'releaseCanary');
+    const failureSpy = vi.spyOn(circuitBreaker, 'recordFailure');
+
+    await expect(
+      gateway.execute({
+        task: 'mentor_chat',
+        user_id: USER_ID,
+        context: {},
+        output_schema: 'mentor_chat.v1',
+        language: 'en',
+        idempotency_key: 'idem-touch-rejects-canary-release',
+        budget: {
+          max_input_units: 2000,
+          max_output_units: 500,
+          timeout_ms: 5000,
+        },
+      }),
+    ).rejects.toThrow('Simulated touchQuotaReservation DB failure');
+
+    // Acquired HALF_OPEN canary token on fallback candidate was released cleanly
+    const fallbackAdmissionIdx = acquireSpy.mock.calls.findIndex(
+      ([id]) => id === FALLBACK_MODEL_ID,
+    );
+    expect(fallbackAdmissionIdx).toBeGreaterThanOrEqual(0);
+    const acquiredToken = (
+      acquireSpy.mock.results[fallbackAdmissionIdx]?.value as {
+        canaryToken: string | null;
+      }
+    )?.canaryToken;
+    expect(typeof acquiredToken).toBe('string');
+    expect(releaseSpy).toHaveBeenCalledWith(FALLBACK_MODEL_ID, acquiredToken);
+
+    // No model failure recorded for fallback candidate; circuit remains HALF_OPEN and acquirable
+    expect(failureSpy.mock.calls.some(([id]) => id === FALLBACK_MODEL_ID)).toBe(
+      false,
+    );
+    expect(circuitBreaker.getState(FALLBACK_MODEL_ID)).toBe('HALF_OPEN');
+    const nextAttempt = circuitBreaker.acquireAttempt(FALLBACK_MODEL_ID);
+    expect(nextAttempt.allowed).toBe(true);
+    expect(typeof nextAttempt.canaryToken).toBe('string');
   });
 });

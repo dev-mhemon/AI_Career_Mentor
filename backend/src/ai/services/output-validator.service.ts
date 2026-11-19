@@ -3,6 +3,8 @@ import { fail } from '../../common/http.js';
 import type { AiTask } from '../ai.types.js';
 
 const HTTP_URL_PATTERN = /^https?:\/\/.+/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CAREER_LEVELS = new Set(['junior', 'mid', 'senior']);
 const ITEM_PRIORITIES = new Set(['core', 'supporting', 'optional']);
 const GAP_TYPES = new Set([
@@ -77,6 +79,14 @@ function asNonEmptyString(value: unknown, maxLen = 20_000): string {
     validationFail();
   }
   return trimmed;
+}
+
+function asCanonicalUuid(value: unknown): string {
+  const raw = asNonEmptyString(value, 128);
+  if (!UUID_PATTERN.test(raw)) {
+    validationFail();
+  }
+  return raw.toLowerCase();
 }
 
 function asStringArray(value: unknown): string[] {
@@ -213,15 +223,13 @@ function validateRoadmap(raw: Record<string, unknown>): void {
       }
 
       const nodeId =
-        typeof item.lineage_id === 'string' && item.lineage_id.trim()
-          ? item.lineage_id.trim()
+        item.lineage_id !== undefined && item.lineage_id !== null
+          ? asCanonicalUuid(item.lineage_id)
           : `${phase.phase_no}:${item.sequence_no}:${item.topic_id}`;
       if (dagEdges.has(nodeId)) {
         validationFail();
       }
-      const deps = item.depends_on_lineage_ids.map((d) =>
-        asNonEmptyString(d, 128),
-      );
+      const deps = item.depends_on_lineage_ids.map((d) => asCanonicalUuid(d));
       dagEdges.set(nodeId, deps);
     }
   }

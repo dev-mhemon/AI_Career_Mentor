@@ -443,4 +443,103 @@ describe('AILoadingState (Component 28)', () => {
     expect(container).toHaveAttribute('data-state', 'succeeded');
     expect(onJobSucceeded).toHaveBeenCalledTimes(1);
   });
+
+  it('discards stale in-flight poll results for a superseded job_id even if the fetcher ignores AbortSignal', async () => {
+    vi.useFakeTimers();
+    const JOB_B_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const jobB: JobAcceptedDTO = {
+      job_id: JOB_B_ID,
+      kind: 'roadmap_generate',
+      status: 'queued',
+      poll_url: `/api/v1/jobs/${JOB_B_ID}`,
+      retry_after_seconds: 2,
+    };
+
+    const onJobSucceeded = vi.fn();
+    let resolveJobA!: (status: JobStatusDTO) => void;
+    const pollJobStatus = vi.fn((id: string) => {
+      if (id === JOB_ID) {
+        return new Promise<JobStatusDTO>((resolve) => {
+          resolveJobA = resolve;
+        });
+      }
+      return Promise.resolve<JobStatusDTO>({
+        job_id: JOB_B_ID,
+        kind: 'roadmap_generate',
+        status: 'succeeded',
+        result_ref: { type: 'roadmap', id: ROADMAP_ID },
+        error: null,
+        retryable: false,
+        created_at: '2026-11-19T09:05:00.000Z',
+        finished_at: '2026-11-19T09:05:04.000Z',
+      });
+    });
+
+    const { rerender } = render(
+      <AILoadingState
+        job={INITIAL_JOB}
+        title="Preparing your career roadmap"
+        pollJobStatus={pollJobStatus}
+        onJobSucceeded={onJobSucceeded}
+      />,
+    );
+
+    // Start job A's poll (now in-flight)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(pollJobStatus).toHaveBeenCalledWith(JOB_ID, expect.any(AbortSignal));
+
+    // Parent switches to replacement queued job B before job A's poll settles
+    rerender(
+      <AILoadingState
+        job={jobB}
+        title="Preparing your career roadmap"
+        pollJobStatus={pollJobStatus}
+        onJobSucceeded={onJobSucceeded}
+      />,
+    );
+
+    const container = screen.getByRole('status');
+    expect(container).toHaveAttribute('data-state', 'queued');
+    expect(container).toHaveAttribute('aria-busy', 'true');
+
+    // Job A's stale promise resolves as failed (ignoring abort signal) -> MUST be discarded
+    await act(async () => {
+      resolveJobA({
+        job_id: JOB_ID,
+        kind: 'roadmap_generate',
+        status: 'failed',
+        result_ref: null,
+        error: {
+          code: 'AI_TIMEOUT',
+          message: 'Job A timed out',
+          retryable: true,
+        },
+        retryable: true,
+        created_at: '2026-11-19T09:00:00.000Z',
+        finished_at: '2026-11-19T09:01:00.000Z',
+      });
+      await Promise.resolve();
+    });
+
+    expect(container).toHaveAttribute('data-state', 'queued');
+    expect(container).toHaveAttribute('aria-busy', 'true');
+
+    // Job B continues polling and succeeds cleanly
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(pollJobStatus).toHaveBeenCalledWith(
+      JOB_B_ID,
+      expect.any(AbortSignal),
+    );
+    expect(container).toHaveAttribute('data-state', 'succeeded');
+    expect(container).toHaveAttribute('aria-busy', 'false');
+    expect(onJobSucceeded).toHaveBeenCalledTimes(1);
+    expect(onJobSucceeded).toHaveBeenCalledWith(
+      { type: 'roadmap', id: ROADMAP_ID },
+      expect.objectContaining({ job_id: JOB_B_ID, status: 'succeeded' }),
+    );
+  });
 });

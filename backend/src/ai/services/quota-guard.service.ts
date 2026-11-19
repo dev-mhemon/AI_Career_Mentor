@@ -12,6 +12,24 @@ export const R26_MAX_OPERATIONAL_LIMIT = 10_000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function extractUpdatedRowCount(result: unknown): number {
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  if (
+    result.length === 2 &&
+    Array.isArray(result[0]) &&
+    (typeof result[1] === 'number' ||
+      result[1] === null ||
+      result[1] === undefined)
+  ) {
+    return typeof result[1] === 'number'
+      ? Math.max(result[0].length, result[1])
+      : result[0].length;
+  }
+  return result.length;
+}
+
 interface BoundedConfigSpec {
   defaultValue: number;
   min: number;
@@ -184,9 +202,31 @@ export class QuotaGuardService {
 
     const configKey = TASK_TO_QUOTA_KEY[task];
     if (!configKey) {
+      if (normalizedExistingId === null) {
+        return {
+          reservationId: null,
+          telemetryRequestId: null,
+        };
+      }
+      const verifiedExistingId = await this.runTx(async (db) => {
+        const existingRows = await db.query<Array<{ id?: string }>>(
+          `SELECT id
+             FROM public.ai_requests
+            WHERE id = $1
+              AND user_id = $2
+              AND task = $3::public.ai_task
+              AND status = 'preparing'
+              AND created_at > clock_timestamp() - interval '24 hours'
+            LIMIT 1`,
+          [normalizedExistingId, normalizedUserId, task],
+        );
+        return Array.isArray(existingRows) && existingRows.length > 0
+          ? normalizedExistingId
+          : null;
+      });
       return {
         reservationId: null,
-        telemetryRequestId: normalizedExistingId,
+        telemetryRequestId: verifiedExistingId,
       };
     }
 
@@ -276,7 +316,31 @@ export class QuotaGuardService {
     });
   }
 
-  /** Marks a synchronous quota reservation row `'succeeded'` after validated gateway completion. */
+  /**
+   * Refreshes `locked_at` on an active synchronous quota reservation row (`is_async = false`,
+   * `status = 'preparing'`) so multi-fallback invocations stay alive past the reaper lease window.
+   */
+  async touchQuotaReservation(reservationId: string | null): Promise<void> {
+    if (!reservationId || !UUID_PATTERN.test(reservationId)) {
+      return;
+    }
+    await this.runTx(async (tx) => {
+      await tx.query(
+        `UPDATE public.ai_requests
+            SET locked_at = clock_timestamp()
+          WHERE id = $1
+            AND is_async = false
+            AND status = 'preparing'`,
+        [reservationId],
+      );
+    });
+  }
+
+  /**
+   * Marks a synchronous quota reservation row `'succeeded'` after validated gateway completion.
+   * Throws `503 AI_SERVICE_ERROR` if 0 rows matched (e.g. reaped before completion) so enclosing
+   * `finalizeGenerationSuccess` rolls back `public.ai_generations` telemetry atomically.
+   */
   async completeQuotaReservation(
     reservationId: string | null,
     tx?: TelemetryQueryExecutor,
@@ -287,15 +351,25 @@ export class QuotaGuardService {
     const runUpdate = async (
       executor: TelemetryQueryExecutor,
     ): Promise<void> => {
-      await executor.query(
+      const updated = await executor.query<unknown>(
         `UPDATE public.ai_requests
             SET status = 'succeeded',
                 finished_at = clock_timestamp()
           WHERE id = $1
             AND is_async = false
-            AND status = 'preparing'`,
+            AND status = 'preparing'
+         RETURNING id`,
         [reservationId],
       );
+      if (extractUpdatedRowCount(updated) === 0) {
+        fail(
+          503,
+          'AI_SERVICE_ERROR',
+          'AI service encountered an error. Please try again later.',
+          undefined,
+          true,
+        );
+      }
     };
     if (tx) {
       await runUpdate(tx);

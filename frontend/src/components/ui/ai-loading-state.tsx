@@ -170,14 +170,19 @@ export function AILoadingState({
         return;
       }
 
+      const requestedJobId = job.job_id;
       try {
-        const nextStatus = await fetcher(job.job_id, controller.signal);
-        if (!mounted || controller.signal.aborted) {
+        const nextStatus = await fetcher(requestedJobId, controller.signal);
+        if (
+          !mounted ||
+          controller.signal.aborted ||
+          jobRef.current.job_id !== requestedJobId
+        ) {
           return;
         }
         setPollFailure(null);
         setPolled({
-          jobId: job.job_id,
+          jobId: requestedJobId,
           sourceJob: jobRef.current,
           sourceStatus: jobRef.current.status,
           status: nextStatus,
@@ -196,12 +201,16 @@ export function AILoadingState({
           void executePoll();
         }, delayMs);
       } catch (error) {
-        if (!mounted || controller.signal.aborted) {
+        if (
+          !mounted ||
+          controller.signal.aborted ||
+          jobRef.current.job_id !== requestedJobId
+        ) {
           return;
         }
         const mapped = mapApiError(error);
         setPollFailure({
-          jobId: job.job_id,
+          jobId: requestedJobId,
           accessToken,
           message: mapped.message,
         });

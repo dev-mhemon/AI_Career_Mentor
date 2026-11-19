@@ -13,7 +13,10 @@ import {
   getBuiltInPromptTemplates,
   PromptManagerService,
 } from './services/prompt-manager.service.js';
-import { SyntheticProviderAdapter } from './services/provider.adapter.js';
+import {
+  ProviderInvocationError,
+  SyntheticProviderAdapter,
+} from './services/provider.adapter.js';
 import { QuotaGuardService } from './services/quota-guard.service.js';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -370,9 +373,13 @@ describe('ModelRouterService & CircuitBreakerService (Approval Gate, Fallback & 
   it('enforces HALF_OPEN canary reservation token ownership so late pre-open releases cannot clear an active canary', async () => {
     vi.useFakeTimers();
 
-    // Request A admitted while CLOSED -> canaryToken = null
+    // Request A admitted while CLOSED -> canaryToken = null, generation = 0
     const admissionA = circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
-    expect(admissionA).toEqual({ allowed: true, canaryToken: null });
+    expect(admissionA).toEqual({
+      allowed: true,
+      canaryToken: null,
+      generation: 0,
+    });
 
     // Trip circuit to OPEN and advance past 60s quarantine into HALF_OPEN
     for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD; i += 1) {
@@ -397,6 +404,7 @@ describe('ModelRouterService & CircuitBreakerService (Approval Gate, Fallback & 
     expect(circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID)).toEqual({
       allowed: false,
       canaryToken: null,
+      generation: admissionB.generation,
     });
 
     // Request B releasing with matching T1 frees the HALF_OPEN canary slot cleanly
@@ -409,10 +417,14 @@ describe('ModelRouterService & CircuitBreakerService (Approval Gate, Fallback & 
 
   it('prevents a late pre-open CLOSED success (canaryToken = null) from prematurely closing an OPEN quarantine', () => {
     const preOpenAdmission = circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
-    expect(preOpenAdmission).toEqual({ allowed: true, canaryToken: null });
+    expect(preOpenAdmission).toEqual({
+      allowed: true,
+      canaryToken: null,
+      generation: 0,
+    });
 
     for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD; i += 1) {
-      circuitBreaker.recordFailure(PRIMARY_MODEL_ID, null);
+      circuitBreaker.recordFailure(PRIMARY_MODEL_ID, null, 0);
     }
     expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('OPEN');
 
@@ -420,9 +432,136 @@ describe('ModelRouterService & CircuitBreakerService (Approval Gate, Fallback & 
     circuitBreaker.recordSuccess(
       PRIMARY_MODEL_ID,
       preOpenAdmission.canaryToken,
+      preOpenAdmission.generation,
     );
     expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('OPEN');
     expect(circuitBreaker.isAvailable(PRIMARY_MODEL_ID)).toBe(false);
+  });
+
+  it('ignores stale-generation CLOSED failures during OPEN quarantine and stale CLOSED successes in a newer CLOSED generation', async () => {
+    vi.useFakeTimers();
+
+    // Admit two requests in initial CLOSED generation 0
+    const staleFailureAdmission =
+      circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
+    const staleSuccessAdmission =
+      circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
+    expect(staleFailureAdmission.generation).toBe(0);
+
+    // Trip circuit to OPEN at t=0
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD; i += 1) {
+      circuitBreaker.recordFailure(PRIMARY_MODEL_ID, null, 0);
+    }
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('OPEN');
+
+    // At t=50s, a late CLOSED failure from generation 0 arrives -> must NOT reset openedAtMs
+    await vi.advanceTimersByTimeAsync(50_000);
+    circuitBreaker.recordFailure(
+      PRIMARY_MODEL_ID,
+      staleFailureAdmission.canaryToken,
+      staleFailureAdmission.generation,
+    );
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('OPEN');
+
+    // 10s later (total 60s from original open), circuit MUST transition to HALF_OPEN (not extended to t=110s)
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('HALF_OPEN');
+
+    // Recover via HALF_OPEN canary -> transitions into newer CLOSED generation
+    const canary = circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
+    expect(canary.allowed).toBe(true);
+    circuitBreaker.recordSuccess(
+      PRIMARY_MODEL_ID,
+      canary.canaryToken,
+      canary.generation,
+    );
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('CLOSED');
+
+    // Accumulate 4 failures in the new CLOSED generation
+    const newGenAdmission = circuitBreaker.acquireAttempt(PRIMARY_MODEL_ID);
+    expect(newGenAdmission.generation).toBeGreaterThan(
+      staleSuccessAdmission.generation,
+    );
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD - 1; i += 1) {
+      circuitBreaker.recordFailure(
+        PRIMARY_MODEL_ID,
+        newGenAdmission.canaryToken,
+        newGenAdmission.generation,
+      );
+    }
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('CLOSED');
+
+    // Late success from generation 0 must NOT clear the 4 failures accumulated in the new CLOSED generation
+    circuitBreaker.recordSuccess(
+      PRIMARY_MODEL_ID,
+      staleSuccessAdmission.canaryToken,
+      staleSuccessAdmission.generation,
+    );
+    // 5th failure in the new generation immediately trips to OPEN
+    expect(
+      circuitBreaker.recordFailure(
+        PRIMARY_MODEL_ID,
+        newGenAdmission.canaryToken,
+        newGenAdmission.generation,
+      ),
+    ).toBe('OPEN');
+  });
+
+  it('stops fallback immediately and does not trip the circuit breaker on policy_rejected errors', async () => {
+    modelsFromDb = [PRIMARY_APPROVED, SECONDARY_APPROVED];
+    const invokedModels: string[] = [];
+    syntheticAdapter.setModelRule(PRIMARY_MODEL_ID, async (req) => {
+      invokedModels.push(req.model.id);
+      throw new ProviderInvocationError(
+        'policy_rejected',
+        'Synthetic provider adapter cannot serve real_user requests',
+        503,
+      );
+    });
+    syntheticAdapter.setModelRule(SECONDARY_MODEL_ID, async (req) => {
+      invokedModels.push(req.model.id);
+      return {
+        output: {
+          content: 'Should never be called',
+          language: 'en',
+          safety_mode: false,
+          learning_claim_recorded: false,
+        },
+        inputUnits: 10,
+        outputUnits: 10,
+        latencyMs: 5,
+      };
+    });
+
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD + 1; i += 1) {
+      await expect(
+        gateway.execute({
+          task: 'mentor_chat',
+          user_id: USER_ID,
+          context: {},
+          output_schema: 'mentor_chat.v1',
+          language: 'en',
+          idempotency_key: `idem-policy-rejected-${i}`,
+          budget: {
+            max_input_units: 1000,
+            max_output_units: 500,
+            timeout_ms: 5000,
+          },
+        }),
+      ).rejects.toSatisfy((err) => {
+        expect(err).toBeInstanceOf(HttpException);
+        const httpErr = err as HttpException;
+        expect(httpErr.getStatus()).toBe(502);
+        expect((httpErr.getResponse() as { code?: string }).code).toBe(
+          'AI_SERVICE_ERROR',
+        );
+        return true;
+      });
+    }
+
+    // Secondary fallback model was NEVER attempted and primary circuit remained CLOSED
+    expect(invokedModels).not.toContain(SECONDARY_MODEL_ID);
+    expect(circuitBreaker.getState(PRIMARY_MODEL_ID)).toBe('CLOSED');
   });
 
   it('never leaks provider_key, model_identifier, or model_id in client-facing errors', async () => {

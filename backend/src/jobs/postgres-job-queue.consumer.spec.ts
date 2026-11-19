@@ -117,8 +117,9 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     vi.restoreAllMocks();
   });
 
-  it('commits SKIP LOCKED claim using available_at BEFORE calling external handler.execute', async () => {
+  it('commits SKIP LOCKED claim using available_at BEFORE calling external handler.execute and locks users FOR SHARE before ai_requests FOR UPDATE', async () => {
     const claimed = makeClaimedJob();
+    const lockOrder: string[] = [];
     queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (
         sql.includes('FOR UPDATE SKIP LOCKED') &&
@@ -131,8 +132,17 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
       }
       if (
         sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        lockOrder.push('ai_requests_unlocked_lookup');
+        return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')
       ) {
+        lockOrder.push('ai_requests_for_update');
         return [
           {
             id: JOB_ID,
@@ -149,6 +159,7 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
       }
       if (sql.includes('FROM public.users u')) {
         expect(sql).toContain('FOR SHARE OF u');
+        lockOrder.push('users_for_share');
         return [{ user_status: 'active', feature_allowed: true }];
       }
       if (
@@ -200,6 +211,11 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
         resultId: RESULT_ID,
       },
     ]);
+    expect(lockOrder).toEqual([
+      'ai_requests_unlocked_lookup',
+      'users_for_share',
+      'ai_requests_for_update',
+    ]);
     expect(persistArtifact).toHaveBeenCalledTimes(1);
 
     const succeededUpdate = queryMock.mock.calls.find(
@@ -209,6 +225,32 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     );
     expect(succeededUpdate).toBeDefined();
     expect(String(succeededUpdate?.[0])).toContain('input_payload = NULL');
+  });
+
+  it('returns fence_lost without locking users or persisting artifacts when ai_requests row is missing on commit gate lookup', async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE')
+      ) {
+        return [];
+      }
+      return [];
+    });
+
+    const persistArtifact = vi.fn();
+    const outcome = await consumer.processClaimedJob(makeClaimedJob(), {
+      execute: vi.fn().mockResolvedValue(makeExecResult()),
+      verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+      persistArtifact,
+    });
+    expect(outcome).toEqual({ outcome: 'fence_lost', jobId: JOB_ID });
+    expect(persistArtifact).not.toHaveBeenCalled();
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        String(sql).includes('FROM public.users u'),
+      ),
+    ).toBe(false);
   });
 
   it('renews heartbeat under fence and immediately aborts without committing when fence is lost', async () => {
@@ -276,6 +318,13 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (
         sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')
       ) {
         return [
@@ -327,6 +376,13 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
 
   it('aborts commit gate when owner is suspended or feature disabled and clears input_payload', async () => {
     queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
+      }
       if (
         sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')
@@ -509,6 +565,13 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     queryMock.mockImplementation(async (sql: string) => {
       if (
         sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')
       ) {
         return [
@@ -554,6 +617,13 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
 
     // 2. Deadline expires during verifyExpectedRefs -> terminal failure before persistArtifact
     queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
+      }
       if (
         sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')
@@ -615,6 +685,13 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     // 3. persistArtifact throws raw instruction + requeue UPDATE returns [[], 0] -> purges input_payload & never logs raw exception message
     let terminalPurgeRan = false;
     queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
+      }
       if (
         sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')
@@ -714,6 +791,13 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     });
 
     queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'quiz_practice' }];
+      }
       if (
         sql.includes('FROM public.ai_requests') &&
         sql.includes('FOR UPDATE')

@@ -436,6 +436,33 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
     execResult: JobExecutionResult,
   ): Promise<JobProcessOutcome> {
     return this.runTx(async (tx) => {
+      const lookupRows = await tx.query<
+        Array<{ user_id: string; feature_key: string | null }>
+      >(
+        `SELECT user_id,
+                feature_key::text AS feature_key
+           FROM public.ai_requests
+          WHERE id = $1`,
+        [fence.requestId],
+      );
+      const lookup = Array.isArray(lookupRows) ? lookupRows[0] : undefined;
+      if (!lookup) {
+        return { outcome: 'fence_lost', jobId: fence.requestId };
+      }
+
+      // Lock owner row FIRST (`users FOR SHARE` -> `ai_requests FOR UPDATE`) to stay deadlock-safe
+      const accessRows = await tx.query<OwnerAccessRow[]>(
+        `SELECT u.status::text AS user_status,
+                CASE
+                  WHEN $2::public.feature_key IS NULL THEN true
+                  ELSE private.effective_feature_access($1, $2::public.feature_key)
+                END AS feature_allowed
+           FROM public.users u
+          WHERE u.id = $1
+          FOR SHARE OF u`,
+        [lookup.user_id, lookup.feature_key],
+      );
+
       const lockedRows = await tx.query<LockedGateRow[]>(
         `SELECT id,
                 user_id,
@@ -454,6 +481,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       const locked = Array.isArray(lockedRows) ? lockedRows[0] : undefined;
       if (
         !locked ||
+        locked.user_id !== lookup.user_id ||
         locked.status !== 'preparing' ||
         locked.locked_by !== fence.lockedBy ||
         Number(locked.attempt_count) !== fence.attemptCount ||
@@ -476,17 +504,6 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         };
       }
 
-      const accessRows = await tx.query<OwnerAccessRow[]>(
-        `SELECT u.status::text AS user_status,
-                CASE
-                  WHEN $2::public.feature_key IS NULL THEN true
-                  ELSE private.effective_feature_access($1, $2::public.feature_key)
-                END AS feature_allowed
-           FROM public.users u
-          WHERE u.id = $1
-          FOR SHARE OF u`,
-        [locked.user_id, locked.feature_key],
-      );
       const access = Array.isArray(accessRows) ? accessRows[0] : undefined;
       if (!access || access.user_status !== 'active') {
         await this.markTerminalFailureInTx(

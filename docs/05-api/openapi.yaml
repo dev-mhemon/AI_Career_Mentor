@@ -2122,14 +2122,16 @@ paths:
             - ACCOUNT_SUSPENDED
             - PERMISSION_DENIED
         '404':
-          description: JOB_NOT_FOUND
+          description: >-
+            JOB_NOT_FOUND (uses ObservedErrorEnvelope because the shared NestJS exception filter emits
+            retryAfterSeconds: null rather than omitting retryAfterSeconds as in canonical ErrorDTO).
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
           x-error-codes:
             - JOB_NOT_FOUND
         '500':

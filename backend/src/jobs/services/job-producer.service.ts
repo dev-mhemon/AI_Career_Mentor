@@ -216,6 +216,45 @@ function assertNoNulByte(value: string, field: string): void {
   }
 }
 
+function assertValidUnicodeString(value: string, field: string): void {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i += 1;
+        continue;
+      }
+      fail(
+        422,
+        'VALIDATION_FAILED',
+        `${field} contains an unpaired Unicode surrogate`,
+        [
+          {
+            field,
+            code: 'VALIDATION_FAILED',
+            message: `${field} must contain valid Unicode text`,
+          },
+        ],
+      );
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      fail(
+        422,
+        'VALIDATION_FAILED',
+        `${field} contains an unpaired Unicode surrogate`,
+        [
+          {
+            field,
+            code: 'VALIDATION_FAILED',
+            message: `${field} must contain valid Unicode text`,
+          },
+        ],
+      );
+    }
+  }
+}
+
 function assertNonEmptyStringField(
   value: unknown,
   field: string,
@@ -240,6 +279,7 @@ function assertNonEmptyStringField(
     );
   }
   assertNoNulByte(value, field);
+  assertValidUnicodeString(value, field);
   return value.trim();
 }
 

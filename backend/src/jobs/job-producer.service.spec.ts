@@ -301,6 +301,35 @@ describe('JobProducerService (R12 Durable Producer)', () => {
       return true;
     });
 
+    // Unpaired UTF-16 high and low surrogates rejected (Postgres jsonb rejects invalid UTF-8)
+    for (const badSurrogate of [
+      'lone-high-\uD800-end',
+      'lone-low-\uDC00-end',
+      'trailing-high-\uDBFF',
+    ]) {
+      await expect(
+        service.enqueue({
+          userId: USER_ID,
+          kind: 'roadmap_revision',
+          envelope: {
+            v: 1,
+            args: {
+              roadmap_id: ROADMAP_ID,
+              base_version_no: 1,
+              instruction: badSurrogate,
+              refresh_stale: false,
+            },
+            expected_refs: {
+              roadmap_version: 1,
+            },
+          },
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'VALIDATION_FAILED');
+        return true;
+      });
+    }
+
     // Unknown top-level key
     await expect(
       service.enqueue({
@@ -492,7 +521,7 @@ describe('JobProducerService (R12 Durable Producer)', () => {
         args: {
           roadmap_id: ROADMAP_ID,
           base_version_no: 1,
-          instruction: 'SENTINEL_PRIVATE_REVISION_TEXT \\u0000',
+          instruction: 'SENTINEL_PRIVATE_REVISION_TEXT 🚀 \\u0000 \\uD800',
           refresh_stale: false,
         },
         expected_refs: { roadmap_version: 1 },

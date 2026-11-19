@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { fail } from '../../common/http.js';
 import {
@@ -40,6 +40,8 @@ export interface AiGatewayExecuteOptions {
  */
 @Injectable()
 export class AiGatewayService {
+  private readonly logger = new Logger(AiGatewayService.name);
+
   constructor(
     @Inject(QuotaGuardService) private readonly quotaGuard: QuotaGuardService,
     @Inject(PromptManagerService)
@@ -158,11 +160,16 @@ export class AiGatewayService {
         );
       }
 
-      let lastFailureKind: 'timeout' | 'rate_limit' | 'provider_error' =
-        'provider_error';
+      let lastFailureKind:
+        | 'timeout'
+        | 'rate_limit'
+        | 'provider_error'
+        | 'policy_rejected'
+        | 'budget_exceeded' = 'provider_error';
       let lastInvocation: ProviderInvocationResult | null = null;
       let chosenModel = route.candidates[0];
       let chosenCanaryToken: string | null = null;
+      let chosenGeneration: number | undefined;
       let fallbackUsed = route.quarantinedCount > 0;
 
       for (let i = 0; i < route.candidates.length; i += 1) {
@@ -178,8 +185,20 @@ export class AiGatewayService {
         }
         chosenModel = candidate;
         chosenCanaryToken = admission.canaryToken;
+        chosenGeneration = admission.generation;
         if (i > 0) {
           fallbackUsed = true;
+          if (reservationId) {
+            try {
+              await this.quotaGuard.touchQuotaReservation(reservationId);
+            } catch (touchError) {
+              this.circuitBreaker.releaseCanary(
+                candidate.id,
+                admission.canaryToken,
+              );
+              throw touchError;
+            }
+          }
         }
 
         try {
@@ -212,12 +231,19 @@ export class AiGatewayService {
               this.circuitBreaker.recordFailure(
                 candidate.id,
                 admission.canaryToken,
+                admission.generation,
               );
-            } else {
-              this.circuitBreaker.releaseCanary(
-                candidate.id,
-                admission.canaryToken,
-              );
+              continue;
+            }
+            this.circuitBreaker.releaseCanary(
+              candidate.id,
+              admission.canaryToken,
+            );
+            if (
+              error.kind === 'policy_rejected' ||
+              error.kind === 'budget_exceeded'
+            ) {
+              break;
             }
             continue;
           }
@@ -225,6 +251,7 @@ export class AiGatewayService {
           this.circuitBreaker.recordFailure(
             candidate.id,
             admission.canaryToken,
+            admission.generation,
           );
         }
       }
@@ -239,7 +266,10 @@ export class AiGatewayService {
             true,
           );
         }
-        if (lastFailureKind === 'rate_limit') {
+        if (
+          lastFailureKind === 'rate_limit' ||
+          lastFailureKind === 'budget_exceeded'
+        ) {
           fail(
             503,
             'AI_BUDGET_EXHAUSTED',
@@ -265,7 +295,11 @@ export class AiGatewayService {
           lastInvocation.output,
         );
       } catch (validationError) {
-        this.circuitBreaker.recordSuccess(chosenModel.id, chosenCanaryToken);
+        this.circuitBreaker.recordSuccess(
+          chosenModel.id,
+          chosenCanaryToken,
+          chosenGeneration,
+        );
         const validationCode =
           validationError instanceof HttpException &&
           typeof (validationError.getResponse() as { code?: unknown })?.code ===
@@ -306,7 +340,11 @@ export class AiGatewayService {
         );
       }
 
-      this.circuitBreaker.recordSuccess(chosenModel.id, chosenCanaryToken);
+      this.circuitBreaker.recordSuccess(
+        chosenModel.id,
+        chosenCanaryToken,
+        chosenGeneration,
+      );
 
       const estimatedCost = Number(
         (
@@ -363,7 +401,13 @@ export class AiGatewayService {
           typeof (error.getResponse() as { code?: unknown })?.code === 'string'
             ? String((error.getResponse() as { code: string }).code)
             : 'AI_GENERATION_FAILED';
-        await this.quotaGuard.failQuotaReservation(reservationId, errorCode);
+        try {
+          await this.quotaGuard.failQuotaReservation(reservationId, errorCode);
+        } catch {
+          this.logger.warn(
+            `Failed to settle AI quota reservation for request ${requestId} (QUOTA_CLEANUP_FAILED)`,
+          );
+        }
       }
       throw error;
     }

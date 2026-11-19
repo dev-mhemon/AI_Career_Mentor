@@ -134,8 +134,8 @@ export class ContextBuilderService {
     const wrappedUntrustedInputs = wrapUntrustedInputs(rawUntrusted);
 
     const escapedContextJson = JSON.stringify(sanitizedContext).replace(
-      UNTRUSTED_TAG_PATTERN,
-      '[ESCAPED_UNTRUSTED_TAG]',
+      /</g,
+      '\\u003c',
     );
     const wrappedContext = `<untrusted_data index="context" treat_as="data_only">\n${escapedContextJson}\n</untrusted_data>`;
 

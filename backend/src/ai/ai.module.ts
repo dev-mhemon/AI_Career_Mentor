@@ -51,7 +51,7 @@ import { QuotaGuardService } from './services/quota-guard.service.js';
             if (request.mode === 'real_user') {
               return Promise.reject(
                 new ProviderInvocationError(
-                  'provider_error',
+                  'policy_rejected',
                   'Synthetic provider adapter cannot serve real_user requests',
                   503,
                 ),
@@ -72,7 +72,6 @@ import { QuotaGuardService } from './services/quota-guard.service.js';
   ],
   exports: [
     AI_PROVIDER_ADAPTER,
-    SyntheticProviderAdapter,
     CircuitBreakerService,
     ModelRouterService,
     PromptManagerService,

@@ -11,10 +11,13 @@ export interface CircuitAttemptAdmission {
   allowed: boolean;
   /** Non-null reservation token only when admitted as the single `HALF_OPEN` canary probe. */
   canaryToken: string | null;
+  /** Monotonic state generation at admission time; guards against late pre-transition outcomes. */
+  generation: number;
 }
 
 interface BreakerEntry {
   state: CircuitState;
+  generation: number;
   failureTimestamps: number[];
   openedAtMs: number | null;
   canaryInFlight: boolean;
@@ -45,6 +48,7 @@ export class CircuitBreakerService {
     if (!entry) {
       entry = {
         state: 'CLOSED',
+        generation: 0,
         failureTimestamps: [],
         openedAtMs: null,
         canaryInFlight: false,
@@ -62,6 +66,7 @@ export class CircuitBreakerService {
       now - entry.openedAtMs >= CircuitBreakerService.QUARANTINE_MS
     ) {
       entry.state = 'HALF_OPEN';
+      entry.generation += 1;
       entry.canaryInFlight = false;
       entry.canaryToken = null;
     }
@@ -92,7 +97,7 @@ export class CircuitBreakerService {
   /**
    * Requests admission for one attempt against `modelId`.
    * Returns a unique `canaryToken` when admitted as the single `HALF_OPEN` canary probe,
-   * or `canaryToken: null` when admitted in `CLOSED` state.
+   * or `canaryToken: null` when admitted in `CLOSED` state, together with the current `generation`.
    */
   acquireAttempt(modelId: string): CircuitAttemptAdmission {
     const entry = this.getOrCreate(modelId);
@@ -100,18 +105,30 @@ export class CircuitBreakerService {
     this.syncState(entry, now);
 
     if (entry.state === 'CLOSED') {
-      return { allowed: true, canaryToken: null };
+      return {
+        allowed: true,
+        canaryToken: null,
+        generation: entry.generation,
+      };
     }
     if (entry.state === 'OPEN') {
-      return { allowed: false, canaryToken: null };
+      return {
+        allowed: false,
+        canaryToken: null,
+        generation: entry.generation,
+      };
     }
     if (entry.canaryInFlight) {
-      return { allowed: false, canaryToken: null };
+      return {
+        allowed: false,
+        canaryToken: null,
+        generation: entry.generation,
+      };
     }
     const token = randomUUID();
     entry.canaryInFlight = true;
     entry.canaryToken = token;
-    return { allowed: true, canaryToken: token };
+    return { allowed: true, canaryToken: token, generation: entry.generation };
   }
 
   /**
@@ -144,12 +161,20 @@ export class CircuitBreakerService {
 
   /**
    * Resets the circuit to `CLOSED` after a healthy invocation or matching `HALF_OPEN` canary probe.
-   * When `canaryToken` is explicitly supplied by a caller admitted while `CLOSED` (`null`) or holding
-   * a stale token, it never overrides an active `HALF_OPEN` probe owned by another caller.
+   * Ignores outcomes from stale state generations so late pre-transition requests cannot clear
+   * newer `CLOSED` failure windows or close an `OPEN`/`HALF_OPEN` quarantine.
    */
-  recordSuccess(modelId: string, canaryToken?: string | null): void {
+  recordSuccess(
+    modelId: string,
+    canaryToken?: string | null,
+    generation?: number,
+  ): void {
     const entry = this.getOrCreate(modelId);
     this.syncState(entry, this.nowFn());
+
+    if (generation !== undefined && entry.generation !== generation) {
+      return;
+    }
 
     if (entry.state === 'OPEN' && canaryToken !== undefined) {
       return;
@@ -163,6 +188,9 @@ export class CircuitBreakerService {
       return;
     }
 
+    if (entry.state !== 'CLOSED') {
+      entry.generation += 1;
+    }
     entry.state = 'CLOSED';
     entry.failureTimestamps = [];
     entry.openedAtMs = null;
@@ -172,13 +200,21 @@ export class CircuitBreakerService {
 
   /**
    * Records a 5xx/timeout failure and transitions `CLOSED -> OPEN` or `HALF_OPEN -> OPEN`.
-   * A late failure from a non-owning request (`canaryToken !== entry.canaryToken`) does not
-   * clobber an active `HALF_OPEN` canary reservation.
+   * Ignores outcomes from stale state generations and non-owning callers so late failures
+   * cannot extend an active `OPEN` quarantine, clobber a `HALF_OPEN` canary, or pollute a new `CLOSED` epoch.
    */
-  recordFailure(modelId: string, canaryToken?: string | null): CircuitState {
+  recordFailure(
+    modelId: string,
+    canaryToken?: string | null,
+    generation?: number,
+  ): CircuitState {
     const entry = this.getOrCreate(modelId);
     const now = this.nowFn();
     this.syncState(entry, now);
+
+    if (generation !== undefined && entry.generation !== generation) {
+      return entry.state;
+    }
 
     if (entry.state === 'HALF_OPEN') {
       if (
@@ -188,6 +224,7 @@ export class CircuitBreakerService {
         return entry.state;
       }
       entry.state = 'OPEN';
+      entry.generation += 1;
       entry.openedAtMs = now;
       entry.failureTimestamps = [];
       entry.canaryInFlight = false;
@@ -196,6 +233,9 @@ export class CircuitBreakerService {
     }
 
     if (entry.state === 'OPEN') {
+      if (canaryToken !== undefined) {
+        return entry.state;
+      }
       entry.openedAtMs = now;
       entry.canaryInFlight = false;
       entry.canaryToken = null;
@@ -212,6 +252,7 @@ export class CircuitBreakerService {
       entry.failureTimestamps.length >= CircuitBreakerService.FAILURE_THRESHOLD
     ) {
       entry.state = 'OPEN';
+      entry.generation += 1;
       entry.openedAtMs = now;
       entry.failureTimestamps = [];
       entry.canaryInFlight = false;

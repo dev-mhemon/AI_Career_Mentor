@@ -40,7 +40,12 @@ export interface ProviderInvocationResult {
   sources?: SourceRefDTO[];
 }
 
-export type ProviderErrorKind = 'timeout' | 'rate_limit' | 'provider_error';
+export type ProviderErrorKind =
+  | 'timeout'
+  | 'rate_limit'
+  | 'provider_error'
+  | 'policy_rejected'
+  | 'budget_exceeded';
 
 /**
  * Typed provider failure surfaced internally to `AiGatewayService` for circuit breaking and failover.
@@ -436,6 +441,13 @@ export class SyntheticProviderAdapter implements ProviderAdapter {
       20,
       Math.ceil(Buffer.byteLength(JSON.stringify(output), 'utf8') / 4),
     );
+    if (outputUnits > request.maxOutputUnits) {
+      throw new ProviderInvocationError(
+        'budget_exceeded',
+        'Generated output exceeds max_output_units budget',
+        503,
+      );
+    }
     return {
       output,
       inputUnits,
@@ -459,7 +471,7 @@ export class UnconfiguredRealUserProviderAdapter implements ProviderAdapter {
   invoke(): Promise<ProviderInvocationResult> {
     return Promise.reject(
       new ProviderInvocationError(
-        'provider_error',
+        'policy_rejected',
         'No real-user AI provider adapter is configured',
         503,
       ),
