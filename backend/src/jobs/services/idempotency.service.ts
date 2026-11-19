@@ -135,6 +135,24 @@ export interface IdempotencyOperationContext {
 }
 
 /**
+ * Execution context supplied to mutating handlers guarded by `IdempotencyService.execute()`.
+ */
+export interface IdempotencyExecutionContext {
+  idempotencyKey: string;
+  reservationToken: string;
+  expiresAtMs: number;
+  signal: AbortSignal;
+}
+
+/**
+ * Handler return payload stored when an `H-IDEM` mutation completes cleanly.
+ */
+export interface IdempotencyHandlerResult<T = unknown> {
+  statusCode: number;
+  responseBody: T;
+}
+
+/**
  * Result returned when an `H-IDEM` operation executes or is replayed from the configured Redis store.
  */
 export interface IdempotencyExecutionResult<T = unknown> {
@@ -605,16 +623,26 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
    *    - If `method`, `route`, or `bodyHash` differs -> `409 IDEMPOTENCY_KEY_REUSED`.
    *    - If `state === 'completed'` -> returns cached `{ statusCode, responseBody, replayed: true }` without invoking `handler`.
    *    - If `state === 'in_flight'` -> fails closed with retryable `503 SERVICE_UNAVAILABLE` (never clears lock or re-runs).
-   * 4. If acquired, rechecks `!stopped` and elapsed acquisition duration `< ttlMs` before invoking `handler()`:
-   *    - On PostgreSQL `23505` (`uq_ai_requests_idempotency`), throws `409 IDEMPOTENCY_KEY_REUSED`.
+   * 4. If acquired, checks `!stopped` and `remainingMs = ttlMs - elapsed > 0` before invoking `handler(executionContext)`,
+   *    where `executionContext = { idempotencyKey, reservationToken, expiresAtMs, signal }`:
+   *    - Mutating handlers MUST honor `executionContext.signal` / `executionContext.expiresAtMs` and/or enforce a durable
+   *      unique claim (such as `uq_ai_requests_idempotency` on `(user_id, idempotency_key)`) so reservation expiry cannot
+   *      permit overlapping side effects. Cancellation is cooperative via `executionContext.signal` plus post-settlement
+   *      expiry rejection (`execute()` awaits handler settlement and can remain pending if a handler ignores `signal` and
+   *      never settles).
+   *    - On PostgreSQL `23505` (`uq_ai_requests_idempotency`) while the reservation is still active, throws `409 IDEMPOTENCY_KEY_REUSED`.
+   *    - If `signal.aborted` becomes `true` or the monotonic reservation deadline elapses during execution, fails closed with
+   *      retryable `503 SERVICE_UNAVAILABLE` without attempting completion or deleting the key.
    *    - On any other handler error/crash, leaves `'in_flight'` intact (`R14`).
-   *    - On success, obtains the currently active client via `getActiveClient()` and executes atomic
+   *    - On active-reservation success, obtains the currently active client via `getActiveClient()` and executes atomic
    *      ownership-verified completion Lua `EVAL` (`epoch`, `reservationToken`, and `PTTL > 0` without extending TTL).
    *      Never reruns `handler()` or retries unknown completion outcomes.
    */
   async execute<T>(
     context: IdempotencyOperationContext,
-    handler: () => Promise<{ statusCode: number; responseBody: T }>,
+    handler: (
+      executionContext: IdempotencyExecutionContext,
+    ) => Promise<IdempotencyHandlerResult<T>>,
   ): Promise<IdempotencyExecutionResult<T>> {
     const { userId, idempotencyKey } = this.validateInputs(
       context.userId,
@@ -657,6 +685,7 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
     };
 
     const acquireStartedMs = performance.now();
+    const reservationDeadlineMs = acquireStartedMs + ttlMs;
     let acquireResult: unknown;
     try {
       acquireResult = await this.withDeadline(
@@ -721,16 +750,55 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    if (this.stopped || performance.now() - acquireStartedMs >= ttlMs) {
+    const remainingMs = reservationDeadlineMs - performance.now();
+    if (this.stopped || remainingMs <= 0) {
       this.unavailable(
         'Idempotency reservation expired or service stopped before mutation dispatch',
       );
     }
 
-    let result: { statusCode: number; responseBody: T };
+    const expiresAtMs = Date.now() + Math.floor(remainingMs);
+    const abortController = new AbortController();
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+    const MAX_TIMEOUT_MS = 2_147_483_647;
+    const armExpiryTimer = (delayMs: number) => {
+      const clampedDelayMs = Math.min(delayMs, MAX_TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        const left = reservationDeadlineMs - performance.now();
+        if (delayMs > MAX_TIMEOUT_MS && left > 0) {
+          armExpiryTimer(left);
+          return;
+        }
+        abortController.abort(
+          new Error('Idempotency reservation expired before handler completed'),
+        );
+      }, clampedDelayMs);
+      timer.unref?.();
+      expiryTimer = timer;
+    };
+    armExpiryTimer(remainingMs);
+
+    const throwIfReservationExpired = () => {
+      if (
+        abortController.signal.aborted ||
+        performance.now() >= reservationDeadlineMs
+      ) {
+        this.unavailable(
+          'Idempotency reservation expired during handler execution; failing closed',
+        );
+      }
+    };
+
+    let result: IdempotencyHandlerResult<T>;
     try {
-      result = await handler();
+      result = await handler({
+        idempotencyKey,
+        reservationToken,
+        expiresAtMs,
+        signal: abortController.signal,
+      });
     } catch (error) {
+      throwIfReservationExpired();
       if (isIdempotencyUniqueViolation(error)) {
         fail(
           409,
@@ -740,11 +808,24 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
       }
       // R14 invariant: NEVER auto-delete an 'in_flight' idempotency key on handler error/timeout and re-run.
       throw error;
+    } finally {
+      clearTimeout(expiryTimer);
     }
+
+    throwIfReservationExpired();
 
     const activeClient = await this.getActiveClient();
     if (typeof activeClient.eval !== 'function') {
       this.unavailable('Idempotency Redis client missing atomic EVAL support');
+    }
+    if (
+      this.stopped ||
+      abortController.signal.aborted ||
+      performance.now() >= reservationDeadlineMs
+    ) {
+      this.unavailable(
+        'Idempotency reservation expired or service stopped before completion commit',
+      );
     }
 
     const completedRecord: IdempotencyRecord<T> = {

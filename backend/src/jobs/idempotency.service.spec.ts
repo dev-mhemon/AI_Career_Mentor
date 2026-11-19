@@ -1443,17 +1443,20 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
     });
     expect(stoppedHandler).not.toHaveBeenCalled();
 
-    // 2. Acquisition latency reaches >= ttlMs before handler() runs
+    // 2. Acquisition latency reaches >= ttlMs before pre-handler guard (without tripping withDeadline)
     vi.useFakeTimers();
+    const perfSpy = vi.spyOn(performance, 'now');
     try {
       const shortTtlConfig: IdempotencyConfiguration = {
         ...config,
         ttlSeconds: 2,
         ttlMs: 2_000,
+        timeoutMs: 1_000,
       };
       const slowAcquireSim = createSimulatedRedisClient(redisStore, {
         isDown: () => false,
       });
+      slowAcquireSim.client.destroy = vi.fn();
       const slowAcquireSvc = new IdempotencyService(
         undefined,
         shortTtlConfig,
@@ -1464,10 +1467,11 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
       slowAcquireSim.evalMock.mockImplementationOnce(
         async (script, evalOpts) => {
           const res = await originalAcquireEval(script, evalOpts);
-          vi.advanceTimersByTime(2_000);
+          perfSpy.mockReturnValue(2_100);
           return res;
         },
       );
+      perfSpy.mockReturnValueOnce(100);
 
       const expiredHandler = vi.fn();
       await expect(
@@ -1483,10 +1487,16 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
         ),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        expect((err as HttpException).getResponse()).toMatchObject({
+          message:
+            'Idempotency reservation expired or service stopped before mutation dispatch',
+        });
         return true;
       });
+      expect(slowAcquireSim.client.destroy).not.toHaveBeenCalled();
       expect(expiredHandler).not.toHaveBeenCalled();
     } finally {
+      perfSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -1746,6 +1756,251 @@ describe('IdempotencyService (Redis 24h H-IDEM Replay & R14 Loss-Epoch Fail-Clos
       } else {
         process.env.IDEMPOTENCY_BOOTSTRAP_ON_INIT = prevEnv;
       }
+    }
+  });
+
+  it('passes { idempotencyKey, reservationToken, expiresAtMs, signal } to handler and aborts signal + fails closed 503 if pending past reservation lifetime', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-19T00:00:00.000Z'));
+      const shortTtlConfig: IdempotencyConfiguration = {
+        ...config,
+        ttlSeconds: 2,
+        ttlMs: 2_000,
+        timeoutMs: 1_000,
+      };
+      const boundedSim = createSimulatedRedisClient(redisStore, {
+        isDown: () => false,
+      });
+      const boundedSvc = new IdempotencyService(
+        undefined,
+        shortTtlConfig,
+        boundedSim.client,
+      );
+
+      const startNowMs = Date.now();
+      let capturedSignal: AbortSignal | undefined;
+      let capturedKey: string | undefined;
+      let capturedToken: string | undefined;
+      let capturedExpiresAtMs: number | undefined;
+      let notifyHandlerEntered!: () => void;
+      const handlerEntered = new Promise<void>((resolve) => {
+        notifyHandlerEntered = resolve;
+      });
+      let resolvePendingHandler!: (val: {
+        statusCode: number;
+        responseBody: { late: boolean };
+      }) => void;
+
+      const execPromise = boundedSvc.execute(
+        {
+          userId: USER_A,
+          idempotencyKey: IDEM_KEY_1,
+          method: 'POST',
+          route: '/api/v1/roadmaps/generate',
+          body: { target_level: 'mid' },
+        },
+        (executionContext) => {
+          capturedKey = executionContext.idempotencyKey;
+          capturedToken = executionContext.reservationToken;
+          capturedExpiresAtMs = executionContext.expiresAtMs;
+          capturedSignal = executionContext.signal;
+          notifyHandlerEntered();
+          return new Promise<{
+            statusCode: number;
+            responseBody: { late: boolean };
+          }>((resolve) => {
+            resolvePendingHandler = resolve;
+          });
+        },
+      );
+
+      await handlerEntered;
+      expect(capturedSignal).toBeDefined();
+      expect(capturedKey).toBe(IDEM_KEY_1);
+      expect(typeof capturedToken).toBe('string');
+      expect(capturedExpiresAtMs).toBe(startNowMs + 2_000);
+      expect(capturedSignal!.aborted).toBe(false);
+
+      // Advance timers past the remaining 2_000ms reservation lifetime
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(capturedSignal!.aborted).toBe(true);
+
+      // Even if the late handler resolves, execute() fails closed 503 without invoking COMPLETE_IDEMPOTENCY_SCRIPT
+      resolvePendingHandler({
+        statusCode: 202,
+        responseBody: { late: true },
+      });
+
+      await expect(execPromise).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      expect(boundedSim.evalMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('unrefs expiration timer and fails closed 503 via monotonic deadline before completion or 23505->409 translation even while signal.aborted is false', async () => {
+    const shortTtlConfig: IdempotencyConfiguration = {
+      ...config,
+      ttlSeconds: 5,
+      ttlMs: 5_000,
+      timeoutMs: 1_000,
+    };
+    const sim = createSimulatedRedisClient(redisStore, {
+      isDown: () => false,
+    });
+    const svc = new IdempotencyService(undefined, shortTtlConfig, sim.client);
+
+    const perfSpy = vi.spyOn(performance, 'now');
+    const unrefSpies: Array<ReturnType<typeof vi.spyOn>> = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((
+        fn: (...args: unknown[]) => void,
+        delay?: number,
+        ...args: unknown[]
+      ) => {
+        const timer = realSetTimeout(fn, delay, ...args);
+        if (delay === shortTtlConfig.ttlMs) {
+          unrefSpies.push(vi.spyOn(timer, 'unref'));
+        }
+        return timer;
+      }) as unknown as typeof setTimeout);
+
+    try {
+      // (a) Late handler success after monotonic deadline (abort timer has not fired -> signal.aborted === false)
+      perfSpy.mockReturnValue(1_000);
+      await expect(
+        svc.execute(
+          {
+            userId: USER_A,
+            idempotencyKey: IDEM_KEY_1,
+            method: 'POST',
+            route: '/api/v1/roadmaps/generate',
+            body: { target_level: 'mid' },
+          },
+          async ({ signal }) => {
+            expect(signal.aborted).toBe(false);
+            perfSpy.mockReturnValue(1_000 + shortTtlConfig.ttlMs);
+            expect(signal.aborted).toBe(false);
+            return {
+              statusCode: 202,
+              responseBody: { late: true },
+            };
+          },
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      // Only ACQUIRE_IDEMPOTENCY_SCRIPT ran; COMPLETE_IDEMPOTENCY_SCRIPT was never invoked
+      expect(sim.evalMock).toHaveBeenCalledTimes(1);
+      expect(unrefSpies).toHaveLength(1);
+      expect(unrefSpies[0]).toHaveBeenCalledTimes(1);
+
+      // (b) Late PostgreSQL 23505 unique violation after monotonic deadline fails closed 503 (never translates to 409)
+      perfSpy.mockReturnValue(10_000);
+      const uniqueViolation = Object.assign(
+        new Error('duplicate key value violates unique constraint'),
+        {
+          code: '23505',
+          constraint: 'uq_ai_requests_idempotency',
+        },
+      );
+      await expect(
+        svc.execute(
+          {
+            userId: USER_A,
+            idempotencyKey: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            method: 'POST',
+            route: '/api/v1/roadmaps/generate',
+            body: { target_level: 'senior' },
+          },
+          async ({ signal }) => {
+            expect(signal.aborted).toBe(false);
+            perfSpy.mockReturnValue(10_000 + shortTtlConfig.ttlMs);
+            expect(signal.aborted).toBe(false);
+            throw uniqueViolation;
+          },
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+      expect(sim.evalMock).toHaveBeenCalledTimes(2);
+      expect(unrefSpies).toHaveLength(2);
+      expect(unrefSpies[1]).toHaveBeenCalledTimes(1);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      perfSpy.mockRestore();
+    }
+  });
+
+  it('fails closed 503 without dispatching COMPLETE_IDEMPOTENCY_SCRIPT when getActiveClient() reconnects across the monotonic deadline', async () => {
+    const shortTtlConfig: IdempotencyConfiguration = {
+      ...config,
+      ttlSeconds: 5,
+      ttlMs: 5_000,
+      timeoutMs: 1_000,
+    };
+    const sim1 = createSimulatedRedisClient(redisStore, {
+      isDown: () => false,
+    });
+    const sim2 = createSimulatedRedisClient(redisStore, {
+      isDown: () => false,
+    });
+    const svc = new IdempotencyService(undefined, shortTtlConfig, sim1.client);
+
+    const perfSpy = vi.spyOn(performance, 'now');
+    const getClientSpy = vi
+      .spyOn(
+        svc as unknown as {
+          getActiveClient: () => Promise<IdempotencyRedisClient>;
+        },
+        'getActiveClient',
+      )
+      .mockResolvedValueOnce(sim1.client)
+      .mockImplementationOnce(async () => {
+        // Handler already finished before deadline; reconnect crosses monotonic deadline
+        perfSpy.mockReturnValue(6_000);
+        return sim2.client;
+      });
+
+    try {
+      perfSpy.mockReturnValue(1_000);
+      await expect(
+        svc.execute(
+          {
+            userId: USER_A,
+            idempotencyKey: IDEM_KEY_1,
+            method: 'POST',
+            route: '/api/v1/roadmaps/generate',
+            body: { target_level: 'mid' },
+          },
+          async ({ signal }) => {
+            expect(signal.aborted).toBe(false);
+            perfSpy.mockReturnValue(1_500);
+            return {
+              statusCode: 202,
+              responseBody: { status: 'preparing' },
+            };
+          },
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE', true);
+        return true;
+      });
+
+      expect(getClientSpy).toHaveBeenCalledTimes(2);
+      expect(sim1.evalMock).toHaveBeenCalledTimes(1);
+      expect(sim2.evalMock).not.toHaveBeenCalled();
+    } finally {
+      getClientSpy.mockRestore();
+      perfSpy.mockRestore();
     }
   });
 });
