@@ -112,6 +112,87 @@ describe("mapApiError", () => {
     expect(m.message).toContain("req-9");
     expect(mapApiError(new ApiError(500, "x")).message).not.toContain("Reference");
   });
+
+  it("maps all 8 AI and Job error codes to safe copy without leaking provider/model internals", () => {
+    const rawInternalLeak = "google-gemini gemini-2.5-pro secret stack trace";
+    const cases: Array<{
+      status: number;
+      code: string;
+      tone: "error" | "warning" | "info";
+      retryable: boolean;
+      match: RegExp;
+    }> = [
+      {
+        status: 504,
+        code: "AI_TIMEOUT",
+        tone: "warning",
+        retryable: true,
+        match: /timed out.*saved/i,
+      },
+      {
+        status: 502,
+        code: "AI_SERVICE_ERROR",
+        tone: "error",
+        retryable: true,
+        match: /temporarily unavailable.*saved/i,
+      },
+      {
+        status: 502,
+        code: "AI_GENERATION_FAILED",
+        tone: "error",
+        retryable: true,
+        match: /couldn't generate.*saved/i,
+      },
+      {
+        status: 502,
+        code: "AI_VALIDATION_FAILED",
+        tone: "error",
+        retryable: true,
+        match: /discarded.*saved/i,
+      },
+      {
+        status: 503,
+        code: "AI_BUDGET_EXHAUSTED",
+        tone: "warning",
+        retryable: true,
+        match: /capacity.*existing roadmaps/i,
+      },
+      {
+        status: 404,
+        code: "JOB_NOT_FOUND",
+        tone: "warning",
+        retryable: false,
+        match: /could not be found/i,
+      },
+      {
+        status: 409,
+        code: "IDEMPOTENCY_KEY_REUSED",
+        tone: "warning",
+        retryable: false,
+        match: /already used/i,
+      },
+      {
+        status: 409,
+        code: "STALE_JOB_INPUT",
+        tone: "warning",
+        retryable: false,
+        match: /saved data changed/i,
+      },
+    ];
+
+    for (const c of cases) {
+      const mapped = mapApiError(
+        new ApiError(c.status, rawInternalLeak, c.code, "req-ai-1"),
+      );
+      expect(mapped.code).toBe(c.code);
+      expect(mapped.tone).toBe(c.tone);
+      expect(mapped.retryable).toBe(c.retryable);
+      expect(mapped.requestId).toBe("req-ai-1");
+      expect(mapped.message).toMatch(c.match);
+      expect(mapped.message).not.toContain("gemini");
+      expect(mapped.message).not.toContain("stack trace");
+    }
+  });
 });
 
 describe("mapActionResult", () => {

@@ -654,3 +654,92 @@ export function getAccountDeletionStatus(
     tokenOrReceipt,
   );
 }
+
+// ─── Async Jobs API Types & Functions (C05 §13.6 / §14.13 EP-J01 / §15.1) ───
+
+export type JobStatus = 'queued' | 'preparing' | 'succeeded' | 'failed';
+
+export type JobKind =
+  | 'career_goal'
+  | 'roadmap_generate'
+  | 'roadmap_revision'
+  | 'merge_proposal'
+  | 'topic_content'
+  | 'quiz_generate'
+  | 'practice_review';
+
+export interface JobResultRefDTO {
+  type: string;
+  id: string;
+}
+
+export interface JobErrorDTO {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface JobAcceptedDTO {
+  job_id: string;
+  kind?: JobKind | string;
+  status: JobStatus;
+  poll_url: string;
+  retry_after_seconds: number;
+}
+
+export interface JobStatusDTO {
+  job_id: string;
+  kind: JobKind | string;
+  status: JobStatus;
+  result_ref: JobResultRefDTO | null;
+  error: JobErrorDTO | null;
+  retryable: boolean;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/**
+ * Attaches an optional `Idempotency-Key` header (`H-IDEM`, C05 §13.1) onto a headers dictionary.
+ */
+export function withIdempotencyKey(
+  idempotencyKey?: string | null,
+  headers?: HeadersInit,
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  if (headers) {
+    if (headers instanceof Headers) {
+      headers.forEach((value, key) => {
+        merged[key] = value;
+      });
+    } else if (Array.isArray(headers)) {
+      for (const [key, value] of headers) {
+        merged[key] = value;
+      }
+    } else {
+      Object.assign(merged, headers);
+    }
+  }
+  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    merged['Idempotency-Key'] = idempotencyKey.trim();
+  }
+  return merged;
+}
+
+/**
+ * GET /jobs/:id (EP-J01)
+ * Polls status for an asynchronous background AI job belonging to the authenticated caller.
+ */
+export function getJobStatus(
+  accessToken: string,
+  jobId: string,
+  options?: AuthStateRequestOptions,
+): Promise<JobStatusDTO> {
+  return apiFetch<JobStatusDTO>(
+    `/jobs/${encodeURIComponent(jobId.trim())}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
