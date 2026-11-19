@@ -1,0 +1,539 @@
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
+import { DatabaseService } from '../../auth/services/database.service.js';
+import { fail } from '../../common/http.js';
+import { readAiGatewayConfiguration } from '../../config.js';
+import type { AiTask, UiLanguage } from '../ai.types.js';
+
+export const R26_MIN_OPERATIONAL_LIMIT = 1;
+export const R26_MAX_OPERATIONAL_LIMIT = 10_000;
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function extractUpdatedRowCount(result: unknown): number {
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  if (
+    result.length === 2 &&
+    Array.isArray(result[0]) &&
+    (typeof result[1] === 'number' ||
+      result[1] === null ||
+      result[1] === undefined)
+  ) {
+    return typeof result[1] === 'number'
+      ? Math.max(result[0].length, result[1])
+      : result[0].length;
+  }
+  return result.length;
+}
+
+interface BoundedConfigSpec {
+  defaultValue: number;
+  min: number;
+  max: number;
+}
+
+const SYSTEM_CONFIG_SPECS: Readonly<Record<string, BoundedConfigSpec>> = {
+  'ai_quota.roadmap_drafts_per_24h': {
+    defaultValue: 5,
+    min: R26_MIN_OPERATIONAL_LIMIT,
+    max: R26_MAX_OPERATIONAL_LIMIT,
+  },
+  'ai_quota.mentor_messages_per_24h': {
+    defaultValue: 50,
+    min: R26_MIN_OPERATIONAL_LIMIT,
+    max: R26_MAX_OPERATIONAL_LIMIT,
+  },
+  'roadmap.soft_size_max_topics': {
+    defaultValue: 45,
+    min: R26_MIN_OPERATIONAL_LIMIT,
+    max: R26_MAX_OPERATIONAL_LIMIT,
+  },
+};
+
+const TASK_TO_QUOTA_KEY: Readonly<Partial<Record<AiTask, string>>> = {
+  roadmap_generate: 'ai_quota.roadmap_drafts_per_24h',
+  mentor_chat: 'ai_quota.mentor_messages_per_24h',
+};
+
+interface CachedConfigEntry {
+  value: number;
+  expiresAtMs: number;
+}
+
+export interface GenerationTelemetryInput {
+  requestId: string | null;
+  task: AiTask;
+  providerKey: string;
+  modelId: string;
+  promptVersionId: string;
+  outputSchemaId: string;
+  validationStatus: 'passed' | 'failed';
+  fallbackUsed: boolean;
+  language: UiLanguage | null;
+  inputUnits: number;
+  outputUnits: number;
+  latencyMs: number;
+  output: unknown;
+}
+
+export interface TelemetryQueryExecutor {
+  query<T = unknown>(query: string, parameters?: unknown[]): Promise<T>;
+}
+
+/**
+ * Enforces `R26` (`1..10000` integer bounds, `<= 5s` cache TTL, safe fallback never unlimited)
+ * over `public.system_configurations`, checks per-user 24h AI quotas (`503 AI_BUDGET_EXHAUSTED`),
+ * and records content-free telemetry in `public.ai_generations` (`output_hash` only).
+ */
+@Injectable()
+export class QuotaGuardService {
+  private readonly cache = new Map<string, CachedConfigEntry>();
+  readonly cacheTtlMs: number;
+
+  constructor(
+    @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Optional() @Inject(ConfigService) configService?: ConfigService,
+  ) {
+    this.cacheTtlMs = readAiGatewayConfiguration(
+      configService ?? process.env,
+    ).quotaCacheTtlMs;
+  }
+
+  private async runTx<T>(
+    operation: (db: TelemetryQueryExecutor) => Promise<T>,
+  ): Promise<T> {
+    if (typeof this.database.transaction === 'function') {
+      return this.database.transaction(
+        null,
+        (db) => operation(db),
+        false,
+        false,
+        true,
+      );
+    }
+    return operation(this.database);
+  }
+
+  /** Clears cached `system_configurations` entries after approved configuration updates (`R26`). */
+  invalidateCache(configKey?: string): void {
+    if (configKey) {
+      this.cache.delete(configKey);
+      return;
+    }
+    this.cache.clear();
+  }
+
+  /**
+   * Reads a bounded integer setting from `public.system_configurations` (`R26`).
+   * Rejects strings, `null`, booleans, floats, and out-of-range integers -> returns safe default.
+   */
+  async getBoundedConfigInteger(configKey: string): Promise<number> {
+    const spec = SYSTEM_CONFIG_SPECS[configKey] ?? {
+      defaultValue: 5,
+      min: R26_MIN_OPERATIONAL_LIMIT,
+      max: R26_MAX_OPERATIONAL_LIMIT,
+    };
+
+    const now = Date.now();
+    const cached = this.cache.get(configKey);
+    if (cached && now < cached.expiresAtMs) {
+      return cached.value;
+    }
+
+    let resolved = spec.defaultValue;
+    try {
+      const rows = await this.runTx((db) =>
+        db.query<Array<{ config_value: unknown }>>(
+          `SELECT config_value
+             FROM public.system_configurations
+            WHERE config_key = $1`,
+          [configKey],
+        ),
+      );
+      const raw = Array.isArray(rows) ? rows[0]?.config_value : undefined;
+      if (
+        typeof raw === 'number' &&
+        Number.isInteger(raw) &&
+        raw >= spec.min &&
+        raw <= spec.max
+      ) {
+        resolved = raw;
+      }
+    } catch {
+      resolved = spec.defaultValue;
+    }
+
+    this.cache.set(configKey, {
+      value: resolved,
+      expiresAtMs: now + this.cacheTtlMs,
+    });
+    return resolved;
+  }
+
+  /**
+   * Atomically serializes 24h rolling quota admission for `(userId, task)` using a canonicalized
+   * per-user/task transaction advisory lock (`($1::uuid)::text`). When `existingRequestId` is
+   * supplied, verifies in SQL that an owned, active `'preparing'` `public.ai_requests` row already
+   * exists for `(id, userId, task)` before skipping a new reservation; unpersisted, foreign, or
+   * already-completed (`'succeeded'`) UUIDs NEVER bypass quota reservation.
+   * Returns both `reservationId` (set only when this call created a new sync reservation row) and
+   * `telemetryRequestId` (the verified persisted `public.ai_requests.id` safe for FK binding, or `null`).
+   * Throws `503 AI_BUDGET_EXHAUSTED` when exceeded (`PRD` §47: existing reads stay unaffected).
+   */
+  async reserveUserQuota(
+    userId: string,
+    task: AiTask,
+    language: UiLanguage | null = null,
+    existingRequestId: string | null = null,
+  ): Promise<{
+    reservationId: string | null;
+    telemetryRequestId: string | null;
+  }> {
+    const normalizedUserId = userId.trim().toLowerCase();
+    const normalizedExistingId =
+      typeof existingRequestId === 'string' &&
+      UUID_PATTERN.test(existingRequestId.trim())
+        ? existingRequestId.trim().toLowerCase()
+        : null;
+
+    const configKey = TASK_TO_QUOTA_KEY[task];
+    if (!configKey) {
+      if (normalizedExistingId === null) {
+        return {
+          reservationId: null,
+          telemetryRequestId: null,
+        };
+      }
+      const verifiedExistingId = await this.runTx(async (db) => {
+        const existingRows = await db.query<Array<{ id?: string }>>(
+          `SELECT id
+             FROM public.ai_requests
+            WHERE id = $1
+              AND user_id = $2
+              AND task = $3::public.ai_task
+              AND status = 'preparing'
+              AND created_at > clock_timestamp() - interval '24 hours'
+            LIMIT 1`,
+          [normalizedExistingId, normalizedUserId, task],
+        );
+        return Array.isArray(existingRows) && existingRows.length > 0
+          ? normalizedExistingId
+          : null;
+      });
+      return {
+        reservationId: null,
+        telemetryRequestId: verifiedExistingId,
+      };
+    }
+
+    const limit = await this.getBoundedConfigInteger(configKey);
+
+    return this.runTx(async (db) => {
+      await db.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('ai_quota:' || ($1::uuid)::text || ':' || $2, 0))",
+        [normalizedUserId, task],
+      );
+
+      let verifiedExistingId: string | null = null;
+      if (normalizedExistingId !== null) {
+        const existingRows = await db.query<Array<{ id?: string }>>(
+          `SELECT id
+             FROM public.ai_requests
+            WHERE id = $1
+              AND user_id = $2
+              AND task = $3::public.ai_task
+              AND status = 'preparing'
+              AND created_at > clock_timestamp() - interval '24 hours'
+            LIMIT 1`,
+          [normalizedExistingId, normalizedUserId, task],
+        );
+        if (Array.isArray(existingRows) && existingRows.length > 0) {
+          verifiedExistingId = normalizedExistingId;
+        }
+      }
+
+      const rows = await db.query<Array<{ used_count: number | string }>>(
+        `SELECT count(*)::int AS used_count
+           FROM public.ai_requests
+          WHERE user_id = $1
+            AND task = $2::public.ai_task
+            AND status <> 'failed'
+            AND created_at > clock_timestamp() - interval '24 hours'
+            AND ($3::uuid IS NULL OR id <> $3::uuid)`,
+        [normalizedUserId, task, verifiedExistingId],
+      );
+      const usedCount = Number(
+        Array.isArray(rows) ? (rows[0]?.used_count ?? 0) : 0,
+      );
+      if (Number.isFinite(usedCount) && usedCount >= limit) {
+        fail(
+          503,
+          'AI_BUDGET_EXHAUSTED',
+          'AI capacity is temporarily unavailable. Existing data remains accessible.',
+          undefined,
+          true,
+        );
+      }
+
+      if (verifiedExistingId !== null) {
+        return {
+          reservationId: null,
+          telemetryRequestId: verifiedExistingId,
+        };
+      }
+
+      const inserted = await db.query<Array<{ id: string }>>(
+        `INSERT INTO public.ai_requests (
+           user_id,
+           task,
+           is_async,
+           status,
+           language,
+           started_at
+         )
+         VALUES (
+           $1,
+           $2::public.ai_task,
+           false,
+           'preparing'::public.job_status,
+           $3::public.ui_language,
+           clock_timestamp()
+         )
+         RETURNING id`,
+        [normalizedUserId, task, language],
+      );
+      const reservationId = Array.isArray(inserted)
+        ? (inserted[0]?.id ?? null)
+        : null;
+      return {
+        reservationId,
+        telemetryRequestId: reservationId,
+      };
+    });
+  }
+
+  /**
+   * Refreshes `locked_at` on an active synchronous quota reservation row (`is_async = false`,
+   * `status = 'preparing'`) so multi-fallback invocations stay alive past the reaper lease window.
+   */
+  async touchQuotaReservation(reservationId: string | null): Promise<void> {
+    if (!reservationId || !UUID_PATTERN.test(reservationId)) {
+      return;
+    }
+    await this.runTx(async (tx) => {
+      await tx.query(
+        `UPDATE public.ai_requests
+            SET locked_at = clock_timestamp()
+          WHERE id = $1
+            AND is_async = false
+            AND status = 'preparing'`,
+        [reservationId],
+      );
+    });
+  }
+
+  /**
+   * Marks a synchronous quota reservation row `'succeeded'` after validated gateway completion.
+   * Throws `503 AI_SERVICE_ERROR` if 0 rows matched (e.g. reaped before completion) so enclosing
+   * `finalizeGenerationSuccess` rolls back `public.ai_generations` telemetry atomically.
+   */
+  async completeQuotaReservation(
+    reservationId: string | null,
+    tx?: TelemetryQueryExecutor,
+  ): Promise<void> {
+    if (!reservationId || !UUID_PATTERN.test(reservationId)) {
+      return;
+    }
+    const runUpdate = async (
+      executor: TelemetryQueryExecutor,
+    ): Promise<void> => {
+      const updated = await executor.query<unknown>(
+        `UPDATE public.ai_requests
+            SET status = 'succeeded',
+                finished_at = clock_timestamp()
+          WHERE id = $1
+            AND is_async = false
+            AND status = 'preparing'
+         RETURNING id`,
+        [reservationId],
+      );
+      if (extractUpdatedRowCount(updated) === 0) {
+        fail(
+          503,
+          'AI_SERVICE_ERROR',
+          'AI service encountered an error. Please try again later.',
+          undefined,
+          true,
+        );
+      }
+    };
+    if (tx) {
+      await runUpdate(tx);
+      return;
+    }
+    await this.runTx(runUpdate);
+  }
+
+  /** Marks a synchronous quota reservation row `'failed'` so failed calls stop counting toward 24h quota. */
+  async failQuotaReservation(
+    reservationId: string | null,
+    errorCode = 'AI_GENERATION_FAILED',
+    tx?: TelemetryQueryExecutor,
+  ): Promise<void> {
+    if (!reservationId || !UUID_PATTERN.test(reservationId)) {
+      return;
+    }
+    const runUpdate = async (
+      executor: TelemetryQueryExecutor,
+    ): Promise<void> => {
+      await executor.query(
+        `UPDATE public.ai_requests
+            SET status = 'failed',
+                error_code = $2,
+                error_message = 'AI request failed before completion',
+                retryable = false,
+                finished_at = clock_timestamp()
+          WHERE id = $1
+            AND is_async = false
+            AND status = 'preparing'`,
+        [reservationId, errorCode],
+      );
+    };
+    if (tx) {
+      await runUpdate(tx);
+      return;
+    }
+    await this.runTx(runUpdate);
+  }
+
+  /**
+   * Atomically persists optional `public.ai_generations` telemetry and completes the synchronous
+   * quota reservation row in a single database transaction so neither write can commit alone.
+   */
+  async finalizeGenerationSuccess(
+    telemetry: GenerationTelemetryInput | null,
+    reservationId: string | null,
+  ): Promise<string | null> {
+    const hasReservation = Boolean(
+      reservationId && UUID_PATTERN.test(reservationId),
+    );
+    if (!telemetry && !hasReservation) {
+      return null;
+    }
+    return this.runTx(async (tx) => {
+      const generationId = telemetry
+        ? await this.recordGenerationTelemetry(telemetry, tx)
+        : null;
+      if (hasReservation) {
+        await this.completeQuotaReservation(reservationId, tx);
+      }
+      return generationId;
+    });
+  }
+
+  /**
+   * Atomically persists optional failed-validation telemetry and marks the synchronous quota
+   * reservation row `'failed'` in a single database transaction.
+   */
+  async finalizeGenerationFailure(
+    telemetry: GenerationTelemetryInput | null,
+    reservationId: string | null,
+    errorCode = 'AI_GENERATION_FAILED',
+  ): Promise<void> {
+    const hasReservation = Boolean(
+      reservationId && UUID_PATTERN.test(reservationId),
+    );
+    if (!telemetry && !hasReservation) {
+      return;
+    }
+    await this.runTx(async (tx) => {
+      if (telemetry) {
+        await this.recordGenerationTelemetry(telemetry, tx);
+      }
+      if (hasReservation) {
+        await this.failQuotaReservation(reservationId, errorCode, tx);
+      }
+    });
+  }
+
+  /**
+   * Inserts a permanent content-free telemetry record into `public.ai_generations`
+   * storing SHA-256 `output_hash` and unit counts while letting DB triggers compute `total_units`/`cost_usd`.
+   */
+  async recordGenerationTelemetry(
+    input: GenerationTelemetryInput,
+    tx?: TelemetryQueryExecutor,
+  ): Promise<string | null> {
+    const normalizedRequestId =
+      typeof input.requestId === 'string' &&
+      UUID_PATTERN.test(input.requestId.trim())
+        ? input.requestId.trim()
+        : null;
+    const outputHash = createHash('sha256')
+      .update(JSON.stringify(input.output ?? null), 'utf8')
+      .digest('hex');
+
+    const runInsert = async (
+      executor: TelemetryQueryExecutor,
+    ): Promise<string | null> => {
+      const rows = await executor.query<Array<{ id: string }>>(
+        `INSERT INTO public.ai_generations (
+           request_id,
+           task,
+           provider_key,
+           model_id,
+           prompt_version_id,
+           output_schema_id,
+           validation_status,
+           fallback_used,
+           language,
+           input_units,
+           output_units,
+           latency_ms,
+           output_hash
+         )
+         VALUES (
+           $1,
+           $2::public.ai_task,
+           $3,
+           $4,
+           $5,
+           $6,
+           $7::public.ai_validation_status,
+           $8,
+           $9::public.ui_language,
+           $10,
+           $11,
+           $12,
+           $13
+         )
+         RETURNING id`,
+        [
+          normalizedRequestId,
+          input.task,
+          input.providerKey,
+          input.modelId,
+          input.promptVersionId,
+          input.outputSchemaId,
+          input.validationStatus,
+          input.fallbackUsed,
+          input.language,
+          Math.max(0, Math.trunc(input.inputUnits)),
+          Math.max(0, Math.trunc(input.outputUnits)),
+          Math.max(0, Math.trunc(input.latencyMs)),
+          outputHash,
+        ],
+      );
+      return Array.isArray(rows) ? (rows[0]?.id ?? null) : null;
+    };
+
+    if (tx) {
+      return runInsert(tx);
+    }
+    return this.runTx(runInsert);
+  }
+}

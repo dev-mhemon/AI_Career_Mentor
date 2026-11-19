@@ -1,17 +1,14 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Password Recovery, Phone, Account Deletion, Retention Purge & Outbox Contract (M03-03)
-  version: 0.1.0
+  title: AI Career Mentor - Authentication, Account Deletion, Durable Jobs & AI Gateway Contract (M04-02)
+  version: 0.2.0
   description: >-
-    Synchronized through M03-05, 2026-11-11. Derived from adopted C05 v1.5.1. Source baseline:
-    eda14c57c1fae7f65a69802b05a1c4472321c56c. Canonical auth operations including email and phone registration (EP-A01),
-    email and phone verification (EP-A02/EP-A03), verification resend (EP-A04), login (EP-A05), logout (EP-A06),
-    token refresh (EP-A07), password recovery (EP-A08/EP-A09), OAuth bootstrap (EP-A10), social linking (EP-A11),
-    add contact (EP-A12), me (EP-A13), account deletion re-authentication, atomic cascade execution, session
-    revocation, DeletionReceipt authority / tombstone status query (EP-X01/EP-X02), encrypted provider_cleanup outbox
-    retries (R35), privacy & retention physical purge worker (R08, R09), and Screen 22 Danger Zone deletion UI are
-    implemented (with phone SMS delivery failing closed with 503 SERVICE_UNAVAILABLE while the SMS provider adapter
-    is disabled). See M03-03 task record, backend architecture, DTO-DB-mapping and QA-plan.
+    Synchronized through M04-02, 2026-11-19. Derived from adopted C05 v1.5.1. Source baseline:
+    eda14c57c1fae7f65a69802b05a1c4472321c56c. Canonical auth operations (EP-A01..EP-A13), account deletion and
+    retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), durable asynchronous job polling (EP-J01
+    GET /api/v1/jobs/{id}), Redis 24h H-IDEM Replay Controls with R14 Loss-Epoch Fail-Closed Barrier
+    (IdempotencyService), durable Postgres FOR UPDATE SKIP LOCKED job producer/consumer/reaper (R12, R13, ADR-017),
+    and internal-only AI Gateway contracts (ADR-008, C08) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -19,7 +16,9 @@ tags:
     description: C05 14.1 subset; shared DTOs preserve later phone/OAuth requirements.
   - name: Account
     description: C05 14.2 Account API (EP-X01, EP-X02); account deletion request scheduling, DeletionReceipt authority, and status lookup.
-x-source: API-Specification.md sections 13, 14.1, 14.2, 15.1-2, 16, 17.1 and accepted R05/R06/R14/R18/R24/R31/R35
+  - name: Jobs
+    description: C05 14.13 Jobs API (EP-J01 GET /api/v1/jobs/{id}); authenticated owner job status polling (Gate none).
+x-source: API-Specification.md sections 13, 13.6, 14.1, 14.2, 14.13, 15.1-2, 15.12, 16, 17.1 and accepted R05/R06/R12/R13/R14/R18/R24/R26/R31/R35
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -2048,6 +2047,116 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
             - SERVICE_UNAVAILABLE
+  /jobs/{id}:
+    get:
+      operationId: EP-J01
+      tags:
+        - Jobs
+      summary: Get asynchronous AI job status
+      description: >-
+        C05 EP-J01 (GET /api/v1/jobs/{id}). Returns canonical JobStatusDTO for an asynchronous job row in
+        public.ai_requests owned by the authenticated caller (WHERE id = $1 AND user_id = $2 AND is_async = true
+        AND job_kind IS NOT NULL). Uses SupabaseAuthGuard followed by AccessGuard with Gate none so existing jobs
+        remain readable even when AI generation feature flags are disabled. Rejects foreign, missing, or sync-only
+        rows with 404 JOB_NOT_FOUND. Never exposes input_payload, locked_by, attempt_count, raw prompts, or
+        provider/model internals (R12).
+      x-source: API-Specification.md sections 13.6, 14.13, 15.1, 16.4, 16.5; accepted R12/R13
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          description: Asynchronous job UUID from JobAcceptedDTO.job_id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-J01 success; returns canonical JobStatusDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, PERMISSION_DENIED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - PERMISSION_DENIED
+        '404':
+          description: >-
+            JOB_NOT_FOUND (uses ObservedErrorEnvelope because the shared NestJS exception filter emits
+            retryAfterSeconds: null rather than omitting retryAfterSeconds as in canonical ErrorDTO).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+          x-error-codes:
+            - JOB_NOT_FOUND
+        '500':
+          description: INTERNAL_ERROR, DATABASE_ERROR
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INTERNAL_ERROR
+            - DATABASE_ERROR
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SERVICE_UNAVAILABLE
 components:
   securitySchemes:
     SupabaseBearer:
@@ -2085,15 +2194,11 @@ components:
       in: header
       required: false
       description: >-
-        H-IDEM idempotency key header (UUID, 24h TTL per C05 §13.1 / R14) for EP-X01. M03-02 implements a process-local,
-        caller-scoped (userId + Idempotency-Key) in-memory idempotency store with TTL eviction and capacity capping (single-instance
-        scope, does not survive process restarts). Same key + same body returns cached 202 response; same key + different body
-        returns 409 IDEMPOTENCY_KEY_REUSED. Because a completed deletion immediately revokes private.approved_auth_sessions and
-        deletes public.users, post-completion HTTP replays to EP-X01 using the revoked Bearer JWT cannot succeed over HTTP (they are
-        rejected with 401 at DeletionReceiptGuard before reaching the controller; EP-X02 with DeletionReceipt is the post-deletion
-        status recovery path); the in-memory idempotency store and in-flight lock serve concurrent/in-flight deduplication and
-        direct service-level callers during M03-02. Active-request uniqueness is additionally enforced via PostgreSQL
-        uq_account_deletion_one_active (409 DELETION_ALREADY_REQUESTED).
+        H-IDEM idempotency key header (UUID, 24h default TTL IDEMPOTENCY_TTL_SECONDS per C05 §13.1 / R14) for
+        idempotent mutation routes (EP-X01 and async job mutations). Implemented by Redis-backed IdempotencyService
+        (M04-01) with atomic Lua epoch/PTTL checks, R14 Loss-Epoch Fail-Closed Barrier (503 SERVICE_UNAVAILABLE on
+        outage or unacknowledged epoch), canonical body-hash comparison (409 IDEMPOTENCY_KEY_REUSED on mismatch or
+        PostgreSQL uq_ai_requests_idempotency 23505), and reservation-deadline enforcement.
       schema:
         type: string
         format: uuid
@@ -2774,3 +2879,166 @@ components:
             - false
         error:
           $ref: '#/components/schemas/ObservedErrorDTO'
+    JobStatus:
+      type: string
+      enum:
+        - queued
+        - preparing
+        - succeeded
+        - failed
+      description: Canonical public.job_status enum (001_enums.sql).
+    JobKind:
+      type: string
+      enum:
+        - career_goal
+        - roadmap_generate
+        - roadmap_revision
+        - merge_proposal
+        - topic_content
+        - quiz_generate
+        - practice_review
+      description: Canonical public.job_kind enum (001_enums.sql); career_goal is sync-only per R12.
+    AiErrorCode:
+      type: string
+      enum:
+        - AI_TIMEOUT
+        - AI_SERVICE_ERROR
+        - AI_GENERATION_FAILED
+        - AI_VALIDATION_FAILED
+        - AI_BUDGET_EXHAUSTED
+        - UNSUPPORTED_LANGUAGE
+        - JOB_NOT_FOUND
+        - IDEMPOTENCY_KEY_REUSED
+        - STALE_JOB_INPUT
+        - WORKER_LEASE_EXPIRED
+      description: Safe AI and asynchronous job error codes exposed to clients (C05 §16.4 / §16.5 / R12).
+    JobResultRefDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+          format: uuid
+    JobErrorDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - retryable
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+          description: Safe canonical dictionary message; raw error_message and provider/model details never exposed.
+        retryable:
+          type: boolean
+    JobAcceptedDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - job_id
+        - status
+        - poll_url
+        - retry_after_seconds
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/JobKind'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        poll_url:
+          type: string
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+    JobAcceptedDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/JobAcceptedDTO'
+    JobStatusDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - job_id
+        - kind
+        - status
+        - result_ref
+        - error
+        - retryable
+        - created_at
+        - finished_at
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/JobKind'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        result_ref:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required:
+            - type
+            - id
+          properties:
+            type:
+              type: string
+            id:
+              type: string
+              format: uuid
+        error:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required:
+            - code
+            - message
+            - retryable
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+              description: Safe canonical dictionary message; raw error_message and provider/model details never exposed.
+            retryable:
+              type: boolean
+        retryable:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+    JobStatusDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/JobStatusDTO'

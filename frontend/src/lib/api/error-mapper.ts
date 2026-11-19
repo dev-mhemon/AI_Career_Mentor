@@ -29,6 +29,62 @@ function fieldErrorsOf(err: ApiError): Record<string, string> {
 export const INVALID_CREDENTIALS_MESSAGE =
   'Please verify your credentials. The password entered is incorrect.';
 
+/**
+ * Curated user-facing mappings for M04 AI & Job error codes (`C05` §16.4 / §16.5).
+ * Never echoes raw `error.message` so provider/model internals cannot leak to the UI.
+ */
+const AI_AND_JOB_SAFE_ERRORS: Readonly<
+  Record<string, { message: string; tone: ErrorTone; retryable: boolean }>
+> = {
+  AI_TIMEOUT: {
+    message:
+      'AI generation timed out. Your information has been saved. Please try again.',
+    tone: 'warning',
+    retryable: true,
+  },
+  AI_SERVICE_ERROR: {
+    message:
+      'AI service is temporarily unavailable. Your information has been saved. Please try again later.',
+    tone: 'error',
+    retryable: true,
+  },
+  AI_GENERATION_FAILED: {
+    message:
+      "We couldn't generate this right now. Your information has been saved. Please try again.",
+    tone: 'error',
+    retryable: true,
+  },
+  AI_VALIDATION_FAILED: {
+    message:
+      'Generated output could not be verified and was discarded. Your information has been saved. Please try again.',
+    tone: 'error',
+    retryable: true,
+  },
+  AI_BUDGET_EXHAUSTED: {
+    message:
+      'AI capacity is temporarily unavailable. Your existing roadmaps, plans, and progress remain accessible.',
+    tone: 'warning',
+    retryable: true,
+  },
+  JOB_NOT_FOUND: {
+    message: 'This background task could not be found.',
+    tone: 'warning',
+    retryable: false,
+  },
+  IDEMPOTENCY_KEY_REUSED: {
+    message:
+      'This request key was already used for a different action. Please refresh and try again.',
+    tone: 'warning',
+    retryable: false,
+  },
+  STALE_JOB_INPUT: {
+    message:
+      'Your saved data changed before this task could complete. Please refresh and try again.',
+    tone: 'warning',
+    retryable: false,
+  },
+};
+
 export function mapApiError(
   error: unknown,
   options?: { channel?: 'email' | 'phone' },
@@ -62,6 +118,16 @@ export function mapApiError(
     retryable: error.retryable,
     requestId: error.requestId,
   };
+
+  if (error.code && Object.hasOwn(AI_AND_JOB_SAFE_ERRORS, error.code)) {
+    const safe = AI_AND_JOB_SAFE_ERRORS[error.code];
+    return {
+      ...m,
+      message: safe.message,
+      tone: safe.tone,
+      retryable: safe.retryable,
+    };
+  }
 
   if (s === 400 || s === 422) {
     return {

@@ -20,6 +20,8 @@ import {
   updateLearningSettings,
   requestAccountDeletion,
   getAccountDeletionStatus,
+  getJobStatus,
+  withIdempotencyKey,
   ApiError,
   UnauthorizedError,
   NetworkError,
@@ -780,5 +782,91 @@ describe('EP-P01 getProfile, EP-P02 updateProfile, and EP-P04 updateLearningSett
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('EP-J01 getJobStatus and withIdempotencyKey', () => {
+  it('calls GET /jobs/:id with Bearer token and AbortSignal', async () => {
+    const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const jobStatus = {
+      job_id: jobId,
+      kind: 'roadmap_generate' as const,
+      status: 'succeeded' as const,
+      result_ref: {
+        type: 'roadmap',
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      },
+      error: null,
+      retryable: false,
+      created_at: '2026-11-19T09:00:00.000Z',
+      finished_at: '2026-11-19T09:00:05.000Z',
+    };
+    const controller = new AbortController();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: jobStatus }),
+    });
+
+    const result = await getJobStatus(MOCK_TOKEN, jobId, {
+      signal: controller.signal,
+    });
+    expect(result).toEqual(jobStatus);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/jobs/${jobId}`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Content-Type': 'application/json',
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('attaches Idempotency-Key only when non-blank while preserving existing headers', () => {
+    expect(
+      withIdempotencyKey('  11111111-1111-4111-8111-111111111111  ', {
+        'X-Custom': 'val',
+      }),
+    ).toEqual({
+      'X-Custom': 'val',
+      'Idempotency-Key': '11111111-1111-4111-8111-111111111111',
+    });
+
+    expect(
+      withIdempotencyKey('   ', new Headers({ 'X-Trace': 'trace-1' })),
+    ).toEqual({
+      'x-trace': 'trace-1',
+    });
+
+    // Replaces existing case-insensitive idempotency-key without duplicating
+    expect(
+      withIdempotencyKey('22222222-2222-4222-8222-222222222222', {
+        'idempotency-key': 'old-key',
+        'X-Custom': 'keep',
+      }),
+    ).toEqual({
+      'X-Custom': 'keep',
+      'Idempotency-Key': '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(
+      withIdempotencyKey(
+        '33333333-3333-4333-8333-333333333333',
+        new Headers({ 'idempotency-key': 'old-key', 'X-Trace': 't1' }),
+      ),
+    ).toEqual({
+      'x-trace': 't1',
+      'Idempotency-Key': '33333333-3333-4333-8333-333333333333',
+    });
+
+    // Blank key preserves existing caller idempotency-key header
+    expect(
+      withIdempotencyKey('  ', { 'idempotency-key': 'keep-existing' }),
+    ).toEqual({
+      'idempotency-key': 'keep-existing',
+    });
   });
 });

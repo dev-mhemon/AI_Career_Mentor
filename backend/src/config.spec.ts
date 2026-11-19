@@ -1,4 +1,8 @@
-import { validateConfiguration } from './config.js';
+import {
+  readAiGatewayConfiguration,
+  readJobWorkerConfiguration,
+  validateConfiguration,
+} from './config.js';
 import { readIdempotencyConfiguration } from './jobs/services/idempotency.service.js';
 const base = {
   SUPABASE_URL: 'http://127.0.0.1:56321',
@@ -497,5 +501,95 @@ describe('Public runtime key boundary', () => {
         REDIS_URL: 'redis://127.0.0.1:6379?foo=bar',
       }),
     ).toThrow('Invalid REDIS_URL');
+  });
+
+  it('validates M04 durable job worker, reaper, and AI gateway operating bounds (R26, R13)', () => {
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        JOB_WORKER_LEASE_SECONDS: '120',
+        JOB_WORKER_HEARTBEAT_SECONDS: '30',
+        JOB_WORKER_MAX_ATTEMPTS: '5',
+        JOB_WORKER_MAX_AGE_SECONDS: '3600',
+        JOB_REAPER_INTERVAL_SECONDS: '30',
+        JOB_POLL_INTERVAL_MS: '1000',
+        JOB_RETRY_AFTER_SECONDS: '3',
+        AI_QUOTA_CACHE_TTL_MS: '5000',
+        AI_EXECUTION_MODE: 'synthetic',
+      }),
+    ).not.toThrow();
+
+    expect(
+      readJobWorkerConfiguration({
+        JOB_WORKER_LEASE_SECONDS: '   ',
+        JOB_WORKER_HEARTBEAT_SECONDS: '   ',
+        JOB_WORKER_MAX_ATTEMPTS: '   ',
+        JOB_WORKER_MAX_AGE_SECONDS: '   ',
+        JOB_REAPER_INTERVAL_SECONDS: '   ',
+      }),
+    ).toEqual({
+      leaseSeconds: 120,
+      heartbeatSeconds: 30,
+      maxAttempts: 5,
+      maxAgeSeconds: 3_600,
+      reaperIntervalSeconds: 30,
+      pollIntervalMs: 1_000,
+      retryAfterSeconds: 3,
+    });
+
+    expect(
+      readAiGatewayConfiguration({
+        AI_QUOTA_CACHE_TTL_MS: '   ',
+        AI_EXECUTION_MODE: '   ',
+      }),
+    ).toEqual({
+      quotaCacheTtlMs: 5_000,
+      executionMode: 'real_user',
+    });
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        JOB_WORKER_LEASE_SECONDS: '30',
+        JOB_WORKER_HEARTBEAT_SECONDS: '30',
+      }),
+    ).toThrow(
+      'JOB_WORKER_HEARTBEAT_SECONDS must be less than JOB_WORKER_LEASE_SECONDS',
+    );
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        JOB_WORKER_MAX_ATTEMPTS: '6',
+      }),
+    ).toThrow('Invalid JOB_WORKER_MAX_ATTEMPTS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        JOB_WORKER_MAX_AGE_SECONDS: '3601',
+      }),
+    ).toThrow('Invalid JOB_WORKER_MAX_AGE_SECONDS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        JOB_REAPER_INTERVAL_SECONDS: '31',
+      }),
+    ).toThrow('Invalid JOB_REAPER_INTERVAL_SECONDS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AI_QUOTA_CACHE_TTL_MS: '5001',
+      }),
+    ).toThrow('Invalid AI_QUOTA_CACHE_TTL_MS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        AI_EXECUTION_MODE: 'free_tier',
+      }),
+    ).toThrow('Invalid AI_EXECUTION_MODE');
   });
 });

@@ -162,6 +162,148 @@ function validateOptionalEpoch(rawEpoch: unknown, keyName: string): void {
   }
 }
 
+export interface JobWorkerConfiguration {
+  leaseSeconds: number;
+  heartbeatSeconds: number;
+  maxAttempts: number;
+  maxAgeSeconds: number;
+  reaperIntervalSeconds: number;
+  pollIntervalMs: number;
+  retryAfterSeconds: number;
+}
+
+export type AiExecutionModeConfig = 'real_user' | 'synthetic';
+
+export interface AiGatewayConfiguration {
+  quotaCacheTtlMs: number;
+  executionMode: AiExecutionModeConfig;
+}
+
+type ConfigLookup =
+  | Record<string, unknown>
+  | { get<T = unknown>(propertyPath: string): T | undefined };
+
+function getConfigValue(source: ConfigLookup, key: string): unknown {
+  if (typeof (source as { get?: unknown }).get === 'function') {
+    return (source as { get<T = unknown>(k: string): T | undefined }).get(key);
+  }
+  return (source as Record<string, unknown>)[key];
+}
+
+function readBoundedPositiveInteger(
+  rawValue: unknown,
+  keyName: string,
+  defaultValue: number,
+  minValue: number,
+  maxValue: number,
+): number {
+  const parsed = readOptionalPositiveInteger(rawValue, keyName);
+  if (parsed === undefined) {
+    return defaultValue;
+  }
+  if (parsed < minValue || parsed > maxValue) {
+    throw new Error(`Invalid ${keyName}`);
+  }
+  return parsed;
+}
+
+/**
+ * Reads and validates server-only durable job queue, heartbeat, and reaper operating defaults (`R26`, `R13`).
+ */
+export function readJobWorkerConfiguration(
+  source: ConfigLookup,
+): JobWorkerConfiguration {
+  const leaseSeconds =
+    readOptionalPositiveInteger(
+      getConfigValue(source, 'JOB_WORKER_LEASE_SECONDS'),
+      'JOB_WORKER_LEASE_SECONDS',
+    ) ?? 120;
+  const heartbeatSeconds =
+    readOptionalPositiveInteger(
+      getConfigValue(source, 'JOB_WORKER_HEARTBEAT_SECONDS'),
+      'JOB_WORKER_HEARTBEAT_SECONDS',
+    ) ?? 30;
+  if (heartbeatSeconds >= leaseSeconds) {
+    throw new Error(
+      'JOB_WORKER_HEARTBEAT_SECONDS must be less than JOB_WORKER_LEASE_SECONDS',
+    );
+  }
+  const maxAttempts = readBoundedPositiveInteger(
+    getConfigValue(source, 'JOB_WORKER_MAX_ATTEMPTS'),
+    'JOB_WORKER_MAX_ATTEMPTS',
+    5,
+    1,
+    5,
+  );
+  const maxAgeSeconds = readBoundedPositiveInteger(
+    getConfigValue(source, 'JOB_WORKER_MAX_AGE_SECONDS'),
+    'JOB_WORKER_MAX_AGE_SECONDS',
+    3_600,
+    1,
+    3_600,
+  );
+  const reaperIntervalSeconds = readBoundedPositiveInteger(
+    getConfigValue(source, 'JOB_REAPER_INTERVAL_SECONDS'),
+    'JOB_REAPER_INTERVAL_SECONDS',
+    30,
+    1,
+    30,
+  );
+  const pollIntervalMs =
+    readOptionalPositiveInteger(
+      getConfigValue(source, 'JOB_POLL_INTERVAL_MS'),
+      'JOB_POLL_INTERVAL_MS',
+    ) ?? 1_000;
+  const retryAfterSeconds =
+    readOptionalPositiveInteger(
+      getConfigValue(source, 'JOB_RETRY_AFTER_SECONDS'),
+      'JOB_RETRY_AFTER_SECONDS',
+    ) ?? 3;
+
+  return {
+    leaseSeconds,
+    heartbeatSeconds,
+    maxAttempts,
+    maxAgeSeconds,
+    reaperIntervalSeconds,
+    pollIntervalMs,
+    retryAfterSeconds,
+  };
+}
+
+/**
+ * Reads and validates internal AI Gateway operating defaults (`R26`, `ADR-008`).
+ */
+export function readAiGatewayConfiguration(
+  source: ConfigLookup,
+): AiGatewayConfiguration {
+  const quotaCacheTtlMs = readBoundedPositiveInteger(
+    getConfigValue(source, 'AI_QUOTA_CACHE_TTL_MS'),
+    'AI_QUOTA_CACHE_TTL_MS',
+    5_000,
+    1,
+    5_000,
+  );
+  const rawMode = getConfigValue(source, 'AI_EXECUTION_MODE');
+  let executionMode: AiExecutionModeConfig = 'real_user';
+  if (rawMode !== undefined && rawMode !== null) {
+    if (typeof rawMode !== 'string') {
+      throw new Error('Invalid AI_EXECUTION_MODE');
+    }
+    const trimmed = rawMode.trim();
+    if (trimmed !== '') {
+      if (trimmed !== 'real_user' && trimmed !== 'synthetic') {
+        throw new Error('Invalid AI_EXECUTION_MODE');
+      }
+      executionMode = trimmed;
+    }
+  }
+  return {
+    quotaCacheTtlMs,
+    executionMode,
+  };
+}
+
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
   const required = [
@@ -290,6 +432,8 @@ export function validateConfiguration(raw: Record<string, unknown>) {
       'IDEMPOTENCY_TTL_SECONDS * 1000 must be greater than IDEMPOTENCY_REDIS_TIMEOUT_MS',
     );
   }
+  readJobWorkerConfiguration(raw);
+  readAiGatewayConfiguration(raw);
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;
 }
