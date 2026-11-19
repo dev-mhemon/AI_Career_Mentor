@@ -31,6 +31,13 @@ import {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Matches an ISO-8601 / PostgreSQL `timestamptz` string with up to 6 fractional digits
+ * and an explicit timezone (`Z` or `±HH` / `±HH:MM` / `±HHMM` with hours `00..15` and minutes `00..59`).
+ */
+const PG_CURSOR_TIMESTAMPTZ_PATTERN =
+  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])[T ](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:0\d|1[0-4])(?::?[0-5]\d)?|[+-]15(?::?00)?)$/;
+
 const GOAL_INTERPRETATION_SCHEMA_ID = 'goal_interpretation.v1';
 const GOAL_INTERPRETATION_TIMEOUT_MS = 9_500;
 const GOAL_INTERPRETATION_MAX_INPUT_UNITS = 4_000;
@@ -139,7 +146,8 @@ function decodeGoalCursor(rawCursor: string): {
     if (
       typeof parsed?.created_at !== 'string' ||
       !parsed.created_at.trim() ||
-      Number.isNaN(Date.parse(parsed.created_at)) ||
+      !PG_CURSOR_TIMESTAMPTZ_PATTERN.test(parsed.created_at.trim()) ||
+      Number.isNaN(Date.parse(parsed.created_at.trim())) ||
       typeof parsed?.id !== 'string' ||
       !UUID_PATTERN.test(parsed.id.trim())
     ) {
@@ -221,6 +229,59 @@ function extractStoredRationales(
     }
   }
   return merged;
+}
+
+function normalizeAlternativeRoleIdsForComparison(rawIds: unknown): string[] {
+  if (!Array.isArray(rawIds)) {
+    return [];
+  }
+  return rawIds.map((id) => String(id).trim().toLowerCase());
+}
+
+function hasGoalRevisionChanged(
+  preflightGoal: CareerGoalRow,
+  lockedGoal: CareerGoalRow,
+): boolean {
+  const preflightUpdatedIso =
+    preflightGoal.updated_at !== undefined && preflightGoal.updated_at !== null
+      ? toIsoTimestamp(preflightGoal.updated_at)
+      : null;
+  const lockedUpdatedIso =
+    lockedGoal.updated_at !== undefined && lockedGoal.updated_at !== null
+      ? toIsoTimestamp(lockedGoal.updated_at)
+      : null;
+
+  if (
+    preflightUpdatedIso !== null &&
+    lockedUpdatedIso !== null &&
+    preflightUpdatedIso !== lockedUpdatedIso
+  ) {
+    return true;
+  }
+
+  const preflightAlternatives = normalizeAlternativeRoleIdsForComparison(
+    preflightGoal.alternative_role_ids,
+  );
+  const lockedAlternatives = normalizeAlternativeRoleIdsForComparison(
+    lockedGoal.alternative_role_ids,
+  );
+  const alternativesChanged =
+    preflightAlternatives.length !== lockedAlternatives.length ||
+    preflightAlternatives.some((id, idx) => id !== lockedAlternatives[idx]);
+
+  return (
+    lockedGoal.status !== preflightGoal.status ||
+    (Number(lockedGoal.clarification_round) || 0) !==
+      (Number(preflightGoal.clarification_round) || 0) ||
+    String(lockedGoal.goal_text) !== String(preflightGoal.goal_text) ||
+    (lockedGoal.clarification_question ?? null) !==
+      (preflightGoal.clarification_question ?? null) ||
+    (lockedGoal.proposed_role_id ?? null) !==
+      (preflightGoal.proposed_role_id ?? null) ||
+    alternativesChanged ||
+    (lockedGoal.suggested_level ?? null) !==
+      (preflightGoal.suggested_level ?? null)
+  );
 }
 
 /**
@@ -596,7 +657,7 @@ export class CareerGoalService {
     if (wantsClarification) {
       const round = Math.min(
         MAX_CLARIFICATION_ROUNDS,
-        Math.max(1, targetRound || aiOutput.clarificationRound || 1),
+        Math.max(1, targetRound),
       );
       const question =
         typeof aiOutput.clarificationQuestion === 'string' &&
@@ -646,15 +707,37 @@ export class CareerGoalService {
     request: AIRequestDTO,
   ): Promise<AIResponseDTO<GoalInterpretationOutput>> {
     const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, GOAL_INTERPRETATION_TIMEOUT_MS);
-    try {
-      return await this.aiGateway.execute<GoalInterpretationOutput>(request, {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadlinePromise = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        try {
+          fail(
+            504,
+            'AI_TIMEOUT',
+            'AI generation timed out. Please try again.',
+            undefined,
+            true,
+          );
+        } catch (timeoutError) {
+          reject(timeoutError);
+        }
+      }, GOAL_INTERPRETATION_TIMEOUT_MS);
+    });
+    const executionPromise = this.aiGateway.execute<GoalInterpretationOutput>(
+      request,
+      {
         signal: controller.signal,
-      });
+      },
+    );
+    // Attach no-op catch so a late rejection after deadline expiry never triggers an unhandledRejection
+    executionPromise.catch(() => undefined);
+    try {
+      return await Promise.race([executionPromise, deadlinePromise]);
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -704,9 +787,19 @@ export class CareerGoalService {
       ...(rationalesOverride ?? {}),
     };
 
+    const activeRoleId = row.confirmed_role_id ?? row.proposed_role_id ?? null;
+    const activeRoleIdLower =
+      typeof activeRoleId === 'string'
+        ? activeRoleId.trim().toLowerCase()
+        : null;
+
     const orderedAlternatives: RoleOptionDTO[] = [];
     for (const rawId of altIds) {
-      const found = byId.get(String(rawId).toLowerCase());
+      const lowerRawId = String(rawId).trim().toLowerCase();
+      if (activeRoleIdLower && lowerRawId === activeRoleIdLower) {
+        continue;
+      }
+      const found = byId.get(lowerRawId);
       if (found) {
         orderedAlternatives.push({
           canonical_role_id: found.canonical_role_id,
@@ -717,7 +810,6 @@ export class CareerGoalService {
       }
     }
 
-    const activeRoleId = row.confirmed_role_id ?? row.proposed_role_id ?? null;
     let activeRoleName =
       typeof row.role_name === 'string' && row.role_name.trim().length > 0
         ? row.role_name
@@ -1297,23 +1389,9 @@ export class CareerGoalService {
           );
         }
 
-        const preflightUpdatedIso =
-          preflight.goal.updated_at !== undefined &&
-          preflight.goal.updated_at !== null
-            ? toIsoTimestamp(preflight.goal.updated_at)
-            : null;
-        const lockedUpdatedIso =
-          lockedGoal.updated_at !== undefined && lockedGoal.updated_at !== null
-            ? toIsoTimestamp(lockedGoal.updated_at)
-            : null;
         if (
           currentRound !== preflight.currentRound ||
-          String(lockedGoal.goal_text) !== String(preflight.goal.goal_text) ||
-          (lockedGoal.clarification_question ?? null) !==
-            (preflight.goal.clarification_question ?? null) ||
-          (preflightUpdatedIso !== null &&
-            lockedUpdatedIso !== null &&
-            preflightUpdatedIso !== lockedUpdatedIso)
+          hasGoalRevisionChanged(preflight.goal, lockedGoal)
         ) {
           fail(
             409,
@@ -1359,7 +1437,8 @@ export class CareerGoalService {
                   clarifications = $6::jsonb,
                   proposed_role_id = $7,
                   alternative_role_ids = $8::uuid[],
-                  suggested_level = $9
+                  suggested_level = $9,
+                  updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
             WHERE user_id = $1
               AND id = $2`,
           [
@@ -1561,7 +1640,7 @@ export class CareerGoalService {
           );
         }
         const roles = await this.loadApprovedCareerRoles(db);
-        return { roles };
+        return { goal, roles };
       },
       true,
       false,
@@ -1646,6 +1725,14 @@ export class CareerGoalService {
           );
         }
 
+        if (hasGoalRevisionChanged(preflight.goal, lockedGoal)) {
+          fail(
+            409,
+            'INVALID_STATE_TRANSITION',
+            'Career goal changed during goal interpretation. Please reload and retry your edit.',
+          );
+        }
+
         const approvedRoles = await this.loadApprovedCareerRoles(db);
         const resolved = this.resolveInterpretationAgainstCatalog(
           aiOutput,
@@ -1678,7 +1765,8 @@ export class CareerGoalService {
                   suggested_level = $10,
                   target_level = NULL,
                   confirmed_role_id = NULL,
-                  confirmed_at = NULL
+                  confirmed_at = NULL,
+                  updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
             WHERE user_id = $1
               AND id = $2`,
           [

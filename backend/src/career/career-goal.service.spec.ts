@@ -465,8 +465,46 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
         goal_text: 'Ambiguous server goal',
       });
       expect(clarifyingRes.status).toBe('clarifying');
+      expect(clarifyingRes.clarification_round).toBe(1);
       expect(clarifyingRes.proposed_role).toBeNull();
       expect(clarifyingRes.alternative_roles).toEqual([]);
+
+      // Even if AI returns clarificationNeeded=false with clarificationRound=2 and no matching role, initial create starts at round 1
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: false,
+          clarificationRound: 2,
+          clarificationQuestion: 'Which tech stack?',
+          proposedRole: {
+            canonicalRoleId: '99999999-9999-4999-8999-999999999999',
+            name: 'Unmatched Role',
+          },
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const round1FallbackRes = await service.createGoal(USER_A, {
+        goal_text: 'Ambiguous server goal',
+      });
+      expect(round1FallbackRes.status).toBe('clarifying');
+      expect(round1FallbackRes.clarification_round).toBe(1);
+
+      // If aiGateway.execute stalls (e.g. during quota reservation), executeGoalInterpretationWithDeadline rejects at the shared deadline with 504 AI_TIMEOUT
+      vi.useFakeTimers();
+      aiExecuteMock.mockImplementationOnce(() => new Promise(() => undefined));
+      const stalledPromise = service.createGoal(USER_A, {
+        goal_text: 'Stalled quota reservation goal',
+      });
+      const stalledExpectation = expect(stalledPromise).rejects.toSatisfy(
+        (err) => {
+          expectContractError(err, 504, 'AI_TIMEOUT');
+          return true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(9_600);
+      await stalledExpectation;
+      vi.useRealTimers();
 
       // If commit-time catalog is empty (all roles retired while AI ran), fail closed with 502 AI_VALIDATION_FAILED
       let roleLoadCallCount = 0;
@@ -739,6 +777,21 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
     it('rejects malformed cursor or malformed goal UUID with 400 INVALID_FORMAT and returns 404 RESOURCE_NOT_FOUND for foreign user', async () => {
       await expect(
         service.listGoals(USER_A, { cursor: 'not-a-valid-cursor' }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 400, 'INVALID_FORMAT');
+        return true;
+      });
+
+      // Cursor with out-of-range timezone offset (+20:00) accepted by Node Date.parse must be rejected before SQL
+      const badTzOffsetCursor = Buffer.from(
+        JSON.stringify({
+          created_at: '2026-10-10T09:00:00.000+20:00',
+          id: GOAL_1,
+        }),
+        'utf8',
+      ).toString('base64url');
+      await expect(
+        service.listGoals(USER_A, { cursor: badTzOffsetCursor }),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 400, 'INVALID_FORMAT');
         return true;
@@ -1039,6 +1092,7 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
       };
 
       const sqlSequence: string[] = [];
+      let goalConfirmationWritten = false;
       queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
         sqlSequence.push(sql);
         if (sql.includes('private.effective_feature_access')) {
@@ -1064,10 +1118,11 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
         }
         if (sql.includes('UPDATE public.career_goals')) {
           expect(params).toEqual([USER_A, GOAL_1, ROLE_FULLSTACK, 'mid']);
+          goalConfirmationWritten = true;
           return [];
         }
         if (sql.includes('SELECT DISTINCT target_level')) {
-          return [{ target_level: 'mid' }];
+          return goalConfirmationWritten ? [{ target_level: 'mid' }] : [];
         }
         if (sql.includes('INSERT INTO public.skill_progress')) {
           expect(params).toEqual([USER_A, 'mid']);
@@ -1110,6 +1165,8 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
         canonical_role_id: ROLE_FULLSTACK,
         name: 'Full-Stack Development',
       });
+      // Confirmed alternative role is promoted to proposed_role and excluded from alternative_roles
+      expect(res.alternative_roles).toEqual([]);
       // Must execute in ONE single transaction (no nested transactions) using the transaction spy, never the root executor
       expect(transactionMock).toHaveBeenCalledTimes(1);
       expect(rootQueryMock).not.toHaveBeenCalled();
@@ -1319,6 +1376,100 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
         expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
         return true;
       });
+
+      // Concurrent PATCH modification while AI was running -> 409 INVALID_STATE_TRANSITION
+      const preflightEditable = {
+        id: GOAL_1,
+        user_id: USER_A,
+        goal_text: 'Initial goal text',
+        status: 'clarifying' as const,
+        clarification_round: 1,
+        clarification_question: 'Q1?',
+        updated_at: '2026-10-10T08:00:00.000Z',
+      };
+      const mutatedLockedEditable = {
+        ...preflightEditable,
+        goal_text: 'Concurrently patched goal text',
+        updated_at: '2026-10-10T08:00:04.000Z',
+      };
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('FROM public.career_goals g')) {
+          return [preflightEditable];
+        }
+        if (sql.includes('FROM public.career_roles')) {
+          return APPROVED_ROLES;
+        }
+        if (
+          sql.includes('FROM public.career_goals') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [mutatedLockedEditable];
+        }
+        return [];
+      });
+
+      await expect(
+        service.updateGoal(USER_A, GOAL_1, {
+          goal_text: 'Stale concurrent patch attempt',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
+        return true;
+      });
+
+      // Concurrent same-text PATCH where proposed_role_id / alternative_role_ids changed while AI was running -> 409 INVALID_STATE_TRANSITION & 0 UPDATEs
+      const sameTextPreflight = {
+        id: GOAL_1,
+        user_id: USER_A,
+        goal_text: 'Backend engineer with distributed systems',
+        status: 'awaiting_confirmation' as const,
+        clarification_round: 0,
+        clarification_question: null,
+        proposed_role_id: ROLE_BACKEND,
+        alternative_role_ids: [ROLE_FULLSTACK],
+        suggested_level: 'mid' as const,
+      };
+      const sameTextLockedAfterConcurrentCommit = {
+        ...sameTextPreflight,
+        proposed_role_id: ROLE_DEVOPS,
+        alternative_role_ids: [ROLE_BACKEND],
+      };
+      let updateExecuted = false;
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('FROM public.career_goals g')) {
+          return [sameTextPreflight];
+        }
+        if (sql.includes('FROM public.career_roles')) {
+          return APPROVED_ROLES;
+        }
+        if (
+          sql.includes('FROM public.career_goals') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [sameTextLockedAfterConcurrentCommit];
+        }
+        if (sql.includes('UPDATE public.career_goals')) {
+          updateExecuted = true;
+          return [];
+        }
+        return [];
+      });
+
+      await expect(
+        service.updateGoal(USER_A, GOAL_1, {
+          goal_text: 'Backend engineer with distributed systems',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
+        return true;
+      });
+      expect(updateExecuted).toBe(false);
     });
   });
 

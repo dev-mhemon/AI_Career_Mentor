@@ -574,16 +574,19 @@ describe('CareerGoalController (EP-C01–EP-C07 /api/v1/career/goals)', () => {
       }
 
       // Verify invalid status enum returns top-level error.code === 'INVALID_ENUM_VALUE' (422)
-      serviceMock.listGoals.mockImplementationOnce(async () => {
-        const realService = new CareerGoalService(
-          databaseStub as unknown as DatabaseService,
-          {} as unknown as AiGatewayService,
-          {} as unknown as ProfileService,
-        );
-        return realService.listGoals(USER_ID, {
-          status: 'pending' as unknown as 'confirmed',
-        });
-      });
+      serviceMock.listGoals.mockImplementationOnce(
+        async (receivedUserId: string, receivedQuery: unknown) => {
+          const realService = new CareerGoalService(
+            databaseStub as unknown as DatabaseService,
+            {} as unknown as AiGatewayService,
+            {} as unknown as ProfileService,
+          );
+          return realService.listGoals(
+            receivedUserId,
+            receivedQuery as Record<string, unknown>,
+          );
+        },
+      );
       const badStatusRes = await request(app.getHttpServer())
         .get('/api/v1/career/goals?status=pending')
         .set('Authorization', `Bearer ${token}`);
@@ -593,6 +596,15 @@ describe('CareerGoalController (EP-C01–EP-C07 /api/v1/career/goals)', () => {
         error: {
           code: 'INVALID_ENUM_VALUE',
         },
+      });
+
+      // Verify empty cursor (?cursor=) is normalized to undefined and treated as first page (200 OK)
+      const emptyCursorRes = await request(app.getHttpServer())
+        .get('/api/v1/career/goals?cursor=')
+        .set('Authorization', `Bearer ${token}`);
+      expect(emptyCursorRes.status).toBe(200);
+      expect(serviceMock.listGoals).toHaveBeenLastCalledWith(USER_ID, {
+        cursor: undefined,
       });
     } finally {
       try {

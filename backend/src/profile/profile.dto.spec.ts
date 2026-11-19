@@ -217,6 +217,12 @@ describe('Foundation & Career/Profile DTO validation', () => {
     expect(await validate(validQuery)).toHaveLength(0);
     expect(validQuery.limit).toBe(25);
 
+    const emptyCursorQuery = plainToInstance(CareerGoalListQueryDTO, {
+      cursor: '   ',
+    });
+    expect(await validate(emptyCursorQuery)).toHaveLength(0);
+    expect(emptyCursorQuery.cursor).toBeUndefined();
+
     const badLimit = plainToInstance(CareerGoalListQueryDTO, {
       limit: 101,
     });

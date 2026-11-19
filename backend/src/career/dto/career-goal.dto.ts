@@ -31,6 +31,14 @@ export const CAREER_LEVEL_VALUES: readonly CareerLevel[] = [
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+const normalizeOptionalCursor = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+};
+
 /**
  * Checks whether a string contains NUL bytes (`\u0000`) or unpaired UTF-16 surrogate code units.
  */
@@ -137,9 +145,9 @@ export class CareerGoalListQueryDTO {
   @Max(100)
   limit?: number;
 
+  @Transform(normalizeOptionalCursor)
   @ValidateIf((_object, value) => value !== undefined)
   @IsString()
-  @Transform(trim)
   @IsNotEmpty()
   @MaxLength(512)
   cursor?: string;
