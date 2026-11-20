@@ -522,5 +522,100 @@ describe('ProfileService (EP-P01–EP-P05, R07, R29)', () => {
         response: { code: 'VALIDATION_FAILED' },
       });
     });
+
+    it('clears stale existing_skills_none when transitioning away from beginner while preserving it when staying beginner (EP-P02)', async () => {
+      const beginnerProfile = {
+        user_id: 'user-1',
+        current_role_title: 'Student',
+        education: 'BSc',
+        experience_level: 'beginner',
+        self_reported_skill_ids: [],
+        existing_skills_none: true,
+        learning_preference: 'mixed',
+        preferred_daily_hours: 2,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: true,
+        updated_at: '2026-10-10T08:00:00Z',
+      };
+
+      const runPatch = async (
+        input: Record<string, unknown>,
+        expectedNone: boolean,
+        expectedLevel: string,
+      ) => {
+        const query = vi.fn<
+          (sql: string, params?: unknown[]) => Promise<unknown[]>
+        >(async (sql: string) => {
+          if (sql.includes('SELECT * FROM public.user_profiles')) {
+            return [beginnerProfile];
+          }
+          if (sql.includes('SELECT p.*,pr.learning_preference')) {
+            return [
+              {
+                ...beginnerProfile,
+                experience_level: expectedLevel,
+                existing_skills_none: expectedNone,
+              },
+            ];
+          }
+          return [];
+        });
+        const transaction = vi.fn((_id, op) => op({ query }));
+        const service = new ProfileService({
+          transaction,
+        } as unknown as DatabaseService);
+
+        const res = await service.patch('user-1', input as any);
+        const updateCall = query.mock.calls.find(([sql]) =>
+          String(sql).includes('UPDATE public.user_profiles'),
+        );
+        expect(updateCall).toBeDefined();
+        expect(updateCall?.[1]?.[3]).toBe(expectedLevel);
+        expect(updateCall?.[1]?.[5]).toBe(expectedNone);
+        expect(res.existing_skills_none).toBe(expectedNone);
+      };
+
+      await runPatch({ experience_level: 'junior' }, false, 'junior');
+      await runPatch({ current_role: 'CS Undergrad' }, true, 'beginner');
+    });
+
+    it('preserves stored preferred_daily_hours on timezone-only EP-P04 patch', async () => {
+      const storedProfile = {
+        user_id: 'user-1',
+        current_role_title: 'Developer',
+        education: 'BSc',
+        experience_level: 'junior',
+        self_reported_skill_ids: [],
+        existing_skills_none: false,
+        learning_preference: 'mixed',
+        preferred_daily_hours: 6,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: false,
+        updated_at: '2026-10-10T08:00:00Z',
+      };
+      const query = vi.fn<
+        (sql: string, params?: unknown[]) => Promise<unknown[]>
+      >(async (sql: string) => {
+        if (sql.includes('SELECT p.*,pr.learning_preference')) {
+          return [storedProfile];
+        }
+        return [];
+      });
+      const transaction = vi.fn((_id, op) => op({ query }));
+      const service = new ProfileService({
+        transaction,
+      } as unknown as DatabaseService);
+
+      const res = await service.learning('user-1', { timezone: 'Asia/Dhaka' });
+      const updateCall = query.mock.calls.find(([sql]) =>
+        String(sql).includes(
+          'UPDATE public.user_profiles SET timezone=COALESCE',
+        ),
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toEqual(['user-1', 'Asia/Dhaka', null]);
+      expect(res.preferred_daily_hours).toBe(6);
+      expect(res.timezone).toBe('Asia/Dhaka');
+    });
   });
 });

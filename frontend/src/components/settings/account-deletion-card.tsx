@@ -41,6 +41,23 @@ export interface AccountDeletionCardProps {
 
 const INITIAL_ACTION_STATE: AccountDeletionActionResult = {};
 
+const INVALID_PASSWORD_ERROR_PATTERN =
+  /invalid password|incorrect password|re-?authentication|reauth_required|invalid credentials|সঠিক পাসওয়ার্ড/i;
+
+/**
+ * Normalizes backend/action error copy into crisp single-line English messages for the deletion modal.
+ */
+function formatAccountDeletionError(rawError: string): string {
+  const trimmed = rawError.trim();
+  if (!trimmed) {
+    return 'Something went wrong. Please try again.';
+  }
+  if (INVALID_PASSWORD_ERROR_PATTERN.test(trimmed)) {
+    return 'Incorrect password.';
+  }
+  return trimmed;
+}
+
 const DangerZoneOverview = memo(function DangerZoneOverview({
   isSuspended,
   canDeleteAccount,
@@ -138,9 +155,14 @@ export function AccountDeletionCard({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [pollError, setPollError] = useState<string | null>(null);
+  const [pollingStopped, setPollingStopped] = useState(false);
+  const [dismissedErrorState, setDismissedErrorState] =
+    useState<AccountDeletionActionResult | null>(null);
 
   const [state, formAction, isPending] = useActionState(
     async (prevState: AccountDeletionActionResult, formData: FormData) => {
+      setPollError(null);
+      setPollingStopped(false);
       try {
         clearRememberedLogin();
       } catch {
@@ -165,7 +187,7 @@ export function AccountDeletionCard({
   const inFlightRef = useRef(false);
 
   const isPendingStatus = state.status === 'in_progress' || state.status === 'scheduled';
-  const isPolling = isPendingStatus && Boolean(state.deletionReceipt) && !pollError;
+  const isPolling = isPendingStatus && Boolean(state.deletionReceipt) && !pollingStopped;
 
   // Handle immediate completion or initiate polling for in_progress / scheduled status
   useEffect(() => {
@@ -178,7 +200,7 @@ export function AccountDeletionCard({
       return;
     }
 
-    if (isPendingStatus && state.deletionReceipt && !pollError) {
+    if (isPendingStatus && state.deletionReceipt && !pollingStopped) {
       const receipt = state.deletionReceipt;
       let isSubscribed = true;
 
@@ -204,6 +226,7 @@ export function AccountDeletionCard({
             }
             if (res.error) {
               setPollError(res.error);
+              setPollingStopped(true);
               return;
             }
             schedulePoll();
@@ -212,6 +235,7 @@ export function AccountDeletionCard({
             setPollError(
               err instanceof Error ? err.message : 'Unable to verify account deletion status.',
             );
+            setPollingStopped(true);
           } finally {
             inFlightRef.current = false;
           }
@@ -228,27 +252,33 @@ export function AccountDeletionCard({
         }
       };
     }
-  }, [state.status, state.deletionReceipt, isPendingStatus, pollError, router]);
+  }, [state.status, state.deletionReceipt, isPendingStatus, pollingStopped, router]);
 
   const handleOpenModal = useCallback(() => {
     setPasswordInput('');
     setPollError(null);
+    setDismissedErrorState(state);
     setIsModalOpen(true);
-  }, []);
+  }, [state]);
 
   const isBusy = isPending || isPolling;
 
   const handleCloseModal = useCallback(() => {
     if (!isBusy) {
+      setPasswordInput('');
+      setPollError(null);
+      setDismissedErrorState(state);
       setIsModalOpen(false);
     }
-  }, [isBusy]);
+  }, [isBusy, state]);
 
   const handlePasswordChange = useCallback(
     (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setPasswordInput(e.target.value);
+      setDismissedErrorState(state);
+      setPollError(null);
     },
-    [],
+    [state],
   );
 
   const handleModalKeyDown = useCallback(
@@ -265,6 +295,12 @@ export function AccountDeletionCard({
 
   const isSubmitDisabled =
     isBusy || (hasPasswordAuth && !passwordInput.trim());
+
+  const activeErrorRaw =
+    (state !== dismissedErrorState ? state.error : undefined) || pollError;
+  const visibleError = activeErrorRaw
+    ? formatAccountDeletionError(activeErrorRaw)
+    : null;
 
   return (
     <section
@@ -303,9 +339,9 @@ export function AccountDeletionCard({
                 : 'This action cannot be undone. Confirm below to permanently delete your account.'}
             </p>
 
-            {(state.error || pollError) && (
+            {visibleError && (
               <Alert variant="error_retryable" role="alert">
-                {state.error || pollError}
+                {visibleError}
               </Alert>
             )}
 

@@ -4,6 +4,16 @@ import { ProfileSetupForm } from '@/components/onboarding/profile-setup-form';
 import type { ProfileResponse } from '@/lib/api/client';
 import { saveProfileSetupAction } from '@/lib/profile/actions';
 
+const mockPush = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
+    replace: vi.fn(),
+    back: vi.fn(),
+    refresh: vi.fn(),
+  }),
+}));
+
 vi.mock('@/lib/profile/actions', () => ({
   saveProfileSetupAction: vi.fn(),
 }));
@@ -49,12 +59,10 @@ function fillValidFields({
   fullName = 'Alice Rahman',
   role = 'Frontend Developer',
   level = 'mid',
-  hours = '2',
 }: {
   fullName?: string;
   role?: string;
   level?: string;
-  hours?: string;
 } = {}) {
   fireEvent.change(screen.getByLabelText(/full name/i), {
     target: { value: fullName },
@@ -64,9 +72,6 @@ function fillValidFields({
   });
   fireEvent.change(screen.getByLabelText(/experience level/i), {
     target: { value: level },
-  });
-  fireEvent.change(screen.getByLabelText(/preferred daily hours/i), {
-    target: { value: hours },
   });
 }
 
@@ -91,7 +96,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     const progressbar = screen.getByRole('progressbar', {
       name: /step 1 of 5/i,
     });
-    expect(progressbar).toHaveClass('px-6', 'py-5');
+    expect(progressbar.parentElement).toHaveClass('px-6', 'py-5');
     expect(progressbar).toHaveAttribute('aria-valuenow', '1');
     expect(progressbar).toHaveAttribute('aria-valuemin', '1');
     expect(progressbar).toHaveAttribute('aria-valuemax', '5');
@@ -102,7 +107,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(screen.getByText('2. Skills')).toHaveClass('mt-2.5');
     expect(screen.getByText('3. Preferences')).toBeInTheDocument();
     expect(screen.getByText('4. Career Goal')).toBeInTheDocument();
-    expect(screen.getByText('5. Confirm Level')).toBeInTheDocument();
+    expect(screen.getByText('5. Confirm Role')).toBeInTheDocument();
 
     const fullNameInput = screen.getByLabelText(/full name/i);
     expect(fullNameInput).toBeRequired();
@@ -168,32 +173,19 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(hiddenTz).not.toBeNull();
     expect(hiddenTz.value).toBeTruthy();
 
-    const hoursInput = screen.getByLabelText(/preferred daily hours/i);
-    expect(hoursInput).toBeRequired();
-
-    expect(screen.getByText('Skill Baseline')).toBeInTheDocument();
-    const noneSwitch = screen.getByRole('switch', {
-      name: /complete beginner/i,
-    });
-    expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
-    expect(noneSwitch).toBeDisabled();
-    expect(noneSwitch).not.toHaveAttribute('aria-describedby');
-    expect(noneSwitch.closest('div')).toHaveClass('min-h-11', 'rounded-md');
-    expect(noneSwitch.closest('div')).not.toHaveClass('rounded-xl');
     expect(
-      screen.queryByText(/starting from zero/i),
+      screen.queryByLabelText(/preferred daily hours/i),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText('Skill Baseline')).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/only available for beginner level/i),
+      screen.queryByRole('switch', { name: /complete beginner/i }),
     ).not.toBeInTheDocument();
 
-    // 4 core controls sit inside the 2x2 md:grid-cols-2 grid
+    // 2 core controls sit inside the md:grid-cols-2 grid
     const coreGrid = container.querySelector('.md\\:grid-cols-2');
     expect(coreGrid).not.toBeNull();
     expect(coreGrid).toContainElement(roleInput);
     expect(coreGrid).toContainElement(levelSelect);
-    expect(coreGrid).toContainElement(noneSwitch);
-    expect(coreGrid).toContainElement(hoursInput);
     expect(coreGrid).not.toContainElement(educationInput);
 
     const dashboardLink = screen.getByRole('link', { name: /go to dashboard/i });
@@ -204,12 +196,17 @@ describe('ProfileSetupForm (Screen 07)', () => {
       'rounded-lg',
     );
 
-    const nextSkillsButton = screen.getByRole('button', {
-      name: /next: skills/i,
+    expect(
+      screen.queryByRole('button', { name: /next: skills/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /next: skills/i }),
+    ).not.toBeInTheDocument();
+    const saveAndNextButton = screen.getByRole('button', {
+      name: /save & next/i,
     });
-    expect(nextSkillsButton).toBeDisabled();
-    expect(nextSkillsButton).toHaveAttribute('aria-disabled', 'true');
-    expect(nextSkillsButton).not.toHaveAttribute('aria-describedby');
+    expect(saveAndNextButton).toBeDisabled();
+    expect(saveAndNextButton).toHaveAttribute('type', 'submit');
 
     expect(screen.queryByText(/milestone m05/i)).not.toBeInTheDocument();
     expect(
@@ -226,11 +223,19 @@ describe('ProfileSetupForm (Screen 07)', () => {
     );
 
     const fullNameInput = screen.getByLabelText(/full name/i);
-    const submitBtn = screen.getByRole('button', { name: /save profile/i });
+    const submitBtn = screen.getByRole('button', { name: /save & next/i });
 
-    // Submit empty -> blocked client-side, error shown, aria-describedby points to error
+    fireEvent.change(screen.getByLabelText(/current role \/ profession/i), {
+      target: { value: 'Frontend Engineer' },
+    });
+    fireEvent.change(screen.getByLabelText(/experience level/i), {
+      target: { value: 'junior' },
+    });
+
+    // Empty Full Name keeps Save & Next disabled; programmatic submit still blocks with inline error
+    expect(submitBtn).toBeDisabled();
     await act(async () => {
-      fireEvent.click(submitBtn);
+      fireEvent.submit(fullNameInput.closest('form')!);
     });
     expect(saveProfileSetupAction).not.toHaveBeenCalled();
     expect(fullNameInput).toHaveAttribute('aria-invalid', 'true');
@@ -239,6 +244,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     // Editing clears existing error immediately without triggering new error on keystroke/blur
     fireEvent.change(fullNameInput, { target: { value: 'A' } });
+    expect(submitBtn).toBeEnabled();
     expect(screen.queryByText('Enter your full name.')).not.toBeInTheDocument();
     fireEvent.blur(fullNameInput);
     expect(
@@ -296,6 +302,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(screen.getByText('+88')).toBeInTheDocument();
 
     // Invalid BD prefix does not error while typing before submit
+    fillValidFields();
     fireEvent.change(phoneInput, { target: { value: '01234' } });
     expect(
       screen.queryByText(/enter a valid bangladesh mobile number/i),
@@ -303,7 +310,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     // Submitting displays phone validation error
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     });
     expect(
       screen.getByText(/enter a valid bangladesh mobile number/i),
@@ -357,12 +364,13 @@ describe('ProfileSetupForm (Screen 07)', () => {
     const emailInput = screen.getByLabelText(/email address/i);
     expect(emailInput).not.toHaveAttribute('readonly');
     expect(emailInput).toHaveAttribute('placeholder', 'Enter your email');
+    fillValidFields();
     fireEvent.change(emailInput, { target: { value: 'not-valid' } });
     fireEvent.blur(emailInput);
     expect(screen.queryByText('Enter a valid email address.')).not.toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     });
     expect(screen.getByText('Enter a valid email address.')).toBeInTheDocument();
 
@@ -373,47 +381,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(emailInput).not.toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('automatically turns OFF and disables Complete Beginner when changing experience level away from beginner', () => {
-    const { container } = render(
-      <ProfileSetupForm
-        initialProfile={EMPTY_PROFILE}
-        initialContact={EMAIL_CONTACT}
-      />,
-    );
-
-    const levelSelect = screen.getByLabelText(/experience level/i);
-    const noneSwitch = screen.getByRole('switch', {
-      name: /complete beginner/i,
-    });
-    const hiddenSkillsNone = container.querySelector(
-      'input[name="existing_skills_none"]',
-    ) as HTMLInputElement;
-
-    const noneLabel = screen.getByText('Complete Beginner');
-    expect(noneLabel).toHaveClass('text-slate-600', 'font-normal');
-
-    // Select beginner and turn ON
-    fireEvent.change(levelSelect, { target: { value: 'beginner' } });
-    expect(noneSwitch).not.toBeDisabled();
-    fireEvent.click(noneSwitch);
-    expect(noneSwitch).toHaveAttribute('aria-checked', 'true');
-    expect(hiddenSkillsNone.value).toBe('true');
-    expect(noneLabel).toHaveClass('text-teal-700', 'font-medium');
-
-    // Switch to junior -> auto-resets OFF and disables
-    fireEvent.change(levelSelect, { target: { value: 'junior' } });
-    expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
-    expect(noneSwitch).toBeDisabled();
-    expect(hiddenSkillsNone.value).toBe('false');
-    expect(noneLabel).toHaveClass('text-slate-600', 'font-normal');
-
-    // Switching back to beginner re-enables switch (stays OFF until user chooses)
-    fireEvent.change(levelSelect, { target: { value: 'beginner' } });
-    expect(noneSwitch).not.toBeDisabled();
-    expect(noneSwitch).toHaveAttribute('aria-checked', 'false');
-  });
-
-  it('rejects non-0.5 daily hours and >200 char education on submit (clearing on change) and falls back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
+  it('rejects >200 char education on submit (clearing on change) and falls back hidden timezone to Asia/Dhaka on invalid browser tz', async () => {
     const tzSpy = vi
       .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
       .mockReturnValue({
@@ -433,29 +401,17 @@ describe('ProfileSetupForm (Screen 07)', () => {
       ) as HTMLInputElement;
       expect(hiddenTz.value).toBe('Asia/Dhaka');
 
-      fillValidFields({
-        hours: '1.3',
-      });
+      fillValidFields();
 
-      const hoursInput = screen.getByLabelText(/preferred daily hours/i);
-      expect(
-        screen.queryByText(/0\.5 to 12 hours per day, in 0\.5 increments\./i),
-      ).not.toBeInTheDocument();
       const educationInput = screen.getByLabelText(/education \(optional\)/i);
 
       fireEvent.change(educationInput, { target: { value: 'x'.repeat(201) } });
       fireEvent.blur(educationInput);
-      fireEvent.blur(hoursInput);
       expect(
         screen.queryByText('Education must be 200 characters or fewer.'),
       ).not.toBeInTheDocument();
-      expect(
-        screen.queryByText(
-          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
-        ),
-      ).not.toBeInTheDocument();
 
-      const submitBtn = screen.getByRole('button', { name: /save profile/i });
+      const submitBtn = screen.getByRole('button', { name: /save & next/i });
       await act(async () => {
         fireEvent.click(submitBtn);
       });
@@ -463,40 +419,18 @@ describe('ProfileSetupForm (Screen 07)', () => {
       expect(
         screen.getByText('Education must be 200 characters or fewer.'),
       ).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
-        ),
-      ).toBeInTheDocument();
 
-      // Editing clears both errors immediately
+      // Editing clears error immediately
       fireEvent.change(educationInput, { target: { value: 'BSc' } });
       expect(
         screen.queryByText('Education must be 200 characters or fewer.'),
       ).not.toBeInTheDocument();
-
-      fireEvent.change(hoursInput, { target: { value: '12.5' } });
-      expect(
-        screen.queryByText(
-          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
-        ),
-      ).not.toBeInTheDocument();
-
-      await act(async () => {
-        fireEvent.click(submitBtn);
-      });
-      expect(saveProfileSetupAction).not.toHaveBeenCalled();
-      expect(
-        screen.getByText(
-          'Enter daily study hours between 0.5 and 12 in 0.5 increments.',
-        ),
-      ).toBeInTheDocument();
     } finally {
       tzSpy.mockRestore();
     }
   });
 
-  it('populates stored profile values and displays preserved skills when present', () => {
+  it('populates stored profile values and preserves hidden daily hours', () => {
     const storedProfile: ProfileResponse = {
       ...EMPTY_PROFILE,
       current_role: 'Frontend Developer',
@@ -536,8 +470,13 @@ describe('ProfileSetupForm (Screen 07)', () => {
       'input[type="hidden"][name="timezone"]',
     ) as HTMLInputElement;
     expect(hiddenTz.value).toBe('Asia/Dhaka');
-    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(2.5);
-    expect(screen.getByText(/React/)).toBeInTheDocument();
+    const hiddenHours = container.querySelector(
+      'input[name="preferred_daily_hours"]',
+    );
+    expect(hiddenHours).toBeNull();
+    expect(
+      screen.queryByLabelText(/preferred daily hours/i),
+    ).not.toBeInTheDocument();
   });
 
   it('never overwrites verified email or phone from server props with empty/stale draft values', () => {
@@ -578,7 +517,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(screen.getByLabelText(/phone number/i)).toHaveValue('01712345678');
   });
 
-  it('toggles explicit beginner None switch and persists unsaved draft in sessionStorage', () => {
+  it('persists unsaved draft in sessionStorage on field edits', () => {
     render(
       <ProfileSetupForm
         initialProfile={EMPTY_PROFILE}
@@ -597,12 +536,6 @@ describe('ProfileSetupForm (Screen 07)', () => {
       target: { value: 'beginner' },
     });
 
-    const noneSwitch = screen.getByRole('switch', {
-      name: /complete beginner/i,
-    });
-    fireEvent.click(noneSwitch);
-    expect(noneSwitch).toHaveAttribute('aria-checked', 'true');
-
     const rawDraft = window.sessionStorage.getItem(
       'mentor_onboarding_profile_draft:user-draft',
     );
@@ -611,7 +544,6 @@ describe('ProfileSetupForm (Screen 07)', () => {
     expect(parsedDraft.full_name).toBe('CS Student Name');
     expect(parsedDraft.current_role).toBe('CS Student');
     expect(parsedDraft.experience_level).toBe('beginner');
-    expect(parsedDraft.existing_skills_none).toBe(true);
   });
 
   it('preserves user draft and renders warning alert when initial GET /profile fails', () => {
@@ -622,7 +554,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
         current_role: 'Self-Taught Learner',
         education: '',
         experience_level: 'beginner',
-        existing_skills_none: true,
+        existing_skills_none: false,
         timezone: 'Asia/Dhaka',
         preferred_daily_hours: '1.5',
       }),
@@ -643,9 +575,6 @@ describe('ProfileSetupForm (Screen 07)', () => {
       'Self-Taught Learner',
     );
     expect(screen.getByLabelText(/experience level/i)).toHaveValue('beginner');
-    expect(
-      screen.getByRole('switch', { name: /complete beginner/i }),
-    ).toHaveAttribute('aria-checked', 'true');
   });
 
   it('performs SSR-safe initial render followed by mount useEffect draft restoration and browser timezone detection', () => {
@@ -693,7 +622,6 @@ describe('ProfileSetupForm (Screen 07)', () => {
         'input[type="hidden"][name="timezone"]',
       ) as HTMLInputElement;
       expect(hiddenTz.value).toBe('Europe/London');
-      expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3);
     } finally {
       tzSpy.mockRestore();
     }
@@ -716,7 +644,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     fillValidFields();
 
-    const submitBtn = screen.getByRole('button', { name: /save profile/i });
+    const submitBtn = screen.getByRole('button', { name: /save & next/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
@@ -765,7 +693,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     );
     fillValidFields();
 
-    const submitBtn = screen.getByRole('button', { name: /save profile/i });
+    const submitBtn = screen.getByRole('button', { name: /save & next/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
@@ -776,7 +704,8 @@ describe('ProfileSetupForm (Screen 07)', () => {
       resolveSubmit({ success: true, message: 'Profile saved successfully.' });
     });
 
-    expect(screen.getByRole('button', { name: /save profile/i })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /save & next/i })).not.toBeDisabled();
+    expect(mockPush).toHaveBeenCalledWith('/onboarding');
   });
 
   it('rejects and clears a sessionStorage draft belonging to a different user_id (account isolation)', () => {
@@ -870,6 +799,10 @@ describe('ProfileSetupForm (Screen 07)', () => {
         'input[type="hidden"][name="timezone"]',
       ) as HTMLInputElement;
       expect(hiddenTz.value).toBe('Asia/Tokyo');
+      const hiddenHours = container.querySelector(
+        'input[name="preferred_daily_hours"]',
+      );
+      expect(hiddenHours).toBeNull();
     } finally {
       tzSpy.mockRestore();
     }
@@ -902,7 +835,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     fillValidFields({ role: 'Full Stack Engineer', level: 'beginner' });
 
-    const submitBtn = screen.getByRole('button', { name: /save profile/i });
+    const submitBtn = screen.getByRole('button', { name: /save & next/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
@@ -953,54 +886,12 @@ describe('ProfileSetupForm (Screen 07)', () => {
     });
     expect(screen.getByText('Profile saved.')).toBeInTheDocument();
 
-    const noneSwitch = screen.getByRole('switch', {
-      name: /complete beginner/i,
+    fireEvent.change(screen.getByLabelText(/experience level/i), {
+      target: { value: 'junior' },
     });
-    fireEvent.click(noneSwitch);
     expect(
       screen.queryByText('Profile saved.'),
     ).not.toBeInTheDocument();
-  });
-
-  it('reflects updated state.profile for stored skills indicator even on partial failure', async () => {
-    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
-      error: 'Unable to reach the server. Please try again.',
-      retryable: true,
-      profile: {
-        ...EMPTY_PROFILE,
-        existing_skills: [
-          {
-            skill_id: 'skill-ts',
-            name: 'TypeScript',
-            alias_resolved: true,
-            learning_state: 'learning',
-            source: 'self_reported',
-          },
-        ],
-        existing_skills_none: false,
-      },
-    });
-
-    render(
-      <ProfileSetupForm
-        initialProfile={EMPTY_PROFILE}
-        initialContact={EMAIL_CONTACT}
-        userId="user-partial-profile"
-      />,
-    );
-
-    expect(screen.queryByText(/TypeScript/)).not.toBeInTheDocument();
-    fillValidFields({ role: 'Platform Engineer' });
-
-    const submitBtn = screen.getByRole('button', { name: /save profile/i });
-    await act(async () => {
-      fireEvent.click(submitBtn);
-    });
-
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      /unable to reach the server/i,
-    );
-    expect(screen.getByText(/TypeScript/)).toBeInTheDocument();
   });
 
   it('reconciles controlled form inputs with state.values upon successful save and cleared education', async () => {
@@ -1046,7 +937,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
     fireEvent.change(educationInput, { target: { value: '' } });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     });
 
     expect(screen.getByLabelText(/full name/i)).toHaveValue('Senior Alice');
@@ -1060,10 +951,9 @@ describe('ProfileSetupForm (Screen 07)', () => {
       'input[type="hidden"][name="timezone"]',
     ) as HTMLInputElement;
     expect(hiddenTz.value).toBe('UTC');
-    expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(4);
   });
 
-  it('preserves skillsNoneTouched and education_touched across reload without overwriting server education from an untouched blank draft', () => {
+  it('preserves education_touched across reload without overwriting server education from an untouched blank draft', () => {
     const profileWithEducation: ProfileResponse = {
       ...EMPTY_PROFILE,
       current_role: 'Backend Engineer',
@@ -1076,14 +966,13 @@ describe('ProfileSetupForm (Screen 07)', () => {
       'mentor_onboarding_profile_draft:user-edu-touched',
       JSON.stringify({
         user_id: 'user-edu-touched',
-        skills_none_touched: true,
         education_touched: false,
         values: {
           full_name: 'Backend Alice',
           current_role: 'Senior Backend Engineer',
           education: '',
           experience_level: 'beginner',
-          existing_skills_none: true,
+          existing_skills_none: false,
           timezone: 'Asia/Dhaka',
           preferred_daily_hours: '2.5',
         },
@@ -1101,17 +990,9 @@ describe('ProfileSetupForm (Screen 07)', () => {
     const educationInput = screen.getByLabelText(/education \(optional\)/i);
     const getEduTouched = (root: HTMLElement) =>
       root.querySelector('input[name="education_touched"]') as HTMLInputElement;
-    const getSkillsTouched = (root: HTMLElement) =>
-      root.querySelector(
-        'input[name="existing_skills_none_touched"]',
-      ) as HTMLInputElement;
 
     expect(educationInput).toHaveValue('BSc in Software Engineering');
     expect(getEduTouched(container)).toHaveValue('false');
-    expect(getSkillsTouched(container)).toHaveValue('true');
-    expect(
-      screen.getByRole('switch', { name: /complete beginner/i }),
-    ).toHaveAttribute('aria-checked', 'true');
 
     // Explicit clear marks education_touched = true and persists across remount
     fireEvent.change(educationInput, { target: { value: '' } });
@@ -1147,9 +1028,11 @@ describe('ProfileSetupForm (Screen 07)', () => {
     );
 
     fillValidFields();
+    const submitBtn = screen.getByRole('button', { name: /save & next/i });
+    expect(submitBtn).toBeDisabled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.submit(submitBtn.closest('form')!);
     });
 
     expect(saveProfileSetupAction).not.toHaveBeenCalled();
@@ -1157,9 +1040,10 @@ describe('ProfileSetupForm (Screen 07)', () => {
       screen.getByText('Enter a valid email address or phone number.'),
     ).toBeInTheDocument();
 
-    // Entering a valid phone clears the missing-contact error
+    // Entering a valid phone clears the missing-contact error and enables Save & Next
     const phoneInput = screen.getByLabelText(/phone number/i);
     fireEvent.change(phoneInput, { target: { value: '01712345678' } });
+    expect(submitBtn).toBeEnabled();
     expect(
       screen.queryByText('Enter a valid email address or phone number.'),
     ).not.toBeInTheDocument();
@@ -1306,7 +1190,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     fillValidFields({ fullName: 'Saved Alice', role: 'Saved Role' });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     });
     expect(screen.getByText('Profile saved.')).toBeInTheDocument();
 
@@ -1386,10 +1270,9 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     fillValidFields({ fullName: 'User A Saved', role: 'User A Saved Role' });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     });
     expect(screen.getByText('Profile saved.')).toBeInTheDocument();
-    expect(screen.getByText(/GoLang/)).toBeInTheDocument();
 
     // Switching userId unmounts User A's keyed inner form, discarding prior useActionState
     rerender(
@@ -1407,7 +1290,6 @@ describe('ProfileSetupForm (Screen 07)', () => {
     );
 
     expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
-    expect(screen.queryByText(/GoLang/)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/full name/i)).toHaveValue('User B');
     expect(screen.getByLabelText(/current role \/ profession/i)).toHaveValue('');
     expect(screen.getByLabelText(/email address/i)).toHaveValue('b@example.com');
@@ -1430,7 +1312,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
       fillValidFields();
 
       await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+        fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
       });
 
       expect(screen.getByText('Profile saved.')).toBeInTheDocument();
@@ -1472,7 +1354,7 @@ describe('ProfileSetupForm (Screen 07)', () => {
 
     fillValidFields({ fullName: 'User A Original', role: 'Backend Dev' });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save profile/i }));
+      fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     });
     expect(saveProfileSetupAction).toHaveBeenCalledTimes(1);
 
@@ -1530,5 +1412,176 @@ describe('ProfileSetupForm (Screen 07)', () => {
       'Staff Systems Architect',
     );
     expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
+  });
+
+  it('preserves existing_skills_none=true for returning beginners after editing full name without sending preferred_daily_hours', async () => {
+    const beginnerProfile: ProfileResponse = {
+      ...EMPTY_PROFILE,
+      current_role: 'Student',
+      experience_level: 'beginner',
+      existing_skills: [],
+      existing_skills_none: true,
+      preferred_daily_hours: 6,
+    };
+    const onSuccess = vi.fn();
+    let submittedFormData: FormData | null = null;
+    vi.mocked(saveProfileSetupAction).mockImplementationOnce(
+      async (_prev, formData) => {
+        submittedFormData = formData;
+        return {
+          success: true,
+          message: 'Profile saved successfully.',
+          profile: beginnerProfile,
+          values: {
+            full_name: 'Alice Updated',
+            email: 'alice@example.com',
+            phone: '',
+            current_role: 'Student',
+            education: '',
+            experience_level: 'beginner',
+            existing_skills_none: true,
+            timezone: 'Asia/Dhaka',
+            preferred_daily_hours: '6',
+          },
+        };
+      },
+    );
+
+    render(
+      <ProfileSetupForm
+        mode="standalone"
+        initialProfile={beginnerProfile}
+        initialContact={EMAIL_CONTACT}
+        initialFullName="Alice"
+        userId="beginner-user"
+        onSuccess={onSuccess}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/full name/i), {
+      target: { value: 'Alice Updated' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    });
+
+    expect(submittedFormData).not.toBeNull();
+    expect(submittedFormData!.get('preferred_daily_hours')).toBeNull();
+    expect(submittedFormData!.get('existing_skills_none')).toBeNull();
+    expect(onSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({ existing_skills_none: true }),
+        values: expect.objectContaining({ existing_skills_none: true }),
+      }),
+    );
+  });
+
+  it('updates dirty baseline ONLY for server-committed fields on partial save error while preserving user inputs for retry', async () => {
+    const initialProfile: ProfileResponse = {
+      ...EMPTY_PROFILE,
+      current_role: 'Junior Dev',
+      experience_level: 'junior',
+    };
+    const committedProfile: ProfileResponse = {
+      ...initialProfile,
+      current_role: 'Senior Dev',
+      experience_level: 'senior',
+    };
+
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      error:
+        'Your role and study schedule were saved, but we could not save your name or contact details. Please try again.',
+      retryable: true,
+      profile: committedProfile,
+      values: {
+        full_name: 'Alice New Name',
+        email: 'alice@example.com',
+        phone: '',
+        current_role: 'Senior Dev',
+        education: '',
+        experience_level: 'senior',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '',
+      },
+    });
+
+    render(
+      <ProfileSetupForm
+        mode="standalone"
+        initialProfile={initialProfile}
+        initialContact={EMAIL_CONTACT}
+        initialFullName="Alice Old"
+        userId="partial-user"
+      />,
+    );
+
+    const nameInput = screen.getByLabelText(/full name/i);
+    const roleInput = screen.getByLabelText(/current role \/ profession/i);
+    const levelSelect = screen.getByLabelText(/experience level/i);
+    const saveBtn = screen.getByRole('button', { name: /save changes/i });
+
+    expect(saveBtn).toBeDisabled();
+    fireEvent.change(nameInput, { target: { value: 'Alice New Name' } });
+    fireEvent.change(roleInput, { target: { value: 'Senior Dev' } });
+    fireEvent.change(levelSelect, { target: { value: 'senior' } });
+    expect(saveBtn).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    // Error alert shown, all user inputs preserved, and Save Changes remains enabled to retry failed metadata write
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not save your name/i);
+    expect(nameInput).toHaveValue('Alice New Name');
+    expect(roleInput).toHaveValue('Senior Dev');
+    expect(saveBtn).toBeEnabled();
+
+    // Even if full_name is reverted, Save Changes stays enabled until the metadata retry succeeds
+    fireEvent.change(nameInput, { target: { value: 'Alice Old' } });
+    expect(saveBtn).toBeEnabled();
+
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      profile: committedProfile,
+      values: {
+        full_name: 'Alice Old',
+        email: 'alice@example.com',
+        phone: '',
+        current_role: 'Senior Dev',
+        education: '',
+        experience_level: 'senior',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '',
+      },
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+    expect(saveBtn).toBeDisabled();
+  });
+
+  it('shows a visible helper note when both email and phone are blank without marking both inputs required', () => {
+    render(
+      <ProfileSetupForm
+        initialProfile={EMPTY_PROFILE}
+        initialContact={{ email: '', emailVerified: false, phone: '', phoneVerified: false }}
+        userId="no-contact-user"
+      />,
+    );
+
+    const emailInput = screen.getByLabelText(/email address/i);
+    const phoneInput = screen.getByLabelText(/phone number/i);
+    expect(emailInput).not.toBeRequired();
+    expect(phoneInput).not.toBeRequired();
+    expect(
+      screen.getByText('Provide at least one contact method (email or phone).'),
+    ).toBeInTheDocument();
+
+    fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
+    expect(
+      screen.queryByText('Provide at least one contact method (email or phone).'),
+    ).not.toBeInTheDocument();
   });
 });

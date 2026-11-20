@@ -227,7 +227,7 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
       expect(aiExecuteMock).toHaveBeenCalledTimes(1);
       const aiReq = aiExecuteMock.mock.calls[0][0] as AIRequestDTO;
       expect(aiReq.task).toBe('goal_interpretation');
-      expect(aiReq.budget.timeout_ms).toBeLessThanOrEqual(10_000);
+      expect(aiReq.budget.timeout_ms).toBe(25_000);
       expect(aiReq.untrusted_inputs).toEqual([
         'Backend developer, mainly Node.js',
       ]);
@@ -502,7 +502,7 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
           return true;
         },
       );
-      await vi.advanceTimersByTimeAsync(9_600);
+      await vi.advanceTimersByTimeAsync(25_100);
       await stalledExpectation;
       vi.useRealTimers();
 
@@ -1416,11 +1416,11 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
           goal_text: 'Stale concurrent patch attempt',
         }),
       ).rejects.toSatisfy((err) => {
-        expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
+        expectContractError(err, 409, 'STALE_VERSION');
         return true;
       });
 
-      // Concurrent same-text PATCH where proposed_role_id / alternative_role_ids changed while AI was running -> 409 INVALID_STATE_TRANSITION & 0 UPDATEs
+      // Concurrent same-text PATCH where proposed_role_id / alternative_role_ids changed while AI was running -> 409 STALE_VERSION & 0 UPDATEs
       const sameTextPreflight = {
         id: GOAL_1,
         user_id: USER_A,
@@ -1466,7 +1466,7 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
           goal_text: 'Backend engineer with distributed systems',
         }),
       ).rejects.toSatisfy((err) => {
-        expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
+        expectContractError(err, 409, 'STALE_VERSION');
         return true;
       });
       expect(updateExecuted).toBe(false);
@@ -1593,6 +1593,131 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
           return true;
         },
       );
+    });
+  });
+
+  describe('Partial catalog alternative filtering', () => {
+    it('drops unavailable alternative roles when the primary role matches an approved catalog role', async () => {
+      const partialCatalog = [
+        {
+          id: ROLE_BACKEND,
+          slug: 'backend-development',
+          name: 'Backend Development',
+          aliases: [],
+        },
+        {
+          id: ROLE_FULLSTACK,
+          slug: 'full-stack-development',
+          name: 'Full-Stack Development',
+          aliases: [],
+        },
+      ];
+
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: {
+            canonicalRoleId: ROLE_BACKEND,
+            name: 'Backend Development',
+          },
+          alternativeRoles: [
+            {
+              canonicalRoleId: ROLE_FULLSTACK,
+              name: 'Full-Stack Development',
+              matchReason: 'Overlapping API skills.',
+            },
+            {
+              canonicalRoleId: '99999999-9999-4999-8999-999999999999',
+              name: 'Mobile Development',
+              matchReason: 'Unavailable in partial catalog.',
+            },
+          ],
+          suggestedLevel: 'junior',
+        }),
+      );
+
+      let insertedAltIds: string[] = [];
+      queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('AS active_count')) {
+          return [{ active_count: 0 }];
+        }
+        if (sql.includes('FROM public.career_roles') && !sql.includes('ANY(')) {
+          return partialCatalog;
+        }
+        if (sql.includes('INSERT INTO public.career_goals')) {
+          insertedAltIds = (params?.[7] as string[]) ?? [];
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: 'Backend developer for game studios',
+              status: 'awaiting_confirmation',
+              clarification_round: 0,
+              clarification_question: null,
+              clarifications: params?.[5] ? JSON.parse(String(params[5])) : [],
+              proposed_role_id: params?.[6],
+              role_name: 'Backend Development',
+              alternative_role_ids: insertedAltIds,
+              suggested_level: params?.[8],
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.career_goals g')) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: 'Backend developer for game studios',
+              status: 'awaiting_confirmation',
+              clarification_round: 0,
+              clarification_question: null,
+              proposed_role_id: ROLE_BACKEND,
+              role_name: 'Backend Development',
+              alternative_role_ids: insertedAltIds,
+              suggested_level: 'junior',
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (
+          sql.includes('FROM public.career_roles') &&
+          sql.includes('id = ANY($1::uuid[])')
+        ) {
+          return [
+            {
+              canonical_role_id: ROLE_FULLSTACK,
+              name: 'Full-Stack Development',
+            },
+          ];
+        }
+        return [];
+      });
+
+      const created = await service.createGoal(USER_A, {
+        goal_text: 'Backend developer for game studios',
+      });
+
+      expect(insertedAltIds).toEqual([ROLE_FULLSTACK]);
+      expect(created.proposed_role).toEqual({
+        canonical_role_id: ROLE_BACKEND,
+        name: 'Backend Development',
+      });
+      expect(created.alternative_roles).toEqual([
+        {
+          canonical_role_id: ROLE_FULLSTACK,
+          name: 'Full-Stack Development',
+          rationale: 'Overlapping API skills.',
+        },
+      ]);
     });
   });
 });

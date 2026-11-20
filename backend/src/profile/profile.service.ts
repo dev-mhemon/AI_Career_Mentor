@@ -202,13 +202,20 @@ export class ProfileService {
             },
           ]);
         }
+        const nextExperienceLevel =
+          input.experience_level ?? old.experience_level;
+        const leftBeginner =
+          old.experience_level === 'beginner' &&
+          nextExperienceLevel !== 'beginner';
         const none =
           skillIds.length > 0
             ? false
             : (input.existing_skills_none ??
               (input.existing_skills !== undefined
                 ? false
-                : Boolean(old.existing_skills_none)));
+                : leftBeginner
+                  ? false
+                  : Boolean(old.existing_skills_none)));
         const educationInput = input.education ?? input.education_level;
         const education =
           educationInput !== undefined
@@ -222,7 +229,7 @@ export class ProfileService {
             id,
             input.current_role ?? old.current_role_title,
             education,
-            input.experience_level ?? old.experience_level,
+            nextExperienceLevel,
             skillIds,
             none,
           ],

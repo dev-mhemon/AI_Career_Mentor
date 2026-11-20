@@ -185,6 +185,11 @@ function validateRoadmap(raw: Record<string, unknown>): void {
     if (!Array.isArray(phase.milestones) || !Array.isArray(phase.items)) {
       validationFail();
     }
+    for (const rawMilestone of phase.milestones) {
+      const milestone = asRecord(rawMilestone);
+      asNonEmptyString(milestone.id, 128);
+      asNonEmptyString(milestone.title, 300);
+    }
     for (const rawItem of phase.items) {
       const item = asRecord(rawItem);
       asNonEmptyString(item.topic_id, 128);
@@ -238,6 +243,14 @@ function validateRoadmap(raw: Record<string, unknown>): void {
   if (!Array.isArray(raw.level_outline) || !Array.isArray(raw.warnings)) {
     validationFail();
   }
+  for (const rawOutline of raw.level_outline) {
+    const outline = asRecord(rawOutline);
+    if (!isEnumValue(CAREER_LEVELS, outline.career_level)) {
+      validationFail();
+    }
+    asStringArray(outline.outline);
+  }
+  asStringArray(raw.warnings);
   const guardrail = asRecord(raw.size_guardrail);
   if (
     typeof guardrail.active_topic_count !== 'number' ||

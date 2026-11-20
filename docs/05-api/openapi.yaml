@@ -1,14 +1,16 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Durable Jobs & AI Gateway Contract (M04-02)
-  version: 0.2.0
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs & AI Gateway Contract (M05-02)
+  version: 0.3.0
   description: >-
-    Synchronized through M04-02, 2026-11-19. Derived from adopted C05 v1.5.1. Source baseline:
+    Synchronized through M05-02, 2026-11-19. Derived from adopted C05 v1.5.1. Source baseline:
     eda14c57c1fae7f65a69802b05a1c4472321c56c. Canonical auth operations (EP-A01..EP-A13), account deletion and
-    retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), durable asynchronous job polling (EP-J01
-    GET /api/v1/jobs/{id}), Redis 24h H-IDEM Replay Controls with R14 Loss-Epoch Fail-Closed Barrier
-    (IdempotencyService), durable Postgres FOR UPDATE SKIP LOCKED job producer/consumer/reaper (R12, R13, ADR-017),
-    and internal-only AI Gateway contracts (ADR-008, C08) are documented here.
+    retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
+    (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
+    (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
+    Replay Controls with R14 Loss-Epoch Fail-Closed Barrier (IdempotencyService), durable Postgres FOR UPDATE SKIP
+    LOCKED job producer/consumer/reaper (R12, R13, ADR-017), and internal-only AI Gateway contracts (ADR-008, C08)
+    are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -16,9 +18,13 @@ tags:
     description: C05 14.1 subset; shared DTOs preserve later phone/OAuth requirements.
   - name: Account
     description: C05 14.2 Account API (EP-X01, EP-X02); account deletion request scheduling, DeletionReceipt authority, and status lookup.
+  - name: Profile
+    description: C05 14.3 Profile API (EP-P01..EP-P05); background, existing skills / explicit beginner None (R07), learning preferences, timezone/hours, and user-scoped skill alias interpretation (ADR-019).
+  - name: Career Goals
+    description: C05 14.4 Career Goal API (EP-C01..EP-C07); free-text technology career goal submission, synchronous AI goal interpretation, up to 2 clarification rounds, canonical role & career level confirmation (R07, R29), and goal discontinuation with roadmap archival.
   - name: Jobs
     description: C05 14.13 Jobs API (EP-J01 GET /api/v1/jobs/{id}); authenticated owner job status polling (Gate none).
-x-source: API-Specification.md sections 13, 13.6, 14.1, 14.2, 14.13, 15.1-2, 15.12, 16, 17.1 and accepted R05/R06/R12/R13/R14/R18/R24/R26/R31/R35
+x-source: API-Specification.md sections 13, 13.6, 14.1, 14.2, 14.3, 14.4, 14.13, 15.1-4, 15.12, 16, 17.1 and accepted R05/R06/R07/R12/R13/R14/R18/R24/R26/R29/R31/R35
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -2157,6 +2163,1126 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
             - SERVICE_UNAVAILABLE
+  /profile:
+    get:
+      operationId: EP-P01
+      tags:
+        - Profile
+      summary: Get authenticated user profile and completeness
+      description: >-
+        C05 EP-P01 (GET /api/v1/profile). Loads the authenticated caller's profile background, self-reported
+        skills, explicit beginner None flag (R07), learning preference, preferred daily hours, timezone,
+        active career goal IDs, and derived profile completeness state (Gate none).
+      x-source: API-Specification.md sections 14.3, 15.3; accepted R07/R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: C05 EP-P01 success; returns ProfileResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+    patch:
+      operationId: EP-P02
+      tags:
+        - Profile
+      summary: Update profile background and existing skills
+      description: >-
+        C05 EP-P02 (PATCH /api/v1/profile). Partial update of current_role, education, experience_level,
+        existing_skills (<= 100 items, each <= 80 Unicode code points), and existing_skills_none (R07).
+        Rejects existing_skills_none=true combined with non-empty existing_skills (422 VALIDATION_FAILED).
+        Resolves skill names against canonical skills, approved skill_aliases, and caller-owned
+        user_skill_aliases; returns uncertain aliases in unresolved_skills[] (R29). Initializes level-scoped
+        skill_progress only across confirmed career goal levels while preserving stronger evidence (R07).
+      x-source: API-Specification.md sections 14.3, 15.3; accepted R07/R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateDTO'
+      responses:
+        '200':
+          description: C05 EP-P02 success; returns ProfileResponseDTO envelope including unresolved_skills.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+  /profile/preferences:
+    patch:
+      operationId: EP-P03
+      tags:
+        - Profile
+      summary: Update learning preference
+      description: >-
+        C05 EP-P03 (PATCH /api/v1/profile/preferences). Updates user_preferences.learning_preference
+        (reading | hands_on | visual | mixed) and returns the updated ProfileResponseDTO.
+      x-source: API-Specification.md sections 14.3, 15.3
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePreferencesDTO'
+      responses:
+        '200':
+          description: C05 EP-P03 success; returns ProfileResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+  /profile/learning-settings:
+    patch:
+      operationId: EP-P04
+      tags:
+        - Profile
+      summary: Update timezone and preferred daily learning hours
+      description: >-
+        C05 EP-P04 (PATCH /api/v1/profile/learning-settings). Updates IANA timezone and/or
+        preferred_daily_hours (0.5..12.0 in 0.5-hour increments). Changing hours does not automatically
+        rebuild any Daily Plan.
+      x-source: API-Specification.md sections 14.3, 15.3
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LearningSettingsDTO'
+      responses:
+        '200':
+          description: C05 EP-P04 success; returns ProfileResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '422':
+          description: VALIDATION_FAILED, INVALID_TIMEZONE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_TIMEZONE
+  /profile/skill-alias-interpretations:
+    post:
+      operationId: EP-P05
+      tags:
+        - Profile
+      summary: Resolve an uncertain skill alias for the authenticated user
+      description: >-
+        C05 EP-P05 (POST /api/v1/profile/skill-alias-interpretations). Atomically upserts a user-scoped
+        alias mapping into public.user_skill_aliases (never auto-promoted globally, ADR-019), appends
+        skill_id to user_profiles.self_reported_skill_ids, sets existing_skills_none = false, and initializes
+        level-scoped skill_progress across confirmed career goal levels (R07).
+      x-source: API-Specification.md sections 14.3, 15.3; accepted R07/ADR-019
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillAliasInterpretationDTO'
+      responses:
+        '201':
+          description: C05 EP-P05 success; returns SkillAliasInterpretationResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillAliasInterpretationResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: SKILL_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - SKILL_NOT_FOUND
+        '422':
+          description: VALIDATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+  /career/goals:
+    post:
+      operationId: EP-C01
+      tags:
+        - Career Goals
+      summary: Create career goal and run synchronous AI interpretation
+      description: >-
+        C05 EP-C01 (POST /api/v1/career/goals). Submits free-text technology career goal (3..300 Unicode code
+        points) and runs synchronous AI interpretation (goal_interpretation, < 10s budget) outside DB
+        transactions. Rejects non-technology goals with 422 OUT_OF_SCOPE_GOAL and enforces < 3 active goals/roadmaps
+        (409 ROADMAP_LIMIT_REACHED).
+      x-source: API-Specification.md sections 14.4, 15.4; accepted R07/R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CareerGoalCreateDTO'
+      responses:
+        '201':
+          description: C05 EP-C01 success; returns CareerGoalResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerGoalResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '409':
+          description: ROADMAP_LIMIT_REACHED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ROADMAP_LIMIT_REACHED
+        '422':
+          description: VALIDATION_FAILED, OUT_OF_SCOPE_GOAL
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - OUT_OF_SCOPE_GOAL
+        '502':
+          description: AI_SERVICE_ERROR, AI_VALIDATION_FAILED, AI_GENERATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_SERVICE_ERROR
+            - AI_VALIDATION_FAILED
+            - AI_GENERATION_FAILED
+        '503':
+          description: AI_BUDGET_EXHAUSTED, SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_BUDGET_EXHAUSTED
+            - SERVICE_UNAVAILABLE
+        '504':
+          description: AI_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_TIMEOUT
+    get:
+      operationId: EP-C02
+      tags:
+        - Career Goals
+      summary: List authenticated user career goals
+      description: >-
+        C05 EP-C02 (GET /api/v1/career/goals). Lists the authenticated caller's career goals with optional
+        status filter and cursor pagination (PageMetaDTO). Gate none so goals remain readable when generation
+        flags are disabled.
+      x-source: API-Specification.md sections 14.4, 15.4; accepted R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/GoalStatus'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-C02 success; returns array of CareerGoalResponseDTO plus top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerGoalListResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '422':
+          description: INVALID_ENUM_VALUE, VALIDATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_ENUM_VALUE
+            - VALIDATION_FAILED
+  /career/goals/{id}:
+    get:
+      operationId: EP-C03
+      tags:
+        - Career Goals
+      summary: Get single career goal by ID
+      description: >-
+        C05 EP-C03 (GET /api/v1/career/goals/{id}). Returns a single career goal owned by the authenticated
+        caller (Gate none). Foreign or missing goal IDs return 404 RESOURCE_NOT_FOUND.
+      x-source: API-Specification.md sections 14.4, 15.4; accepted R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-C03 success; returns CareerGoalResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerGoalResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESOURCE_NOT_FOUND
+    patch:
+      operationId: EP-C06
+      tags:
+        - Career Goals
+      summary: Edit unconfirmed career goal text
+      description: >-
+        C05 EP-C06 (PATCH /api/v1/career/goals/{id}). Rewords an unconfirmed career goal, resets
+        clarification rounds, and re-interprets via AI Gateway. Confirmed goals cannot be edited
+        (409 GOAL_ALREADY_CONFIRMED).
+      x-source: API-Specification.md sections 14.4, 15.4; accepted R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CareerGoalCreateDTO'
+      responses:
+        '200':
+          description: C05 EP-C06 success; returns re-interpreted CareerGoalResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerGoalResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESOURCE_NOT_FOUND
+        '409':
+          description: GOAL_ALREADY_CONFIRMED, INVALID_STATE_TRANSITION, STALE_VERSION
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - GOAL_ALREADY_CONFIRMED
+            - INVALID_STATE_TRANSITION
+            - STALE_VERSION
+        '422':
+          description: VALIDATION_FAILED, OUT_OF_SCOPE_GOAL
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - OUT_OF_SCOPE_GOAL
+        '502':
+          description: AI_SERVICE_ERROR, AI_VALIDATION_FAILED, AI_GENERATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_SERVICE_ERROR
+            - AI_VALIDATION_FAILED
+            - AI_GENERATION_FAILED
+        '504':
+          description: AI_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_TIMEOUT
+    delete:
+      operationId: EP-C07
+      tags:
+        - Career Goals
+      summary: Discontinue career goal and archive linked roadmap
+      description: >-
+        C05 EP-C07 (DELETE /api/v1/career/goals/{id}). Discontinues a career goal (Gate none), archives any
+        linked non-archived roadmap, safely clears is_focus=false before promoting a replacement locked
+        roadmap to Focus, and preserves all historical evidence and skill progress (PRD §22).
+      x-source: API-Specification.md sections 14.4, 15.4
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-C07 success; returns DiscontinueCareerGoalResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscontinueCareerGoalResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESOURCE_NOT_FOUND
+  /career/goals/{id}/clarifications:
+    post:
+      operationId: EP-C04
+      tags:
+        - Career Goals
+      summary: Submit answer to AI goal clarification question
+      description: >-
+        C05 EP-C04 (POST /api/v1/career/goals/{id}/clarifications). Submits an answer (1..300 Unicode code
+        points) for a goal in status 'clarifying' (up to 2 rounds). After round 2, coerces status to
+        'awaiting_confirmation' with the AI's best supported canonical role proposal (PRD §15).
+      x-source: API-Specification.md sections 14.4, 15.4; accepted R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoalClarificationDTO'
+      responses:
+        '200':
+          description: C05 EP-C04 success; returns updated CareerGoalResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerGoalResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESOURCE_NOT_FOUND
+        '409':
+          description: INVALID_STATE_TRANSITION, CLARIFICATION_LIMIT_REACHED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_STATE_TRANSITION
+            - CLARIFICATION_LIMIT_REACHED
+        '422':
+          description: VALIDATION_FAILED, OUT_OF_SCOPE_GOAL
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - OUT_OF_SCOPE_GOAL
+        '502':
+          description: AI_SERVICE_ERROR, AI_VALIDATION_FAILED, AI_GENERATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_SERVICE_ERROR
+            - AI_VALIDATION_FAILED
+            - AI_GENERATION_FAILED
+        '504':
+          description: AI_TIMEOUT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AI_TIMEOUT
+  /career/goals/{id}/confirm:
+    post:
+      operationId: EP-C05
+      tags:
+        - Career Goals
+      summary: Confirm canonical career role and target career level
+      description: >-
+        C05 EP-C05 (POST /api/v1/career/goals/{id}/confirm). Confirms the canonical role (must match
+        proposed_role or an element of alternative_roles; 422 ROLE_MISMATCH) and target_level (junior | mid |
+        senior), enforcing < 3 active confirmed goals/roadmaps (409 ROADMAP_LIMIT_REACHED) and atomically
+        initializing level-scoped skill_progress for self-reported skills (R07).
+      x-source: API-Specification.md sections 14.4, 15.4; accepted R07/R29
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoalConfirmDTO'
+      responses:
+        '200':
+          description: C05 EP-C05 success; returns confirmed CareerGoalResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerGoalResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_FORMAT
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - AUTH_REQUIRED
+            - INVALID_TOKEN
+            - TOKEN_EXPIRED
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESOURCE_NOT_FOUND
+        '409':
+          description: INVALID_STATE_TRANSITION, ROADMAP_LIMIT_REACHED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_STATE_TRANSITION
+            - ROADMAP_LIMIT_REACHED
+        '422':
+          description: ROLE_MISMATCH, INVALID_ENUM_VALUE, VALIDATION_FAILED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ROLE_MISMATCH
+            - INVALID_ENUM_VALUE
+            - VALIDATION_FAILED
 components:
   securitySchemes:
     SupabaseBearer:
@@ -3042,3 +4168,496 @@ components:
             - true
         data:
           $ref: '#/components/schemas/JobStatusDTO'
+
+    ExperienceLevel:
+      type: string
+      enum:
+        - beginner
+        - junior
+        - mid
+        - senior
+    CareerLevel:
+      type: string
+      enum:
+        - junior
+        - mid
+        - senior
+    LearningPreference:
+      type: string
+      enum:
+        - reading
+        - hands_on
+        - visual
+        - mixed
+    LearningState:
+      type: string
+      enum:
+        - not_started
+        - learning
+        - practicing
+        - proficient
+    ProgressInitializationStatus:
+      type: string
+      enum:
+        - deferred_until_level_confirmation
+        - initialized
+        - unchanged
+    GoalStatus:
+      type: string
+      enum:
+        - clarifying
+        - awaiting_confirmation
+        - confirmed
+        - discontinued
+    SkillInputDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+    ProfileUpdateDTO:
+      type: object
+      additionalProperties: false
+      properties:
+        current_role:
+          type: string
+          minLength: 1
+          maxLength: 120
+        education:
+          type: string
+          maxLength: 200
+        education_level:
+          type: string
+          maxLength: 200
+        experience_level:
+          $ref: '#/components/schemas/ExperienceLevel'
+        existing_skills:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/SkillInputDTO'
+        existing_skills_none:
+          type: boolean
+    ProfilePreferencesDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - learning_preference
+      properties:
+        learning_preference:
+          $ref: '#/components/schemas/LearningPreference'
+    LearningSettingsDTO:
+      type: object
+      additionalProperties: false
+      properties:
+        timezone:
+          type: string
+          description: Valid IANA timezone identifier (e.g. Asia/Dhaka).
+        preferred_daily_hours:
+          type: number
+          minimum: 0.5
+          maximum: 12
+          multipleOf: 0.5
+    SkillAliasInterpretationDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - input
+        - skill_id
+      properties:
+        input:
+          type: string
+          minLength: 1
+          maxLength: 80
+        skill_id:
+          type: string
+          format: uuid
+    UnresolvedSkillCandidateDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - skill_id
+        - name
+      properties:
+        skill_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    UnresolvedSkillDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - input
+        - candidates
+      properties:
+        input:
+          type: string
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnresolvedSkillCandidateDTO'
+    ProfileSkillDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - skill_id
+        - name
+        - alias_resolved
+        - learning_state
+        - source
+      properties:
+        skill_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        alias_resolved:
+          type: boolean
+        learning_state:
+          $ref: '#/components/schemas/LearningState'
+        source:
+          type: string
+          enum:
+            - self_reported
+            - evidence
+    ProfileResponseDTO:
+      type: object
+      required:
+        - current_role
+        - education
+        - experience_level
+        - existing_skills
+        - existing_skills_none
+        - learning_preference
+        - preferred_daily_hours
+        - timezone
+        - timezone_detected
+        - active_career_goal_ids
+        - profile_complete
+        - missing_fields
+        - updated_at
+      properties:
+        current_role:
+          type: string
+          nullable: true
+        education:
+          type: string
+          nullable: true
+        education_level:
+          type: string
+          nullable: true
+        experience_level:
+          type: string
+          nullable: true
+          enum:
+            - beginner
+            - junior
+            - mid
+            - senior
+            - null
+        existing_skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileSkillDTO'
+        existing_skills_none:
+          type: boolean
+        learning_preference:
+          type: string
+          nullable: true
+          enum:
+            - reading
+            - hands_on
+            - visual
+            - mixed
+            - null
+        preferred_daily_hours:
+          type: number
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        timezone_detected:
+          type: boolean
+        active_career_goal_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        profile_complete:
+          type: boolean
+        missing_fields:
+          type: array
+          items:
+            type: string
+        unresolved_skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnresolvedSkillDTO'
+        progress_initialization:
+          $ref: '#/components/schemas/ProgressInitializationStatus'
+        updated_at:
+          type: string
+          format: date-time
+    ProfileResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/ProfileResponseDTO'
+    SkillAliasInterpretationResponseDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - input
+        - skill_id
+        - scope
+        - added_to_profile
+        - progress_initialization
+      properties:
+        input:
+          type: string
+        skill_id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          enum:
+            - user
+        added_to_profile:
+          type: boolean
+        progress_initialization:
+          $ref: '#/components/schemas/ProgressInitializationStatus'
+    SkillAliasInterpretationResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/SkillAliasInterpretationResponseDTO'
+    CareerGoalCreateDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - goal_text
+      properties:
+        goal_text:
+          type: string
+          minLength: 3
+          maxLength: 300
+          description: Trimmed 3..300 Unicode code points; treated as untrusted text (PRD §44).
+    GoalClarificationDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - answer
+      properties:
+        answer:
+          type: string
+          minLength: 1
+          maxLength: 300
+    GoalConfirmDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - canonical_role_id
+        - target_level
+      properties:
+        canonical_role_id:
+          type: string
+          format: uuid
+        target_level:
+          $ref: '#/components/schemas/CareerLevel'
+    ProposedRoleDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - canonical_role_id
+        - name
+      properties:
+        canonical_role_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    RoleOptionDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - canonical_role_id
+        - name
+        - rationale
+      properties:
+        canonical_role_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        rationale:
+          type: string
+          nullable: true
+          description: R29 complete consuming schema; explicit null when rationale is absent.
+    CareerGoalResponseDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - goal_text
+        - status
+        - clarification_round
+        - clarification_question
+        - proposed_role
+        - alternative_roles
+        - suggested_level
+        - target_level
+        - roadmap_id
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        goal_text:
+          type: string
+        status:
+          $ref: '#/components/schemas/GoalStatus'
+        clarification_round:
+          type: integer
+          minimum: 0
+          maximum: 2
+        clarification_question:
+          type: string
+          nullable: true
+        proposed_role:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required:
+            - canonical_role_id
+            - name
+          properties:
+            canonical_role_id:
+              type: string
+              format: uuid
+            name:
+              type: string
+        alternative_roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleOptionDTO'
+        suggested_level:
+          type: string
+          nullable: true
+          enum:
+            - junior
+            - mid
+            - senior
+            - null
+        target_level:
+          type: string
+          nullable: true
+          enum:
+            - junior
+            - mid
+            - senior
+            - null
+        roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    CareerGoalResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/CareerGoalResponseDTO'
+    PageMetaDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - limit
+        - next_cursor
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        next_cursor:
+          type: string
+          nullable: true
+    CareerGoalListResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CareerGoalResponseDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    DiscontinueCareerGoalResponseDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - archived_roadmap_id
+        - new_focus_roadmap_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - discontinued
+        archived_roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+        new_focus_roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+    DiscontinueCareerGoalResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/DiscontinueCareerGoalResponseDTO'

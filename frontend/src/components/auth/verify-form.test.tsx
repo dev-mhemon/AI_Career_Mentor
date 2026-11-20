@@ -406,7 +406,7 @@ describe('VerifyForm', () => {
     );
     vi.mocked(verifyOtpAction).mockResolvedValueOnce({
       success: true,
-      redirectTo: '/onboarding/profile',
+      redirectTo: '/onboarding',
     });
 
     render(<VerifyForm />);
@@ -428,7 +428,7 @@ describe('VerifyForm', () => {
         window.sessionStorage.getItem(VERIFICATION_DRAFT_STORAGE_KEY),
       ).toBeNull();
       expect(getPersistedCooldown('email', 'candidate@example.com')).toBeNull();
-      expect(mockPush).toHaveBeenCalledWith('/onboarding/profile');
+      expect(mockPush).toHaveBeenCalledWith('/onboarding');
     });
   });
 

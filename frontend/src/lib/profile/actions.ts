@@ -40,7 +40,7 @@ export interface ProfileContactInfo {
 }
 
 /**
- * Supported form field keys on Screen 07 (`/onboarding/profile`).
+ * Supported form field keys on Screen 07 (`/onboarding`).
  */
 export type ProfileSetupFieldKey =
   | 'full_name'
@@ -60,7 +60,7 @@ export type ProfileSetupFieldKey =
 export type LearningSettingsFieldKey = 'timezone' | 'preferred_daily_hours';
 
 /**
- * Preserved form input values for Screen 07 (`/onboarding/profile`).
+ * Preserved form input values for Screen 07 (`/onboarding`).
  */
 export interface ProfileSetupFormValues {
   full_name: string;
@@ -83,7 +83,7 @@ export interface LearningSettingsFormValues {
 }
 
 /**
- * State returned by `saveProfileSetupAction` for Screen 07 (`/onboarding/profile`).
+ * State returned by `saveProfileSetupAction` for Screen 07 (`/onboarding`).
  */
 export interface ProfileSetupActionState {
   success?: boolean;
@@ -264,7 +264,7 @@ export async function loadProfileForSetup(): Promise<{
 }
 
 /**
- * Server action for Screen 07 (`/onboarding/profile`) that validates and saves profile background (EP-P02), learning settings (EP-P04), and user metadata.
+ * Server action for Screen 07 (`/onboarding`) that validates and saves profile background (EP-P02), learning settings (EP-P04), and user metadata.
  */
 export async function saveProfileSetupAction(
   _prevState: ProfileSetupActionState,
@@ -353,8 +353,9 @@ export async function saveProfileSetupAction(
     fieldErrors.timezone = timezoneRes.error;
   }
 
-  const dailyHoursRes = validateDailyHours(hoursRaw);
-  if (!dailyHoursRes.ok) {
+  const hasDailyHours = preferred_daily_hours.length > 0;
+  const dailyHoursRes = hasDailyHours ? validateDailyHours(hoursRaw) : null;
+  if (dailyHoursRes && !dailyHoursRes.ok) {
     fieldErrors.preferred_daily_hours = dailyHoursRes.error;
   }
 
@@ -387,15 +388,17 @@ export async function saveProfileSetupAction(
       };
     }
 
-    if (timezoneRes.ok && dailyHoursRes.ok) {
+    if (timezoneRes.ok) {
+      const learningBody: { timezone: string; preferred_daily_hours?: number } = {
+        timezone: timezoneRes.value,
+        ...(dailyHoursRes?.ok
+          ? { preferred_daily_hours: dailyHoursRes.value }
+          : {}),
+      };
       committedProfile = await withSingleSessionRefresh(
         supabase,
         session,
-        (accessToken) =>
-          updateLearningSettings(accessToken, {
-            timezone: timezoneRes.value,
-            preferred_daily_hours: dailyHoursRes.value,
-          }),
+        (accessToken) => updateLearningSettings(accessToken, learningBody),
       );
     }
 

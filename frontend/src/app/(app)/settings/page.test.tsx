@@ -200,7 +200,7 @@ describe('SettingsPage Server Component', () => {
     ).not.toBeInTheDocument();
     expect(
       within(overview as HTMLElement).getByRole('link', { name: /edit profile/i }),
-    ).toHaveAttribute('href', '/onboarding/profile');
+    ).toHaveAttribute('href', '/profile');
 
     expect(screen.getByLabelText(/^timezone$/i)).toHaveValue('Europe/London');
     expect(screen.getByLabelText(/preferred daily hours/i)).toHaveValue(3.5);

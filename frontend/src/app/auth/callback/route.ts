@@ -150,7 +150,7 @@ export async function GET(request: Request) {
           : approved.next_step === "add_verified_contact"
             ? "/settings?prompt=verify_contact"
             : approved.next_step === "profile_setup"
-              ? "/onboarding/profile"
+              ? "/onboarding"
               : "/dashboard";
 
       const response = NextResponse.redirect(`${origin}${destination}`);

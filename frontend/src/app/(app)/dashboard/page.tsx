@@ -1,10 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { listCareerGoals, type CareerGoalResponse } from '@/lib/api/client';
 import { logoutAction } from '@/lib/auth/actions';
 import { getAppSessionStateResult } from '@/lib/auth/user';
 import { getUserDisplayName } from '@/lib/auth/user-display';
 import { resolveWorkspaceProfile } from '@/lib/auth/workspace-profile';
+import { computeProfileCompletion } from '@/lib/onboarding/completion';
 import { EXPERIENCE_LEVEL_LABELS } from '@/lib/profile/metadata';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { Alert } from '@/components/ui/alert';
 import { AppShellSync } from '@/components/ui/app-shell-context';
 import { Button } from '@/components/ui/button';
@@ -18,6 +21,44 @@ import {
   SparklesIcon,
   UserCheckIcon,
 } from '@/components/ui/icons';
+
+export const dynamic = 'force-dynamic';
+
+const MAX_GOAL_PAGES = 20;
+
+async function loadNonDiscontinuedGoals(): Promise<CareerGoalResponse[] | null> {
+  try {
+    const supabase = await createSupabaseServerClient({ readOnly: true });
+    if (typeof supabase.auth.getSession !== 'function') {
+      return null;
+    }
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return null;
+    }
+    const allItems: CareerGoalResponse[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < MAX_GOAL_PAGES; page += 1) {
+      const res = await listCareerGoals(
+        session.access_token,
+        cursor ? { limit: 100, cursor } : { limit: 100 },
+      );
+      allItems.push(...res.items);
+      const nextCursor = res.meta?.next_cursor;
+      if (!nextCursor || seenCursors.has(nextCursor)) {
+        break;
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    return allItems.filter((g) => g.status !== 'discontinued');
+  } catch {
+    return null;
+  }
+}
 
 const primaryLinkClass =
   'inline-flex h-10 min-h-11 items-center justify-center gap-2 rounded-lg bg-action-primary-background px-5 text-label-lg font-medium text-action-primary-foreground shadow-xs transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active';
@@ -87,7 +128,12 @@ export default async function DashboardPage() {
   }
 
   const state = result.data;
-  const workspace = await resolveWorkspaceProfile(state);
+  const [workspace, loadedGoals] = await Promise.all([
+    resolveWorkspaceProfile(state),
+    state.user.status === 'suspended'
+      ? Promise.resolve(null)
+      : loadNonDiscontinuedGoals(),
+  ]);
 
   if (workspace.unauthorized) {
     redirect('/login');
@@ -131,6 +177,21 @@ export default async function DashboardPage() {
     phone: workspace.displayedPhone,
   });
 
+  const fallbackGoals =
+    loadedGoals !== null
+      ? loadedGoals
+      : workspace.isProfileComplete &&
+          (workspace.mergedProfileForForm?.active_career_goal_ids?.length ?? 0) > 0
+        ? [{ status: 'confirmed' as const }]
+        : [];
+
+  const completion = computeProfileCompletion(
+    workspace.mergedProfileForForm,
+    fallbackGoals,
+    workspace.fullName,
+  );
+  const isComplete = completion.isComplete;
+
   const dailyHours = workspace.preferredDailyHours;
   const weeklyHours =
     dailyHours !== null ? Number((dailyHours * 7).toFixed(1)) : null;
@@ -145,13 +206,13 @@ export default async function DashboardPage() {
         'Personalized milestone sequencing built around your role, baseline skills, and weekly schedule.',
       icon: CompassIcon,
       ready:
-        workspace.isProfileComplete &&
+        isComplete &&
         (effective_access.roadmap_generator ??
           effective_access.roadmap_generation ??
           true),
-      primaryHref: '/onboarding/profile',
+      primaryHref: '/profile',
       primaryLabel: 'Review Profile',
-      secondaryHref: '/settings',
+      secondaryHref: '/career-profile',
       secondaryLabel: 'Schedule Settings',
     },
     {
@@ -160,11 +221,11 @@ export default async function DashboardPage() {
         'Focused daily tasks and adaptive checkpoints paced to match your preferred study hours.',
       icon: BookOpenIcon,
       ready:
-        workspace.isProfileComplete &&
+        isComplete &&
         (effective_access.daily_plan ?? effective_access.quiz_practice ?? true),
-      primaryHref: '/settings',
+      primaryHref: '/career-profile',
       primaryLabel: 'Study Preferences',
-      secondaryHref: '/onboarding/profile',
+      secondaryHref: '/career-profile',
       secondaryLabel: 'Update Skills',
     },
     {
@@ -172,11 +233,9 @@ export default async function DashboardPage() {
       description:
         'Targeted technical coaching and feedback anchored in your onboarding goals and evidence.',
       icon: SparklesIcon,
-      ready: workspace.isProfileComplete && (effective_access.ai_mentor ?? true),
-      primaryHref: '/onboarding/profile',
-      primaryLabel: workspace.isProfileComplete
-        ? 'Edit Career Profile'
-        : 'Continue Setup',
+      ready: isComplete && (effective_access.ai_mentor ?? true),
+      primaryHref: '/career-profile',
+      primaryLabel: 'Edit Career Profile',
       secondaryHref: '/settings',
       secondaryLabel: 'Account Settings',
     },
@@ -217,11 +276,42 @@ export default async function DashboardPage() {
               Dashboard
             </h1>
           </div>
-
-          <Link href="/onboarding/profile" className={primaryLinkClass}>
-            {workspace.isProfileComplete ? 'Edit Profile' : 'Continue Setup'}
-          </Link>
         </div>
+
+        {/* Incomplete Profile Setup Banner (only shown when < 100%) */}
+        {completion.percentage < 100 && (
+          <section
+            aria-label="Profile completion progress"
+            className="flex flex-col gap-4 rounded-xl border border-teal-200/90 bg-teal-50/70 p-5 shadow-xs dark:border-teal-500/30 dark:bg-teal-950/30 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex flex-1 flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Complete your profile ({completion.percentage}%)
+                </p>
+                <span className="font-mono text-xs font-semibold tabular-nums text-teal-700 dark:text-teal-300">
+                  {completion.completedCount} of 5 steps
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label="Profile completion"
+                aria-valuenow={completion.percentage}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="h-2 w-full overflow-hidden rounded-full bg-teal-200/70 dark:bg-teal-900/60"
+              >
+                <div
+                  className="h-full rounded-full bg-teal-600 transition-all duration-300 dark:bg-teal-400"
+                  style={{ width: `${completion.percentage}%` }}
+                />
+              </div>
+            </div>
+            <Link href="/onboarding" className={primaryLinkClass}>
+              Continue setup
+            </Link>
+          </section>
+        )}
 
         {/* Row 1: Welcome & KPI Summary Cards */}
         <section
@@ -256,10 +346,8 @@ export default async function DashboardPage() {
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
                   Profile Status
                 </p>
-                <p className="mt-1.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  {workspace.isProfileComplete
-                    ? '100% Complete'
-                    : 'Step 1 of 5 • 20%'}
+                <p className="mt-1.5 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                  {completion.percentage}% Complete
                 </p>
               </div>
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300">
@@ -268,15 +356,15 @@ export default async function DashboardPage() {
             </div>
             <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
               <StatusBadge
-                ready={workspace.isProfileComplete}
+                ready={isComplete}
                 readyLabel="Complete"
                 pendingLabel="In Progress"
               />
               <Link
-                href="/onboarding/profile"
+                href={isComplete ? '/profile' : '/onboarding'}
                 className="text-xs font-semibold text-teal-700 transition-colors hover:text-teal-800 hover:underline dark:text-teal-300"
               >
-                {workspace.isProfileComplete ? 'Update Profile' : 'Complete Setup'}
+                {isComplete ? 'View Profile' : 'Continue Setup'}
               </Link>
             </div>
           </article>
@@ -302,10 +390,10 @@ export default async function DashboardPage() {
               <span className="tabular-nums text-slate-500 dark:text-slate-400">
                 {weeklyHours !== null
                   ? `${weeklyHours} hrs / week`
-                  : 'Set schedule in Settings'}
+                  : 'Set schedule in Career Goals'}
               </span>
               <Link
-                href="/settings"
+                href="/career-profile#preferences"
                 className="font-semibold text-teal-700 transition-colors hover:text-teal-800 hover:underline dark:text-teal-300"
               >
                 Manage
@@ -333,7 +421,7 @@ export default async function DashboardPage() {
                 {workspace.currentRole ?? 'Profession not set'}
               </span>
               <Link
-                href="/onboarding/profile"
+                href="/profile"
                 className="shrink-0 font-semibold text-teal-700 transition-colors hover:text-teal-800 hover:underline dark:text-teal-300"
               >
                 Change

@@ -21,7 +21,13 @@ import {
  *  - Replace NestJS guards
  */
 
-const PROTECTED_ROUTES = ["/dashboard", "/onboarding", "/settings"];
+const PROTECTED_ROUTES = [
+  "/dashboard",
+  "/profile",
+  "/career-profile",
+  "/onboarding",
+  "/settings",
+];
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

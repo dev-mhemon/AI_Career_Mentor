@@ -25,6 +25,27 @@ const UUID_PATTERN =
 const VALID_AI_TASK_SET: ReadonlySet<string> = new Set<string>(AI_TASKS);
 const VALID_LANGUAGES: ReadonlySet<string> = new Set(['bn', 'en', 'mixed']);
 const MAX_TIMEOUT_MS = 120_000;
+const MULTI_CANDIDATE_PRIMARY_TIMEOUT_CAP_MS = 10_000;
+
+function computeCandidateTimeoutMs(
+  totalBudgetMs: number,
+  remainingMs: number,
+  remainingCandidates: number,
+): number {
+  if (remainingCandidates <= 1) {
+    return Math.max(1, remainingMs);
+  }
+  if (totalBudgetMs >= 20_000) {
+    const reservedForNext = Math.floor(
+      remainingMs / Math.min(remainingCandidates, 2),
+    );
+    return Math.max(
+      1,
+      Math.min(MULTI_CANDIDATE_PRIMARY_TIMEOUT_CAP_MS, reservedForNext),
+    );
+  }
+  return Math.max(1, Math.floor(remainingMs / remainingCandidates));
+}
 
 export interface AiGatewayExecuteOptions {
   /** Set false when caller commits `public.ai_generations` atomically inside its own commit gate. */
@@ -172,8 +193,15 @@ export class AiGatewayService {
       let chosenGeneration: number | undefined;
       let fallbackUsed = route.quarantinedCount > 0;
 
+      const gatewayDeadlineMs = Date.now() + request.budget.timeout_ms;
+
       for (let i = 0; i < route.candidates.length; i += 1) {
         if (options.signal?.aborted) {
+          lastFailureKind = 'timeout';
+          break;
+        }
+        const remainingMs = gatewayDeadlineMs - Date.now();
+        if (remainingMs <= 0) {
           lastFailureKind = 'timeout';
           break;
         }
@@ -201,6 +229,23 @@ export class AiGatewayService {
           }
         }
 
+        const postTouchRemainingMs = gatewayDeadlineMs - Date.now();
+        if (options.signal?.aborted || postTouchRemainingMs <= 0) {
+          this.circuitBreaker.releaseCanary(
+            candidate.id,
+            admission.canaryToken,
+          );
+          lastFailureKind = 'timeout';
+          break;
+        }
+
+        const remainingCandidates = route.candidates.length - i;
+        const candidateTimeoutMs = computeCandidateTimeoutMs(
+          request.budget.timeout_ms,
+          postTouchRemainingMs,
+          remainingCandidates,
+        );
+
         try {
           lastInvocation = await this.providerAdapter.invoke({
             requestId,
@@ -211,7 +256,7 @@ export class AiGatewayService {
             userEnvelope: builtContext.userEnvelope,
             outputSchemaId: prompt.outputSchemaId,
             maxOutputUnits: request.budget.max_output_units,
-            timeoutMs: request.budget.timeout_ms,
+            timeoutMs: candidateTimeoutMs,
             mode: request.mode,
             signal: options.signal,
           });

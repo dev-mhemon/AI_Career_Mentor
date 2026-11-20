@@ -140,7 +140,7 @@ describe('Auth Callback Route Handler (GET /auth/callback)', () => {
   });
 
   describe('OAuth Sign-In Flows (Google & Facebook)', () => {
-    it('approves Google OAuth session and navigates to /onboarding/profile when next_step is profile_setup', async () => {
+    it('approves Google OAuth session and navigates to /onboarding when next_step is profile_setup', async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -177,7 +177,7 @@ describe('Auth Callback Route Handler (GET /auth/callback)', () => {
       expect(approveOAuthSession).toHaveBeenCalledWith('google-access-token', 'google');
       expect(response.status).toBe(307);
       expect(response.headers.get('location')).toBe(
-        'http://localhost:3001/onboarding/profile',
+        'http://localhost:3001/onboarding',
       );
     });
 

@@ -734,6 +734,32 @@ describe('Profile Setup Actions (M01-09 Screen 07)', () => {
         }),
       );
     });
+
+    it('omits preferred_daily_hours from EP-P04 when blank so a failed profile load does not overwrite saved hours', async () => {
+      vi.mocked(updateLearningSettings).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        preferred_daily_hours: 6,
+      });
+      vi.mocked(updateProfile).mockResolvedValueOnce({
+        ...MOCK_PROFILE,
+        preferred_daily_hours: 6,
+      });
+
+      const formData = new FormData();
+      formData.set('full_name', 'Alice Rahman');
+      formData.set('email', 'alice@example.com');
+      formData.set('current_role', 'Staff Engineer');
+      formData.set('experience_level', 'senior');
+      formData.set('timezone', 'Asia/Dhaka');
+      formData.set('preferred_daily_hours', '');
+
+      const result = await saveProfileSetupAction({}, formData);
+      expect(result.success).toBe(true);
+      expect(updateLearningSettings).toHaveBeenCalledWith('valid-token', {
+        timezone: 'Asia/Dhaka',
+      });
+      expect(result.values?.preferred_daily_hours).toBe('6');
+    });
   });
 
   describe('updateLearningSettingsAction (M02-04 Screen 22 EP-P04)', () => {

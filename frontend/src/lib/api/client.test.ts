@@ -18,7 +18,17 @@ import {
   getProfile,
   updateProfile,
   updateLearningSettings,
-  requestAccountDeletion,
+  updatePreferences,
+  updateSkills,
+  interpretSkillAlias,
+  createCareerGoal,
+  listCareerGoals,
+  getCareerGoal,
+  submitGoalClarification,
+  confirmCareerGoal,
+  updateCareerGoal,
+  deleteCareerGoal,
+  dispatchM05Operation,  requestAccountDeletion,
   getAccountDeletionStatus,
   getJobStatus,
   withIdempotencyKey,
@@ -868,5 +878,162 @@ describe('EP-J01 getJobStatus and withIdempotencyKey', () => {
     ).toEqual({
       'idempotency-key': 'keep-existing',
     });
+  });
+});
+
+describe('M05 EP-P03/EP-P05 and EP-C01–EP-C07 typed fetchers', () => {
+  const GOAL = {
+    id: '11111111-1111-4111-8111-111111111111',
+    goal_text: 'Backend developer',
+    status: 'awaiting_confirmation' as const,
+    clarification_round: 0,
+    clarification_question: null,
+    proposed_role: { canonical_role_id: 'role-1', name: 'Backend Development' },
+    alternative_roles: [
+      { canonical_role_id: 'role-2', name: 'DevOps', rationale: null },
+    ],
+    suggested_level: 'junior' as const,
+    target_level: null,
+    roadmap_id: null,
+    created_at: '2026-11-01T00:00:00.000Z',
+  };
+  const ok = (data: unknown, extra: Record<string, unknown> = {}) =>
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data, ...extra }),
+    });
+  const lastCall = () => {
+    const [url, init] = mockFetch.mock.calls.at(-1)!;
+    return { url: url as string, init: init as RequestInit };
+  };
+
+  it('EP-P03 PATCH /profile/preferences sends learning_preference', async () => {
+    ok({ learning_preference: 'hands_on' });
+    await updatePreferences(MOCK_TOKEN, { learning_preference: 'hands_on' });
+    const { url, init } = lastCall();
+    expect(url).toBe('http://localhost:3000/api/v1/profile/preferences');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ learning_preference: 'hands_on' });
+  });
+
+  it('EP-P02 updateSkills sends names, or explicit None without skills (R07)', async () => {
+    ok({});
+    await updateSkills(MOCK_TOKEN, { names: ['React', 'SQL'] });
+    expect(JSON.parse(lastCall().init.body as string)).toEqual({
+      existing_skills_none: false,
+      existing_skills: [{ name: 'React' }, { name: 'SQL' }],
+    });
+    ok({});
+    await updateSkills(MOCK_TOKEN, { none: true });
+    const body = JSON.parse(lastCall().init.body as string);
+    expect(body).toEqual({ existing_skills_none: true });
+    expect(body).not.toHaveProperty('existing_skills');
+    expect(lastCall().url).toBe('http://localhost:3000/api/v1/profile');
+  });
+
+  it('EP-P05 POST /profile/skill-alias-interpretations sends input + skill_id', async () => {
+    ok({ input: 'node', skill_id: 's1', scope: 'user', added_to_profile: true, progress_initialization: 'deferred_until_level_confirmation' });
+    const result = await interpretSkillAlias(MOCK_TOKEN, { input: 'node', skill_id: 's1' });
+    expect(result.scope).toBe('user');
+    const { url, init } = lastCall();
+    expect(url).toBe('http://localhost:3000/api/v1/profile/skill-alias-interpretations');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ input: 'node', skill_id: 's1' });
+  });
+
+  it('EP-C01 POST /career/goals', async () => {
+    ok(GOAL);
+    const result = await createCareerGoal(MOCK_TOKEN, { goal_text: 'Backend developer' });
+    expect(result.alternative_roles[0].rationale).toBeNull();
+    const { url, init } = lastCall();
+    expect(url).toBe('http://localhost:3000/api/v1/career/goals');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ goal_text: 'Backend developer' });
+  });
+
+  it('EP-C02 GET /career/goals reads data array plus top-level meta and builds the query', async () => {
+    ok([GOAL], { meta: { limit: 5, next_cursor: 'abc' } });
+    const result = await listCareerGoals(MOCK_TOKEN, { status: 'confirmed', limit: 5, cursor: 'c1' });
+    expect(result.items).toHaveLength(1);
+    expect(result.meta).toEqual({ limit: 5, next_cursor: 'abc' });
+    expect(lastCall().url).toBe(
+      'http://localhost:3000/api/v1/career/goals?status=confirmed&limit=5&cursor=c1',
+    );
+  });
+
+  it('EP-C02 rejects a missing or malformed meta envelope with INVALID_RESPONSE', async () => {
+    ok([GOAL]);
+    await expect(listCareerGoals(MOCK_TOKEN)).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'INVALID_RESPONSE',
+    });
+  });
+
+  it('EP-C03 GET /career/goals/:id encodes the id', async () => {
+    ok(GOAL);
+    await getCareerGoal(MOCK_TOKEN, ' a/b ');
+    expect(lastCall().url).toBe('http://localhost:3000/api/v1/career/goals/a%2Fb');
+  });
+
+  it('EP-C04 POST …/clarifications', async () => {
+    ok(GOAL);
+    await submitGoalClarification(MOCK_TOKEN, GOAL.id, { answer: 'APIs' });
+    const { url, init } = lastCall();
+    expect(url).toBe(`http://localhost:3000/api/v1/career/goals/${GOAL.id}/clarifications`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ answer: 'APIs' });
+  });
+
+  it('EP-C05 POST …/confirm', async () => {
+    ok({ ...GOAL, status: 'confirmed' });
+    await confirmCareerGoal(MOCK_TOKEN, GOAL.id, { canonical_role_id: 'role-1', target_level: 'mid' });
+    const { url, init } = lastCall();
+    expect(url).toBe(`http://localhost:3000/api/v1/career/goals/${GOAL.id}/confirm`);
+    expect(JSON.parse(init.body as string)).toEqual({ canonical_role_id: 'role-1', target_level: 'mid' });
+  });
+
+  it('EP-C06 PATCH /career/goals/:id', async () => {
+    ok(GOAL);
+    await updateCareerGoal(MOCK_TOKEN, GOAL.id, { goal_text: 'Data analyst' });
+    const { url, init } = lastCall();
+    expect(url).toBe(`http://localhost:3000/api/v1/career/goals/${GOAL.id}`);
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ goal_text: 'Data analyst' });
+  });
+
+  it('EP-C07 DELETE /career/goals/:id', async () => {
+    ok({ id: GOAL.id, status: 'discontinued', archived_roadmap_id: null, new_focus_roadmap_id: null });
+    const result = await deleteCareerGoal(MOCK_TOKEN, GOAL.id);
+    expect(result.status).toBe('discontinued');
+    const { url, init } = lastCall();
+    expect(url).toBe(`http://localhost:3000/api/v1/career/goals/${GOAL.id}`);
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('surfaces backend error codes on ApiError for M05 failures', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      headers: { get: () => null },
+      json: () =>
+        Promise.resolve({ success: false, error: { code: 'OUT_OF_SCOPE_GOAL', message: 'raw' } }),
+    });
+    await expect(createCareerGoal(MOCK_TOKEN, { goal_text: 'Be a chef' })).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'OUT_OF_SCOPE_GOAL',
+    });
+  });
+
+  it('dispatchM05Operation routes each operation and rejects unknown names', async () => {
+    ok(GOAL);
+    await dispatchM05Operation(MOCK_TOKEN, 'getCareerGoal', { id: GOAL.id });
+    expect(lastCall().url).toBe(`http://localhost:3000/api/v1/career/goals/${GOAL.id}`);
+    ok([], { meta: { limit: 100, next_cursor: null } });
+    await dispatchM05Operation(MOCK_TOKEN, 'listCareerGoals', undefined);
+    expect(lastCall().url).toBe('http://localhost:3000/api/v1/career/goals');
+    await expect(
+      dispatchM05Operation(MOCK_TOKEN, 'nope' as never, undefined as never),
+    ).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
   });
 });

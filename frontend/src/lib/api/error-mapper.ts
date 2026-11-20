@@ -1,5 +1,10 @@
 /** Central mapper: ApiError / UnauthorizedError / NetworkError -> UI-ready error model. Pure; no I/O. */
 import { ApiError, NetworkError } from './client';
+import type {
+  M05OperationInput,
+  M05OperationName,
+  M05OperationOutput,
+} from './client';
 
 export type ErrorTone = 'error' | 'warning' | 'info';
 
@@ -85,6 +90,74 @@ const AI_AND_JOB_SAFE_ERRORS: Readonly<
   },
 };
 
+/**
+ * Curated user-facing mappings for M05 profile & career-goal error codes (`C05` §14.3/§14.4/§16).
+ * Never echoes raw `error.message`, so internals cannot leak to the UI.
+ */
+const M05_SAFE_ERRORS: Readonly<
+  Record<string, { message: string; tone: ErrorTone; retryable: boolean }>
+> = {
+  OUT_OF_SCOPE_GOAL: {
+    message:
+      'This goal is outside what we support. AI Career Mentor covers technology careers only. Try a technology role such as "Backend developer" or "Data analyst".',
+    tone: 'warning',
+    retryable: false,
+  },
+  CLARIFICATION_LIMIT_REACHED: {
+    message:
+      'The clarification limit was reached. Review the best interpretation below and confirm it.',
+    tone: 'info',
+    retryable: false,
+  },
+  GOAL_ALREADY_CONFIRMED: {
+    message:
+      'This goal is already confirmed and its text cannot be edited. Discontinue it and create a new goal instead.',
+    tone: 'warning',
+    retryable: false,
+  },
+  ROLE_MISMATCH: {
+    message:
+      'That role is not one of the proposed options. Choose one of the suggested roles and try again.',
+    tone: 'error',
+    retryable: false,
+  },
+  ROADMAP_LIMIT_REACHED: {
+    message:
+      'You already have 3 active goals or roadmaps. Archive or discontinue one before adding another.',
+    tone: 'warning',
+    retryable: false,
+  },
+  SKILL_NOT_FOUND: {
+    message:
+      'We could not find that skill. Pick one of the suggested skills or check the spelling.',
+    tone: 'warning',
+    retryable: false,
+  },
+  FEATURE_DISABLED: {
+    message:
+      'This feature is currently unavailable. Your existing goals, roadmaps and progress remain accessible.',
+    tone: 'warning',
+    retryable: false,
+  },
+  INVALID_STATE_TRANSITION: {
+    message:
+      'This goal has already moved to a different step. Refresh to see its current state.',
+    tone: 'warning',
+    retryable: false,
+  },
+  STALE_VERSION: {
+    message:
+      'This goal changed while your edit was being processed. Refresh and try again.',
+    tone: 'warning',
+    retryable: false,
+  },
+  RESOURCE_NOT_FOUND: {
+    message: 'We could not find that item. It may have been removed.',
+    tone: 'warning',
+    retryable: false,
+  },
+};
+
 export function mapApiError(
   error: unknown,
   options?: { channel?: 'email' | 'phone' },
@@ -121,6 +194,16 @@ export function mapApiError(
 
   if (error.code && Object.hasOwn(AI_AND_JOB_SAFE_ERRORS, error.code)) {
     const safe = AI_AND_JOB_SAFE_ERRORS[error.code];
+    return {
+      ...m,
+      message: safe.message,
+      tone: safe.tone,
+      retryable: safe.retryable,
+    };
+  }
+
+  if (error.code && Object.hasOwn(M05_SAFE_ERRORS, error.code)) {
+    const safe = M05_SAFE_ERRORS[error.code];
     return {
       ...m,
       message: safe.message,
@@ -246,6 +329,25 @@ export function mapApiError(
   }
   return { ...m, message: error.message || base.message };
 }
+
+/** Serializable result envelope returned by server-action glue to client components. */
+export type ActionResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: MappedError };
+
+/** Converts any thrown value into a serializable, UI-safe failure result. */
+export function toActionFailure(error: unknown): { ok: false; error: MappedError } {
+  return { ok: false, error: mapApiError(error) };
+}
+
+/**
+ * Server-action-shaped invoker injected into M05 client forms by their Server Component page.
+ * Keeps access tokens server-side; failures arrive already mapped to safe copy.
+ */
+export type M05Invoke = <K extends M05OperationName>(
+  op: K,
+  input: M05OperationInput<K>,
+) => Promise<ActionResult<M05OperationOutput<K>>>;
 
 /**
  * Input is never cleared on error: callers keep their own form values and only

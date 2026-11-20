@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module.js';
-import { readAiGatewayConfiguration } from '../config.js';
+import {
+  readAiGatewayConfiguration,
+  readGeminiProviderConfiguration,
+} from '../config.js';
 import { AiGatewayService } from './services/ai-gateway.service.js';
 import { CircuitBreakerService } from './services/circuit-breaker.service.js';
 import { ContextBuilderService } from './services/context-builder.service.js';
+import { GeminiProviderAdapter } from './services/gemini-provider.adapter.js';
 import { ModelRouterService } from './services/model-router.service.js';
 import { OutputValidatorService } from './services/output-validator.service.js';
 import { PromptManagerService } from './services/prompt-manager.service.js';
@@ -23,9 +27,10 @@ import { QuotaGuardService } from './services/quota-guard.service.js';
  * Intentionally declares zero HTTP controllers (`controllers: []`) so no external
  * client route can specify prompts, providers, or models directly.
  *
- * Binds `AI_PROVIDER_ADAPTER` to `SyntheticProviderAdapter` ONLY when `AI_EXECUTION_MODE=synthetic`;
- * defaults fail-closed (`UnconfiguredRealUserProviderAdapter`) in `real_user` mode so synthetic
- * output can never be returned as real-user model output.
+ * Binds `AI_PROVIDER_ADAPTER` to `SyntheticProviderAdapter` when `AI_EXECUTION_MODE=synthetic`,
+ * `GeminiProviderAdapter` when `AI_EXECUTION_MODE=real_user` and `GEMINI_API_KEY` is configured,
+ * and fails closed (`UnconfiguredRealUserProviderAdapter`) in `real_user` mode when no key is set
+ * so synthetic output can never be returned as real-user model output.
  */
 @Module({
   imports: [AuthModule],
@@ -42,8 +47,16 @@ import { QuotaGuardService } from './services/quota-guard.service.js';
         syntheticAdapter: SyntheticProviderAdapter,
         configService?: ConfigService,
       ): ProviderAdapter => {
-        const cfg = readAiGatewayConfiguration(configService ?? process.env);
+        const source = configService ?? process.env;
+        const cfg = readAiGatewayConfiguration(source);
         if (cfg.executionMode !== 'synthetic') {
+          const geminiCfg = readGeminiProviderConfiguration(source);
+          if (geminiCfg.apiKey) {
+            return new GeminiProviderAdapter({
+              apiKey: geminiCfg.apiKey,
+              defaultTimeoutMs: geminiCfg.timeoutMs,
+            });
+          }
           return new UnconfiguredRealUserProviderAdapter();
         }
         return {

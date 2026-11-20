@@ -25,6 +25,12 @@ extensions=[
  {'kind':'down','path':'supabase/rollbacks/023_session_gate_hardening_down.sql','bytes':1607,'sha256':'3739f58b79bc2968fc1908b089736a9428048d13697e556e60f10fe551231fe3'},
  {'kind':'forward','path':'supabase/migrations/024_session_revocation.sql','bytes':2412,'sha256':'a197b94df15cb7c54edd8d784abfc7bc38e17d5c63ebeea41e576e2daa21f102'},
  {'kind':'down','path':'supabase/rollbacks/024_session_revocation_down.sql','bytes':2309,'sha256':'a8a1aad7248a438216c909b5c61e8ca57a4e72f623d6ee139d2c2aa1a097e79a'},
+ {'kind':'forward','path':'supabase/migrations/025_seed_skills_catalog.sql','bytes':11019,'sha256':'8432e79783e8fe334f32fbb9a629672549069867f3055421c168061460a715b7'},
+ {'kind':'down','path':'supabase/rollbacks/025_seed_skills_catalog_down.sql','bytes':1619,'sha256':'acc30e948b2f1d1e70d382ec7681262912fb129cfb92fdd0b7427aceb0b3a52b'},
+ {'kind':'forward','path':'supabase/migrations/026_seed_ai_prompts_and_synthetic_model.sql','bytes':3197,'sha256':'3a359ab23305e855f85479bb7791def3311e76b6a8032b00e32d9c8e5c8c77dc'},
+ {'kind':'down','path':'supabase/rollbacks/026_seed_ai_prompts_and_synthetic_model_down.sql','bytes':2687,'sha256':'a5af9325aece7ff7c3b84dd983c53aab334b77259d38b192d26f8c66bb83dead'},
+ {'kind':'forward','path':'supabase/migrations/027_seed_gemini_real_user_models.sql','bytes':1837,'sha256':'017ad34f7a2c970a0514811b257cbc72a12b81c8b4c4e5720d0e15d6bc6b4555'},
+ {'kind':'down','path':'supabase/rollbacks/027_seed_gemini_real_user_models_down.sql','bytes':890,'sha256':'0752897f7d7fa9bf3478a1d52c867c5ff100ee628b51bf64acf5262e69dab6d4'},
 ]
 for f in extensions: check(root/f['path'],f)
 def paths(folder):
@@ -34,4 +40,4 @@ for kind,folder in [('forward','supabase/migrations'),('down','supabase/rollback
  actual=paths(folder)
  if actual!=expected:
   raise SystemExit(f'SQL directory inventory mismatch for {kind}: unexpected={sorted(actual-expected)}, missing={sorted(expected-actual)}')
-print('PASS: scoped SQL extensions 022, 023 and 024 forward / rollback registered; no unregistered SQL inventory')
+print('PASS: scoped SQL extensions 022, 023, 024, 025, 026 and 027 forward / rollback registered; no unregistered SQL inventory')

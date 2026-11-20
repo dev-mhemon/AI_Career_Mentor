@@ -358,7 +358,7 @@ export default async function SettingsPage({
 
             {!isSuspended && (
               <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
-                <Link href="/onboarding/profile" className={secondaryLinkClass}>
+                <Link href="/profile" className={secondaryLinkClass}>
                   Edit Profile
                 </Link>
               </div>

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import type { FastShellSessionResult } from '@/lib/auth/shell-user';
+import type { AuthenticatedFastShellSession } from '@/lib/auth/shell-user';
 
 let mockPathname = '/dashboard';
 
-const { mockRedirect, mockGetFastSessionShellUser } = vi.hoisted(() => ({
+const { mockRedirect, mockRequireFastSessionShell } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string): never => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
-  mockGetFastSessionShellUser: vi.fn<() => Promise<FastShellSessionResult>>(),
+  mockRequireFastSessionShell: vi.fn<() => Promise<AuthenticatedFastShellSession>>(),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -21,7 +21,7 @@ vi.mock('@/lib/auth/actions', () => ({
 }));
 
 vi.mock('@/lib/auth/shell-user', () => ({
-  getFastSessionShellUser: mockGetFastSessionShellUser,
+  requireFastSessionShell: mockRequireFastSessionShell,
 }));
 
 import AuthenticatedAppLayout from './layout';
@@ -33,8 +33,11 @@ describe('AuthenticatedAppLayout', () => {
     vi.clearAllMocks();
   });
 
-  it('redirects unauthenticated requests to /login', async () => {
-    mockGetFastSessionShellUser.mockResolvedValue({ unauthenticated: true });
+  it('redirects unauthenticated requests to /login via requireFastSessionShell', async () => {
+    mockRequireFastSessionShell.mockImplementation(async () => {
+      mockRedirect('/login');
+      throw new Error('unreachable');
+    });
 
     await expect(
       AuthenticatedAppLayout({ children: <div>Workspace Child</div> }),
@@ -43,7 +46,7 @@ describe('AuthenticatedAppLayout', () => {
   });
 
   it('mounts persistent AppShell from fast cookie session and hides/restores chrome cleanly via AppShellSync', async () => {
-    mockGetFastSessionShellUser.mockResolvedValue({
+    mockRequireFastSessionShell.mockResolvedValue({
       unauthenticated: false,
       variant: 'authenticated',
       user: {
@@ -79,7 +82,8 @@ describe('AuthenticatedAppLayout', () => {
       'aria-current',
       'page',
     );
-    expect(within(sidebar).getByRole('link', { name: 'Profile Setup' })).toBeInTheDocument();
+    expect(within(sidebar).getByRole('link', { name: 'Profile' })).toBeInTheDocument();
+    expect(within(sidebar).getByRole('link', { name: 'Career Goals' })).toBeInTheDocument();
     expect(within(sidebar).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Home' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Quick settings' })).not.toBeInTheDocument();

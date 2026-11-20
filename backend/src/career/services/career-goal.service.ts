@@ -39,7 +39,7 @@ const PG_CURSOR_TIMESTAMPTZ_PATTERN =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])[T ](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:0\d|1[0-4])(?::?[0-5]\d)?|[+-]15(?::?00)?)$/;
 
 const GOAL_INTERPRETATION_SCHEMA_ID = 'goal_interpretation.v1';
-const GOAL_INTERPRETATION_TIMEOUT_MS = 9_500;
+const GOAL_INTERPRETATION_TIMEOUT_MS = 25_000;
 const GOAL_INTERPRETATION_MAX_INPUT_UNITS = 4_000;
 const GOAL_INTERPRETATION_MAX_OUTPUT_UNITS = 1_500;
 const MAX_ACTIVE_GOALS_AND_ROADMAPS = 3;
@@ -1728,7 +1728,7 @@ export class CareerGoalService {
         if (hasGoalRevisionChanged(preflight.goal, lockedGoal)) {
           fail(
             409,
-            'INVALID_STATE_TRANSITION',
+            'STALE_VERSION',
             'Career goal changed during goal interpretation. Please reload and retry your edit.',
           );
         }
