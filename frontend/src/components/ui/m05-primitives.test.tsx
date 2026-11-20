@@ -63,7 +63,10 @@ describe('MultiStepFormWrapper (#09)', () => {
     expect(bar).toHaveAttribute('aria-valuenow', '3');
     expect(screen.getByText('Step 3 of 5')).toBeInTheDocument();
     expect(screen.getByText('60% Complete')).toBeInTheDocument();
-    const items = within(bar).getAllByRole('listitem');
+    expect(screen.queryByRole('navigation', { name: 'Onboarding steps' })).not.toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Onboarding steps' });
+    expect(bar).not.toContainElement(list);
+    const items = within(list).getAllByRole('listitem');
     expect(items).toHaveLength(5);
     expect(items.filter((li) => li.getAttribute('aria-current') === 'step')).toHaveLength(1);
     expect(items[2]).toHaveAttribute('aria-current', 'step');
@@ -73,12 +76,20 @@ describe('MultiStepFormWrapper (#09)', () => {
     expect(screen.getByRole('heading', { name: 'Prefs' })).toBeInTheDocument();
   });
 
-  it('lists the five steps in order', () => {
+  it('lists the five steps in exact DOM order', () => {
     render(<OnboardingStepHeader currentStep={5} />);
     expect(screen.getByText('Clarify & Confirm')).toBeInTheDocument();
-    ['1. Profile', '2. Skills', '3. Preferences', '4. Career Goal', '5. Confirm Level'].forEach(
-      (label) => expect(screen.getByText(label)).toBeInTheDocument(),
-    );
+    const list = screen.getByRole('list', { name: 'Onboarding steps' });
+    const labels = within(list)
+      .getAllByRole('listitem')
+      .map((li) => li.querySelector('span:not([aria-hidden="true"])')?.textContent?.trim());
+    expect(labels).toEqual([
+      '1. Profile',
+      '2. Skills',
+      '3. Preferences',
+      '4. Career Goal',
+      '5. Confirm Role',
+    ]);
   });
 
   it('renders busy state and an alert for errors', () => {
@@ -93,11 +104,35 @@ describe('MultiStepFormWrapper (#09)', () => {
 });
 
 describe('CareerCard (#13)', () => {
-  it('omits rationale text when R29 rationale is null', () => {
-    render(<CareerCard title="Backend Development" rationale={null} recommended />);
+  it('omits rationale text when R29 rationale is null, defaults recommended badge to "Recommended", and supports custom badgeLabel overrides', () => {
+    const { rerender } = render(
+      <CareerCard title="Backend Development" rationale={null} recommended />,
+    );
     expect(screen.getByRole('heading', { name: 'Backend Development' })).toBeInTheDocument();
     expect(screen.getByText('Recommended')).toBeInTheDocument();
     expect(screen.queryByText(/null/i)).not.toBeInTheDocument();
+
+    rerender(
+      <CareerCard
+        title="Backend Development"
+        rationale={null}
+        recommended
+        badgeLabel="Your choice"
+      />,
+    );
+    expect(screen.getByText('Your choice')).toBeInTheDocument();
+    expect(screen.queryByText('Recommended')).not.toBeInTheDocument();
+
+    rerender(
+      <CareerCard
+        title="Backend Development"
+        rationale={null}
+        recommended
+        badgeLabel="Suggested"
+      />,
+    );
+    expect(screen.getByText('Suggested')).toBeInTheDocument();
+    expect(screen.queryByText('Your choice')).not.toBeInTheDocument();
   });
 
   it('shows rationale, category/level metadata and an alternative badge', () => {
@@ -194,7 +229,9 @@ describe('SkillCard (#14)', () => {
     );
     const remove = screen.getByRole('button', { name: 'Remove skill Go' });
     fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(remove, { key: 'Delete' });
+    expect(onRemove).toHaveBeenCalledTimes(2);
     fireEvent.keyDown(remove, { key: 'Backspace' });
     expect(onRemove).toHaveBeenCalledTimes(3);
   });
@@ -207,5 +244,25 @@ describe('SkillCard (#14)', () => {
     );
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('supports compact pill variant with accessible remove button and keyboard Delete/Backspace', () => {
+    const onRemove = vi.fn();
+    render(
+      <ul className="flex flex-wrap gap-2">
+        <SkillCard variant="pill" name="React" aliasInput="react.js" onRemove={onRemove} />
+      </ul>,
+    );
+    const pill = screen.getByRole('listitem');
+    expect(pill).toHaveClass('rounded-full');
+    expect(screen.getByText('React')).toBeInTheDocument();
+    expect(screen.getByText('(react.js)')).toBeInTheDocument();
+    const remove = screen.getByRole('button', { name: 'Remove React' });
+    fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(remove, { key: 'Delete' });
+    expect(onRemove).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(remove, { key: 'Backspace' });
+    expect(onRemove).toHaveBeenCalledTimes(3);
   });
 });

@@ -37,14 +37,14 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         lockedWhenSuspended: true,
       },
       {
-        href: '/onboarding/profile',
-        label: 'Profile Setup',
+        href: '/profile',
+        label: 'Profile',
         icon: UserCheckIcon,
         lockedWhenSuspended: true,
       },
       {
         href: '/career-profile',
-        label: 'Career Profile',
+        label: 'Career Goals',
         icon: CompassIcon,
         lockedWhenSuspended: true,
       },

@@ -145,6 +145,12 @@ const M05_SAFE_ERRORS: Readonly<
     tone: 'warning',
     retryable: false,
   },
+  STALE_VERSION: {
+    message:
+      'This goal changed while your edit was being processed. Refresh and try again.',
+    tone: 'warning',
+    retryable: false,
+  },
   RESOURCE_NOT_FOUND: {
     message: 'We could not find that item. It may have been removed.',
     tone: 'warning',

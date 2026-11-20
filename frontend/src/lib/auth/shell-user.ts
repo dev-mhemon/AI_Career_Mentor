@@ -1,3 +1,5 @@
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { getProfile, type UserResponse } from '@/lib/api/client';
 import { normalizeBdPhone, normalizeEmail } from '@/lib/validation/auth-schemas';
@@ -125,13 +127,15 @@ export async function getAuthenticatedShellUser(
   };
 }
 
+export interface AuthenticatedFastShellSession {
+  unauthenticated: false;
+  user: ShellUserInfo | null;
+  variant: 'authenticated' | 'admin';
+}
+
 export type FastShellSessionResult =
   | { unauthenticated: true }
-  | {
-      unauthenticated: false;
-      user: ShellUserInfo | null;
-      variant: 'authenticated' | 'admin';
-    };
+  | AuthenticatedFastShellSession;
 
 /**
  * Non-blocking cookie session reader for the persistent `(app)` shell layout.
@@ -172,4 +176,30 @@ export async function getFastSessionShellUser(): Promise<FastShellSessionResult>
   } catch {
     return { unauthenticated: false, user: null, variant: 'authenticated' };
   }
+}
+
+/**
+ * Shared fast cookie-session guard for authenticated route-group layouts (`(app)` and `(onboarding)`).
+ * Redirects unauthenticated visitors to `/login` (or `/login?deleted=true` when the deletion cookie is set).
+ */
+export async function requireFastSessionShell(): Promise<AuthenticatedFastShellSession> {
+  const fastSession = await getFastSessionShellUser();
+
+  if (fastSession.unauthenticated) {
+    let isDeleted = false;
+    try {
+      const cookieStore = await cookies();
+      if (cookieStore?.get('account_deleted')?.value === 'true') {
+        isDeleted = true;
+      }
+    } catch {
+      // Ignore if cookies() is unavailable outside request context
+    }
+    if (isDeleted) {
+      redirect('/login?deleted=true');
+    }
+    redirect('/login');
+  }
+
+  return fastSession;
 }

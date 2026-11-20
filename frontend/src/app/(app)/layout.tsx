@@ -1,13 +1,11 @@
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import { logoutAction } from '@/lib/auth/actions';
-import { getFastSessionShellUser } from '@/lib/auth/shell-user';
+import { requireFastSessionShell } from '@/lib/auth/shell-user';
 import { AppShell } from '@/components/ui/app-shell';
 import { AppShellProvider } from '@/components/ui/app-shell-context';
 
 /**
  * Shared persistent layout for authenticated workspace routes:
- * `/dashboard`, `/onboarding/*`, and `/settings`.
+ * `/dashboard`, `/career-profile`, and `/settings`.
  *
  * Uses only a fast local cookie session read so Sidebar and Top Header stay
  * persistently mounted and immediately interactive without blocking on slow
@@ -18,23 +16,7 @@ export default async function AuthenticatedAppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const fastSession = await getFastSessionShellUser();
-
-  if (fastSession.unauthenticated) {
-    let isDeleted = false;
-    try {
-      const cookieStore = await cookies();
-      if (cookieStore?.get('account_deleted')?.value === 'true') {
-        isDeleted = true;
-      }
-    } catch {
-      // Ignore if cookies() is unavailable outside request context
-    }
-    if (isDeleted) {
-      redirect('/login?deleted=true');
-    }
-    redirect('/login');
-  }
+  const fastSession = await requireFastSessionShell();
 
   return (
     <AppShellProvider

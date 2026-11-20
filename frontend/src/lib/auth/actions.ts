@@ -747,7 +747,7 @@ export async function loginAction(
     if (session.user.status === 'suspended') {
       destination = '/settings';
     } else if (session.next_step === 'profile_setup') {
-      destination = '/onboarding/profile';
+      destination = '/onboarding';
     } else if (session.next_step === 'add_verified_contact') {
       destination = '/settings?prompt=verify_contact';
     }
@@ -1029,7 +1029,7 @@ export async function verifyOtpAction(
     } else if (verifiedContext === 'secondary_contact') {
       destination = '/settings?verified=contact';
     } else if (session.next_step === 'profile_setup') {
-      destination = '/onboarding/profile';
+      destination = '/onboarding';
     } else if (session.next_step === 'add_verified_contact') {
       destination = '/settings?prompt=verify_contact';
     } else {
@@ -1569,8 +1569,7 @@ export async function requestAccountDeletionAction(
 
   if (!session?.access_token) {
     return {
-      error:
-        'আপনার সেশনটি মেয়াদোত্তীর্ণ হয়েছে। অনুগ্রহ করে পুনরায় সাইন ইন করুন (Session expired).',
+      error: 'Session expired. Please sign in again.',
     };
   }
 
@@ -1594,8 +1593,7 @@ export async function requestAccountDeletionAction(
 
     if (!response) {
       return {
-        error:
-          'আপনার সেশনটি মেয়াদোত্তীর্ণ হয়েছে। অনুগ্রহ করে পুনরায় সাইন ইন করুন (Session expired).',
+        error: 'Session expired. Please sign in again.',
       };
     }
 
@@ -1642,31 +1640,38 @@ export async function requestAccountDeletionAction(
     }
     if (err instanceof NetworkError) {
       return {
-        error: 'সার্ভারে সংযোগ করা সম্ভব হচ্ছে না। অনুগ্রহ করে আবার চেষ্টা করুন (Network error).',
+        error: 'Unable to reach the server. Please try again.',
       };
     }
     if (err instanceof ApiError) {
       if (err.code === 'CONFIRMATION_MISMATCH') {
         return {
-          error: 'কনফার্মেশন অবশ্যই DELETE হতে হবে (Confirmation must equal DELETE).',
+          error: 'Confirmation must equal DELETE.',
         };
       }
-      if (err.code === 'REAUTH_REQUIRED') {
+      if (
+        err.code === 'REAUTH_REQUIRED' ||
+        err.code === 'AUTH_INVALID_CREDENTIALS' ||
+        err.code === 'INVALID_CREDENTIALS' ||
+        err.code === 'INVALID_PASSWORD' ||
+        err.statusCode === 401 ||
+        err.statusCode === 403
+      ) {
         return {
-          error:
-            'সঠিক পাসওয়ার্ড বা রি-অথেনটিকেশন টোকেন প্রয়োজন (Invalid password or re-authentication required).',
+          error: 'Incorrect password.',
         };
       }
       if (err.code === 'DELETION_ALREADY_REQUESTED') {
         return {
-          error:
-            'এই অ্যাকাউন্টের জন্য ইতিমধ্যে একটি ডিলিট প্রক্রিয়া চলমান রয়েছে (Deletion request already in progress).',
+          error: 'Deletion request already in progress.',
         };
       }
-      return { error: err.message };
+      return {
+        error: err.message || 'Unable to delete account. Please try again.',
+      };
     }
     return {
-      error: 'অ্যাকাউন্ট মোছার সময় একটি অপ্রত্যাশিত সমস্যা হয়েছে (An unexpected error occurred).',
+      error: 'Something went wrong. Please try again.',
     };
   }
 }

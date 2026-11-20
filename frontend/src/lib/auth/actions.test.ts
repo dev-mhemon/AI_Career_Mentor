@@ -201,7 +201,7 @@ describe('Auth Actions', () => {
       expect(redirect).toHaveBeenCalledWith('/dashboard');
     });
 
-    it('redirects active user to /onboarding/profile when next_step is profile_setup', async () => {
+    it('redirects active user to /onboarding when next_step is profile_setup', async () => {
       const formData = new FormData();
       formData.set('email', 'newuser@example.com');
       formData.set('password', 'password123');
@@ -215,7 +215,7 @@ describe('Auth Actions', () => {
       mockSetSession.mockResolvedValueOnce({ error: null });
 
       await loginAction({}, formData);
-      expect(redirect).toHaveBeenCalledWith('/onboarding/profile');
+      expect(redirect).toHaveBeenCalledWith('/onboarding');
     });
 
     it('redirects suspended user to /settings shell regardless of next_step', async () => {
@@ -878,7 +878,7 @@ describe('Auth Actions', () => {
       expect(result).toEqual({ error: 'Invalid verification request.' });
     });
 
-    it('verifies email via backend EP-A02 and returns redirectTo /onboarding/profile on profile_setup', async () => {
+    it('verifies email via backend EP-A02 and returns redirectTo /onboarding on profile_setup', async () => {
       vi.mocked(verifyEmail).mockResolvedValueOnce({
         access_token: 'test-access-token',
         refresh_token: 'test-refresh-token',
@@ -919,7 +919,7 @@ describe('Auth Actions', () => {
       );
       expect(result).toEqual({
         success: true,
-        redirectTo: '/onboarding/profile',
+        redirectTo: '/onboarding',
       });
     });
 
@@ -956,7 +956,7 @@ describe('Auth Actions', () => {
       });
       expect(result).toEqual({
         success: true,
-        redirectTo: '/onboarding/profile',
+        redirectTo: '/onboarding',
       });
     });
 
@@ -1005,7 +1005,7 @@ describe('Auth Actions', () => {
       expect(result).toMatchObject({ error: 'Verification code is invalid' });
     });
 
-    it('verifies phone via backend EP-A03 and redirects to /onboarding/profile', async () => {
+    it('verifies phone via backend EP-A03 and redirects to /onboarding', async () => {
       const phoneContext = Buffer.from(
         JSON.stringify({ type: 'phone', identifier: '+8801712345678' }),
       ).toString('base64url');
@@ -1051,7 +1051,7 @@ describe('Auth Actions', () => {
       );
       expect(result).toEqual({
         success: true,
-        redirectTo: '/onboarding/profile',
+        redirectTo: '/onboarding',
       });
     });
 
@@ -1495,7 +1495,7 @@ describe('Auth Actions', () => {
       expect(response.headers.get('location')).toBe('http://localhost:3001/dashboard');
     });
 
-    it('redirects OAuth user to /onboarding/profile when next_step is profile_setup', async () => {
+    it('redirects OAuth user to /onboarding when next_step is profile_setup', async () => {
       mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
       mockGetSession.mockResolvedValueOnce({
         data: {
@@ -1519,7 +1519,7 @@ describe('Auth Actions', () => {
       );
       const response = await authCallbackGet(request);
       expect(response.status).toBe(307);
-      expect(response.headers.get('location')).toBe('http://localhost:3001/onboarding/profile');
+      expect(response.headers.get('location')).toBe('http://localhost:3001/onboarding');
     });
 
     it("signs out with scope: 'local' and redirects to /login?error=oauth_failed if user lacks matching identity", async () => {
@@ -2712,7 +2712,7 @@ describe('Auth Actions', () => {
         new UnauthorizedError('Re-authentication required', 'REAUTH_REQUIRED'),
       );
       const reauthRes = await requestAccountDeletionAction({}, formData);
-      expect(reauthRes.error).toMatch(/Invalid password or re-authentication required/);
+      expect(reauthRes.error).toBe('Incorrect password.');
       expect(mockSignOut).not.toHaveBeenCalled();
 
       // 2. DELETION_ALREADY_REQUESTED
@@ -2720,12 +2720,12 @@ describe('Auth Actions', () => {
         new ApiError(409, 'Already requested', 'DELETION_ALREADY_REQUESTED'),
       );
       const conflictRes = await requestAccountDeletionAction({}, formData);
-      expect(conflictRes.error).toMatch(/Deletion request already in progress/);
+      expect(conflictRes.error).toBe('Deletion request already in progress.');
 
       // 3. NetworkError
       vi.mocked(requestAccountDeletion).mockRejectedValueOnce(new NetworkError('Failed to fetch'));
       const netRes = await requestAccountDeletionAction({}, formData);
-      expect(netRes.error).toMatch(/Network error/);
+      expect(netRes.error).toBe('Unable to reach the server. Please try again.');
     });
 
     it('forwards only password when both password and reauth_token are provided in FormData', async () => {

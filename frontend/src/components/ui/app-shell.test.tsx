@@ -60,9 +60,12 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(dashboardLink.className).toContain('text-teal-700');
     expect(dashboardLink.className).toContain('border-teal-600');
 
-    const profileLink = within(sidebar).getByRole('link', { name: 'Profile Setup' });
-    expect(profileLink).toHaveAttribute('href', '/onboarding/profile');
+    const profileLink = within(sidebar).getByRole('link', { name: 'Profile' });
+    expect(profileLink).toHaveAttribute('href', '/profile');
     expect(profileLink).not.toHaveAttribute('aria-current');
+
+    const careerGoalsLink = within(sidebar).getByRole('link', { name: 'Career Goals' });
+    expect(careerGoalsLink).toHaveAttribute('href', '/career-profile');
 
     expect(
       within(sidebar).queryByRole('link', { name: 'Home' }),
@@ -233,7 +236,7 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(within(menu).getByText('Welcome back 👋!')).toBeInTheDocument();
 
     const profileMenuItem = within(menu).getByRole('menuitem', { name: 'Profile' });
-    expect(profileMenuItem).toHaveAttribute('href', '/onboarding/profile');
+    expect(profileMenuItem).toHaveAttribute('href', '/profile');
 
     const settingsMenuItem = within(menu).getByRole('menuitem', {
       name: 'Account Settings',
@@ -469,7 +472,7 @@ describe('AppShell, Sidebar, and Header', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('locks Dashboard/Profile Setup when suspended, renders offline banner and admin badge', () => {
+  it('locks Dashboard/Profile/Career Goals when suspended, renders offline banner and admin badge', () => {
     render(
       <AppShell
         variant="admin"
@@ -488,7 +491,8 @@ describe('AppShell, Sidebar, and Header', () => {
     );
     expect(within(sidebar).getByText('Admin')).toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Dashboard' })).not.toBeInTheDocument();
-    expect(within(sidebar).queryByRole('link', { name: 'Profile Setup' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Career Goals' })).not.toBeInTheDocument();
     expect(within(sidebar).getByText('Dashboard').closest('[aria-disabled="true"]')).toBeInTheDocument();
     expect(within(sidebar).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
 
@@ -529,7 +533,7 @@ describe('AppShell, Sidebar, and Header', () => {
     fireEvent.click(within(sidebarEl).getByRole('button', { name: 'Toggle sidebar' }));
     expect(sidebarEl.className).toContain('lg:w-[72px]');
 
-    mockPathname = '/onboarding/profile';
+    mockPathname = '/profile';
     rerender(
       <AppShellProvider
         initialUser={{
@@ -555,7 +559,7 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(screen.getByRole('banner')).toBe(headerEl);
     expect(sidebarEl.className).toContain('lg:w-[72px]');
     expect(
-      within(sidebarEl).getByRole('link', { name: 'Profile Setup' }),
+      within(sidebarEl).getByRole('link', { name: 'Profile' }),
     ).toHaveAttribute('aria-current', 'page');
 
     // Syncing disabled hides shell chrome and restores cleanly on return

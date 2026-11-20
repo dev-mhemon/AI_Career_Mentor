@@ -8,7 +8,7 @@ export const ONBOARDING_STEPS = [
   { number: 2, label: '2. Skills', title: 'Skills' },
   { number: 3, label: '3. Preferences', title: 'Learning Preferences' },
   { number: 4, label: '4. Career Goal', title: 'Career Goal' },
-  { number: 5, label: '5. Confirm Level', title: 'Clarify & Confirm' },
+  { number: 5, label: '5. Confirm Role', title: 'Clarify & Confirm' },
 ] as const;
 
 export type OnboardingStepNumber = 1 | 2 | 3 | 4 | 5;
@@ -25,16 +25,16 @@ export const OnboardingStepHeader = memo(function OnboardingStepHeader({
   const total = ONBOARDING_STEPS.length;
   const active = ONBOARDING_STEPS[currentStep - 1];
   return (
-    <div
-      role="progressbar"
-      aria-valuenow={currentStep}
-      aria-valuemin={1}
-      aria-valuemax={total}
-      aria-valuetext={`Step ${currentStep} of ${total}: ${active.title}`}
-      aria-label={`Onboarding progress: Step ${currentStep} of ${total}`}
-      className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5">
+      <div
+        role="progressbar"
+        aria-valuenow={currentStep}
+        aria-valuemin={1}
+        aria-valuemax={total}
+        aria-valuetext={`Step ${currentStep} of ${total}: ${active.title}`}
+        aria-label={`Onboarding progress: Step ${currentStep} of ${total}`}
+        className="flex flex-wrap items-center justify-between gap-2"
+      >
         <div className="flex items-center gap-2.5">
           <span className="text-label-lg font-semibold text-text-primary">
             {active.title}
@@ -48,50 +48,50 @@ export const OnboardingStepHeader = memo(function OnboardingStepHeader({
         </span>
       </div>
 
-      <ol className="grid grid-cols-5 items-start">
-        {ONBOARDING_STEPS.map((step, idx) => {
-          const isActive = step.number === currentStep;
-          const isDone = step.number < currentStep;
-          const isLast = idx === total - 1;
-          return (
-            <li
-              key={step.label}
-              aria-current={isActive ? 'step' : undefined}
-              className="relative flex flex-col items-center px-1 text-center"
-            >
-              {!isLast && (
+      <ol aria-label="Onboarding steps" className="grid grid-cols-5 items-start">
+          {ONBOARDING_STEPS.map((step, idx) => {
+            const isActive = step.number === currentStep;
+            const isDone = step.number < currentStep;
+            const isLast = idx === total - 1;
+            return (
+              <li
+                key={step.label}
+                aria-current={isActive ? 'step' : undefined}
+                className="relative flex flex-col items-center px-1 text-center"
+              >
+                {!isLast && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
+                  />
+                )}
                 <span
                   aria-hidden="true"
-                  className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
-                />
-              )}
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all motion-reduce:transition-none',
-                  isActive
-                    ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
-                    : isDone
-                      ? 'border border-teal-500 bg-teal-500/15 font-medium text-text-brand'
-                      : 'border border-border-default bg-surface-default font-medium text-text-muted',
-                )}
-              >
-                {isDone ? '✓' : step.number}
-              </span>
-              <span
-                className={cn(
-                  'sr-only mt-2.5 text-caption leading-tight sm:not-sr-only',
-                  isActive
-                    ? 'font-semibold text-text-brand'
-                    : 'text-text-muted',
-                )}
-              >
-                {step.label}
-              </span>
-              {isDone && <span className="sr-only">(completed)</span>}
-            </li>
-          );
-        })}
+                  className={cn(
+                    'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all motion-reduce:transition-none',
+                    isActive
+                      ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
+                      : isDone
+                        ? 'border border-teal-500 bg-teal-500/15 font-medium text-text-brand'
+                        : 'border border-border-default bg-surface-default font-medium text-text-muted',
+                  )}
+                >
+                  {isDone ? '✓' : step.number}
+                </span>
+                <span
+                  className={cn(
+                    'mt-2.5 text-[11px] leading-tight sm:text-caption',
+                    isActive
+                      ? 'font-semibold text-text-brand'
+                      : 'text-text-muted',
+                  )}
+                >
+                  {step.label}
+                </span>
+                {isDone && <span className="sr-only">(completed)</span>}
+              </li>
+            );
+          })}
       </ol>
     </div>
   );
@@ -172,7 +172,7 @@ export function MultiStepFormWrapper({
 
       {(errorMessage || status === 'network_error') && (
         <Alert variant="warning" role="alert">
-          {errorMessage ?? 'Network problem. Your input is kept; try again.'}
+          {errorMessage || 'Network problem. Your input is kept; try again.'}
         </Alert>
       )}
 

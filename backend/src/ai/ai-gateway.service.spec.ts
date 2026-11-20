@@ -1302,4 +1302,295 @@ describe('AiGatewayService & QuotaGuardService (Internal AI Gateway, 9 Tasks, Va
     expect(nextAttempt.allowed).toBe(true);
     expect(typeof nextAttempt.canaryToken).toBe('string');
   });
+
+  it('matches Frontend developer in SyntheticProviderAdapter to Frontend Development plus 2 distinct alternatives (3 roles total)', async () => {
+    const res = await gateway.execute<{
+      proposedRole: { canonicalRoleId: string; name: string } | null;
+      alternativeRoles: Array<{
+        canonicalRoleId: string;
+        name: string;
+        matchReason: string;
+      }>;
+    }>({
+      task: 'goal_interpretation',
+      user_id: USER_ID,
+      context: {
+        clarification_round: 0,
+        approved_roles: [
+          {
+            canonical_role_id: 'aaaa1111-1111-4111-8111-111111111111',
+            slug: 'frontend-development',
+            name: 'Frontend Development',
+          },
+          {
+            canonical_role_id: 'bbbb2222-2222-4222-8222-222222222222',
+            slug: 'full-stack-development',
+            name: 'Full-Stack Development',
+          },
+          {
+            canonical_role_id: 'cccc3333-3333-4333-8333-333333333333',
+            slug: 'mobile-development',
+            name: 'Mobile Development',
+          },
+        ],
+      },
+      untrusted_inputs: ['Frontend developer'],
+      output_schema: 'goal_interpretation.v1',
+      language: 'en',
+      idempotency_key: 'idem-synthetic-frontend-3-roles',
+      budget: {
+        max_input_units: 2000,
+        max_output_units: 1000,
+        timeout_ms: 5000,
+      },
+    });
+
+    expect(res.output?.proposedRole).toEqual({
+      canonicalRoleId: 'aaaa1111-1111-4111-8111-111111111111',
+      name: 'Frontend Development',
+    });
+    expect(res.output?.alternativeRoles).toHaveLength(2);
+    const allNames = [
+      res.output?.proposedRole?.name,
+      ...(res.output?.alternativeRoles ?? []).map((r) => r.name),
+    ];
+    expect(new Set(allNames).size).toBe(3);
+    expect(res.output?.alternativeRoles.map((r) => r.name)).toEqual([
+      'Full-Stack Development',
+      'Mobile Development',
+    ]);
+  });
+
+  it('matches Data analyst using the exact CareerGoalService createGoal payload shape to 3 distinct seeded roles with Data Engineering first', async () => {
+    const res = await gateway.execute<{
+      proposedRole: { canonicalRoleId: string; name: string } | null;
+      alternativeRoles: Array<{
+        canonicalRoleId: string;
+        name: string;
+        matchReason: string;
+      }>;
+    }>({
+      task: 'goal_interpretation',
+      user_id: USER_ID,
+      feature_key: 'roadmap_generator',
+      context: {
+        clarification_round: 0,
+        approved_roles: [
+          {
+            canonical_role_id: '10000001-0000-4000-8000-000000000001',
+            slug: 'frontend-development',
+            name: 'Frontend Development',
+          },
+          {
+            canonical_role_id: '10000001-0000-4000-8000-000000000002',
+            slug: 'backend-development',
+            name: 'Backend Development',
+          },
+          {
+            canonical_role_id: '10000001-0000-4000-8000-000000000003',
+            slug: 'full-stack-development',
+            name: 'Full-Stack Development',
+          },
+          {
+            canonical_role_id: '10000001-0000-4000-8000-000000000004',
+            slug: 'data-engineering',
+            name: 'Data Engineering',
+          },
+          {
+            canonical_role_id: '10000001-0000-4000-8000-000000000005',
+            slug: 'ai-ml-engineering',
+            name: 'AI / Machine Learning Engineering',
+          },
+        ],
+      },
+      untrusted_inputs: ['Data analyst'],
+      output_schema: 'goal_interpretation.v1',
+      language: 'en',
+      idempotency_key: 'idem-synthetic-data-analyst-3-roles',
+      budget: {
+        max_input_units: 4000,
+        max_output_units: 1500,
+        timeout_ms: 9500,
+      },
+    });
+
+    expect(res.output?.proposedRole).toEqual({
+      canonicalRoleId: '10000001-0000-4000-8000-000000000004',
+      name: 'Data Engineering',
+    });
+    expect(res.output?.alternativeRoles).toHaveLength(2);
+    expect(res.output?.alternativeRoles.map((r) => r.name)).toEqual([
+      'AI / Machine Learning Engineering',
+      'Backend Development',
+    ]);
+    const allIds = [
+      res.output?.proposedRole?.canonicalRoleId,
+      ...(res.output?.alternativeRoles ?? []).map((r) => r.canonicalRoleId),
+    ];
+    expect(new Set(allIds).size).toBe(3);
+  });
+
+  it('releases HALF_OPEN canary and throws AI_TIMEOUT without invoking fallback when deadline expires during touchQuotaReservation', async () => {
+    vi.useFakeTimers();
+    const FALLBACK_MODEL_ID = '55555555-5555-4555-8555-555555555555';
+    const RESERVATION_ID = '66666666-6666-4666-8666-666666666666';
+    const FALLBACK_MODEL: AiModelRecord = {
+      ...APPROVED_MODEL,
+      id: FALLBACK_MODEL_ID,
+      provider_key: 'openai',
+      model_identifier: 'gpt-4o-mini-fallback',
+      display_name: 'Fallback Model',
+      fallback_rank: 2,
+    };
+
+    for (let i = 0; i < CircuitBreakerService.FAILURE_THRESHOLD; i += 1) {
+      circuitBreaker.recordFailure(FALLBACK_MODEL_ID);
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(circuitBreaker.getState(FALLBACK_MODEL_ID)).toBe('HALF_OPEN');
+
+    const baseImpl = queryMock.getMockImplementation() as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<unknown>;
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM public.ai_models')) {
+        return [APPROVED_MODEL, FALLBACK_MODEL];
+      }
+      if (sql.includes('INSERT INTO public.ai_requests')) {
+        return [{ id: RESERVATION_ID }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes('SET locked_at = clock_timestamp()')
+      ) {
+        // Advance clock past the 5_000ms gateway deadline while touching the reservation
+        vi.advanceTimersByTime(6_000);
+        return [];
+      }
+      return baseImpl(sql, params);
+    });
+
+    const fallbackInvoked = vi.fn();
+    syntheticAdapter.setModelRule(MODEL_ID, 'provider_error');
+    syntheticAdapter.setModelRule(FALLBACK_MODEL_ID, () => {
+      fallbackInvoked();
+      throw new ProviderInvocationError('timeout', 'Should not run', 504);
+    });
+
+    const releaseSpy = vi.spyOn(circuitBreaker, 'releaseCanary');
+    const failureSpy = vi.spyOn(circuitBreaker, 'recordFailure');
+
+    await expect(
+      gateway.execute({
+        task: 'mentor_chat',
+        user_id: USER_ID,
+        context: {},
+        output_schema: 'mentor_chat.v1',
+        language: 'en',
+        idempotency_key: 'idem-touch-expires-deadline',
+        budget: {
+          max_input_units: 2000,
+          max_output_units: 500,
+          timeout_ms: 5000,
+        },
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 504, 'AI_TIMEOUT');
+      return true;
+    });
+
+    expect(fallbackInvoked).not.toHaveBeenCalled();
+    expect(releaseSpy).toHaveBeenCalledWith(
+      FALLBACK_MODEL_ID,
+      expect.any(String),
+    );
+    expect(failureSpy.mock.calls.some(([id]) => id === FALLBACK_MODEL_ID)).toBe(
+      false,
+    );
+    expect(circuitBreaker.getState(FALLBACK_MODEL_ID)).toBe('HALF_OPEN');
+  });
+
+  it('does not match "studios" as iOS and drops unavailable alternative roles on partial approved_roles catalogs', async () => {
+    const partialRoles = [
+      {
+        canonical_role_id: 'aaaa1111-1111-4111-8111-111111111111',
+        slug: 'frontend-development',
+        name: 'Frontend Development',
+      },
+      {
+        canonical_role_id: 'bbbb2222-2222-4222-8222-222222222222',
+        slug: 'backend-development',
+        name: 'Backend Development',
+      },
+      {
+        canonical_role_id: 'cccc3333-3333-4333-8333-333333333333',
+        slug: 'full-stack-development',
+        name: 'Full-Stack Development',
+      },
+    ];
+
+    const studiosRes = await gateway.execute<{
+      proposedRole: { canonicalRoleId: string; name: string } | null;
+      alternativeRoles: Array<{ canonicalRoleId: string; name: string }>;
+    }>({
+      task: 'goal_interpretation',
+      user_id: USER_ID,
+      context: { clarification_round: 0, approved_roles: partialRoles },
+      untrusted_inputs: ['Backend developer for game studios'],
+      output_schema: 'goal_interpretation.v1',
+      language: 'en',
+      idempotency_key: 'idem-synthetic-studios-backend',
+      budget: {
+        max_input_units: 2000,
+        max_output_units: 1000,
+        timeout_ms: 5000,
+      },
+    });
+
+    expect(studiosRes.output?.proposedRole).toEqual({
+      canonicalRoleId: 'bbbb2222-2222-4222-8222-222222222222',
+      name: 'Backend Development',
+    });
+    // cloud-engineering is absent from partialRoles -> dropped instead of emitting a synthetic UUID
+    expect(studiosRes.output?.alternativeRoles).toEqual([
+      {
+        canonicalRoleId: 'cccc3333-3333-4333-8333-333333333333',
+        name: 'Full-Stack Development',
+        matchReason: 'Overlapping API and web engineering skills.',
+      },
+    ]);
+
+    const frontendRes = await gateway.execute<{
+      proposedRole: { canonicalRoleId: string; name: string } | null;
+      alternativeRoles: Array<{ canonicalRoleId: string; name: string }>;
+    }>({
+      task: 'goal_interpretation',
+      user_id: USER_ID,
+      context: { clarification_round: 0, approved_roles: partialRoles },
+      untrusted_inputs: ['Frontend developer'],
+      output_schema: 'goal_interpretation.v1',
+      language: 'en',
+      idempotency_key: 'idem-synthetic-partial-frontend',
+      budget: {
+        max_input_units: 2000,
+        max_output_units: 1000,
+        timeout_ms: 5000,
+      },
+    });
+
+    expect(frontendRes.output?.proposedRole).toEqual({
+      canonicalRoleId: 'aaaa1111-1111-4111-8111-111111111111',
+      name: 'Frontend Development',
+    });
+    // mobile-development is absent from partialRoles -> dropped cleanly
+    expect(frontendRes.output?.alternativeRoles).toEqual([
+      {
+        canonicalRoleId: 'cccc3333-3333-4333-8333-333333333333',
+        name: 'Full-Stack Development',
+        matchReason:
+          'Combines frontend UI expertise with backend API development.',
+      },
+    ]);
+  });
 });

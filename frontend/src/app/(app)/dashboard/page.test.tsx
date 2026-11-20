@@ -10,6 +10,7 @@ const {
   mockRedirect,
   mockGetAppSessionStateResult,
   mockLoadProfileForSetup,
+  mockListCareerGoals,
   mockGetUser,
   mockGetSession,
 } = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ const {
   }),
   mockGetAppSessionStateResult: vi.fn<() => Promise<SessionStateResult>>(),
   mockLoadProfileForSetup: vi.fn<() => Promise<ProfileSetupResult>>(),
+  mockListCareerGoals: vi.fn(),
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
 }));
@@ -34,6 +36,14 @@ vi.mock('@/lib/auth/user', () => ({
 vi.mock('@/lib/profile/actions', () => ({
   loadProfileForSetup: mockLoadProfileForSetup,
 }));
+
+vi.mock('@/lib/api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api/client')>();
+  return {
+    ...actual,
+    listCareerGoals: mockListCareerGoals,
+  };
+});
 
 vi.mock('@/lib/supabase/server', () => ({
   createSupabaseServerClient: vi.fn().mockImplementation(async () => ({
@@ -221,10 +231,11 @@ describe('DashboardPage', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: 'Dashboard' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Edit Profile' })).toHaveAttribute(
-      'href',
-      '/onboarding/profile',
-    );
+    // Top-right Edit Profile CTA button removed
+    expect(screen.queryByRole('link', { name: 'Edit Profile' })).not.toBeInTheDocument();
+    // No incomplete banner when 100% complete
+    expect(screen.queryByRole('region', { name: 'Profile completion progress' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /continue setup/i })).not.toBeInTheDocument();
 
     expect(screen.getByText('GOOD DAY,')).toBeInTheDocument();
     expect(
@@ -232,6 +243,30 @@ describe('DashboardPage', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('Asia/Dhaka')).toBeInTheDocument();
     expect(screen.getByText('100% Complete')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View Profile' })).toHaveAttribute(
+      'href',
+      '/profile',
+    );
+    expect(screen.getByRole('link', { name: 'Manage' })).toHaveAttribute(
+      'href',
+      '/career-profile#preferences',
+    );
+    expect(screen.getByRole('link', { name: 'Change' })).toHaveAttribute(
+      'href',
+      '/profile',
+    );
+    expect(screen.getByRole('link', { name: 'Review Profile' })).toHaveAttribute(
+      'href',
+      '/profile',
+    );
+    expect(screen.getByRole('link', { name: 'Update Skills' })).toHaveAttribute(
+      'href',
+      '/career-profile',
+    );
+    expect(screen.getByRole('link', { name: 'Edit Career Profile' })).toHaveAttribute(
+      'href',
+      '/career-profile',
+    );
     expect(screen.getByText('4 hrs / day')).toBeInTheDocument();
     expect(screen.getByText('28 hrs / week')).toBeInTheDocument();
     expect(screen.getByText('Mid-Level')).toBeInTheDocument();
@@ -250,7 +285,14 @@ describe('DashboardPage', () => {
     expect(document.body.textContent).not.toMatch(/[\u0980-\u09FF]/);
   });
 
-  it('renders onboarding prompt and pending module badges when profile is incomplete', async () => {
+  it('renders synced onboarding banner and Continue setup CTA to /onboarding when profile completion < 100%', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-123' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [],
+      meta: { limit: 100, next_cursor: null },
+    });
     mockGetAppSessionStateResult.mockResolvedValue({
       status: 'authenticated',
       data: {
@@ -275,7 +317,21 @@ describe('DashboardPage', () => {
     });
     mockLoadProfileForSetup.mockResolvedValue({
       fullName: 'Starter User',
-      profile: null,
+      profile: {
+        current_role: 'Student',
+        education: null,
+        experience_level: 'beginner',
+        existing_skills: [],
+        existing_skills_none: true,
+        learning_preference: null,
+        preferred_daily_hours: null,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: true,
+        active_career_goal_ids: [],
+        profile_complete: false,
+        missing_fields: [],
+        updated_at: '2026-11-15T10:00:00.000Z',
+      },
     });
 
     const page = await DashboardPage();
@@ -285,11 +341,18 @@ describe('DashboardPage', () => {
       </AppShellProvider>,
     );
 
-    expect(screen.getAllByRole('link', { name: 'Continue Setup' })[0]).toHaveAttribute(
+    const banner = screen.getByRole('region', { name: 'Profile completion progress' });
+    expect(within(banner).getByText('Complete your profile (40%)')).toBeInTheDocument();
+    expect(within(banner).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40');
+    expect(within(banner).getByRole('link', { name: 'Continue setup' })).toHaveAttribute(
       'href',
-      '/onboarding/profile',
+      '/onboarding',
     );
-    expect(screen.getByText('Step 1 of 5 • 20%')).toBeInTheDocument();
+    expect(screen.getByText('40% Complete')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Continue Setup' })).toHaveAttribute(
+      'href',
+      '/onboarding',
+    );
     expect(screen.getAllByText('Unlocks after full onboarding')).toHaveLength(3);
     expect(document.body.textContent).not.toMatch(/[\u0980-\u09FF]/);
   });

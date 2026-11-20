@@ -2905,7 +2905,7 @@ paths:
           x-error-codes:
             - RESOURCE_NOT_FOUND
         '409':
-          description: GOAL_ALREADY_CONFIRMED, INVALID_STATE_TRANSITION
+          description: GOAL_ALREADY_CONFIRMED, INVALID_STATE_TRANSITION, STALE_VERSION
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -2916,6 +2916,7 @@ paths:
           x-error-codes:
             - GOAL_ALREADY_CONFIRMED
             - INVALID_STATE_TRANSITION
+            - STALE_VERSION
         '422':
           description: VALIDATION_FAILED, OUT_OF_SCOPE_GOAL
           headers:

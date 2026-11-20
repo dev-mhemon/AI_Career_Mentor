@@ -20,20 +20,34 @@ const LEARNING_STATE_LABEL: Record<ProfileSkillDTO['learning_state'], string> = 
   proficient: 'Proficient',
 };
 
-export interface SkillCardProps {
+export type SkillCardVariant = 'card' | 'pill';
+
+interface SkillCardBaseProps {
   name: string;
   /** Raw text the user typed when it differs from the canonical `name` (alias badge). */
   aliasInput?: string | null;
   /** `false` flags an unresolved alias that needs clarification. */
   aliasResolved?: boolean;
   learningState?: ProfileSkillDTO['learning_state'];
-  /** Optional proficiency; selector renders only when `onProficiencyChange` is provided. */
-  proficiency?: Proficiency;
-  onProficiencyChange?: (next: Proficiency) => void;
   onRemove?: () => void;
   disabled?: boolean;
   className?: string;
 }
+
+export type SkillCardProps =
+  | (SkillCardBaseProps & {
+      /** Layout variant: `'card'` (default, full row). */
+      variant?: 'card';
+      /** Optional proficiency; selector renders only when `onProficiencyChange` is provided. */
+      proficiency?: Proficiency;
+      onProficiencyChange?: (next: Proficiency) => void;
+    })
+  | (SkillCardBaseProps & {
+      /** Layout variant: `'pill'` (compact wrapping chip, display-and-remove only). */
+      variant: 'pill';
+      proficiency?: never;
+      onProficiencyChange?: never;
+    });
 
 /**
  * Component #14 `SkillCard` (`profile_skill` variant).
@@ -42,6 +56,7 @@ export interface SkillCardProps {
  */
 export function SkillCard({
   name,
+  variant = 'card',
   aliasInput,
   aliasResolved = true,
   learningState,
@@ -62,6 +77,47 @@ export function SkillCard({
       onRemove();
     }
   };
+
+  if (variant === 'pill') {
+    return (
+      <li
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full border border-teal-500 bg-teal-500/15 py-1.5 pl-3.5 text-label font-medium text-text-brand shadow-xs',
+          'transition-colors duration-(--duration-fast) ease-standard motion-reduce:transition-none hover:bg-teal-500/20',
+          onRemove ? 'pr-1.5' : 'pr-3.5',
+          !aliasResolved &&
+            'border-feedback-warning-border bg-feedback-warning-background text-feedback-warning-text',
+          className,
+        )}
+      >
+        <span dir="auto" className="leading-snug">
+          {name}
+        </span>
+        {showAlias && (
+          <span className="text-caption font-normal text-text-secondary">
+            ({aliasInput})
+          </span>
+        )}
+        {!aliasResolved && (
+          <span className="text-caption font-normal text-feedback-warning-text">
+            · Needs clarification
+          </span>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove ${name}`}
+            disabled={disabled}
+            onClick={onRemove}
+            onKeyDown={onRemoveKey}
+            className="relative inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-brand transition-colors duration-(--duration-fast) ease-standard motion-reduce:transition-none hover:bg-teal-500/20 hover:text-text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:cursor-not-allowed disabled:text-text-disabled after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
+          >
+            <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </li>
+    );
+  }
 
   return (
     <li

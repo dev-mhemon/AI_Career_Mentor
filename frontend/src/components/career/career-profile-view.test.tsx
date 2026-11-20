@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
   ApiError,
@@ -9,6 +9,10 @@ import {
 } from '@/lib/api/client';
 import { mapApiError, type M05Invoke } from '@/lib/api/error-mapper';
 import { CareerProfileView } from './career-profile-view';
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
+}));
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
@@ -67,6 +71,7 @@ function makeInvoke(handler: (op: string, input: unknown) => unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
 });
 
 describe('Screen 14 — CareerProfileView', () => {
@@ -86,29 +91,62 @@ describe('Screen 14 — CareerProfileView', () => {
     expect(within(confirmed).getByText(/Role: Backend Development · Mid level/)).toBeInTheDocument();
 
     const clarifying = screen.getByText('Something with AI').closest('li')!;
-    expect(within(clarifying).getByRole('link', { name: 'Resume clarification' })).toHaveAttribute(
-      'href',
-      '/onboarding/clarify?goalId=g-clarifying',
-    );
+    const resumeBtn = within(clarifying).getByRole('button', { name: 'Resume clarification' });
+    expect(resumeBtn).toHaveClass('h-8');
     const awaiting = screen.getByText('Data analyst').closest('li')!;
-    expect(within(awaiting).getByRole('link', { name: 'Review & confirm' })).toHaveAttribute(
-      'href',
-      '/onboarding/clarify?goalId=g-awaiting',
-    );
+    const reviewBtn = within(awaiting).getByRole('button', { name: 'Review & confirm' });
+    expect(reviewBtn).toHaveClass('h-8');
+    expect(within(awaiting).getByRole('button', { name: 'Edit goal text' })).toHaveClass('h-8');
+    expect(within(awaiting).getByRole('button', { name: /discontinue/i })).toHaveClass('h-8');
     const discontinued = screen.getByText('Old mobile goal').closest('li')!;
     expect(within(discontinued).getByText('Discontinued')).toBeInTheDocument();
     expect(within(discontinued).queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('shows skills, preferences and quick-edit links', () => {
-    render(<CareerProfileView initialGoals={[]} profile={PROFILE} invoke={makeInvoke(() => ({ ok: true, data: {} }))} />);
+  it('shows skills, preferences, links Edit profile to /profile, and supports inline editing for skills and preferences', async () => {
+    const updatedSkillsProfile: ProfileResponse = {
+      ...PROFILE,
+      existing_skills: [
+        ...PROFILE.existing_skills,
+        { skill_id: 's2', name: 'SQL', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+      ],
+    };
+    const updatedPrefsProfile: ProfileResponse = {
+      ...updatedSkillsProfile,
+      learning_preference: 'visual',
+    };
+    const invoke = makeInvoke((op) => {
+      if (op === 'updateSkills') return { ok: true, data: updatedSkillsProfile };
+      if (op === 'updatePreferences') return { ok: true, data: updatedPrefsProfile };
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[]} profile={PROFILE} invoke={invoke} />);
     expect(screen.getByText('React')).toBeInTheDocument();
     expect(screen.getByText('Hands-on')).toBeInTheDocument();
     expect(screen.getByText('2 h')).toBeInTheDocument();
     expect(screen.getByText('Asia/Dhaka')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Edit skills' })).toHaveAttribute('href', '/onboarding/skills');
-    expect(screen.getByRole('link', { name: 'Edit preferences' })).toHaveAttribute('href', '/onboarding/preferences');
+    expect(screen.getByRole('link', { name: 'Edit profile' })).toHaveAttribute('href', '/profile');
     expect(screen.getByText(/no career goals yet/i)).toBeInTheDocument();
+
+    // Inline Edit skills (reuses SkillsSetupForm mode="standalone") -> fires Toast
+    fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
+    const skillInput = screen.getByLabelText('Add a skill');
+    fireEvent.change(skillInput, { target: { value: 'SQL' } });
+    fireEvent.keyDown(skillInput, { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Skills' }));
+    await waitFor(() => expect(screen.getByText('SQL')).toBeInTheDocument());
+    expect(invoke).toHaveBeenCalledWith('updateSkills', { names: ['React', 'SQL'] });
+    expect(screen.getByTestId('toast-container')).toHaveTextContent('Skills updated.');
+    expect(screen.getByTestId('toast-countdown-bar')).toBeInTheDocument();
+
+    // Inline Edit preferences (reuses PreferencesSetupForm mode="standalone") -> fires Toast
+    fireEvent.click(screen.getByRole('button', { name: 'Edit preferences' }));
+    fireEvent.click(screen.getByRole('radio', { name: /^Visual/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Preferences' }));
+    await waitFor(() => expect(screen.getByText('Visual')).toBeInTheDocument());
+    expect(invoke).toHaveBeenCalledWith('updatePreferences', { learning_preference: 'visual' });
+    expect(screen.getByTestId('toast-container')).toHaveTextContent('Learning preferences updated.');
   });
 
   it('shows the explicit-None message when the profile declares no skills', () => {
@@ -220,14 +258,15 @@ describe('Screen 14 — CareerProfileView', () => {
     expect(await screen.findByText('Discontinued goals (1)')).toBeInTheDocument();
   });
 
-  it('disables adding a fourth active goal but ignores discontinued goals in the cap', () => {
+  it('disables adding a fourth active goal (showing actual count) and opens inline goal form when under cap', () => {
     const three = [goal('a', 'confirmed', 'A'), goal('b', 'confirmed', 'B'), goal('c', 'clarifying', 'C'), goal('d', 'discontinued', 'D')];
     const { unmount } = render(<CareerProfileView initialGoals={three} profile={PROFILE} invoke={makeInvoke(() => ({ ok: true, data: {} }))} />);
-    expect(screen.queryByRole('link', { name: 'Add a career goal' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add a career goal' })).not.toBeInTheDocument();
     expect(screen.getByText(/3 active goals/i)).toBeInTheDocument();
     unmount();
     render(<CareerProfileView initialGoals={three.slice(0, 2)} profile={PROFILE} invoke={makeInvoke(() => ({ ok: true, data: {} }))} />);
-    expect(screen.getByRole('link', { name: 'Add a career goal' })).toHaveAttribute('href', '/onboarding/goal');
+    fireEvent.click(screen.getByRole('button', { name: 'Add a career goal' }));
+    expect(screen.getByRole('region', { name: 'Add a career goal' })).toBeInTheDocument();
   });
 
   it('shows load errors without hiding the other section and loads more goals', async () => {
@@ -249,5 +288,491 @@ describe('Screen 14 — CareerProfileView', () => {
     expect(await screen.findByText('Second page goal')).toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith('listCareerGoals', { limit: 100, cursor: 'cur1' });
     expect(screen.queryByRole('button', { name: 'Show more goals' })).not.toBeInTheDocument();
+  });
+
+  it('restores the user-selected target level when reopening Review & confirm after closing the panel', async () => {
+    const createdGoal = goal('g-new', 'awaiting_confirmation', 'Backend developer', {
+      suggested_level: 'junior',
+      target_level: null,
+    });
+    const invoke = makeInvoke((op) => {
+      if (op === 'updateLearningSettings') return { ok: true, data: PROFILE };
+      if (op === 'createCareerGoal') return { ok: true, data: createdGoal };
+      if (op === 'confirmCareerGoal') {
+        return { ok: true, data: { ...createdGoal, status: 'confirmed', target_level: 'senior' } };
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[]} profile={PROFILE} userId="u-1" invoke={invoke} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a career goal' }));
+    fireEvent.change(screen.getByRole('combobox', { name: /career goal/i }), {
+      target: { value: 'Backend developer' },
+    });
+    fireEvent.change(screen.getByLabelText(/target career level/i), {
+      target: { value: 'senior' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /analyze goal/i }));
+
+    expect(await screen.findByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /back to goal/i }));
+    expect(screen.queryByRole('region', { name: 'Review and confirm career goal' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review & confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^confirm role$/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('confirmCareerGoal', {
+        id: 'g-new',
+        body: { canonical_role_id: 'r1', target_level: 'senior' },
+      }),
+    );
+  });
+
+  it('invalidates the open confirmation panel when its goal is edited or discontinued without affecting other goals', async () => {
+    const goalA = goal('g-a', 'awaiting_confirmation', 'Data analyst');
+    const goalB = goal('g-b', 'awaiting_confirmation', 'Frontend developer', {
+      proposed_role: { canonical_role_id: 'r2', name: 'Frontend Development' },
+    });
+    const invoke = makeInvoke((op) => {
+      if (op === 'updateCareerGoal') {
+        return { ok: true, data: { ...goalA, goal_text: 'Data engineer' } };
+      }
+      if (op === 'deleteCareerGoal') {
+        return { ok: true, data: { id: 'g-a', status: 'discontinued', archived_roadmap_id: null, new_focus_roadmap_id: null } };
+      }
+      if (op === 'listCareerGoals') {
+        return { ok: true, data: { items: [{ ...goalA, status: 'discontinued' }, goalB], meta: { limit: 100, next_cursor: null } } };
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[goalA, goalB]} profile={PROFILE} invoke={invoke} />);
+
+    // Open confirmation panel for goalA, then edit goalA -> panel closes
+    const rowA = screen.getByText('Data analyst').closest('li')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Review & confirm' }));
+    expect(screen.getByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Edit goal text' }));
+    fireEvent.change(screen.getByLabelText('Edit goal'), { target: { value: 'Data engineer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save goal' }));
+    await waitFor(() => expect(screen.getByText('Data engineer')).toBeInTheDocument());
+    expect(screen.queryByRole('region', { name: 'Review and confirm career goal' })).not.toBeInTheDocument();
+
+    // Open confirmation panel for goalB, then discontinue goalA -> goalB's panel stays open
+    const rowB = screen.getByText('Frontend developer').closest('li')!;
+    fireEvent.click(within(rowB).getByRole('button', { name: 'Review & confirm' }));
+    expect(screen.getByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+    const updatedRowA = screen.getByText('Data engineer').closest('li')!;
+    fireEvent.click(within(updatedRowA).getByRole('button', { name: /discontinue goal/i }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discontinue goal' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+  });
+
+  it('keeps late clarification results from Goal A out of Goal B panel when switching goals mid-flight', async () => {
+    let resolveA!: (value: unknown) => void;
+    const goalA = goal('g-a', 'clarifying', 'Something with AI');
+    const goalB = goal('g-b', 'awaiting_confirmation', 'Frontend developer', {
+      proposed_role: { canonical_role_id: 'r2', name: 'Frontend Development' },
+      suggested_level: 'mid',
+    });
+    const invoke = makeInvoke((op) => {
+      if (op === 'submitGoalClarification') {
+        return new Promise((resolve) => {
+          resolveA = resolve;
+        });
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[goalA, goalB]} profile={PROFILE} invoke={invoke} />);
+    const rowA = screen.getByText('Something with AI').closest('li')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Resume clarification' }));
+    fireEvent.change(screen.getByLabelText(/your answer/i), { target: { value: 'LLM engineering' } });
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }));
+
+    // Switch to Goal B while Goal A's clarification is still in flight
+    const rowB = screen.getByText('Frontend developer').closest('li')!;
+    fireEvent.click(within(rowB).getByRole('button', { name: 'Review & confirm' }));
+    const panel = screen.getByRole('region', { name: 'Review and confirm career goal' });
+    expect(within(panel).getByText('Frontend Development')).toBeInTheDocument();
+
+    // Goal A resolves late -> Goal A row updates, Goal B panel stays intact
+    await act(async () => {
+      resolveA({
+        ok: true,
+        data: {
+          ...goalA,
+          status: 'awaiting_confirmation',
+          proposed_role: { canonical_role_id: 'r-ai', name: 'AI Engineering' },
+        },
+      });
+    });
+    await waitFor(() => expect(screen.getByText(/Proposed role: AI Engineering/)).toBeInTheDocument());
+    expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('Frontend Development')).toBeInTheDocument();
+  });
+
+  it('merges Skills and Preferences slices independently during concurrent inline saves', async () => {
+    let resolveSkills!: (value: unknown) => void;
+    let resolvePrefs!: (value: unknown) => void;
+    const invoke = makeInvoke((op) => {
+      if (op === 'updateSkills') {
+        return new Promise((resolve) => {
+          resolveSkills = resolve;
+        });
+      }
+      if (op === 'updatePreferences') {
+        return new Promise((resolve) => {
+          resolvePrefs = resolve;
+        });
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[]} profile={PROFILE} invoke={invoke} />);
+
+    // Open both Skills and Preferences inline editors simultaneously
+    fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit preferences' }));
+
+    const skillInput = screen.getByLabelText('Add a skill');
+    fireEvent.change(skillInput, { target: { value: 'SQL' } });
+    fireEvent.keyDown(skillInput, { key: 'Enter' });
+    fireEvent.click(screen.getByRole('radio', { name: /^Visual/ }));
+
+    // Trigger both saves concurrently
+    fireEvent.click(screen.getByRole('button', { name: 'Save Skills' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Preferences' }));
+
+    // Preferences resolves first with old skills, then Skills resolves later with old preferences
+    await act(async () => {
+      resolvePrefs({
+        ok: true,
+        data: {
+          ...PROFILE,
+          learning_preference: 'visual',
+          updated_at: '2026-11-02T00:00:00.000Z',
+        },
+      });
+      resolveSkills({
+        ok: true,
+        data: {
+          ...PROFILE,
+          existing_skills: [
+            ...PROFILE.existing_skills,
+            { skill_id: 's2', name: 'SQL', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+          ],
+          learning_preference: 'hands_on', // stale preference in skills response must NOT wipe 'visual'
+          updated_at: '2026-11-01T23:59:59.000Z',
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText('SQL')).toBeInTheDocument());
+    expect(screen.getByText('Visual')).toBeInTheDocument();
+  });
+
+  it('ignores late clarification responses for a goal that was edited after clarification began', async () => {
+    let resolveClarify!: (value: unknown) => void;
+    const goalA = goal('g-a', 'clarifying', 'Something with AI');
+    const invoke = makeInvoke((op) => {
+      if (op === 'submitGoalClarification') {
+        return new Promise((resolve) => {
+          resolveClarify = resolve;
+        });
+      }
+      if (op === 'updateCareerGoal') {
+        return {
+          ok: true,
+          data: {
+            ...goalA,
+            goal_text: 'Edited Cloud Architect',
+            status: 'awaiting_confirmation',
+            proposed_role: { canonical_role_id: 'r-cloud', name: 'Cloud Engineering' },
+          },
+        };
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[goalA]} profile={PROFILE} invoke={invoke} />);
+    const rowA = screen.getByText('Something with AI').closest('li')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Resume clarification' }));
+    fireEvent.change(screen.getByLabelText(/your answer/i), { target: { value: 'Old answer' } });
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }));
+
+    // Edit goalA while clarification is in flight -> bumps goal revision & closes panel
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Edit goal text' }));
+    fireEvent.change(screen.getByLabelText('Edit goal'), { target: { value: 'Edited Cloud Architect' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save goal' }));
+    await waitFor(() => expect(screen.getByText('Edited Cloud Architect')).toBeInTheDocument());
+
+    // Late clarification response arrives -> MUST be ignored so edited goal is not overwritten
+    await act(async () => {
+      resolveClarify({
+        ok: true,
+        data: {
+          ...goalA,
+          goal_text: 'Something with AI',
+          status: 'awaiting_confirmation',
+          proposed_role: { canonical_role_id: 'r-ai', name: 'AI Engineering' },
+        },
+      });
+    });
+    expect(screen.getByText('Edited Cloud Architect')).toBeInTheDocument();
+    expect(screen.queryByText(/Proposed role: AI Engineering/)).not.toBeInTheDocument();
+  });
+
+  it('does not hijack another goal review panel when inline Add Goal resolves late, and isolates inline drafts from onboarding drafts', async () => {
+    window.sessionStorage.setItem(
+      'mentor_onboarding_goal_draft:u-scope',
+      JSON.stringify({ goal: 'Onboarding Draft Goal', dailyHours: '4', targetLevel: 'mid', goalId: 'g-onb' }),
+    );
+    let resolveCreate!: (value: unknown) => void;
+    const existingGoal = goal('g-b', 'awaiting_confirmation', 'Frontend developer', {
+      proposed_role: { canonical_role_id: 'r2', name: 'Frontend Development' },
+    });
+    const invoke = makeInvoke((op) => {
+      if (op === 'updateLearningSettings') return { ok: true, data: { ...PROFILE, preferred_daily_hours: 3 } };
+      if (op === 'createCareerGoal') {
+        return new Promise((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[existingGoal]} profile={PROFILE} userId="u-scope" invoke={invoke} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a career goal' }));
+
+    // Onboarding draft must NOT be cleared or loaded into inline form
+    expect(screen.getByRole('combobox', { name: /career goal/i })).toHaveValue('');
+    expect(window.sessionStorage.getItem('mentor_onboarding_goal_draft:u-scope')).toContain('Onboarding Draft Goal');
+
+    fireEvent.change(screen.getByRole('combobox', { name: /career goal/i }), { target: { value: 'AI engineer' } });
+    fireEvent.change(screen.getByLabelText(/preferred daily hours/i), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText(/target career level/i), { target: { value: 'senior' } });
+    fireEvent.click(screen.getByRole('button', { name: /analyze goal/i }));
+
+    await waitFor(() => expect(typeof resolveCreate).toBe('function'));
+
+    // While inline create is pending, user switches to Goal B's review panel
+    const rowB = screen.getByText('Frontend developer').closest('li')!;
+    fireEvent.click(within(rowB).getByRole('button', { name: 'Review & confirm' }));
+    expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('Frontend Development')).toBeInTheDocument();
+
+    // Inline create resolves -> adds AI engineer to list, does NOT hijack Goal B's open panel
+    await act(async () => {
+      resolveCreate({
+        ok: true,
+        data: goal('g-new-ai', 'awaiting_confirmation', 'AI engineer', {
+          proposed_role: { canonical_role_id: 'r-ai', name: 'AI Engineering' },
+        }),
+      });
+    });
+
+    expect(screen.getByText('AI engineer')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('Frontend Development')).toBeInTheDocument();
+    expect(window.sessionStorage.getItem('mentor_onboarding_goal_draft:u-scope')).toContain('Onboarding Draft Goal');
+  });
+
+  it('updates a reopened Goal A panel on late clarification, closes reopened Goal A panel on late confirm, and reconciles discontinue refresh against newer mutations', async () => {
+    let resolveClarify!: (value: unknown) => void;
+    let resolveConfirm!: (value: unknown) => void;
+    let resolveRefresh!: (value: unknown) => void;
+    const goalA = goal('g-a', 'clarifying', 'Something with AI');
+    const goalB = goal('g-b', 'awaiting_confirmation', 'Frontend developer', {
+      proposed_role: { canonical_role_id: 'r2', name: 'Frontend Development' },
+      suggested_level: 'mid',
+    });
+
+    const invoke = makeInvoke((op) => {
+      if (op === 'submitGoalClarification') {
+        return new Promise((resolve) => {
+          resolveClarify = resolve;
+        });
+      }
+      if (op === 'confirmCareerGoal') {
+        return new Promise((resolve) => {
+          resolveConfirm = resolve;
+        });
+      }
+      if (op === 'deleteCareerGoal') {
+        return { ok: true, data: { id: 'g-a', status: 'discontinued', archived_roadmap_id: null, new_focus_roadmap_id: null } };
+      }
+      if (op === 'listCareerGoals') {
+        return new Promise((resolve) => {
+          resolveRefresh = resolve;
+        });
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[goalA, goalB]} profile={PROFILE} userId="u-race" invoke={invoke} />);
+
+    // Submit clarification on Goal A, close & reopen Goal A panel while in flight
+    const rowA = screen.getByText('Something with AI').closest('li')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Resume clarification' }));
+    fireEvent.change(screen.getByLabelText(/your answer/i), { target: { value: 'Deep learning' } });
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }));
+    fireEvent.click(screen.getByRole('button', { name: /back to goal/i }));
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Resume clarification' }));
+
+    // Late clarification arrives -> reopened Goal A panel transitions to Confirm your role
+    await act(async () => {
+      resolveClarify({
+        ok: true,
+        data: {
+          ...goalA,
+          status: 'awaiting_confirmation',
+          proposed_role: { canonical_role_id: 'r-ai', name: 'AI Engineering' },
+        },
+      });
+    });
+    expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('AI Engineering')).toBeInTheDocument();
+
+    // Start confirming Goal A, close & reopen Goal A panel while confirm is in flight
+    fireEvent.click(screen.getByRole('button', { name: /^confirm role$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /back to goal/i }));
+    fireEvent.click(within(screen.getByText('Something with AI').closest('li')!).getByRole('button', { name: 'Review & confirm' }));
+    expect(screen.getByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+
+    // Confirm resolves -> closes obsolete reopened Goal A panel
+    await act(async () => {
+      resolveConfirm({
+        ok: true,
+        data: {
+          ...goalA,
+          status: 'confirmed',
+          proposed_role: { canonical_role_id: 'r-ai', name: 'AI Engineering' },
+          target_level: 'junior',
+        },
+      });
+    });
+    expect(screen.queryByRole('region', { name: 'Review and confirm career goal' })).not.toBeInTheDocument();
+
+    // Open Goal B panel, discontinue Goal A -> while discontinue list refresh is in flight, confirm Goal B
+    const rowB = screen.getByText('Frontend developer').closest('li')!;
+    fireEvent.click(within(rowB).getByRole('button', { name: 'Review & confirm' }));
+    const confirmedRowA = screen.getByText('Something with AI').closest('li')!;
+    fireEvent.click(within(confirmedRowA).getByRole('button', { name: /discontinue goal/i }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discontinue goal' }));
+    await waitFor(() => expect(typeof resolveRefresh).toBe('function'));
+
+    // Confirm Goal B while refresh is still pending (Goal A not yet marked discontinued in local list -> 2 confirmed)
+    fireEvent.click(screen.getByRole('button', { name: /^confirm role$/i }));
+    await act(async () => {
+      resolveConfirm({
+        ok: true,
+        data: { ...goalB, status: 'confirmed', target_level: 'mid' },
+      });
+    });
+    expect(screen.getByText('Confirmed goals (2)')).toBeInTheDocument();
+
+    // Stale refresh returns Goal B still awaiting_confirmation -> MUST preserve locally confirmed Goal B
+    await act(async () => {
+      resolveRefresh({
+        ok: true,
+        data: {
+          items: [{ ...goalA, status: 'discontinued' }, goalB],
+          meta: { limit: 100, next_cursor: null },
+        },
+      });
+    });
+    expect(screen.getByText('Confirmed goals (1)')).toBeInTheDocument();
+    expect(screen.getByText('Discontinued goals (1)')).toBeInTheDocument();
+    expect(screen.queryByText('Awaiting confirmation (1)')).not.toBeInTheDocument();
+  });
+
+  it('reflects saved daily study hours in profile immediately even when goal creation fails, and persists pending targetLevel per goalId across remount', async () => {
+    const goalA = goal('g-a', 'awaiting_confirmation', 'Backend developer', { suggested_level: 'junior' });
+    const goalB = goal('g-b', 'awaiting_confirmation', 'Data analyst', { suggested_level: 'junior' });
+    let createCount = 0;
+    const invoke = makeInvoke((op) => {
+      if (op === 'updateLearningSettings') {
+        return { ok: true, data: { ...PROFILE, preferred_daily_hours: 4.5, updated_at: '2026-11-05T00:00:00.000Z' } };
+      }
+      if (op === 'createCareerGoal') {
+        createCount += 1;
+        if (createCount === 1) {
+          return { ok: false, error: mapApiError(new ApiError(422, 'Out of scope', 'OUT_OF_SCOPE_GOAL')) };
+        }
+        return { ok: true, data: createCount === 2 ? goalA : goalB };
+      }
+      if (op === 'confirmCareerGoal') {
+        return { ok: true, data: { ...goalA, status: 'confirmed', target_level: 'senior' } };
+      }
+      return { ok: true, data: {} };
+    });
+
+    const first = render(<CareerProfileView initialGoals={[]} profile={PROFILE} userId="u-persist" invoke={invoke} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a career goal' }));
+    fireEvent.change(screen.getByRole('combobox', { name: /career goal/i }), { target: { value: 'Pastry chef' } });
+    fireEvent.change(screen.getByLabelText(/preferred daily hours/i), { target: { value: '4.5' } });
+    fireEvent.change(screen.getByLabelText(/target career level/i), { target: { value: 'senior' } });
+    fireEvent.click(screen.getByRole('button', { name: /analyze goal/i }));
+
+    // Goal creation fails, but 4.5 h saved via EP-P04 is immediately reflected in profile summary
+    expect(await screen.findByRole('alert')).toHaveTextContent(/technology careers only/i);
+    expect(screen.getByText('4.5 h')).toBeInTheDocument();
+
+    // Retry with valid Goal A (Senior), then add Goal B (Mid), then unmount & remount
+    fireEvent.change(screen.getByRole('combobox', { name: /career goal/i }), { target: { value: 'Backend developer' } });
+    fireEvent.click(screen.getByRole('button', { name: /analyze goal/i }));
+    expect(await screen.findByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a career goal' }));
+    fireEvent.change(screen.getByRole('combobox', { name: /career goal/i }), { target: { value: 'Data analyst' } });
+    fireEvent.change(screen.getByLabelText(/target career level/i), { target: { value: 'mid' } });
+    fireEvent.click(screen.getByRole('button', { name: /analyze goal/i }));
+    await waitFor(() => expect(screen.getByText('Data analyst')).toBeInTheDocument());
+    first.unmount();
+
+    // Remount CareerProfileView -> Goal A still preserves 'senior' instead of falling back to 'junior'
+    render(<CareerProfileView initialGoals={[goalA, goalB]} profile={PROFILE} userId="u-persist" invoke={invoke} />);
+    const rowA = screen.getByText('Backend developer').closest('li')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: 'Review & confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: /^confirm role$/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('confirmCareerGoal', {
+        id: 'g-a',
+        body: { canonical_role_id: 'r1', target_level: 'senior' },
+      }),
+    );
+  });
+
+  it('syncs open review panel when discontinue list refresh returns an updated snapshot (clarifying -> awaiting_confirmation)', async () => {
+    const goalA = goal('g-a', 'confirmed', 'Backend developer');
+    const goalB = goal('g-b', 'clarifying', 'Something with AI');
+    const refreshedGoalB = goal('g-b', 'awaiting_confirmation', 'Something with AI', {
+      proposed_role: { canonical_role_id: 'r-ai', name: 'AI Engineering' },
+    });
+    const invoke = makeInvoke((op) => {
+      if (op === 'deleteCareerGoal') {
+        return { ok: true, data: { id: 'g-a', status: 'discontinued', archived_roadmap_id: null, new_focus_roadmap_id: null } };
+      }
+      if (op === 'listCareerGoals') {
+        return {
+          ok: true,
+          data: { items: [{ ...goalA, status: 'discontinued' }, refreshedGoalB], meta: { limit: 100, next_cursor: null } },
+        };
+      }
+      return { ok: true, data: {} };
+    });
+
+    render(<CareerProfileView initialGoals={[goalA, goalB]} profile={PROFILE} invoke={invoke} />);
+    const rowB = screen.getByText('Something with AI').closest('li')!;
+    fireEvent.click(within(rowB).getByRole('button', { name: 'Resume clarification' }));
+    expect(screen.getByRole('heading', { name: 'One quick question' })).toBeInTheDocument();
+
+    const rowA = screen.getByText('Backend developer').closest('li')!;
+    fireEvent.click(within(rowA).getByRole('button', { name: /discontinue goal/i }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discontinue goal' }));
+
+    // Open panel for Goal B updates cleanly to the refreshed awaiting_confirmation snapshot
+    expect(await screen.findByRole('heading', { name: 'Confirm your role' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('AI Engineering')).toBeInTheDocument();
   });
 });

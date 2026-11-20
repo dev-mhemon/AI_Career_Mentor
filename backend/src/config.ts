@@ -179,6 +179,11 @@ export interface AiGatewayConfiguration {
   executionMode: AiExecutionModeConfig;
 }
 
+export interface GeminiProviderConfiguration {
+  apiKey?: string;
+  timeoutMs: number;
+}
+
 type ConfigLookup =
   | Record<string, unknown>
   | { get<T = unknown>(propertyPath: string): T | undefined };
@@ -301,6 +306,37 @@ export function readAiGatewayConfiguration(
   return {
     quotaCacheTtlMs,
     executionMode,
+  };
+}
+
+/**
+ * Reads and validates optional Google Gemini provider configuration for `AI_EXECUTION_MODE=real_user`.
+ * Never echoes `GEMINI_API_KEY` in errors or logs.
+ */
+export function readGeminiProviderConfiguration(
+  source: ConfigLookup,
+): GeminiProviderConfiguration {
+  const rawApiKey = getConfigValue(source, 'GEMINI_API_KEY');
+  let apiKey: string | undefined;
+  if (rawApiKey !== undefined && rawApiKey !== null) {
+    if (typeof rawApiKey !== 'string') {
+      throw new Error('Invalid GEMINI_API_KEY');
+    }
+    const trimmed = rawApiKey.trim();
+    if (trimmed !== '' && !trimmed.startsWith('replace_')) {
+      apiKey = trimmed;
+    }
+  }
+  const timeoutMs = readBoundedPositiveInteger(
+    getConfigValue(source, 'GEMINI_TIMEOUT_MS'),
+    'GEMINI_TIMEOUT_MS',
+    30_000,
+    1_000,
+    120_000,
+  );
+  return {
+    ...(apiKey ? { apiKey } : {}),
+    timeoutMs,
   };
 }
 
@@ -434,6 +470,7 @@ export function validateConfiguration(raw: Record<string, unknown>) {
   }
   readJobWorkerConfiguration(raw);
   readAiGatewayConfiguration(raw);
+  readGeminiProviderConfiguration(raw);
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;
 }

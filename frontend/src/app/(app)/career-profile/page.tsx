@@ -13,10 +13,20 @@ import { toActionFailure, type ActionResult } from '@/lib/api/error-mapper';
 import { CareerProfileView } from '@/components/career/career-profile-view';
 import { AppShellSync } from '@/components/ui/app-shell-context';
 
-/** Operations this screen may run through its server action (EP-C02, EP-C06, EP-C07). */
+export const dynamic = 'force-dynamic';
+
+/** Operations this screen may run through its server action (EP-P01..P05, EP-C01..C07). */
 const ALLOWED_OPERATIONS: ReadonlySet<M05OperationName> = new Set([
   'listCareerGoals',
   'getProfile',
+  'updateSkills',
+  'interpretSkillAlias',
+  'updatePreferences',
+  'updateLearningSettings',
+  'createCareerGoal',
+  'getCareerGoal',
+  'submitGoalClarification',
+  'confirmCareerGoal',
   'updateCareerGoal',
   'deleteCareerGoal',
 ]);
@@ -97,6 +107,7 @@ export default async function CareerProfilePage() {
           goalsError={goalsResult.ok ? null : goalsResult.error.message}
           profile={profileResult.ok ? profileResult.data : null}
           profileError={profileResult.ok ? null : profileResult.error.message}
+          userId={user?.id}
           invoke={invoke}
         />
       </main>

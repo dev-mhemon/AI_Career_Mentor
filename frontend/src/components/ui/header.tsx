@@ -98,12 +98,20 @@ const QUICK_SEARCH_ROUTES: readonly QuickSearchRoute[] = [
     hrefLower: '/dashboard',
   },
   {
-    href: '/onboarding/profile',
-    label: 'Profile Setup',
-    keywords: 'profile onboarding skills experience role',
+    href: '/profile',
+    label: 'Profile',
+    keywords: 'profile name role experience education',
     restrictedWhenSuspended: true,
-    labelLower: 'profile setup',
-    hrefLower: '/onboarding/profile',
+    labelLower: 'profile',
+    hrefLower: '/profile',
+  },
+  {
+    href: '/career-profile',
+    label: 'Career Goals',
+    keywords: 'career goals skills preferences roadmap track',
+    restrictedWhenSuspended: true,
+    labelLower: 'career goals',
+    hrefLower: '/career-profile',
   },
   {
     href: '/settings',
@@ -379,7 +387,7 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
 
           {!isSuspended && (
             <Link
-              href="/onboarding/profile"
+              href="/profile"
               role="menuitem"
               onClick={onClose}
               className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/80 dark:hover:text-white cursor-pointer"

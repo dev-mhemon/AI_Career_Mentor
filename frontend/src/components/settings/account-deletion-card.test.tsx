@@ -376,4 +376,43 @@ describe('AccountDeletionCard Component (Screen 22 / EP-X01 / EP-X02)', () => {
       }
     }
   });
+
+  it('shows crisp "Incorrect password." error, clears immediately on retype, and clears when modal closes/reopens', async () => {
+    vi.mocked(requestAccountDeletionAction)
+      .mockResolvedValueOnce({
+        error:
+          'সঠিক পাসওয়ার্ড বা রি-অথেনটিকেশন টোকেন প্রয়োজন (Invalid password or re-authentication required).',
+      })
+      .mockResolvedValueOnce({
+        error: 'Incorrect password.',
+      });
+
+    render(<AccountDeletionCard canDeleteAccount={true} hasPasswordAuth={true} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    const passwordInput = screen.getByLabelText(/account password/i);
+    fireEvent.change(passwordInput, { target: { value: 'WrongPass1!' } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Incorrect password\.$/);
+
+    // Typing clears error immediately
+    fireEvent.change(passwordInput, { target: { value: 'WrongPass2!' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // Resubmitting shows error again; closing and reopening clears it
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /confirm deletion/i }));
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Incorrect password\.$/);
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

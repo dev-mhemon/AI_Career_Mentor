@@ -1,5 +1,5 @@
 /**
- * Shared client & server-action validation for Screen 07 Profile Setup (`/onboarding/profile`).
+ * Shared client & server-action validation for Screen 07 Profile Setup (`/onboarding`).
  * Reuses email and Bangladesh phone validators from `./auth-schemas`.
  */
 

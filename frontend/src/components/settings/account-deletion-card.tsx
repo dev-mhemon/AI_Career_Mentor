@@ -41,6 +41,23 @@ export interface AccountDeletionCardProps {
 
 const INITIAL_ACTION_STATE: AccountDeletionActionResult = {};
 
+const INVALID_PASSWORD_ERROR_PATTERN =
+  /invalid password|incorrect password|re-?authentication|reauth_required|invalid credentials|সঠিক পাসওয়ার্ড/i;
+
+/**
+ * Normalizes backend/action error copy into crisp single-line English messages for the deletion modal.
+ */
+function formatAccountDeletionError(rawError: string): string {
+  const trimmed = rawError.trim();
+  if (!trimmed) {
+    return 'Something went wrong. Please try again.';
+  }
+  if (INVALID_PASSWORD_ERROR_PATTERN.test(trimmed)) {
+    return 'Incorrect password.';
+  }
+  return trimmed;
+}
+
 const DangerZoneOverview = memo(function DangerZoneOverview({
   isSuspended,
   canDeleteAccount,
@@ -138,6 +155,8 @@ export function AccountDeletionCard({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [pollError, setPollError] = useState<string | null>(null);
+  const [dismissedErrorState, setDismissedErrorState] =
+    useState<AccountDeletionActionResult | null>(null);
 
   const [state, formAction, isPending] = useActionState(
     async (prevState: AccountDeletionActionResult, formData: FormData) => {
@@ -233,22 +252,28 @@ export function AccountDeletionCard({
   const handleOpenModal = useCallback(() => {
     setPasswordInput('');
     setPollError(null);
+    setDismissedErrorState(state);
     setIsModalOpen(true);
-  }, []);
+  }, [state]);
 
   const isBusy = isPending || isPolling;
 
   const handleCloseModal = useCallback(() => {
     if (!isBusy) {
+      setPasswordInput('');
+      setPollError(null);
+      setDismissedErrorState(state);
       setIsModalOpen(false);
     }
-  }, [isBusy]);
+  }, [isBusy, state]);
 
   const handlePasswordChange = useCallback(
     (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setPasswordInput(e.target.value);
+      setDismissedErrorState(state);
+      setPollError(null);
     },
-    [],
+    [state],
   );
 
   const handleModalKeyDown = useCallback(
@@ -265,6 +290,12 @@ export function AccountDeletionCard({
 
   const isSubmitDisabled =
     isBusy || (hasPasswordAuth && !passwordInput.trim());
+
+  const activeErrorRaw =
+    (state !== dismissedErrorState ? state.error : undefined) || pollError;
+  const visibleError = activeErrorRaw
+    ? formatAccountDeletionError(activeErrorRaw)
+    : null;
 
   return (
     <section
@@ -303,9 +334,9 @@ export function AccountDeletionCard({
                 : 'This action cannot be undone. Confirm below to permanently delete your account.'}
             </p>
 
-            {(state.error || pollError) && (
+            {visibleError && (
               <Alert variant="error_retryable" role="alert">
-                {state.error || pollError}
+                {visibleError}
               </Alert>
             )}
 

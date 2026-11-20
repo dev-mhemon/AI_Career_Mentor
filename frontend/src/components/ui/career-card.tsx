@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from './cn';
-import { CheckIcon } from './icons';
 import type { CareerLevel, GoalStatus } from '@/lib/api/client';
 
 const STATUS_LABEL: Record<GoalStatus, string> = {
@@ -53,6 +52,8 @@ export interface CareerCardProps {
   level?: CareerLevel | null;
   /** Marks the AI's primary proposal (`true`) vs an alternative (`false`). */
   recommended?: boolean;
+  /** Optional explicit badge copy (overrides default `"Recommended"` / `"Alternative"` label). */
+  badgeLabel?: string;
   status?: GoalStatus;
   /** When provided, the card behaves as a radio option. */
   selected?: boolean;
@@ -72,6 +73,7 @@ export function CareerCard({
   category,
   level,
   recommended,
+  badgeLabel,
   status,
   selected = false,
   onSelect,
@@ -84,41 +86,73 @@ export function CareerCard({
   const TextTag = selectable ? 'span' : 'p';
   const RowTag = selectable ? 'span' : 'div';
 
+  const resolvedBadgeLabel =
+    badgeLabel ??
+    (recommended !== undefined ? (recommended ? 'Recommended' : 'Alternative') : null);
+  const hasBadges = Boolean(resolvedBadgeLabel) || Boolean(status);
+  const hasTopRow = selectable || hasBadges;
+
   const body = (
     <>
-      <RowTag className="flex flex-wrap items-center gap-2">
-        <TitleTag dir="auto" className="text-heading-sm text-text-primary">
-          {title}
-        </TitleTag>
-        {recommended !== undefined && (
-          <span
-            className={cn(
-              'inline-flex items-center rounded-full border px-2 py-0.5 text-caption font-medium',
-              recommended
-                ? 'border-border-focus bg-surface-subtle text-text-brand'
-                : 'border-border-default bg-surface-default text-text-secondary',
-            )}
-          >
-            {recommended ? 'Recommended' : 'Alternative'}
-          </span>
+      {hasTopRow && (
+        <RowTag className="flex w-full items-center justify-between gap-2">
+          {selectable ? (
+            <span
+              aria-hidden="true"
+              className={cn(
+                'relative flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[1.5px] shadow-xs ring-4 transition-all duration-200 ease-out motion-reduce:transition-none',
+                selected
+                  ? 'border-teal-600 bg-teal-600 ring-teal-500/15 dark:border-teal-400 dark:bg-teal-500 dark:ring-teal-400/20'
+                  : 'border-slate-300 bg-white ring-transparent group-hover:border-teal-500/80 group-hover:ring-teal-500/10 dark:border-slate-600 dark:bg-surface-default dark:group-hover:border-teal-400 dark:group-hover:ring-teal-400/15',
+              )}
+            >
+              <span
+                className={cn(
+                  'h-2 w-2 rounded-full bg-white transition-all duration-200 ease-out motion-reduce:transition-none',
+                  selected ? 'scale-100 opacity-100' : 'scale-0 opacity-0',
+                )}
+              />
+            </span>
+          ) : (
+            <span aria-hidden="true" />
+          )}
+          {hasBadges && (
+            <RowTag className="flex flex-wrap items-center justify-end gap-2">
+              {resolvedBadgeLabel && (
+                <span
+                  className={cn(
+                    'inline-flex items-center rounded-full border px-2 py-0.5 text-caption font-medium transition-colors duration-200 ease-out motion-reduce:transition-none',
+                    recommended
+                      ? 'border-border-focus bg-surface-subtle text-text-brand'
+                      : 'border-border-default bg-surface-default text-text-secondary',
+                  )}
+                >
+                  {resolvedBadgeLabel}
+                </span>
+              )}
+              {status && <GoalStatusBadge status={status} />}
+            </RowTag>
+          )}
+        </RowTag>
+      )}
+      <TitleTag
+        dir="auto"
+        className={cn(
+          'block w-full text-left text-heading-sm text-text-primary transition-colors duration-200 ease-out motion-reduce:transition-none',
+          hasTopRow && 'mt-3',
         )}
-        {status && <GoalStatusBadge status={status} />}
-        {selectable && selected && (
-          <span className="ml-auto inline-flex items-center gap-1 text-caption font-medium text-text-brand">
-            <CheckIcon className="h-4 w-4" aria-hidden="true" />
-            Selected
-          </span>
-        )}
-      </RowTag>
+      >
+        {title}
+      </TitleTag>
       {(category || level) && (
-        <TextTag className="block text-caption text-text-secondary">
+        <TextTag className="mt-1.5 block text-caption text-text-secondary">
           {[category, level ? `${LEVEL_LABEL[level]} level` : null]
             .filter(Boolean)
             .join(' · ')}
         </TextTag>
       )}
       {rationale ? (
-        <TextTag dir="auto" className="block text-body-sm text-text-secondary">
+        <TextTag dir="auto" className="mt-1.5 block text-body-sm text-text-secondary">
           {rationale}
         </TextTag>
       ) : null}
@@ -126,11 +160,20 @@ export function CareerCard({
     </>
   );
 
-  const shell =
-    'flex w-full flex-col gap-2 rounded-lg border bg-surface-default p-4 text-left shadow-xs';
+  const shell = 'flex h-full w-full flex-col rounded-lg p-4 text-left shadow-xs';
 
   if (!selectable) {
-    return <article className={cn(shell, 'border-border-default', className)}>{body}</article>;
+    return (
+      <article
+        className={cn(
+          shell,
+          'border border-border-default bg-surface-default',
+          className,
+        )}
+      >
+        {body}
+      </article>
+    );
   }
 
   return (
@@ -143,12 +186,12 @@ export function CareerCard({
       onClick={onSelect}
       className={cn(
         shell,
-        'min-h-11 cursor-pointer transition-colors duration-(--duration-fast) ease-standard motion-reduce:transition-none',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2',
-        'disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled',
+        'group min-h-[120px] cursor-pointer border-[1.5px] ring-4 transition-[background-color,border-color,box-shadow,transform] duration-200 ease-out motion-reduce:transition-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2',
+        'disabled:cursor-not-allowed disabled:border-border-disabled disabled:bg-surface-disabled disabled:hover:translate-y-0 disabled:hover:shadow-none',
         selected
-          ? 'border-2 border-border-focus bg-surface-subtle'
-          : 'border-border-strong hover:border-border-focus',
+          ? 'border-teal-600 bg-teal-50/60 shadow-sm ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40 dark:ring-teal-400/25'
+          : 'border-slate-200/90 bg-white ring-transparent hover:-translate-y-0.5 hover:border-teal-400/80 hover:bg-slate-50/70 hover:shadow-md active:translate-y-0 dark:border-border-default dark:bg-surface-default dark:hover:border-teal-400/80 dark:hover:bg-surface-subtle',
         className,
       )}
     >

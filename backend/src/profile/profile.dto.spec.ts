@@ -60,6 +60,13 @@ describe('Foundation & Career/Profile DTO validation', () => {
     ).not.toHaveLength(0);
   });
 
+  it('accepts timezone-only LearningPatch without preferred_daily_hours (EP-P04)', async () => {
+    const dto = plainToInstance(LearningPatch, { timezone: 'Asia/Dhaka' });
+    expect(await validate(dto)).toHaveLength(0);
+    expect(dto.timezone).toBe('Asia/Dhaka');
+    expect(dto.preferred_daily_hours).toBeUndefined();
+  });
+
   it('trims roles and rejects blank names', async () => {
     const p = plainToInstance(ProfilePatch, {
       current_role: '  Student ',

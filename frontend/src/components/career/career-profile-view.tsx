@@ -1,14 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type {
   CareerGoalResponse,
+  CareerLevel,
   GoalStatus,
   LearningPreference,
   ProfileResponse,
 } from '@/lib/api/client';
-import type { M05Invoke, MappedError } from '@/lib/api/error-mapper';
+import {
+  mapApiError,
+  type M05Invoke,
+  type MappedError,
+} from '@/lib/api/error-mapper';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { GoalStatusBadge } from '@/components/ui/career-card';
@@ -16,12 +21,21 @@ import { Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { toneToAlertVariant } from '@/components/ui/multi-step-form-wrapper';
 import { SkillCard } from '@/components/ui/skill-card';
+import { Toast } from '@/components/ui/toast';
 import {
   GOAL_TEXT_MAX,
   GOAL_TEXT_MIN,
+  GoalSetupForm,
+  clearGoalDraft,
+  clearPendingGoalTargetLevel,
   codePointLength,
+  readPendingGoalTargetLevels,
   validateBoundedText,
+  writePendingGoalTargetLevel,
 } from '@/components/onboarding/goal-setup-form';
+import { GoalClarifyForm } from '@/components/onboarding/goal-clarify-form';
+import { SkillsSetupForm } from '@/components/onboarding/skills-setup-form';
+import { PreferencesSetupForm } from '@/components/onboarding/preferences-setup-form';
 
 export const MAX_ACTIVE_GOALS = 3;
 
@@ -52,6 +66,7 @@ export interface CareerProfileViewProps {
   profile: ProfileResponse | null;
   goalsError?: string | null;
   profileError?: string | null;
+  userId?: string;
   invoke: M05Invoke;
 }
 
@@ -62,20 +77,132 @@ export interface CareerProfileViewProps {
 export function CareerProfileView({
   initialGoals,
   initialNextCursor = null,
-  profile,
+  profile: initialProfile,
   goalsError,
   profileError,
+  userId,
   invoke,
 }: CareerProfileViewProps) {
   const [goals, setGoals] = useState<CareerGoalResponse[]>(initialGoals);
+  const [profile, setProfile] = useState<ProfileResponse | null>(initialProfile);
   const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [editTouched, setEditTouched] = useState(false);
   const [discontinueTarget, setDiscontinueTarget] = useState<CareerGoalResponse | null>(null);
+  const [inlineAddSessionId, setInlineAddSessionId] = useState<number | null>(null);
+  const isAddingGoal = inlineAddSessionId !== null;
+  const inlineAddSessionRef = useRef(0);
+  const activeAddSessionIdRef = useRef<number | null>(null);
+  const clarifyingInstanceRef = useRef(0);
+  const goalMutationRevisionsRef = useRef(new Map<string, number>());
+  const [selectedTargetLevels, setSelectedTargetLevels] = useState<
+    Record<string, CareerLevel>
+  >({});
+  const [clarifyingGoal, setClarifyingGoal] = useState<{
+    instanceId: number;
+    goalRevision: number;
+    goal: CareerGoalResponse;
+    targetLevel: CareerLevel | null;
+  } | null>(null);
+  const clarifyingGoalRef = useRef(clarifyingGoal);
+  useEffect(() => {
+    clarifyingGoalRef.current = clarifyingGoal;
+  }, [clarifyingGoal]);
+  const [isEditingSkills, setIsEditingSkills] = useState(false);
+  const [isEditingPreferences, setIsEditingPreferences] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<MappedError | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+
+  function showSuccessToast(message: string) {
+    setToast((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
+  }
+
+  function mergeLearningSettingsProfile(updatedProfile: ProfileResponse) {
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            preferred_daily_hours: updatedProfile.preferred_daily_hours,
+            timezone: updatedProfile.timezone,
+            timezone_detected: updatedProfile.timezone_detected,
+            updated_at:
+              updatedProfile.updated_at > prev.updated_at
+                ? updatedProfile.updated_at
+                : prev.updated_at,
+          }
+        : updatedProfile,
+    );
+  }
+
+  function getGoalRevision(goalId: string): number {
+    return goalMutationRevisionsRef.current.get(goalId) ?? 0;
+  }
+
+  function bumpGoalRevision(goalId: string): number {
+    const next = getGoalRevision(goalId) + 1;
+    goalMutationRevisionsRef.current.set(goalId, next);
+    return next;
+  }
+
+  function openClarifyingGoal(
+    goal: CareerGoalResponse,
+    targetLevel: CareerLevel | null,
+  ) {
+    activeAddSessionIdRef.current = null;
+    clarifyingInstanceRef.current += 1;
+    setClarifyingGoal({
+      instanceId: clarifyingInstanceRef.current,
+      goalRevision: getGoalRevision(goal.id),
+      goal,
+      targetLevel,
+    });
+  }
+
+  function handleClarifyGoalUpdated(
+    capturedGoalRevision: number,
+    updatedGoal: CareerGoalResponse,
+  ) {
+    if (getGoalRevision(updatedGoal.id) !== capturedGoalRevision) {
+      return;
+    }
+    const nextRevision = bumpGoalRevision(updatedGoal.id);
+    setGoals((prev) =>
+      prev.map((g) => (g.id === updatedGoal.id ? updatedGoal : g)),
+    );
+    setClarifyingGoal((prev) =>
+      prev &&
+      prev.goal.id === updatedGoal.id &&
+      prev.goalRevision === capturedGoalRevision
+        ? { ...prev, goal: updatedGoal, goalRevision: nextRevision }
+        : prev,
+    );
+  }
+
+  function handleClarifyGoalConfirmed(
+    capturedGoalRevision: number,
+    confirmedGoal: CareerGoalResponse,
+  ) {
+    if (getGoalRevision(confirmedGoal.id) !== capturedGoalRevision) {
+      return;
+    }
+    bumpGoalRevision(confirmedGoal.id);
+    clearPendingGoalTargetLevel(confirmedGoal.id, userId);
+    setGoals((prev) =>
+      prev.map((g) => (g.id === confirmedGoal.id ? confirmedGoal : g)),
+    );
+    setSelectedTargetLevels((prev) => {
+      if (!(confirmedGoal.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[confirmedGoal.id];
+      return next;
+    });
+    setClarifyingGoal((prev) =>
+      prev && prev.goal.id === confirmedGoal.id ? null : prev,
+    );
+    showSuccessToast('Career goal confirmed.');
+  }
 
   const activeCount = goals.filter((g) => g.status !== 'discontinued').length;
   const canAddGoal = activeCount < MAX_ACTIVE_GOALS;
@@ -83,6 +210,37 @@ export function CareerProfileView({
 
   function isEditableGoalStatus(status: GoalStatus): boolean {
     return status === 'clarifying' || status === 'awaiting_confirmation';
+  }
+
+  function hasGoalSnapshotChanged(
+    current: CareerGoalResponse,
+    refreshed: CareerGoalResponse,
+  ): boolean {
+    if (
+      current.status !== refreshed.status ||
+      current.goal_text !== refreshed.goal_text ||
+      current.clarification_round !== refreshed.clarification_round ||
+      current.clarification_question !== refreshed.clarification_question ||
+      current.proposed_role?.canonical_role_id !==
+        refreshed.proposed_role?.canonical_role_id ||
+      current.proposed_role?.name !== refreshed.proposed_role?.name ||
+      current.suggested_level !== refreshed.suggested_level ||
+      current.target_level !== refreshed.target_level ||
+      current.alternative_roles.length !== refreshed.alternative_roles.length
+    ) {
+      return true;
+    }
+    for (let i = 0; i < current.alternative_roles.length; i += 1) {
+      const prevRole = current.alternative_roles[i];
+      const nextRole = refreshed.alternative_roles[i];
+      if (
+        prevRole.canonical_role_id !== nextRole?.canonical_role_id ||
+        prevRole.name !== nextRole?.name
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function startEdit(goal: CareerGoalResponse) {
@@ -99,18 +257,27 @@ export function CareerProfileView({
     if (!isEditableGoalStatus(goal.status) || editError !== null || pending) return;
     setPending(true);
     setError(null);
-    const result = await invoke('updateCareerGoal', {
-      id: goal.id,
-      body: { goal_text: editText.trim() },
-    });
+    let result: Awaited<ReturnType<typeof invoke<'updateCareerGoal'>>>;
+    try {
+      result = await invoke('updateCareerGoal', {
+        id: goal.id,
+        body: { goal_text: editText.trim() },
+      });
+    } catch (err) {
+      setPending(false);
+      setError(mapApiError(err));
+      return;
+    }
     setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
+    bumpGoalRevision(goal.id);
     setGoals((prev) => prev.map((g) => (g.id === goal.id ? result.data : g)));
+    setClarifyingGoal((prev) => (prev?.goal.id === goal.id ? null : prev));
     setEditingId(null);
-    setNotice('Goal updated.');
+    showSuccessToast('Goal updated.');
   }
 
   async function confirmDiscontinue() {
@@ -118,13 +285,24 @@ export function CareerProfileView({
     if (!target || pending) return;
     setPending(true);
     setError(null);
-    const result = await invoke('deleteCareerGoal', { id: target.id });
+    let result: Awaited<ReturnType<typeof invoke<'deleteCareerGoal'>>>;
+    try {
+      result = await invoke('deleteCareerGoal', { id: target.id });
+    } catch (err) {
+      setPending(false);
+      setDiscontinueTarget(null);
+      setError(mapApiError(err));
+      return;
+    }
     if (!result.ok) {
       setPending(false);
       setDiscontinueTarget(null);
       setError(result.error);
       return;
     }
+    bumpGoalRevision(target.id);
+    clearPendingGoalTargetLevel(target.id, userId);
+    const snapshotRevisions = new Map(goalMutationRevisionsRef.current);
     let refreshed: Awaited<ReturnType<typeof invoke<'listCareerGoals'>>> | null = null;
     try {
       refreshed = await invoke('listCareerGoals', { limit: 100 });
@@ -134,21 +312,102 @@ export function CareerProfileView({
     setPending(false);
     setDiscontinueTarget(null);
     if (refreshed?.ok) {
-      setGoals(refreshed.data.items);
+      const refreshedItems = refreshed.data.items;
+      // Pre-compute every goal whose local revision advanced while refresh was in flight
+      // BEFORE applying any refresh-driven revision bumps, and reuse this single snapshot everywhere.
+      const advancedGoalIds = new Set<string>();
+      for (const [goalId, rev] of goalMutationRevisionsRef.current.entries()) {
+        if (rev > (snapshotRevisions.get(goalId) ?? 0)) {
+          advancedGoalIds.add(goalId);
+        }
+      }
+      const hasAdvanced = (goalId: string) => advancedGoalIds.has(goalId);
+
+      setGoals((prev) => {
+        const prevById = new Map(prev.map((g) => [g.id, g]));
+        const refreshedById = new Map(refreshedItems.map((g) => [g.id, g]));
+        const reconciled: CareerGoalResponse[] = [];
+        for (const item of refreshedItems) {
+          if (hasAdvanced(item.id) && prevById.has(item.id)) {
+            reconciled.push(prevById.get(item.id)!);
+          } else {
+            reconciled.push(item);
+          }
+        }
+        for (const localGoal of prev) {
+          if (!refreshedById.has(localGoal.id) && hasAdvanced(localGoal.id)) {
+            reconciled.unshift(localGoal);
+          }
+        }
+        return reconciled;
+      });
       setNextCursor(refreshed.data.meta.next_cursor);
-      if (editingId) {
-        const stillEditable = refreshed.data.items.some(
+      if (editingId && !hasAdvanced(editingId)) {
+        const stillEditable = refreshedItems.some(
           (g) => g.id === editingId && isEditableGoalStatus(g.status),
         );
         if (!stillEditable) setEditingId(null);
       }
+      const openPanel = clarifyingGoalRef.current;
+      if (openPanel && !hasAdvanced(openPanel.goal.id)) {
+        const refreshedMatch = refreshedItems.find(
+          (g) => g.id === openPanel.goal.id,
+        );
+        if (!refreshedMatch || !isEditableGoalStatus(refreshedMatch.status)) {
+          bumpGoalRevision(openPanel.goal.id);
+          setClarifyingGoal((prev) =>
+            prev && prev.instanceId === openPanel.instanceId ? null : prev,
+          );
+        } else if (hasGoalSnapshotChanged(openPanel.goal, refreshedMatch)) {
+          const nextRevision = bumpGoalRevision(refreshedMatch.id);
+          clarifyingInstanceRef.current += 1;
+          const nextInstanceId = clarifyingInstanceRef.current;
+          setClarifyingGoal((prev) =>
+            prev && prev.instanceId === openPanel.instanceId
+              ? {
+                  ...prev,
+                  instanceId: nextInstanceId,
+                  goalRevision: nextRevision,
+                  goal: refreshedMatch,
+                }
+              : prev,
+          );
+        }
+      }
+      // Clear non-editable persisted target levels outside the React state updater.
+      for (const item of refreshedItems) {
+        if (!hasAdvanced(item.id) && !isEditableGoalStatus(item.status)) {
+          clearPendingGoalTargetLevel(item.id, userId);
+        }
+      }
+      setSelectedTargetLevels((prev) => {
+        const next: Record<string, CareerLevel> = {};
+        for (const [id, level] of Object.entries(prev)) {
+          if (hasAdvanced(id)) {
+            next[id] = level;
+          }
+        }
+        for (const item of refreshedItems) {
+          if (!hasAdvanced(item.id) && isEditableGoalStatus(item.status) && prev[item.id]) {
+            next[item.id] = prev[item.id];
+          }
+        }
+        return next;
+      });
     } else {
       setGoals((prev) =>
         prev.map((g) => (g.id === target.id ? { ...g, status: 'discontinued' } : g)),
       );
       if (editingId === target.id) setEditingId(null);
+      setClarifyingGoal((prev) => (prev?.goal.id === target.id ? null : prev));
+      setSelectedTargetLevels((prev) => {
+        if (!(target.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[target.id];
+        return next;
+      });
     }
-    setNotice(
+    showSuccessToast(
       result.data.archived_roadmap_id
         ? 'Goal discontinued. Its roadmap was archived and your progress and evidence were kept.'
         : 'Goal discontinued. Your progress and evidence were kept.',
@@ -159,7 +418,14 @@ export function CareerProfileView({
     if (!nextCursor || pending) return;
     setPending(true);
     setError(null);
-    const result = await invoke('listCareerGoals', { limit: 100, cursor: nextCursor });
+    let result: Awaited<ReturnType<typeof invoke<'listCareerGoals'>>>;
+    try {
+      result = await invoke('listCareerGoals', { limit: 100, cursor: nextCursor });
+    } catch (err) {
+      setPending(false);
+      setError(mapApiError(err));
+      return;
+    }
     setPending(false);
     if (!result.ok) {
       setError(result.error);
@@ -184,22 +450,121 @@ export function CareerProfileView({
           </p>
         </div>
         {canAddGoal ? (
-          <Link
-            href="/onboarding/goal"
-            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-action-primary-background px-5 text-label-lg text-action-primary-foreground hover:bg-action-primary-background-hover"
+          <Button
+            type="button"
+            variant="primary"
+            size="md"
+            disabled={pending}
+            onClick={() => {
+              clearGoalDraft(userId, 'inline');
+              setClarifyingGoal(null);
+              if (isAddingGoal) {
+                activeAddSessionIdRef.current = null;
+                setInlineAddSessionId(null);
+              } else {
+                inlineAddSessionRef.current += 1;
+                const nextSession = inlineAddSessionRef.current;
+                activeAddSessionIdRef.current = nextSession;
+                setInlineAddSessionId(nextSession);
+              }
+            }}
           >
-            Add a career goal
-          </Link>
+            {isAddingGoal ? 'Close' : 'Add a career goal'}
+          </Button>
         ) : (
           <p className="max-w-xs text-caption text-text-secondary">
-            You have {MAX_ACTIVE_GOALS} active goals. Discontinue one to add another.
+            You have {activeCount} active goals (maximum {MAX_ACTIVE_GOALS}). Discontinue one to add another.
           </p>
         )}
       </header>
 
-      <div role="status" aria-live="polite" className="empty:hidden">
-        {notice && <Alert variant="success">{notice}</Alert>}
-      </div>
+      {isAddingGoal && (
+        <section
+          aria-label="Add a career goal"
+          className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
+        >
+          <GoalSetupForm
+            embedded
+            draftScope="inline"
+            invoke={invoke}
+            userId={userId}
+            initialDailyHours={profile?.preferred_daily_hours ?? null}
+            onBack={() => {
+              activeAddSessionIdRef.current = null;
+              setInlineAddSessionId(null);
+            }}
+            shouldPersistDraft={() =>
+              inlineAddSessionId !== null &&
+              activeAddSessionIdRef.current === inlineAddSessionId
+            }
+            onLearningSettingsSaved={mergeLearningSettingsProfile}
+            onSuccess={({ goal: createdGoal, targetLevel }) => {
+              const stillOwnsInteraction =
+                inlineAddSessionId !== null &&
+                activeAddSessionIdRef.current === inlineAddSessionId;
+              bumpGoalRevision(createdGoal.id);
+              writePendingGoalTargetLevel(createdGoal.id, targetLevel, userId);
+              setGoals((prev) => [
+                createdGoal,
+                ...prev.filter((g) => g.id !== createdGoal.id),
+              ]);
+              setSelectedTargetLevels((prev) => ({
+                ...prev,
+                [createdGoal.id]: targetLevel,
+              }));
+              if (stillOwnsInteraction) {
+                activeAddSessionIdRef.current = null;
+                setInlineAddSessionId(null);
+                openClarifyingGoal(createdGoal, targetLevel);
+              }
+            }}
+          />
+        </section>
+      )}
+
+      {clarifyingGoal && (
+        <section
+          aria-label="Review and confirm career goal"
+          className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
+        >
+          <GoalClarifyForm
+            key={`${clarifyingGoal.goal.id}:${clarifyingGoal.instanceId}`}
+            embedded
+            draftScope="inline"
+            goal={clarifyingGoal.goal}
+            initialTargetLevel={clarifyingGoal.targetLevel}
+            userId={userId}
+            invoke={invoke}
+            onBack={() => setClarifyingGoal(null)}
+            onGoalUpdated={(updatedGoal) =>
+              handleClarifyGoalUpdated(
+                clarifyingGoal.goalRevision,
+                updatedGoal,
+              )
+            }
+            onSuccess={(confirmedGoal) =>
+              handleClarifyGoalConfirmed(
+                clarifyingGoal.goalRevision,
+                confirmedGoal,
+              )
+            }
+          />
+        </section>
+      )}
+
+      {toast && (
+        <Toast
+          key={toast.id}
+          variant="success"
+          position="top-center"
+          role="status"
+          ariaLive="polite"
+          autoDismissMs={4000}
+          onDismiss={() => setToast(null)}
+        >
+          {toast.message}
+        </Toast>
+      )}
       {error && (
         <Alert variant={toneToAlertVariant(error.tone)} role="alert">
           {error.message}
@@ -275,14 +640,27 @@ export function CareerProfileView({
                     )}
 
                     {!editing && goal.status !== 'discontinued' && (
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {editable && (
-                          <Link
-                            href={`/onboarding/clarify?goalId=${encodeURIComponent(goal.id)}`}
-                            className="inline-flex min-h-11 items-center rounded-lg border border-border-default px-4 text-label-lg text-text-primary hover:bg-surface-subtle"
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={pending}
+                            onClick={() => {
+                              activeAddSessionIdRef.current = null;
+                              setInlineAddSessionId(null);
+                              openClarifyingGoal(
+                                goal,
+                                selectedTargetLevels[goal.id] ??
+                                  readPendingGoalTargetLevels(userId)[goal.id] ??
+                                  goal.target_level ??
+                                  null,
+                              );
+                            }}
                           >
                             {goal.status === 'clarifying' ? 'Resume clarification' : 'Review & confirm'}
-                          </Link>
+                          </Button>
                         )}
                         {editable && (
                           <Button type="button" size="sm" variant="secondary" disabled={pending} onClick={() => startEdit(goal)}>
@@ -324,69 +702,153 @@ export function CareerProfileView({
           <h2 id="skills-heading" className="text-heading-md text-text-primary">
             Skills
           </h2>
-          <Link href="/onboarding/skills" className="text-label-lg text-text-link underline underline-offset-2">
-            Edit skills
-          </Link>
+          {!isEditingSkills && (
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              disabled={pending || !profile}
+              onClick={() => setIsEditingSkills(true)}
+            >
+              Edit skills
+            </Button>
+          )}
         </div>
         {profileError && (
           <Alert variant="warning" role="alert">
             {profileError}
           </Alert>
         )}
-        {profile && profile.existing_skills.length > 0 && (
-          <ul aria-label="Your skills" className="flex flex-col gap-2">
-            {profile.existing_skills.map((skill) => (
-              <SkillCard
-                key={skill.skill_id}
-                name={skill.name}
-                aliasResolved={skill.alias_resolved}
-                learningState={skill.learning_state}
-              />
-            ))}
-          </ul>
-        )}
-        {profile && profile.existing_skills.length === 0 && (
-          <p className="text-body-sm text-text-secondary">
-            {profile.existing_skills_none
-              ? 'No prior technical skills (you are starting from zero).'
-              : 'No skills added yet.'}
-          </p>
+        {isEditingSkills ? (
+          <div className="rounded-xl border border-border-default bg-surface-raised p-5 shadow-xs">
+            <SkillsSetupForm
+              mode="standalone"
+              initialProfile={profile}
+              invoke={invoke}
+              onCancel={() => setIsEditingSkills(false)}
+              onSuccess={(updatedProfile) => {
+                setProfile((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        existing_skills: updatedProfile.existing_skills,
+                        existing_skills_none: updatedProfile.existing_skills_none,
+                        unresolved_skills: updatedProfile.unresolved_skills,
+                        progress_initialization:
+                          updatedProfile.progress_initialization,
+                        profile_complete: updatedProfile.profile_complete,
+                        missing_fields: updatedProfile.missing_fields,
+                        updated_at:
+                          updatedProfile.updated_at > prev.updated_at
+                            ? updatedProfile.updated_at
+                            : prev.updated_at,
+                      }
+                    : updatedProfile,
+                );
+                setIsEditingSkills(false);
+                showSuccessToast('Skills updated.');
+              }}
+            />
+          </div>
+        ) : (
+          <>
+            {profile && profile.existing_skills.length > 0 && (
+              <ul aria-label="Your skills" className="flex flex-col gap-2">
+                {profile.existing_skills.map((skill) => (
+                  <SkillCard
+                    key={skill.skill_id}
+                    name={skill.name}
+                    aliasResolved={skill.alias_resolved}
+                    learningState={skill.learning_state}
+                  />
+                ))}
+              </ul>
+            )}
+            {profile && profile.existing_skills.length === 0 && (
+              <p className="text-body-sm text-text-secondary">
+                {profile.existing_skills_none
+                  ? 'No prior technical skills (you are starting from zero).'
+                  : 'No skills added yet.'}
+              </p>
+            )}
+          </>
         )}
       </section>
 
-      <section aria-labelledby="prefs-heading" className="flex flex-col gap-3">
+      <section
+        id="preferences"
+        aria-labelledby="prefs-heading"
+        className="flex flex-col gap-3"
+      >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="prefs-heading" className="text-heading-md text-text-primary">
             Learning preferences
           </h2>
-          <span className="flex gap-4">
-            <Link href="/onboarding/preferences" className="text-label-lg text-text-link underline underline-offset-2">
-              Edit preferences
-            </Link>
-            <Link href="/onboarding/profile" className="text-label-lg text-text-link underline underline-offset-2">
+          <span className="flex items-center gap-4">
+            {!isEditingPreferences && (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                disabled={pending || !profile}
+                onClick={() => setIsEditingPreferences(true)}
+              >
+                Edit preferences
+              </Button>
+            )}
+            <Link href="/profile" className="text-label-lg text-text-link underline underline-offset-2">
               Edit profile
             </Link>
           </span>
         </div>
-        {profile && (
-          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div>
-              <dt className="text-caption text-text-secondary">Learning style</dt>
-              <dd className="text-body text-text-primary">
-                {profile.learning_preference ? PREFERENCE_LABEL[profile.learning_preference] : 'Not set'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-caption text-text-secondary">Daily study hours</dt>
-              <dd className="text-body text-text-primary">
-                {profile.preferred_daily_hours !== null ? `${profile.preferred_daily_hours} h` : 'Not set'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-caption text-text-secondary">Timezone</dt>
-              <dd className="text-body text-text-primary">{profile.timezone ?? 'Not set'}</dd>
-            </div>
-          </dl>
+        {isEditingPreferences ? (
+          <div className="rounded-xl border border-border-default bg-surface-raised p-5 shadow-xs">
+            <PreferencesSetupForm
+              mode="standalone"
+              initialProfile={profile}
+              invoke={invoke}
+              onCancel={() => setIsEditingPreferences(false)}
+              onSuccess={(updatedProfile) => {
+                setProfile((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        learning_preference: updatedProfile.learning_preference,
+                        profile_complete: updatedProfile.profile_complete,
+                        missing_fields: updatedProfile.missing_fields,
+                        updated_at:
+                          updatedProfile.updated_at > prev.updated_at
+                            ? updatedProfile.updated_at
+                            : prev.updated_at,
+                      }
+                    : updatedProfile,
+                );
+                setIsEditingPreferences(false);
+                showSuccessToast('Learning preferences updated.');
+              }}
+            />
+          </div>
+        ) : (
+          profile && (
+            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <dt className="text-caption text-text-secondary">Learning style</dt>
+                <dd className="text-body text-text-primary">
+                  {profile.learning_preference ? PREFERENCE_LABEL[profile.learning_preference] : 'Not set'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-caption text-text-secondary">Daily study hours</dt>
+                <dd className="text-body text-text-primary">
+                  {profile.preferred_daily_hours !== null ? `${profile.preferred_daily_hours} h` : 'Not set'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-caption text-text-secondary">Timezone</dt>
+                <dd className="text-body text-text-primary">{profile.timezone ?? 'Not set'}</dd>
+              </div>
+            </dl>
+          )
         )}
       </section>
 
