@@ -45,14 +45,19 @@ export function Select({
   children,
   className,
   disabled,
+  'aria-describedby': callerDescribedBy,
+  'aria-invalid': callerInvalid,
   ref,
   ...rest
 }: SelectProps) {
-  const describedBy = error
+  const generatedDescribedBy = error
     ? `${id}-error`
     : hint
       ? `${id}-hint`
       : undefined;
+  const describedBy =
+    [callerDescribedBy, generatedDescribedBy].filter(Boolean).join(' ') ||
+    undefined;
 
   return (
     <FieldShell
@@ -65,11 +70,12 @@ export function Select({
     >
       <div className="group relative">
         <select
+          {...rest}
           ref={ref}
           id={id}
           required={required}
           disabled={disabled}
-          aria-invalid={error ? 'true' : undefined}
+          aria-invalid={error ? 'true' : callerInvalid}
           aria-describedby={describedBy}
           className={cn(
             SELECT_BASE_CLASS,
@@ -78,7 +84,6 @@ export function Select({
               : 'border-border-default hover:border-border-strong focus:border-border-focus focus:ring-focus-ring',
             className,
           )}
-          {...rest}
         >
           {placeholder !== undefined && <option value="">{placeholder}</option>}
           {options

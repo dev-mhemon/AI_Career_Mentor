@@ -95,8 +95,8 @@ const TASK_JSON_CONTRACTS: Readonly<Record<AiTask, string>> = {
     '{',
     '  "reason": string,',
     '  "target_level": "junior" | "mid" | "senior" | null,',
-    '  "operations": [{ "sort_order": number, "op": "add_topic" | "update_topic" | "reprioritize" | "reclassify" | "retire_topic", "topic_id": string | null, "lineage_id": string | null, "priority": "core" | "supporting" | "optional" | null, "reason": string, "payload": object }],',
-    '  "size_impact": { "active_topics_before": number, "active_topics_after": number, "materially_large": boolean }',
+    '  "operations": [{ "sort_order": number, "op": "add_topic" | "update_topic" | "reprioritize" | "reclassify" | "retire_topic", "topic_id": string | null, "lineage_id": string | null, "title": string | null, "priority": "core" | "supporting" | "optional" | null, "reason": string, "payload": object }],',
+    '  "size_impact": { "active_topics_before": number, "active_topics_after": number, "materially_large": boolean, "warning": string | null }',
     '}',
   ].join('\n'),
   topic_content: [
@@ -152,7 +152,8 @@ const TASK_JSON_CONTRACTS: Readonly<Record<AiTask, string>> = {
     '  "source_url": "https://..." | null,',
     '  "release_status": "released" | "announced" | "planned" | "experimental" | null,',
     '  "relevance": "high" | "medium" | "low" | null,',
-    '  "action_timing": "act_now" | "learn_later" | "awareness_only" | null',
+    '  "action_timing": "act_now" | "learn_later" | "awareness_only" | null,',
+    '  "roadmap_relation": string | null',
     '}',
   ].join('\n'),
 };

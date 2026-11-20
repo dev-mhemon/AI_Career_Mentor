@@ -25,6 +25,7 @@ export type CompletionProfileInput = Pick<
   | 'learning_preference'
 > & {
   full_name?: string | null;
+  unresolved_skills?: ProfileResponse['unresolved_skills'];
 };
 
 export type CompletionGoalInput = Pick<CareerGoalResponse, 'status'>;
@@ -73,14 +74,19 @@ export function computeProfileCompletion(
     fullName !== undefined ? fullName : (profile?.full_name ?? null);
   const goalList = goals ?? [];
 
+  const hasPendingAmbiguousSkills = (profile?.unresolved_skills ?? []).some(
+    (item) => item.candidates.length > 0,
+  );
+
   const steps: ProfileCompletionSteps = {
     profile:
       isNonEmptyString(resolvedFullName) &&
       isNonEmptyString(profile?.current_role) &&
       isNonEmptyString(profile?.experience_level),
     skills:
-      profile?.existing_skills_none === true ||
-      (profile?.existing_skills?.length ?? 0) > 0,
+      !hasPendingAmbiguousSkills &&
+      (profile?.existing_skills_none === true ||
+        (profile?.existing_skills?.length ?? 0) > 0),
     preferences: isNonEmptyString(profile?.learning_preference),
     goal: goalList.some((g) => ACTIVE_GOAL_STATUSES.has(g.status)),
     confirm: goalList.some((g) => g.status === 'confirmed'),

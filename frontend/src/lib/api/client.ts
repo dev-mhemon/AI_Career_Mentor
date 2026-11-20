@@ -791,6 +791,9 @@ export async function listCareerGoals(
     !Array.isArray(data) ||
     !m ||
     typeof m.limit !== 'number' ||
+    !Number.isInteger(m.limit) ||
+    m.limit < 1 ||
+    m.limit > 100 ||
     !(m.next_cursor === null || typeof m.next_cursor === 'string')
   ) {
     throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');

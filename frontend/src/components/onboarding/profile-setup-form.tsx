@@ -379,6 +379,7 @@ function ProfileSetupFormInner({
   const [savedBaseline, setSavedBaseline] = useState<ProfileSetupFormValues>(
     () => buildInitialState(initialProfile, initialContact, initialFullName),
   );
+  const [hasPendingMetadataRetry, setHasPendingMetadataRetry] = useState(false);
   const [formState, setFormState] = useState<{
     values: ProfileSetupFormValues;
     hasDraft: boolean;
@@ -430,6 +431,7 @@ function ProfileSetupFormInner({
   if (state !== lastHandledState) {
     setLastHandledState(state);
     if (state.success && !state._superseded) {
+      setHasPendingMetadataRetry(false);
       const nextBaselineValues: ProfileSetupFormValues | null = state.values
         ? {
             full_name: state.values.full_name ?? formState.values.full_name,
@@ -476,8 +478,10 @@ function ProfileSetupFormInner({
       });
     } else if (!state.success && !state._superseded && state.profile) {
       // Partial save (e.g. EP-P02/EP-P04 succeeded while Supabase metadata write failed):
-      // advance baseline ONLY for server-committed profile fields while preserving all user inputs & failed metadata fields.
+      // advance baseline ONLY for server-committed profile fields while preserving all user inputs
+      // and keeping Save Changes enabled until the metadata write succeeds.
       const committed = state.profile;
+      setHasPendingMetadataRetry(true);
       setSavedBaseline((prev) => ({
         ...prev,
         current_role: committed.current_role ?? prev.current_role,
@@ -1009,6 +1013,7 @@ function ProfileSetupFormInner({
   const showContactHelper = !hasRequiredContact;
   const isDirty =
     !isStandalone ||
+    hasPendingMetadataRetry ||
     values.full_name.trim() !== savedBaseline.full_name.trim() ||
     (!emailVerified && values.email.trim() !== savedBaseline.email.trim()) ||
     (!phoneVerified && values.phone.trim() !== savedBaseline.phone.trim()) ||

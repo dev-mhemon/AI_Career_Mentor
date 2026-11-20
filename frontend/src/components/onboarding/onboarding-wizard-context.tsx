@@ -28,6 +28,7 @@ import type { OnboardingStepNumber } from '@/components/ui/multi-step-form-wrapp
 export interface OnboardingWizardState {
   currentStep: OnboardingStepKey;
   profile: ProfileResponse | null;
+  profileLoadError: string | null;
   fullName: string;
   contact: ProfileContactInfo;
   goals: CareerGoalResponse[];
@@ -67,6 +68,7 @@ function isUnconfirmedGoal(goal: CareerGoalResponse): boolean {
 export function createInitialWizardState(params: {
   initialStep: OnboardingStepKey;
   initialProfile: ProfileResponse | null;
+  profileLoadError?: string | null;
   initialGoals: CareerGoalResponse[];
   initialContact: ProfileContactInfo;
   initialFullName: string;
@@ -83,6 +85,7 @@ export function createInitialWizardState(params: {
   return {
     currentStep: params.initialStep,
     profile: params.initialProfile,
+    profileLoadError: params.profileLoadError ?? null,
     fullName: params.initialFullName,
     contact: params.initialContact,
     goals: activeGoals,
@@ -180,6 +183,7 @@ export function onboardingWizardReducer(
       return {
         ...state,
         profile: action.profile ?? state.profile,
+        profileLoadError: action.profile ? null : state.profileLoadError,
         fullName:
           action.fullName !== undefined ? action.fullName : state.fullName,
         contact: nextContact,
@@ -278,6 +282,7 @@ export function OnboardingWizardProvider({
     {
       initialStep,
       initialProfile,
+      profileLoadError,
       initialGoals,
       initialContact,
       initialFullName,
@@ -333,7 +338,7 @@ export function OnboardingWizardProvider({
       isStepSubmitting,
       setStepSubmitting,
       userId,
-      profileLoadError,
+      profileLoadError: state.profileLoadError,
       goalsLoadError,
       invoke,
       dispatch,
@@ -350,7 +355,6 @@ export function OnboardingWizardProvider({
       maxUnlockedIndex,
       isStepSubmitting,
       userId,
-      profileLoadError,
       goalsLoadError,
       invoke,
       nextStep,

@@ -1654,11 +1654,15 @@ export async function requestAccountDeletionAction(
         err.code === 'AUTH_INVALID_CREDENTIALS' ||
         err.code === 'INVALID_CREDENTIALS' ||
         err.code === 'INVALID_PASSWORD' ||
-        err.statusCode === 401 ||
-        err.statusCode === 403
+        err.statusCode === 401
       ) {
         return {
           error: 'Incorrect password.',
+        };
+      }
+      if (err.code === 'VERIFIED_CONTACT_REQUIRED') {
+        return {
+          error: 'Verify an email or phone number before deleting your account.',
         };
       }
       if (err.code === 'DELETION_ALREADY_REQUESTED') {

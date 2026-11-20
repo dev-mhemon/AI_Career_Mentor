@@ -289,8 +289,15 @@ export function GoalClarifyForm({
       return;
     }
     if (!result.ok) {
-      setPending(false);
       setApiError(result.error);
+      if (
+        result.error.code === 'ROLE_MISMATCH' ||
+        result.error.code === 'INVALID_STATE_TRANSITION' ||
+        result.error.code === 'CLARIFICATION_LIMIT_REACHED'
+      ) {
+        await resync(goal.id);
+      }
+      setPending(false);
       return;
     }
     const currentDraft = readGoalDraft(userId, draftScope);

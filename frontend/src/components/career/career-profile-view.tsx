@@ -94,6 +94,7 @@ export function CareerProfileView({
   const isAddingGoal = inlineAddSessionId !== null;
   const inlineAddSessionRef = useRef(0);
   const activeAddSessionIdRef = useRef<number | null>(null);
+  const learningSettingsAppliedSessionRef = useRef(0);
   const clarifyingInstanceRef = useRef(0);
   const goalMutationRevisionsRef = useRef(new Map<string, number>());
   const [selectedTargetLevels, setSelectedTargetLevels] = useState<
@@ -119,7 +120,20 @@ export function CareerProfileView({
     setToast((prev) => ({ id: (prev?.id ?? 0) + 1, message }));
   }
 
-  function mergeLearningSettingsProfile(updatedProfile: ProfileResponse) {
+  function mergeLearningSettingsProfile(
+    updatedProfile: ProfileResponse,
+    sessionId?: number | null,
+  ) {
+    if (
+      sessionId !== null &&
+      sessionId !== undefined &&
+      sessionId < learningSettingsAppliedSessionRef.current
+    ) {
+      return;
+    }
+    if (sessionId !== null && sessionId !== undefined) {
+      learningSettingsAppliedSessionRef.current = sessionId;
+    }
     setProfile((prev) =>
       prev
         ? {
@@ -127,10 +141,24 @@ export function CareerProfileView({
             preferred_daily_hours: updatedProfile.preferred_daily_hours,
             timezone: updatedProfile.timezone,
             timezone_detected: updatedProfile.timezone_detected,
-            updated_at:
-              updatedProfile.updated_at > prev.updated_at
-                ? updatedProfile.updated_at
-                : prev.updated_at,
+            updated_at: updatedProfile.updated_at,
+          }
+        : updatedProfile,
+    );
+  }
+
+  function mergeSkillsProfile(updatedProfile: ProfileResponse) {
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            existing_skills: updatedProfile.existing_skills,
+            existing_skills_none: updatedProfile.existing_skills_none,
+            unresolved_skills: updatedProfile.unresolved_skills,
+            progress_initialization: updatedProfile.progress_initialization,
+            profile_complete: updatedProfile.profile_complete,
+            missing_fields: updatedProfile.missing_fields,
+            updated_at: updatedProfile.updated_at,
           }
         : updatedProfile,
     );
@@ -192,6 +220,7 @@ export function CareerProfileView({
     setGoals((prev) =>
       prev.map((g) => (g.id === confirmedGoal.id ? confirmedGoal : g)),
     );
+    setEditingId((prev) => (prev === confirmedGoal.id ? null : prev));
     setSelectedTargetLevels((prev) => {
       if (!(confirmedGoal.id in prev)) return prev;
       const next = { ...prev };
@@ -255,6 +284,7 @@ export function CareerProfileView({
     event.preventDefault();
     setEditTouched(true);
     if (!isEditableGoalStatus(goal.status) || editError !== null || pending) return;
+    const capturedRevision = getGoalRevision(goal.id);
     setPending(true);
     setError(null);
     let result: Awaited<ReturnType<typeof invoke<'updateCareerGoal'>>>;
@@ -269,6 +299,9 @@ export function CareerProfileView({
       return;
     }
     setPending(false);
+    if (getGoalRevision(goal.id) !== capturedRevision) {
+      return;
+    }
     if (!result.ok) {
       setError(result.error);
       return;
@@ -497,7 +530,9 @@ export function CareerProfileView({
               inlineAddSessionId !== null &&
               activeAddSessionIdRef.current === inlineAddSessionId
             }
-            onLearningSettingsSaved={mergeLearningSettingsProfile}
+            onLearningSettingsSaved={(updatedProfile) =>
+              mergeLearningSettingsProfile(updatedProfile, inlineAddSessionId)
+            }
             onSuccess={({ goal: createdGoal, targetLevel }) => {
               const stillOwnsInteraction =
                 inlineAddSessionId !== null &&
@@ -613,7 +648,7 @@ export function CareerProfileView({
                       </p>
                     )}
 
-                    {editing && (
+                    {editing && editable && (
                       <form onSubmit={(e) => saveEdit(e, goal)} noValidate className="flex flex-col gap-2">
                         <Input
                           variant="textarea"
@@ -714,7 +749,7 @@ export function CareerProfileView({
             </Button>
           )}
         </div>
-        {profileError && (
+        {profileError && !profile && (
           <Alert variant="warning" role="alert">
             {profileError}
           </Alert>
@@ -726,25 +761,9 @@ export function CareerProfileView({
               initialProfile={profile}
               invoke={invoke}
               onCancel={() => setIsEditingSkills(false)}
+              onProfileCommitted={mergeSkillsProfile}
               onSuccess={(updatedProfile) => {
-                setProfile((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        existing_skills: updatedProfile.existing_skills,
-                        existing_skills_none: updatedProfile.existing_skills_none,
-                        unresolved_skills: updatedProfile.unresolved_skills,
-                        progress_initialization:
-                          updatedProfile.progress_initialization,
-                        profile_complete: updatedProfile.profile_complete,
-                        missing_fields: updatedProfile.missing_fields,
-                        updated_at:
-                          updatedProfile.updated_at > prev.updated_at
-                            ? updatedProfile.updated_at
-                            : prev.updated_at,
-                      }
-                    : updatedProfile,
-                );
+                mergeSkillsProfile(updatedProfile);
                 setIsEditingSkills(false);
                 showSuccessToast('Skills updated.');
               }}

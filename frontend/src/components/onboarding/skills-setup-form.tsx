@@ -92,6 +92,8 @@ export interface SkillsSetupFormProps {
   mode?: 'wizard' | 'standalone';
   /** Notifies an outer wizard container whenever submission enters or exits pending state. */
   onPendingChange?: (pending: boolean) => void;
+  /** Fired whenever EP-P02 commits skills on the server even if unresolved aliases keep the user on this step. */
+  onProfileCommitted?: (profile: ProfileResponse) => void;
   /** Optional callback invoked on successful save/continue instead of router navigation. */
   onSuccess?: (profile: ProfileResponse) => void;
   /** Optional callback for the Back action when embedded in a wizard or inline view. */
@@ -118,7 +120,10 @@ export function validateNewSkill(raw: string, existing: string[]): string | null
   return null;
 }
 
-function hydrateEntries(existing: ProfileSkillDTO[]): SkillEntry[] {
+function hydrateEntries(
+  existing: ProfileSkillDTO[],
+  unresolved: UnresolvedSkillDTO[] = [],
+): SkillEntry[] {
   const seen = new Set<string>();
   const entries: SkillEntry[] = [];
   for (const skill of existing) {
@@ -127,6 +132,23 @@ function hydrateEntries(existing: ProfileSkillDTO[]): SkillEntry[] {
     if (label && !seen.has(key)) {
       seen.add(key);
       entries.push({ key, label, status: 'valid' });
+    }
+  }
+  for (const item of unresolved) {
+    const label = item.input.trim();
+    const key = label.toLowerCase();
+    if (label && !seen.has(key)) {
+      seen.add(key);
+      entries.push(
+        item.candidates.length > 0
+          ? {
+              key,
+              label,
+              status: 'ambiguous',
+              candidates: item.candidates,
+            }
+          : { key, label, status: 'unrecognized' },
+      );
     }
   }
   return entries;
@@ -150,6 +172,7 @@ export function SkillsSetupForm({
   invoke,
   mode = 'wizard',
   onPendingChange,
+  onProfileCommitted,
   onSuccess,
   onBack,
   onCancel,
@@ -163,12 +186,16 @@ export function SkillsSetupForm({
   const errorId = `${fieldId}-skill-error`;
 
   const [entries, setEntries] = useState<SkillEntry[]>(() =>
-    hydrateEntries(initialProfile?.existing_skills ?? []),
+    hydrateEntries(
+      initialProfile?.existing_skills ?? [],
+      initialProfile?.unresolved_skills ?? [],
+    ),
   );
   const [none, setNone] = useState<boolean>(
     () =>
       Boolean(initialProfile?.existing_skills_none) &&
-      (initialProfile?.existing_skills.length ?? 0) === 0,
+      (initialProfile?.existing_skills.length ?? 0) === 0 &&
+      (initialProfile?.unresolved_skills?.length ?? 0) === 0,
   );
   const [draftError, setDraftError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -397,28 +424,14 @@ export function SkillsSetupForm({
     }
     const pendingAliases = result.data.unresolved_skills ?? [];
     if (pendingAliases.length > 0) {
-      const nextEntries: SkillEntry[] = hydrateEntries(
+      const nextEntries = hydrateEntries(
         result.data.existing_skills,
+        pendingAliases,
       );
-      const seen = new Set(nextEntries.map((e) => e.key));
-      for (const item of pendingAliases) {
-        const label = item.input.trim();
-        const key = label.toLowerCase();
-        if (label && !seen.has(key)) {
-          seen.add(key);
-          nextEntries.push(
-            item.candidates.length > 0
-              ? {
-                  key,
-                  label,
-                  status: 'ambiguous',
-                  candidates: item.candidates,
-                }
-              : { key, label, status: 'unrecognized' },
-          );
-        }
-      }
       commitEntries(nextEntries);
+      noneRef.current = false;
+      setNone(false);
+      onProfileCommitted?.(result.data);
       setPending(false);
       return;
     }

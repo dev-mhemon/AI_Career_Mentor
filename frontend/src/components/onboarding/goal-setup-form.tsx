@@ -343,6 +343,8 @@ export interface GoalSetupFormProps {
    * falling back to EP-C01 (`createCareerGoal`) only on HTTP 404 or terminal 409.
    */
   activeDraftGoalId?: string | null;
+  /** Optional server-side load error (e.g., failed EP-C02 fetch); disables submission to avoid duplicate goal creation. */
+  loadError?: string | null;
   /** Notifies an outer wizard container whenever submission enters or exits pending state. */
   onPendingChange?: (pending: boolean) => void;
   /** Optional ownership guard preventing a superseded inline add session from overwriting the shared inline draft. */
@@ -376,6 +378,7 @@ export function GoalSetupForm({
   initialTargetLevel = null,
   initialTargetLevelSource = 'explicit',
   activeDraftGoalId = null,
+  loadError = null,
   onPendingChange,
   shouldPersistDraft,
   onLearningSettingsSaved,
@@ -410,9 +413,10 @@ export function GoalSetupForm({
       : '';
   const text = draft ? draft.goal : initialGoalText;
   const dailyHours = draft ? draft.dailyHours : initialHoursStr;
-  const targetLevel: CareerLevel | '' = draft
-    ? draft.targetLevel
-    : (initialTargetLevel ?? '');
+  const targetLevel: CareerLevel | '' =
+    draft && draft.targetLevelExplicit !== false
+      ? draft.targetLevel
+      : (initialTargetLevel ?? draft?.targetLevel ?? '');
   const [levelExplicitlyChosen, setLevelExplicitlyChosen] = useState(false);
   const isTargetLevelExplicit: boolean =
     levelExplicitlyChosen ||
@@ -446,7 +450,11 @@ export function GoalSetupForm({
   const showHoursValidation = hoursTouched && !hoursCheck.ok;
   const showLevelValidation = levelTouched && targetLevel === '';
   const canSubmit =
-    trimmedText.length > 0 && hoursCheck.ok && targetLevel !== '' && !pending;
+    !loadError &&
+    trimmedText.length > 0 &&
+    hoursCheck.ok &&
+    targetLevel !== '' &&
+    !pending;
 
   const query = trimmedText.toLowerCase();
   const isExactPreset = EXAMPLE_GOAL_ROLES.some((role) => role.toLowerCase() === query);
@@ -535,7 +543,7 @@ export function GoalSetupForm({
     setTouched(true);
     setHoursTouched(true);
     setLevelTouched(true);
-    if (validation !== null || !hoursCheck.ok || targetLevel === '' || pending) return;
+    if (loadError || validation !== null || !hoursCheck.ok || targetLevel === '' || pending) return;
     setPending(true);
     setApiError(null);
     writeGoalDraft(
@@ -654,6 +662,7 @@ export function GoalSetupForm({
         heading="What is your career goal?"
         description="Choose or describe the technology role you want to work toward."
         status="editing"
+        errorMessage={loadError}
         actions={
           <>
             {backControl}

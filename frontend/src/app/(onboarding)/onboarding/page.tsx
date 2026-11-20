@@ -90,6 +90,41 @@ async function invoke<K extends M05OperationName>(
   return runOperation(op, input, false);
 }
 
+const MAX_GOAL_PAGES = 20;
+
+async function loadAllCareerGoalsReadOnly(): Promise<
+  ActionResult<M05OperationOutput<'listCareerGoals'>>
+> {
+  const items: M05OperationOutput<'listCareerGoals'>['items'] = [];
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  let lastMeta: M05OperationOutput<'listCareerGoals'>['meta'] = {
+    limit: 100,
+    next_cursor: null,
+  };
+
+  for (let page = 0; page < MAX_GOAL_PAGES; page += 1) {
+    const res = await runOperation(
+      'listCareerGoals',
+      cursor ? { limit: 100, cursor } : { limit: 100 },
+      true,
+    );
+    if (!res.ok) {
+      return res;
+    }
+    items.push(...res.data.items);
+    lastMeta = res.data.meta ?? lastMeta;
+    const nextCursor = res.data.meta?.next_cursor;
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      break;
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return { ok: true, data: { items, meta: lastMeta } };
+}
+
 /**
  * Unified Multi-Step Onboarding Wizard (`/onboarding`) — Screens 07–11.
  *
@@ -109,7 +144,7 @@ export default async function OnboardingPage() {
 
   const [profileSnapshot, goalsResult, liveAuthUser] = await Promise.all([
     loadProfileForSetup(),
-    runOperation('listCareerGoals', undefined, true),
+    loadAllCareerGoalsReadOnly(),
     readLiveAuthUser(),
   ]);
 

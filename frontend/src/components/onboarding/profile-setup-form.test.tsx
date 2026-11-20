@@ -1531,14 +1531,34 @@ describe('ProfileSetupForm (Screen 07)', () => {
       fireEvent.click(saveBtn);
     });
 
-    // Error alert shown, all user inputs preserved, and Save Changes remains enabled to retry failed full_name
+    // Error alert shown, all user inputs preserved, and Save Changes remains enabled to retry failed metadata write
     expect(screen.getByRole('alert')).toHaveTextContent(/could not save your name/i);
     expect(nameInput).toHaveValue('Alice New Name');
     expect(roleInput).toHaveValue('Senior Dev');
     expect(saveBtn).toBeEnabled();
 
-    // Reverting failed full_name back to original server baseline makes form clean (because role/level were committed!)
+    // Even if full_name is reverted, Save Changes stays enabled until the metadata retry succeeds
     fireEvent.change(nameInput, { target: { value: 'Alice Old' } });
+    expect(saveBtn).toBeEnabled();
+
+    vi.mocked(saveProfileSetupAction).mockResolvedValueOnce({
+      success: true,
+      profile: committedProfile,
+      values: {
+        full_name: 'Alice Old',
+        email: 'alice@example.com',
+        phone: '',
+        current_role: 'Senior Dev',
+        education: '',
+        experience_level: 'senior',
+        existing_skills_none: false,
+        timezone: 'Asia/Dhaka',
+        preferred_daily_hours: '',
+      },
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
     expect(saveBtn).toBeDisabled();
   });
 

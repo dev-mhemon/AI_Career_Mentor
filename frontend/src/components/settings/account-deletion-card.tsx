@@ -155,11 +155,14 @@ export function AccountDeletionCard({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [pollError, setPollError] = useState<string | null>(null);
+  const [pollingStopped, setPollingStopped] = useState(false);
   const [dismissedErrorState, setDismissedErrorState] =
     useState<AccountDeletionActionResult | null>(null);
 
   const [state, formAction, isPending] = useActionState(
     async (prevState: AccountDeletionActionResult, formData: FormData) => {
+      setPollError(null);
+      setPollingStopped(false);
       try {
         clearRememberedLogin();
       } catch {
@@ -184,7 +187,7 @@ export function AccountDeletionCard({
   const inFlightRef = useRef(false);
 
   const isPendingStatus = state.status === 'in_progress' || state.status === 'scheduled';
-  const isPolling = isPendingStatus && Boolean(state.deletionReceipt) && !pollError;
+  const isPolling = isPendingStatus && Boolean(state.deletionReceipt) && !pollingStopped;
 
   // Handle immediate completion or initiate polling for in_progress / scheduled status
   useEffect(() => {
@@ -197,7 +200,7 @@ export function AccountDeletionCard({
       return;
     }
 
-    if (isPendingStatus && state.deletionReceipt && !pollError) {
+    if (isPendingStatus && state.deletionReceipt && !pollingStopped) {
       const receipt = state.deletionReceipt;
       let isSubscribed = true;
 
@@ -223,6 +226,7 @@ export function AccountDeletionCard({
             }
             if (res.error) {
               setPollError(res.error);
+              setPollingStopped(true);
               return;
             }
             schedulePoll();
@@ -231,6 +235,7 @@ export function AccountDeletionCard({
             setPollError(
               err instanceof Error ? err.message : 'Unable to verify account deletion status.',
             );
+            setPollingStopped(true);
           } finally {
             inFlightRef.current = false;
           }
@@ -247,7 +252,7 @@ export function AccountDeletionCard({
         }
       };
     }
-  }, [state.status, state.deletionReceipt, isPendingStatus, pollError, router]);
+  }, [state.status, state.deletionReceipt, isPendingStatus, pollingStopped, router]);
 
   const handleOpenModal = useCallback(() => {
     setPasswordInput('');

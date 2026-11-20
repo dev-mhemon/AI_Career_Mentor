@@ -218,6 +218,9 @@ function OnboardingWizardContent() {
           invoke={invoke}
           onBack={prevStep}
           onPendingChange={setStepSubmitting}
+          onProfileCommitted={(committedProfile) => {
+            syncProfile(committedProfile);
+          }}
           onSuccess={(updatedProfile) => {
             syncProfile(updatedProfile);
             nextStep();
@@ -248,6 +251,7 @@ function OnboardingWizardContent() {
           invoke={invoke}
           userId={userId}
           draftScope="onboarding"
+          loadError={goalsLoadError}
           activeDraftGoalId={state.activeDraftGoalId}
           initialGoalText={state.activeGoal?.goal_text ?? ''}
           initialDailyHours={state.profile?.preferred_daily_hours ?? null}

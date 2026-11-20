@@ -43,6 +43,17 @@ export default async function ProfilePage() {
 
   const meta = extractMetadataProfile(liveAuthUser?.user_metadata);
   const resolvedFullName = meta.fullName ?? profileSnapshot.fullName ?? '';
+  const resolvedCurrentRole =
+    profileSnapshot.profile?.current_role ?? meta.currentRole ?? null;
+  const resolvedExperienceLevel =
+    profileSnapshot.profile?.experience_level ?? meta.experienceLevel ?? null;
+  const initialProfile = profileSnapshot.profile
+    ? {
+        ...profileSnapshot.profile,
+        current_role: resolvedCurrentRole,
+        experience_level: resolvedExperienceLevel,
+      }
+    : null;
   const contactChannels = resolveContactChannels({
     user: (user ?? {}) as ChannelConfirmationUser,
     liveAuthUser,
@@ -63,7 +74,7 @@ export default async function ProfilePage() {
         variant={user?.role === 'ADMIN' ? 'admin' : 'authenticated'}
         user={{
           fullName: resolvedFullName || null,
-          currentRole: profileSnapshot.profile?.current_role ?? null,
+          currentRole: resolvedCurrentRole,
           email: contactChannels.displayedEmail,
           phone: contactChannels.displayedPhone,
         }}
@@ -81,7 +92,7 @@ export default async function ProfilePage() {
         <div className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs sm:p-8">
           <ProfileSetupForm
             mode="standalone"
-            initialProfile={profileSnapshot.profile}
+            initialProfile={initialProfile}
             initialContact={initialContact}
             initialFullName={resolvedFullName}
             loadError={profileSnapshot.loadError}

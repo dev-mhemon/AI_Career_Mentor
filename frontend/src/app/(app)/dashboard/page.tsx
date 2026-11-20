@@ -24,6 +24,8 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+const MAX_GOAL_PAGES = 20;
+
 async function loadNonDiscontinuedGoals(): Promise<CareerGoalResponse[] | null> {
   try {
     const supabase = await createSupabaseServerClient({ readOnly: true });
@@ -36,8 +38,23 @@ async function loadNonDiscontinuedGoals(): Promise<CareerGoalResponse[] | null> 
     if (!session?.access_token) {
       return null;
     }
-    const res = await listCareerGoals(session.access_token, { limit: 100 });
-    return res.items.filter((g) => g.status !== 'discontinued');
+    const allItems: CareerGoalResponse[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < MAX_GOAL_PAGES; page += 1) {
+      const res = await listCareerGoals(
+        session.access_token,
+        cursor ? { limit: 100, cursor } : { limit: 100 },
+      );
+      allItems.push(...res.items);
+      const nextCursor = res.meta?.next_cursor;
+      if (!nextCursor || seenCursors.has(nextCursor)) {
+        break;
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    return allItems.filter((g) => g.status !== 'discontinued');
   } catch {
     return null;
   }
