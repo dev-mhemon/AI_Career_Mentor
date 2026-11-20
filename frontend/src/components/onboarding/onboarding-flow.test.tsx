@@ -1239,4 +1239,118 @@ describe('Screen 11 — GoalClarifyForm', () => {
       screen.getByText('Closest technology tracks for “Seo Specialist”:'),
     ).toBeInTheDocument();
   });
+
+  it('wires post-confirmation state of Screen 11 to RoadmapGenerateHandoff (EP-C05 confirmed -> EP-R01 generateRoadmap with Idempotency-Key + AILoadingState -> /roadmaps/:id/draft) while keeping /career-profile secondary link', async () => {
+    vi.useFakeTimers();
+    try {
+      const invoke = makeInvoke((op) => {
+        if (op === 'confirmCareerGoal') {
+          return {
+            ok: true,
+            data: {
+              ...AWAITING,
+              status: 'confirmed',
+              target_level: 'mid',
+            },
+          };
+        }
+        if (op === 'generateRoadmap') {
+          return {
+            ok: true,
+            data: {
+              job_id: 'job-r01-onb',
+              kind: 'roadmap_generate',
+              status: 'queued',
+              poll_url: '/api/v1/jobs/job-r01-onb',
+              retry_after_seconds: 1,
+            },
+          };
+        }
+        if (op === 'getJobStatus') {
+          return {
+            ok: true,
+            data: {
+              job_id: 'job-r01-onb',
+              kind: 'roadmap_generate',
+              status: 'succeeded',
+              result_ref: { type: 'roadmap', id: 'roadmap-draft-77' },
+              error: null,
+              retryable: false,
+              created_at: '2026-11-20T00:00:00.000Z',
+              finished_at: '2026-11-20T00:00:01.000Z',
+            },
+          };
+        }
+        return failure('RESOURCE_NOT_FOUND', 404);
+      });
+
+      render(
+        <GoalClarifyForm
+          goal={AWAITING}
+          initialTargetLevel="mid"
+          showGenerateHandoff
+          invoke={invoke}
+        />,
+      );
+
+      // Confirm Role transitions into the post-confirmation Screen 11 handoff state
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /^confirm role$/i }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(invoke).toHaveBeenCalledWith('confirmCareerGoal', {
+        id: GOAL_ID,
+        body: { canonical_role_id: 'role-1', target_level: 'mid' },
+      });
+      expect(
+        screen.getByRole('heading', { name: 'Goal confirmed' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: 'Go to Career Profile' }),
+      ).toHaveAttribute('href', '/career-profile');
+
+      // Click Generate Roadmap Draft -> triggers EP-R01 with UUID Idempotency-Key & AILoadingState polling
+      const generateBtn = screen.getByRole('button', {
+        name: 'Generate Roadmap Draft',
+      });
+      await act(async () => {
+        fireEvent.click(generateBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(invoke).toHaveBeenCalledWith(
+        'generateRoadmap',
+        expect.objectContaining({
+          body: {
+            career_goal_id: GOAL_ID,
+            target_level: 'mid',
+            level_confirmed: true,
+          },
+          idempotencyKey: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+          ),
+        }),
+      );
+      expect(
+        screen.getByText('Generating your roadmap draft'),
+      ).toBeInTheDocument();
+
+      // Advance polling timer -> routes to /roadmaps/roadmap-draft-77/draft
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(invoke).toHaveBeenCalledWith('getJobStatus', {
+        jobId: 'job-r01-onb',
+      });
+      expect(push).toHaveBeenCalledWith('/roadmaps/roadmap-draft-77/draft');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

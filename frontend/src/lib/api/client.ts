@@ -947,6 +947,14 @@ export interface M05OperationMap {
     input: { id: string };
     output: DiscontinueCareerGoalResponse;
   };
+  generateRoadmap: {
+    input: { body: GenerateRoadmapRequestDTO; idempotencyKey: string };
+    output: JobAcceptedDTO;
+  };
+  getJobStatus: {
+    input: { jobId: string };
+    output: JobStatusDTO;
+  };
 }
 
 export type M05OperationName = keyof M05OperationMap;
@@ -1004,6 +1012,15 @@ export async function dispatchM05Operation<K extends M05OperationName>(
       }
       case 'deleteCareerGoal':
         return deleteCareerGoal(accessToken, (input as { id: string }).id);
+      case 'generateRoadmap': {
+        const v = input as {
+          body: GenerateRoadmapRequestDTO;
+          idempotencyKey: string;
+        };
+        return generateRoadmap(accessToken, v.body, v.idempotencyKey);
+      }
+      case 'getJobStatus':
+        return getJobStatus(accessToken, (input as { jobId: string }).jobId);
       default:
         throw new ApiError(400, 'Unsupported operation', 'INVALID_OPERATION');
     }

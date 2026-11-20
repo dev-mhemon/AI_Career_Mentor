@@ -205,7 +205,7 @@ const M05_SAFE_ERRORS: Readonly<
   },
   ROADMAP_LIMIT_REACHED: {
     message:
-      'You have reached the maximum of 3 active goals or roadmaps. Archive or discontinue one before adding another.',
+      'You have reached the maximum of 3 active roadmaps (3 active goals or roadmaps). Archive or discontinue an existing one before adding another.',
     tone: 'warning',
     retryable: false,
   },
@@ -229,12 +229,12 @@ const M05_SAFE_ERRORS: Readonly<
   },
   STALE_VERSION: {
     message:
-      'A newer version exists or this item changed while your update was being processed. Reload the latest version before continuing.',
+      'A newer version of this roadmap exists, or this goal changed while your update was being processed. Reload the latest version before continuing.',
     tone: 'warning',
     retryable: false,
   },
   RESOURCE_NOT_FOUND: {
-    message: 'We could not find that item or roadmap. It may have been removed.',
+    message: 'We could not find that item (the requested resource could not be found). It may have been removed.',
     tone: 'warning',
     retryable: false,
   },

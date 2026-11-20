@@ -21,7 +21,7 @@ import { CompassIcon } from '@/components/ui/icons';
 
 export interface RoadmapGenerateHandoffProps {
   /** Authenticated Bearer token passed from a Server Component or verified client session. */
-  accessToken: string;
+  accessToken?: string;
   /** Confirmed career goal UUID (`EP-R01` `career_goal_id`). */
   careerGoalId: string;
   /** Optional target career level (`junior` | `mid` | `senior`). */
@@ -34,9 +34,14 @@ export interface RoadmapGenerateHandoffProps {
   disabled?: boolean;
   /** Custom CTA label. */
   buttonLabel?: string;
+  /** Optional custom `EP-R01` invoker (e.g. via Server Action glue when `accessToken` is kept server-side). */
+  onGenerateRoadmap?: (
+    body: GenerateRoadmapRequestDTO,
+    idempotencyKey: string,
+  ) => Promise<JobAcceptedDTO>;
   /** Optional navigation override (defaults to `router.push('/roadmaps/${id}/draft')`). */
   onNavigateToDraft?: (roadmapId: string) => void;
-  /** Optional custom job poller for tests. */
+  /** Optional custom job poller for tests or Server Action glue. */
   pollJobStatus?: (jobId: string, signal: AbortSignal) => Promise<JobStatusDTO>;
   className?: string;
 }
@@ -49,13 +54,14 @@ const DETERMINISTIC_HTTP_STATUSES = new Set([400, 403, 404, 409, 422]);
  * Navigates to `/roadmaps/[id]/draft` only after the background job reaches `succeeded`.
  */
 export function RoadmapGenerateHandoff({
-  accessToken,
+  accessToken = '',
   careerGoalId,
   targetLevel,
   levelConfirmed,
   featureEnabled = true,
   disabled = false,
   buttonLabel = 'Generate Roadmap Draft',
+  onGenerateRoadmap,
   onNavigateToDraft,
   pollJobStatus,
   className,
@@ -100,7 +106,9 @@ export function RoadmapGenerateHandoff({
     setMappedError(null);
 
     try {
-      const job = await generateRoadmap(accessToken, payload, idempotencyKey);
+      const job = onGenerateRoadmap
+        ? await onGenerateRoadmap(payload, idempotencyKey)
+        : await generateRoadmap(accessToken, payload, idempotencyKey);
       pendingKeyRef.current = null;
       setAcceptedJob(job);
     } catch (err) {

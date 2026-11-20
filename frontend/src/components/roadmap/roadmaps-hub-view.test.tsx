@@ -128,6 +128,9 @@ describe('RoadmapsHubView', () => {
     expect(screen.getByText('Focus Roadmap')).toBeInTheDocument();
     expect(screen.getByText('Stale Draft')).toBeInTheDocument();
     expect(screen.getByText('Open Merge')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Manage Goals & Profile/i }),
+    ).toHaveAttribute('href', '/career-profile');
 
     expect(
       screen.getByRole('link', { name: /Review Draft/i }),
@@ -215,6 +218,24 @@ describe('RoadmapsHubView', () => {
       'token-1',
       'rm-locked-2',
     );
+  });
+
+  it('renders clean empty state on 200 empty list and links Manage Goals & Profile to /career-profile', async () => {
+    vi.mocked(listRoadmaps).mockResolvedValueOnce({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    render(<RoadmapsHubView accessToken="token-1" />);
+
+    expect(await screen.findByText('No roadmaps yet')).toBeInTheDocument();
+    const manageLinks = screen.getAllByRole('link', {
+      name: /Manage Goals & Profile/i,
+    });
+    expect(manageLinks.length).toBeGreaterThanOrEqual(2);
+    for (const link of manageLinks) {
+      expect(link).toHaveAttribute('href', '/career-profile');
+    }
   });
 });
 

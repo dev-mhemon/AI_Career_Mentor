@@ -358,7 +358,7 @@ export function RoadmapsHubView({
           </p>
         </div>
 
-        <Link href="/onboarding/profile" className={secondaryLinkClass}>
+        <Link href="/career-profile" className={secondaryLinkClass}>
           Manage Goals &amp; Profile
         </Link>
       </header>
@@ -458,8 +458,8 @@ export function RoadmapsHubView({
                 : 'Switch status tabs to view roadmaps in another stage.'}
             </p>
             {filter === 'all' && (
-              <Link href="/onboarding/profile" className={primaryLinkClass}>
-                Continue Onboarding
+              <Link href="/career-profile" className={primaryLinkClass}>
+                Manage Goals &amp; Profile
               </Link>
             )}
           </div>
