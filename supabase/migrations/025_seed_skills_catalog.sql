@@ -94,7 +94,6 @@ WITH inserted_aliases AS (
       ('tailwind-css',                   'Tailwind'),
       ('vuejs',                          'Vue'),
       ('vuejs',                          'VueJS'),
-      ('nodejs',                         'Node'),
       ('nodejs',                         'NodeJS'),
       ('expressjs',                      'Express'),
       ('expressjs',                      'ExpressJS'),
