@@ -9654,5 +9654,155 @@ describe('AuthService session approval boundary', () => {
       expect(userInsert?.params?.[1]).toBe(recoveredEmail);
       expect(userInsert?.params?.[2]).toBe('+8801712345678');
     });
+
+    it('login reconciles pending auth:v1:reset-cleanup channel mapping via getPendingResetCleanup and clears key once synced', async () => {
+      const recoveredEmail = 'resume-login@example.invalid';
+      const token = accessToken([{ method: 'password' }], {
+        email: recoveredEmail,
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              access_token: token,
+              refresh_token: 'refresh-resume',
+              expires_in: 3600,
+            }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ id: userId, email: recoveredEmail }),
+          }),
+      );
+
+      let syncedChannel = false;
+      const clearPendingResetCleanup = vi.fn().mockResolvedValue(undefined);
+      const getPendingResetCleanup = vi.fn().mockResolvedValue({
+        recoveryOpId: 'op-resume-1',
+        localSyncPending: true,
+        localSessionRevocationPending: false,
+        accountSyncPending: true,
+        fallbackBootstrapPending: false,
+        channelMappingSyncPending: true,
+        goTrueRevocationPending: false,
+        channel: 'email',
+        recordedAt: '2026-11-21T00:00:00Z',
+      });
+
+      const txQuery = vi.fn(async (sql: string) => {
+        if (sql.includes('INSERT INTO public.user_auth_providers')) {
+          syncedChannel = true;
+          return [];
+        }
+        if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: recoveredEmail,
+            },
+          ];
+        }
+        if (sql.includes('SELECT u.verified_contact,p.verified_at')) {
+          return syncedChannel
+            ? [
+                {
+                  verified_contact: true,
+                  verified_at: '2026-11-21T00:00:00Z',
+                  contact_value: recoveredEmail,
+                },
+              ]
+            : [
+                {
+                  verified_contact: true,
+                  verified_at: null,
+                  contact_value: null,
+                },
+              ];
+        }
+        if (sql.includes('SELECT u.id,u.email')) {
+          return [
+            {
+              id: userId,
+              email: recoveredEmail,
+              phone: null,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['email', 'google'],
+            },
+          ];
+        }
+        if (sql.includes('SELECT p.*,pr.learning_preference')) {
+          return [];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        return [];
+      });
+
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) {
+            return [{ id: userId }];
+          }
+          if (sql.includes('FROM auth.users')) {
+            return [
+              {
+                id: userId,
+                email: recoveredEmail,
+                phone: null,
+                email_confirmed_at: '2026-11-21T00:00:00Z',
+                phone_confirmed_at: null,
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_sub: unknown, fn: any) =>
+          fn({ query: txQuery }),
+        ),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+          login: vi.fn(async (_c, _ip, exec) => (await exec()).value),
+          getPendingResetCleanup,
+          clearPendingResetCleanup,
+          clearPasswordResetOperation: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          approve: vi.fn().mockResolvedValue(undefined),
+        } as unknown as SessionApprovalService,
+      );
+
+      const res = await service.login(
+        { identifier: recoveredEmail, password: 'RecoveredPassword1!' },
+        {
+          socket: { remoteAddress: '127.0.0.1' },
+          ip: '127.0.0.1',
+          ips: [],
+          headers: {},
+          app: { get: vi.fn() },
+        } as unknown as Request,
+      );
+
+      expect(getPendingResetCleanup).toHaveBeenCalledWith(userId);
+      expect(syncedChannel).toBe(true);
+      expect(clearPendingResetCleanup).toHaveBeenCalledWith(userId);
+      expect(res.access_token).toBe(token);
+      expect(res.user.email).toBe(recoveredEmail);
+    });
   });
 });

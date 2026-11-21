@@ -290,6 +290,30 @@ export class AuthService {
         'SERVICE_UNAVAILABLE',
         'Auth service returned an invalid session',
       );
+    // Real login-time consumer for `auth:v1:reset-cleanup:${userId}`:
+    // Resume any unfinished channel-mapping sync, fallback account bootstrap, or prior-session
+    // revocation before checking `public.users` / `public.user_auth_providers`, preserving the
+    // newly minted `identity.sessionId`. If DB is still unavailable, keep the Redis record intact
+    // and return a retryable 503 SERVICE_UNAVAILABLE.
+    const cleanupResult = await this.reconcilePendingResetCleanup(
+      identity.sub,
+      { preserveSessionId: identity.sessionId },
+    );
+    if (
+      cleanupResult.found &&
+      (cleanupResult.remaining.account_bootstrap ||
+        cleanupResult.remaining.channel_mapping_sync ||
+        cleanupResult.remaining.local_session_revocation)
+    ) {
+      fail(
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Account recovery cleanup is still pending. Please try signing in again shortly.',
+        [],
+        true,
+        5,
+      );
+    }
     const approveLogin = async (db: EntityManager) => {
       if (verifiedPhonePasswordHash !== null) {
         const authRows = await db.query(
@@ -394,7 +418,8 @@ export class AuthService {
   }
 
   /**
-   * Checks whether a non-deleted account exists for the normalized email or phone identifier.
+   * Checks whether a non-deleted account exists for the normalized email or phone identifier,
+   * including an `auth.users` account awaiting post-reset fallback bootstrap in Redis.
    */
   private async accountExists(
     channel: 'email' | 'phone',
@@ -403,9 +428,9 @@ export class AuthService {
     if (typeof this.database?.query !== 'function') return true;
     const rows = await this.database.query(
       channel === 'phone'
-        ? `SELECT u.id
+        ? `SELECT u.id, (pu.id IS NOT NULL) AS has_app_row
              FROM auth.users u
-             JOIN public.users pu ON pu.id = u.id
+             LEFT JOIN public.users pu ON pu.id = u.id
             WHERE u.deleted_at IS NULL
               AND (
                 u.phone IN ($1, ltrim($1, '+'))
@@ -418,10 +443,11 @@ export class AuthService {
                      AND p.contact_value IN ($1, ltrim($1, '+'))
                 )
               )
+            ORDER BY (pu.id IS NOT NULL) DESC
             LIMIT 1`
-        : `SELECT u.id
+        : `SELECT u.id, (pu.id IS NOT NULL) AS has_app_row
              FROM auth.users u
-             JOIN public.users pu ON pu.id = u.id
+             LEFT JOIN public.users pu ON pu.id = u.id
             WHERE u.deleted_at IS NULL
               AND (
                 (
@@ -438,10 +464,18 @@ export class AuthService {
                      AND lower(p.contact_value) = $1
                 )
               )
+            ORDER BY (pu.id IS NOT NULL) DESC
             LIMIT 1`,
       [identifier],
     );
-    return !Array.isArray(rows) || rows.length > 0;
+    if (!Array.isArray(rows)) return true;
+    const row = rows[0];
+    if (!row) return false;
+    if (row.has_app_row === false) {
+      const pendingCleanup = await this.readPendingResetCleanup(String(row.id));
+      return pendingCleanup?.fallbackBootstrapPending === true;
+    }
+    return true;
   }
   async bootstrap(
     identity: JwtIdentity,
@@ -3665,7 +3699,7 @@ export class AuthService {
 
       if (localCleanupFullySucceeded && goTrueCleanupSucceeded) {
         await this.abuse?.clearPasswordResetOperation?.(userId);
-        await this.abuse?.clearUnfinishedPasswordResetCleanup?.(userId);
+        await this.clearPendingResetCleanupRecord(userId);
         return {
           password_reset: true as const,
         };
@@ -3673,10 +3707,11 @@ export class AuthService {
 
       // Persist non-secret, non-PII cleanup/bootstrap metadata so unfinished steps (including
       // channel mapping sync via authoritative auth.users contact lookup verified by contactHash)
-      // can be reconciled via reconcilePendingPasswordResetCleanup without resubmitting OTP.
+      // can be reconciled on subsequent login via reconcilePendingResetCleanup without another OTP.
       await this.abuse?.clearPasswordResetOperation?.(userId);
       await this.abuse?.recordUnfinishedPasswordResetCleanup?.(userId, {
         operationId,
+        recoveryOpId: operationId,
         localSyncPending: !localCleanupFullySucceeded,
         localSessionRevocationPending: !localSessionRevocationSucceeded,
         accountSyncPending: !accountSyncSucceeded,
@@ -3785,14 +3820,39 @@ export class AuthService {
       .digest('hex');
   }
 
+  private async readPendingResetCleanup(userId: string) {
+    if (typeof this.abuse?.getPendingResetCleanup === 'function') {
+      return this.abuse.getPendingResetCleanup(userId);
+    }
+    if (typeof this.abuse?.getUnfinishedPasswordResetCleanup === 'function') {
+      return this.abuse.getUnfinishedPasswordResetCleanup(userId);
+    }
+    return null;
+  }
+
+  private async clearPendingResetCleanupRecord(userId: string): Promise<void> {
+    if (typeof this.abuse?.clearPendingResetCleanup === 'function') {
+      await this.abuse.clearPendingResetCleanup(userId);
+      return;
+    }
+    if (typeof this.abuse?.clearUnfinishedPasswordResetCleanup === 'function') {
+      await this.abuse.clearUnfinishedPasswordResetCleanup(userId);
+    }
+  }
+
   /**
-   * Consumable reconciliation retry path for unfinished password-reset cleanup metadata
-   * stored under `auth:v1:reset-cleanup:${userId}` (local session revocation, fallback account
-   * bootstrap, verified channel mapping sync, and GoTrue session revocation).
-   * Resolves the authoritative contact from `auth.users` (verified against `contactHash`) so
-   * Redis never stores raw PII.
+   * Real recovery consumer for unfinished password-reset cleanup metadata stored under
+   * `auth:v1:reset-cleanup:${userId}` (local session revocation, fallback account bootstrap,
+   * verified channel mapping sync, and GoTrue session revocation).
+   * Invoked during `login` before checking `public.users` / `public.user_auth_providers`
+   * (passing `preserveSessionId` so the newly minted login session is preserved), and also
+   * callable for background/operator reconciliation. Resolves the authoritative contact from
+   * `auth.users` (verified against `contactHash`) so Redis never stores raw PII.
    */
-  async reconcilePendingPasswordResetCleanup(userId: string): Promise<{
+  async reconcilePendingResetCleanup(
+    userId: string,
+    options?: { preserveSessionId?: string },
+  ): Promise<{
     found: boolean;
     completed: boolean;
     remaining: {
@@ -3802,8 +3862,7 @@ export class AuthService {
       provider_session_revocation: boolean;
     };
   }> {
-    const metadata =
-      await this.abuse?.getUnfinishedPasswordResetCleanup?.(userId);
+    const metadata = await this.readPendingResetCleanup(userId);
     if (!metadata) {
       return {
         found: false,
@@ -3907,7 +3966,7 @@ export class AuthService {
 
     if (goTrueRevocationPending) {
       try {
-        await this.revokeGoTrueUserSessions(userId);
+        await this.revokeGoTrueUserSessions(userId, options?.preserveSessionId);
         goTrueRevocationPending = false;
       } catch (err) {
         this.logger.error(
@@ -3925,7 +3984,7 @@ export class AuthService {
       !metadata.providerUpdateUncertain;
 
     if (completed) {
-      await this.abuse?.clearUnfinishedPasswordResetCleanup?.(userId);
+      await this.clearPendingResetCleanupRecord(userId);
       await this.abuse?.clearPasswordResetOperation?.(userId);
     } else {
       await this.abuse?.recordUnfinishedPasswordResetCleanup?.(userId, {
@@ -3954,6 +4013,14 @@ export class AuthService {
         provider_session_revocation: goTrueRevocationPending,
       },
     };
+  }
+
+  /** Backwards-compatible alias for `reconcilePendingResetCleanup`. */
+  async reconcilePendingPasswordResetCleanup(
+    userId: string,
+    options?: { preserveSessionId?: string },
+  ) {
+    return this.reconcilePendingResetCleanup(userId, options);
   }
 
   private async commitLocalSessionRevocation(
@@ -5059,7 +5126,10 @@ export class AuthService {
     }
   }
 
-  private async revokeGoTrueUserSessions(userId: string): Promise<void> {
+  private async revokeGoTrueUserSessions(
+    userId: string,
+    preserveSessionId?: string,
+  ): Promise<void> {
     const configuredTimeout = Number(this.config.get('GOTRUE_TIMEOUT_MS'));
     const timeoutMs =
       Number.isFinite(configuredTimeout) && configuredTimeout > 0
@@ -5074,18 +5144,36 @@ export class AuthService {
           async (qr) => {
             await qr.query(`SET LOCAL statement_timeout = ${safeTimeoutMs}`);
             await qr.query(`SET LOCAL lock_timeout = ${safeTimeoutMs}`);
-            await qr.query(
-              `UPDATE auth.refresh_tokens
-                  SET revoked = true,
-                      updated_at = clock_timestamp()
-                WHERE user_id = $1::text
-                  AND COALESCE(revoked, false) = false`,
-              [userId],
-            );
-            await qr.query(
-              'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
-              [userId],
-            );
+            if (preserveSessionId) {
+              await qr.query(
+                `UPDATE auth.refresh_tokens
+                    SET revoked = true,
+                        updated_at = clock_timestamp()
+                  WHERE user_id = $1::text
+                    AND COALESCE(revoked, false) = false
+                    AND session_id IS DISTINCT FROM $2::uuid`,
+                [userId, preserveSessionId],
+              );
+              await qr.query(
+                `DELETE FROM auth.sessions
+                  WHERE user_id = $1::uuid
+                    AND id IS DISTINCT FROM $2::uuid`,
+                [userId, preserveSessionId],
+              );
+            } else {
+              await qr.query(
+                `UPDATE auth.refresh_tokens
+                    SET revoked = true,
+                        updated_at = clock_timestamp()
+                  WHERE user_id = $1::text
+                    AND COALESCE(revoked, false) = false`,
+                [userId],
+              );
+              await qr.query(
+                'DELETE FROM auth.sessions WHERE user_id = $1::uuid',
+                [userId],
+              );
+            }
           },
           false,
           false,

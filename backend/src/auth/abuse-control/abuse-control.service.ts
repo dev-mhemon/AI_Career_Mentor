@@ -701,6 +701,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
     userId: string,
     metadata: {
       operationId?: string;
+      recoveryOpId?: string;
       localSyncPending: boolean;
       localSessionRevocationPending?: boolean;
       accountSyncPending?: boolean;
@@ -733,9 +734,10 @@ export class AuthAbuseControl implements OnModuleDestroy {
     }
   }
 
-  /** Reads unfinished password-reset cleanup metadata for background/operator reconciliation. */
-  async getUnfinishedPasswordResetCleanup(userId: string): Promise<{
+  /** Reads unfinished password-reset cleanup metadata for login-time or background reconciliation. */
+  async getPendingResetCleanup(userId: string): Promise<{
     operationId?: string;
+    recoveryOpId?: string;
     localSyncPending: boolean;
     localSessionRevocationPending?: boolean;
     accountSyncPending?: boolean;
@@ -767,8 +769,8 @@ export class AuthAbuseControl implements OnModuleDestroy {
     }
   }
 
-  /** Clears finished password-reset cleanup metadata once reconciliation completes. */
-  async clearUnfinishedPasswordResetCleanup(userId: string): Promise<void> {
+  /** Clears finished password-reset cleanup metadata once all pending actions succeed. */
+  async clearPendingResetCleanup(userId: string): Promise<void> {
     if (!this.configuration || this.stopped) return;
     const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
     const key = `auth:v1:reset-cleanup:${userId}`;
@@ -782,6 +784,16 @@ export class AuthAbuseControl implements OnModuleDestroy {
       if (this.client?.isOpen) this.client.destroy();
       this.client = undefined;
     }
+  }
+
+  /** Backwards-compatible alias for `getPendingResetCleanup`. */
+  async getUnfinishedPasswordResetCleanup(userId: string) {
+    return this.getPendingResetCleanup(userId);
+  }
+
+  /** Backwards-compatible alias for `clearPendingResetCleanup`. */
+  async clearUnfinishedPasswordResetCleanup(userId: string): Promise<void> {
+    return this.clearPendingResetCleanup(userId);
   }
 
   /** The code exists only in memory; Redis reserves the current generation before provider verification. */

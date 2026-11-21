@@ -1022,6 +1022,304 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
       expect(clearCleanup).toHaveBeenCalledWith(TEST_USER_ID);
     });
 
+    it('consumes auth:v1:reset-cleanup on subsequent login to resume channel-mapping sync without another OTP, and returns retryable 503 keeping Redis intact if DB is still down', async () => {
+      const redisCleanupStore = new Map<string, Record<string, unknown>>();
+      const recordCleanup = vi.fn(
+        async (uid: string, meta: Record<string, unknown>) => {
+          redisCleanupStore.set(`auth:v1:reset-cleanup:${uid}`, meta);
+        },
+      );
+      const getPendingResetCleanup = vi.fn(
+        async (uid: string) =>
+          redisCleanupStore.get(`auth:v1:reset-cleanup:${uid}`) ?? null,
+      );
+      const clearPendingResetCleanup = vi.fn(async (uid: string) => {
+        redisCleanupStore.delete(`auth:v1:reset-cleanup:${uid}`);
+      });
+
+      const abuseWithRedis = {
+        ...abuse,
+        enforceIpQuota: vi.fn(async () => undefined),
+        login: vi.fn(
+          async (
+            _contact: unknown,
+            _ip: string,
+            execute: () => Promise<{ success: true; value: unknown }>,
+          ) => {
+            const res = await execute();
+            return res.value;
+          },
+        ),
+        recordUnfinishedPasswordResetCleanup: recordCleanup,
+        getPendingResetCleanup,
+        clearPendingResetCleanup,
+      };
+
+      const recoveryService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        abuseWithRedis as unknown as AuthAbuseControl,
+        {
+          ...approvals,
+          approve: vi.fn(async () => undefined),
+        } as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      // Step 1: Verified OAuth user resets password, GoTrue succeeds, channel-mapping sync fails -> Redis record persisted
+      const oauthAccountRow = {
+        id: TEST_USER_ID,
+        email: TEST_EMAIL,
+        status: 'active',
+        verified_contact: true,
+        provider_subject: 'google-sub-123',
+        verified_at: '2026-01-01T00:00:00Z',
+        is_oauth_provider: true,
+        has_verified_channel_provider: false,
+        has_verified_email_provider: false,
+        needs_auth_confirm: false,
+        needs_auth_contact_sync: false,
+      };
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          typeof sql === 'string' &&
+          sql.includes('FROM public.users') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: TEST_EMAIL,
+            },
+          ];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [oauthAccountRow];
+        }
+        return [];
+      });
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+      let resetTx = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          resetTx += 1;
+          if (resetTx === 3 || resetTx === 5) {
+            throw new Error('transient DB outage during channel sync');
+          }
+          return op({ query: database.query } as unknown as EntityManager);
+        },
+      );
+
+      const resetRes = await recoveryService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+      expect(resetRes).toMatchObject({
+        password_reset: true,
+        cleanup_status: 'pending_account_sync',
+        account_ready_for_signin: false,
+      });
+      const storedMeta = redisCleanupStore.get(
+        `auth:v1:reset-cleanup:${TEST_USER_ID}`,
+      );
+      expect(storedMeta).toMatchObject({
+        recoveryOpId: expect.any(String),
+        channel: 'email',
+        channelMappingSyncPending: true,
+        contactHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      // Non-secret / non-PII guard
+      expect(JSON.stringify(storedMeta)).not.toContain(TEST_NEW_PASSWORD);
+      expect(JSON.stringify(storedMeta)).not.toContain('123456');
+      expect(JSON.stringify(storedMeta)).not.toContain(TEST_EMAIL);
+
+      const makeJwt = () => {
+        const enc = (obj: object) =>
+          Buffer.from(JSON.stringify(obj)).toString('base64url');
+        return `${enc({ alg: 'HS256' })}.${enc({
+          sub: TEST_USER_ID,
+          session_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        })}.sig`;
+      };
+
+      // Step 2: Login while DB is STILL unavailable -> keeps Redis record intact and returns retryable 503
+      const token1 = makeJwt();
+      (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: token1,
+            refresh_token: 'refresh-1',
+            expires_in: 3600,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: TEST_USER_ID, email: TEST_EMAIL }),
+        });
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM auth.users u')) {
+          return [{ id: TEST_USER_ID }];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM auth.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              email_confirmed_at: '2026-01-01T00:00:00Z',
+              phone_confirmed_at: null,
+            },
+          ];
+        }
+        return [];
+      });
+      database.transaction.mockRejectedValueOnce(
+        new Error('DB still unavailable'),
+      );
+
+      const fakeReq = {
+        socket: { remoteAddress: '127.0.0.1' },
+        ip: '127.0.0.1',
+        ips: [],
+        headers: {},
+        app: { get: vi.fn() },
+      } as never;
+
+      await expect(
+        recoveryService.login(
+          { identifier: TEST_EMAIL, password: TEST_NEW_PASSWORD },
+          fakeReq,
+        ),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: expect.objectContaining({
+          code: 'SERVICE_UNAVAILABLE',
+          retryable: true,
+        }),
+      });
+      expect(clearPendingResetCleanup).not.toHaveBeenCalled();
+      expect(
+        redisCleanupStore.has(`auth:v1:reset-cleanup:${TEST_USER_ID}`),
+      ).toBe(true);
+
+      // Step 3: DB recovers -> subsequent login consumes Redis record, syncs channel mapping, clears Redis, and succeeds without another OTP
+      const token2 = makeJwt();
+      (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: token2,
+            refresh_token: 'refresh-2',
+            expires_in: 3600,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: TEST_USER_ID, email: TEST_EMAIL }),
+        });
+
+      let channelMappingSynced = false;
+      const loginQuery = vi.fn(async (sql: string) => {
+        if (sql.includes('INSERT INTO public.user_auth_providers')) {
+          channelMappingSynced = true;
+          return [];
+        }
+        if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: TEST_EMAIL,
+            },
+          ];
+        }
+        if (sql.includes('SELECT u.verified_contact,p.verified_at')) {
+          return channelMappingSynced
+            ? [
+                {
+                  verified_contact: true,
+                  verified_at: '2026-01-01T00:00:00Z',
+                  contact_value: TEST_EMAIL,
+                },
+              ]
+            : [
+                {
+                  verified_contact: true,
+                  verified_at: null,
+                  contact_value: null,
+                },
+              ];
+        }
+        if (sql.includes('SELECT u.id,u.email')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['email', 'google'],
+            },
+          ];
+        }
+        if (sql.includes('SELECT p.*,pr.learning_preference')) {
+          return [];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        return [];
+      });
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => op({ query: loginQuery } as unknown as EntityManager),
+      );
+
+      const loginRes = await recoveryService.login(
+        { identifier: TEST_EMAIL, password: TEST_NEW_PASSWORD },
+        fakeReq,
+      );
+
+      expect(channelMappingSynced).toBe(true);
+      expect(clearPendingResetCleanup).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(
+        redisCleanupStore.has(`auth:v1:reset-cleanup:${TEST_USER_ID}`),
+      ).toBe(false);
+      expect(loginRes).toMatchObject({
+        access_token: token2,
+        refresh_token: 'refresh-2',
+        token_type: 'Bearer',
+        user: expect.objectContaining({
+          id: TEST_USER_ID,
+          email: TEST_EMAIL,
+        }),
+      });
+    });
+
     it('records pre-GoTrue operation state, clears it on confirmed rejection, and marks provider_uncertain without revoking sessions on provider timeout', async () => {
       const recordOp = vi.fn(async () => undefined);
       const clearOp = vi.fn(async () => undefined);
