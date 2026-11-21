@@ -476,6 +476,172 @@ export class AuthAbuseControl implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Acquires a short-lived Redis per-user mutation fence so external GoTrue writes
+   * (such as password reset) coordinate with concurrent contact/account updates
+   * without holding PostgreSQL row locks across outbound HTTP calls.
+   *
+   * Fails closed with retryable `503 SERVICE_UNAVAILABLE` if Redis is unavailable
+   * or errors during acquisition, returns `409 CONCURRENT_ACCOUNT_UPDATE` on confirmed
+   * contention, and returns an ownership token ONLY after confirmed `SET NX` success.
+   */
+  async acquireUserMutationFence(
+    userId: string,
+    ttlMs = 15_000,
+  ): Promise<string> {
+    if (!this.configuration || this.stopped) this.unavailable();
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:user-mutation-lock:${userId}`;
+    const token = randomUUID();
+    const safeTtl = Math.max(1000, Math.trunc(ttlMs));
+    try {
+      const client = await this.getConnectedClient();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const acquired = await this.withDeadline(
+          client.withCommandOptions({ timeout }).set(key, token, {
+            NX: true,
+            PX: safeTtl,
+          }),
+          timeout,
+        );
+        if (acquired === 'OK') {
+          return token;
+        }
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+      }
+      fail(
+        409,
+        'CONCURRENT_ACCOUNT_UPDATE',
+        'Another account security update is already in progress. Please try again shortly.',
+        [],
+        true,
+        2,
+      );
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      this.unavailable();
+    }
+  }
+
+  /**
+   * Extends the per-user mutation fence TTL atomically only if `token` still owns it.
+   * Returns `true` when ownership is confirmed and extended, `false` if ownership was lost.
+   */
+  async renewUserMutationFence(
+    userId: string,
+    token: string,
+    ttlMs = 15_000,
+  ): Promise<boolean> {
+    if (!token || !this.configuration || this.stopped) this.unavailable();
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:user-mutation-lock:${userId}`;
+    const safeTtl = Math.max(1000, Math.trunc(ttlMs));
+    const renewScript =
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
+    try {
+      const client = await this.getConnectedClient();
+      const renewed = await this.withDeadline(
+        client.withCommandOptions({ timeout }).eval(renewScript, {
+          keys: [key],
+          arguments: [token, String(safeTtl)],
+        }),
+        timeout,
+      );
+      return Number(renewed) === 1;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      this.unavailable();
+    }
+  }
+
+  /**
+   * Verifies that `token` still owns the per-user mutation fence (and refreshes its lease)
+   * right before a protected provider or DB write, failing closed on ownership loss or Redis error.
+   */
+  async assertUserMutationFenceOwned(
+    userId: string,
+    token: string,
+    ttlMs = 15_000,
+  ): Promise<void> {
+    const stillOwned = await this.renewUserMutationFence(userId, token, ttlMs);
+    if (!stillOwned) {
+      fail(
+        409,
+        'CONCURRENT_ACCOUNT_UPDATE',
+        'Account security lock expired or was superseded. Please retry.',
+        [],
+        true,
+        2,
+      );
+    }
+  }
+
+  /** Releases a previously acquired per-user Redis mutation fence only if the token still matches. */
+  async releaseUserMutationFence(
+    userId: string,
+    token: string | null,
+  ): Promise<void> {
+    if (!token || !this.configuration || this.stopped) return;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:user-mutation-lock:${userId}`;
+    const releaseScript =
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).eval(releaseScript, {
+          keys: [key],
+          arguments: [token],
+        }),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /**
+   * Persists non-secret, non-PII unfinished password-reset cleanup or bootstrap metadata in Redis
+   * so incomplete local session revocation, provider session cleanup, or fallback account bootstrap
+   * can be reconciled without resubmitting an OTP.
+   */
+  async recordUnfinishedPasswordResetCleanup(
+    userId: string,
+    metadata: {
+      localSyncPending: boolean;
+      localSessionRevocationPending?: boolean;
+      accountSyncPending?: boolean;
+      fallbackBootstrapPending?: boolean;
+      goTrueRevocationPending: boolean;
+      channel: 'email' | 'phone';
+      recordedAt: string;
+    },
+    ttlSeconds = 86_400,
+  ): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:reset-cleanup:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client
+          .withCommandOptions({ timeout })
+          .set(key, JSON.stringify(metadata), { EX: ttlSeconds }),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
   /** The code exists only in memory; Redis reserves the current generation before provider verification. */
   async verifyChallenge(
     contact: Contact,

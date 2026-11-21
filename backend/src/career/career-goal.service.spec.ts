@@ -304,6 +304,180 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
       ).toBe(false);
     });
 
+    it('accepts "Data analyst" and all frontend technology preset roles, mapping "Data analyst" to Data Engineering even if AI returns isTechnologyGoal=false or "Data Analyst"', async () => {
+      const roleDataEngineering = '66666666-6666-4666-8666-666666666661';
+      const roleFrontend = '66666666-6666-4666-8666-666666666662';
+      const roleAiMl = '66666666-6666-4666-8666-666666666663';
+      const roleMobile = '66666666-6666-4666-8666-666666666664';
+      const fullCatalog = [
+        ...APPROVED_ROLES,
+        {
+          id: roleDataEngineering,
+          slug: 'data-engineering',
+          name: 'Data Engineering',
+          aliases: ['Data Engineer'],
+        },
+        {
+          id: roleFrontend,
+          slug: 'frontend-development',
+          name: 'Frontend Development',
+          aliases: ['Frontend Developer'],
+        },
+        {
+          id: roleAiMl,
+          slug: 'ai-ml-engineering',
+          name: 'AI / Machine Learning Engineering',
+          aliases: ['ML Engineer'],
+        },
+        {
+          id: roleMobile,
+          slug: 'mobile-development',
+          name: 'Mobile Development',
+          aliases: ['Mobile Developer'],
+        },
+      ];
+
+      queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('AS active_count')) {
+          return [{ active_count: 0 }];
+        }
+        if (sql.includes('FROM public.career_roles') && !sql.includes('ANY(')) {
+          return fullCatalog;
+        }
+        if (sql.includes('INSERT INTO public.career_goals')) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: String(params?.[1] ?? ''),
+              status: String(params?.[2] ?? 'awaiting_confirmation'),
+              clarification_round: Number(params?.[3] ?? 0),
+              clarification_question: params?.[4] ?? null,
+              clarifications: JSON.parse(String(params?.[5] ?? '[]')),
+              proposed_role_id: params?.[6] ?? null,
+              alternative_role_ids: params?.[7] ?? [],
+              suggested_level: params?.[8] ?? 'junior',
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (
+          sql.includes('FROM public.career_roles') &&
+          sql.includes('id = ANY($1::uuid[])')
+        ) {
+          const requestedIds = (params?.[0] as string[]) ?? [];
+          return fullCatalog
+            .filter((r) => requestedIds.includes(r.id))
+            .map((r) => ({ canonical_role_id: r.id, name: r.name }));
+        }
+        return [];
+      });
+
+      // Simulate Gemini returning isTechnologyGoal=false for "Data analyst" because it lacks an exact "Data Analyst" row
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+
+      const dataAnalystGoal = await service.createGoal(USER_A, {
+        goal_text: 'Data analyst',
+      });
+      expect(dataAnalystGoal.status).toBe('awaiting_confirmation');
+      expect(dataAnalystGoal.proposed_role).toEqual({
+        canonical_role_id: roleDataEngineering,
+        name: 'Data Engineering',
+      });
+
+      // Verify all other frontend presets also resolve cleanly without OUT_OF_SCOPE_GOAL
+      const presets: ReadonlyArray<{ text: string; expectedRoleId: string }> = [
+        { text: 'Backend developer', expectedRoleId: ROLE_BACKEND },
+        { text: 'Frontend developer', expectedRoleId: roleFrontend },
+        { text: 'AI engineer', expectedRoleId: roleAiMl },
+        { text: 'DevOps engineer', expectedRoleId: ROLE_DEVOPS },
+        { text: 'Mobile app developer', expectedRoleId: roleMobile },
+      ];
+
+      for (const preset of presets) {
+        aiExecuteMock.mockResolvedValueOnce(
+          buildAiResponse({
+            isTechnologyGoal: false,
+            clarificationNeeded: false,
+            clarificationRound: 0,
+            clarificationQuestion: null,
+            proposedRole: null,
+            alternativeRoles: [],
+            suggestedLevel: 'junior',
+          }),
+        );
+        const res = await service.createGoal(USER_A, {
+          goal_text: preset.text,
+        });
+        expect(res.status).toBe('awaiting_confirmation');
+        expect(res.proposed_role?.canonical_role_id).toBe(
+          preset.expectedRoleId,
+        );
+      }
+
+      // Also verify that if Gemini returns isTechnologyGoal=true with an unmapped/invented role name or clarificationNeeded=true for "Data analyst", it still maps cleanly to Data Engineering awaiting_confirmation
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: true,
+          clarificationRound: 1,
+          clarificationQuestion: 'Which data specialization?',
+          proposedRole: {
+            canonicalRoleId: 'invented-non-catalog-id',
+            name: 'Business Data Analyst',
+          },
+          alternativeRoles: [],
+          suggestedLevel: 'junior',
+        }),
+      );
+      const unmappedDataAnalyst = await service.createGoal(USER_A, {
+        goal_text: 'Data analyst',
+      });
+      expect(unmappedDataAnalyst.status).toBe('awaiting_confirmation');
+      expect(unmappedDataAnalyst.proposed_role).toEqual({
+        canonical_role_id: roleDataEngineering,
+        name: 'Data Engineering',
+      });
+
+      // Also verify a genuinely unmapped primary candidate (both ID and name fail to match any approved role) falls back cleanly
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: true,
+          clarificationRound: 1,
+          clarificationQuestion: 'Which role fits best?',
+          proposedRole: {
+            canonicalRoleId: 'invented-unmapped-role-id',
+            name: 'Quantum Astronaut Advisor',
+          },
+          alternativeRoles: [],
+          suggestedLevel: 'junior',
+        }),
+      );
+      const trulyUnmapped = await service.createGoal(USER_A, {
+        goal_text: 'Data analyst',
+      });
+      expect(trulyUnmapped.status).toBe('awaiting_confirmation');
+      expect(trulyUnmapped.proposed_role).toEqual({
+        canonical_role_id: roleDataEngineering,
+        name: 'Data Engineering',
+      });
+    });
+
     it('rejects when active goal/roadmap count >= 3 with 409 ROADMAP_LIMIT_REACHED before calling AI', async () => {
       queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('private.effective_feature_access')) {
@@ -1718,6 +1892,767 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
           rationale: 'Overlapping API skills.',
         },
       ]);
+    });
+  });
+
+  describe('Deterministic scope-guard edge cases', () => {
+    const EXTENDED_ROLES = [
+      ...APPROVED_ROLES,
+      {
+        id: '66666666-6666-4666-8666-666666666666',
+        slug: 'mobile-development',
+        name: 'Mobile Development',
+        aliases: ['Mobile Developer'],
+      },
+      {
+        id: '77777777-7777-4777-8777-777777777771',
+        slug: 'cloud-engineering',
+        name: 'Cloud Engineering',
+        aliases: ['Cloud Engineer'],
+      },
+      {
+        id: '88888888-8888-4888-8888-888888888881',
+        slug: 'ai-ml-engineering',
+        name: 'AI / ML Engineering',
+        aliases: ['Machine Learning Engineer'],
+      },
+    ];
+
+    it('does NOT let historical tech goal_text override isTechnologyGoal=false when current clarification answer is non-tech', async () => {
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('FROM public.career_goals g')) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: 'Frontend or backend developer',
+              status: 'clarifying',
+              clarification_round: 1,
+              clarification_question: 'Which path interests you more?',
+              clarifications: [],
+              proposed_role_id: null,
+              alternative_role_ids: [],
+              suggested_level: null,
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+              updated_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.career_roles')) {
+          return EXTENDED_ROLES;
+        }
+        return [];
+      });
+
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 1,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+
+      await expect(
+        service.answerClarification(USER_A, GOAL_1, {
+          answer: 'I want to become a teacher',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+    });
+
+    it('does NOT override isTechnologyGoal=false on negated technology mentions while preserving affirmative recovery', async () => {
+      queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('AS active_count')) {
+          return [{ active_count: 0 }];
+        }
+        if (sql.includes('FROM public.career_roles') && !sql.includes('ANY(')) {
+          return EXTENDED_ROLES;
+        }
+        if (sql.includes('INSERT INTO public.career_goals')) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: params?.[1],
+              status: params?.[2],
+              clarification_round: params?.[3],
+              clarification_question: params?.[4],
+              clarifications: params?.[5] ? JSON.parse(String(params[5])) : [],
+              proposed_role_id: params?.[6],
+              role_name: 'Backend Development',
+              alternative_role_ids: params?.[7] ?? [],
+              suggested_level: params?.[8],
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (
+          sql.includes('FROM public.career_roles') &&
+          sql.includes('id = ANY($1::uuid[])')
+        ) {
+          return EXTENDED_ROLES.map((r) => ({
+            canonical_role_id: r.id,
+            name: r.name,
+          }));
+        }
+        return [];
+      });
+
+      for (const negatedGoal of [
+        'I want to become a teacher, not a backend developer',
+        'Not a backend developer, I want to paint portraits',
+        "I don't want to be a data analyst anymore",
+      ]) {
+        aiExecuteMock.mockResolvedValueOnce(
+          buildAiResponse({
+            isTechnologyGoal: false,
+            clarificationNeeded: false,
+            clarificationRound: 0,
+            clarificationQuestion: null,
+            proposedRole: null,
+            alternativeRoles: [],
+            suggestedLevel: null,
+          }),
+        );
+
+        await expect(
+          service.createGoal(USER_A, { goal_text: negatedGoal }),
+        ).rejects.toSatisfy((err) => {
+          expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+          return true;
+        });
+      }
+
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+
+      const affirmative = await service.createGoal(USER_A, {
+        goal_text: 'Backend developer',
+      });
+      expect(affirmative.status).toBe('awaiting_confirmation');
+      expect(affirmative.proposed_role?.canonical_role_id).toBe(ROLE_BACKEND);
+    });
+
+    it('recovers exact presets Mobile Development, Cloud Engineering, and AI / ML Engineering under both non-tech and clarification AI outputs', async () => {
+      const cases = [
+        {
+          goalText: 'Mobile Development',
+          expectedRoleId: '66666666-6666-4666-8666-666666666666',
+          expectedRoleName: 'Mobile Development',
+        },
+        {
+          goalText: 'Cloud Engineering',
+          expectedRoleId: '77777777-7777-4777-8777-777777777771',
+          expectedRoleName: 'Cloud Engineering',
+        },
+        {
+          goalText: 'AI / ML Engineering',
+          expectedRoleId: '88888888-8888-4888-8888-888888888881',
+          expectedRoleName: 'AI / ML Engineering',
+        },
+      ] as const;
+
+      for (const presetCase of cases) {
+        for (const aiVariant of [
+          { isTechnologyGoal: false, clarificationNeeded: false },
+          { isTechnologyGoal: true, clarificationNeeded: true },
+        ]) {
+          queryMock.mockImplementation(
+            async (sql: string, params?: unknown[]) => {
+              if (sql.includes('private.effective_feature_access')) {
+                return [{ enabled: true }];
+              }
+              if (sql.includes('AS active_count')) {
+                return [{ active_count: 0 }];
+              }
+              if (
+                sql.includes('FROM public.career_roles') &&
+                !sql.includes('ANY(')
+              ) {
+                return EXTENDED_ROLES;
+              }
+              if (sql.includes('INSERT INTO public.career_goals')) {
+                return [
+                  {
+                    id: GOAL_1,
+                    user_id: USER_A,
+                    goal_text: params?.[1],
+                    status: params?.[2],
+                    clarification_round: params?.[3],
+                    clarification_question: params?.[4],
+                    clarifications: params?.[5]
+                      ? JSON.parse(String(params[5]))
+                      : [],
+                    proposed_role_id: params?.[6],
+                    role_name: presetCase.expectedRoleName,
+                    alternative_role_ids: params?.[7] ?? [],
+                    suggested_level: params?.[8],
+                    target_level: null,
+                    created_at: '2026-10-10T08:00:00.000Z',
+                  },
+                ];
+              }
+              if (
+                sql.includes('FROM public.career_roles') &&
+                sql.includes('id = ANY($1::uuid[])')
+              ) {
+                return EXTENDED_ROLES.map((r) => ({
+                  canonical_role_id: r.id,
+                  name: r.name,
+                }));
+              }
+              return [];
+            },
+          );
+
+          aiExecuteMock.mockResolvedValueOnce(
+            buildAiResponse({
+              isTechnologyGoal: aiVariant.isTechnologyGoal,
+              clarificationNeeded: aiVariant.clarificationNeeded,
+              clarificationRound: 0,
+              clarificationQuestion: aiVariant.clarificationNeeded
+                ? 'Could you be more specific?'
+                : null,
+              proposedRole: null,
+              alternativeRoles: [],
+              suggestedLevel: null,
+            }),
+          );
+
+          const created = await service.createGoal(USER_A, {
+            goal_text: presetCase.goalText,
+          });
+          expect(created.status).toBe('awaiting_confirmation');
+          expect(created.proposed_role).toEqual({
+            canonical_role_id: presetCase.expectedRoleId,
+            name: presetCase.expectedRoleName,
+          });
+        }
+      }
+    });
+
+    it('handles hyphenated presets, deterministic preset preference over mismatched AI role, explicit target sentences, occupation-change, trailing negation, incidental tools, and deduplicated fallback alternatives', async () => {
+      const roleData = '11111111-2222-4333-8444-555555555551';
+      const roleFrontend = '11111111-2222-4333-8444-555555555552';
+      const fullCatalog = [
+        ...EXTENDED_ROLES,
+        {
+          id: roleData,
+          slug: 'data-engineering',
+          name: 'Data Engineering',
+          aliases: ['Data Engineer'],
+        },
+        {
+          id: roleFrontend,
+          slug: 'frontend-development',
+          name: 'Frontend Development',
+          aliases: ['Frontend Developer'],
+        },
+      ];
+
+      const setupInsertMocks = () => {
+        queryMock.mockImplementation(
+          async (sql: string, params?: unknown[]) => {
+            if (sql.includes('private.effective_feature_access')) {
+              return [{ enabled: true }];
+            }
+            if (sql.includes('AS active_count')) {
+              return [{ active_count: 0 }];
+            }
+            if (
+              sql.includes('FROM public.career_roles') &&
+              !sql.includes('ANY(')
+            ) {
+              return fullCatalog;
+            }
+            if (sql.includes('INSERT INTO public.career_goals')) {
+              const chosenId = String(params?.[6] ?? '');
+              const chosenRow = fullCatalog.find((r) => r.id === chosenId);
+              return [
+                {
+                  id: GOAL_1,
+                  user_id: USER_A,
+                  goal_text: params?.[1],
+                  status: params?.[2],
+                  clarification_round: params?.[3],
+                  clarification_question: params?.[4],
+                  clarifications: params?.[5]
+                    ? JSON.parse(String(params[5]))
+                    : [],
+                  proposed_role_id: params?.[6],
+                  role_name: chosenRow?.name ?? null,
+                  alternative_role_ids: params?.[7] ?? [],
+                  suggested_level: params?.[8],
+                  target_level: null,
+                  created_at: '2026-10-10T08:00:00.000Z',
+                },
+              ];
+            }
+            if (
+              sql.includes('FROM public.career_roles') &&
+              sql.includes('id = ANY($1::uuid[])')
+            ) {
+              const ids = (params?.[0] as string[]) ?? [];
+              return fullCatalog
+                .filter((r) => ids.includes(r.id))
+                .map((r) => ({ canonical_role_id: r.id, name: r.name }));
+            }
+            return [];
+          },
+        );
+      };
+
+      setupInsertMocks();
+
+      // 9. Hyphenated preset "Data-Analyst" recovers to Data Engineering
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const hyphenated = await service.createGoal(USER_A, {
+        goal_text: 'Data-Analyst',
+      });
+      expect(hyphenated.proposed_role?.canonical_role_id).toBe(roleData);
+
+      // 10, 15 & 17. Exact preset "Data analyst" overrides mismatched model role (Backend) -> Data Engineering AND populates BOTH approved alternatives (AI / ML Engineering & Backend Development) even when provider's only alt resolves to Data Engineering itself
+      const roleAiMl = '88888888-8888-4888-8888-888888888881';
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: {
+            canonicalRoleId: ROLE_BACKEND,
+            name: 'Backend Development',
+          },
+          alternativeRoles: [
+            {
+              canonicalRoleId: 'invented-alt',
+              name: 'Business Data Analyst',
+              matchReason: 'Same as primary',
+            },
+          ],
+          suggestedLevel: 'junior',
+        }),
+      );
+      const presetPreferred = await service.createGoal(USER_A, {
+        goal_text: 'Data analyst',
+      });
+      expect(presetPreferred.proposed_role?.canonical_role_id).toBe(roleData);
+      expect(
+        presetPreferred.alternative_roles.map((a) => a.canonical_role_id),
+      ).toEqual([roleAiMl, ROLE_BACKEND]);
+
+      // 15 (early-return path). Even when AI already proposed Data Engineering with empty alternatives, Data Analyst still receives BOTH approved catalog alternatives
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: {
+            canonicalRoleId: roleData,
+            name: 'Data Engineering',
+          },
+          alternativeRoles: [],
+          suggestedLevel: 'junior',
+        }),
+      );
+      const dataAlreadyPrimary = await service.createGoal(USER_A, {
+        goal_text: 'Data analyst',
+      });
+      expect(dataAlreadyPrimary.proposed_role?.canonical_role_id).toBe(
+        roleData,
+      );
+      expect(
+        dataAlreadyPrimary.alternative_roles.map((a) => a.canonical_role_id),
+      ).toEqual([roleAiMl, ROLE_BACKEND]);
+
+      // 11. Explicit target sentence "I want to become a Data Analyst" resolves without unnecessary clarification, while ambiguous "I want to work in software" preserves clarification
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: true,
+          clarificationRound: 1,
+          clarificationQuestion: 'Which data role?',
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const explicitSentence = await service.createGoal(USER_A, {
+        goal_text: 'I want to become a Data Analyst',
+      });
+      expect(explicitSentence.status).toBe('awaiting_confirmation');
+      expect(explicitSentence.proposed_role?.canonical_role_id).toBe(roleData);
+
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: true,
+          clarificationRound: 1,
+          clarificationQuestion: 'Which software specialty interests you?',
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const ambiguousSoftware = await service.createGoal(USER_A, {
+        goal_text: 'I want to work in software',
+      });
+      expect(ambiguousSoftware.status).toBe('clarifying');
+
+      // 12. Current occupation vs target career: "I am a teacher and want to become a frontend developer" recovers to Frontend Development
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const careerSwitch = await service.createGoal(USER_A, {
+        goal_text: 'I am a teacher and want to become a frontend developer',
+      });
+      expect(careerSwitch.status).toBe('awaiting_confirmation');
+      expect(careerSwitch.proposed_role?.canonical_role_id).toBe(roleFrontend);
+
+      // 13. Trailing negation: "Backend development is not for me; I want to paint portraits" -> OUT_OF_SCOPE_GOAL
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text:
+            'Backend development is not for me; I want to paint portraits',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // 14. Incidental tool mention in non-tech goal stays OUT_OF_SCOPE_GOAL, while "DevOps engineer" still recovers
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text:
+            'I want to paint portraits and use Docker to host my portfolio',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const devopsGoal = await service.createGoal(USER_A, {
+        goal_text: 'DevOps engineer',
+      });
+      expect(devopsGoal.status).toBe('awaiting_confirmation');
+      expect(devopsGoal.proposed_role?.canonical_role_id).toBe(ROLE_DEVOPS);
+
+      // 11. Hyphenated "Front-end developer" matches exact preset identically to "Frontend developer"
+      for (const spelling of ['Front-end developer', 'Frontend developer']) {
+        aiExecuteMock.mockResolvedValueOnce(
+          buildAiResponse({
+            isTechnologyGoal: true,
+            clarificationNeeded: true,
+            clarificationRound: 1,
+            clarificationQuestion: 'Which frontend framework?',
+            proposedRole: null,
+            alternativeRoles: [],
+            suggestedLevel: null,
+          }),
+        );
+        const feRes = await service.createGoal(USER_A, {
+          goal_text: spelling,
+        });
+        expect(feRes.status).toBe('awaiting_confirmation');
+        expect(feRes.proposed_role?.canonical_role_id).toBe(roleFrontend);
+      }
+
+      // 12. Target occupation ignores trailing tool mentions: "photographer who uses frontend tools" -> OUT_OF_SCOPE_GOAL, while standalone "Frontend" recovers
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text: 'I want to become a photographer who uses frontend tools',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const standaloneFrontend = await service.createGoal(USER_A, {
+        goal_text: 'Frontend',
+      });
+      expect(standaloneFrontend.status).toBe('awaiting_confirmation');
+      expect(standaloneFrontend.proposed_role?.canonical_role_id).toBe(
+        roleFrontend,
+      );
+
+      // 13. Prefer role governed by "become" over trailing specialization ("backend developer working on data engineering projects" -> Backend Development)
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const backendPrimary = await service.createGoal(USER_A, {
+        goal_text:
+          'I want to become a backend developer working on data engineering projects',
+      });
+      expect(backendPrimary.status).toBe('awaiting_confirmation');
+      expect(backendPrimary.proposed_role?.canonical_role_id).toBe(
+        ROLE_BACKEND,
+      );
+
+      // 14. Clause-level negation polarity catches >4-word span: "I do not want to be a senior backend developer" -> OUT_OF_SCOPE_GOAL
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text: 'I do not want to be a senior backend developer',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // Clause-level experience/contrast/exclusion edge cases:
+      // (a) Background "no experience" must NOT negate later career-intent clause ("frontend developer")
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const noExpFrontend = await service.createGoal(USER_A, {
+        goal_text:
+          'I have no experience and want to become a frontend developer',
+      });
+      expect(noExpFrontend.status).toBe('awaiting_confirmation');
+      expect(noExpFrontend.proposed_role?.canonical_role_id).toBe(roleFrontend);
+
+      // Direct negation of career intent still stays OUT_OF_SCOPE_GOAL
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text: 'I do not want to become a frontend developer',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // (b) Negated first career clause with trailing project details + later affirmative career clause -> recovers frontend-development
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const contrastFrontend = await service.createGoal(USER_A, {
+        goal_text:
+          "I don't want to be a data analyst working on reports, but I want to become a frontend developer",
+      });
+      expect(contrastFrontend.status).toBe('awaiting_confirmation');
+      expect(contrastFrontend.proposed_role?.canonical_role_id).toBe(
+        roleFrontend,
+      );
+
+      // (c) Exclusion phrase "anything but" stays rejected as OUT_OF_SCOPE_GOAL (never split at "but")
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text: 'I want to be anything but a backend developer',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // 16. Never substitute unrelated approvedRoles[0] when Data Engineering is not approved (only Mobile Development approved -> routes to clarification with null proposed_role)
+      const mobileOnlyCatalog = [
+        {
+          id: '66666666-6666-4666-8666-666666666666',
+          slug: 'mobile-development',
+          name: 'Mobile Development',
+          aliases: ['Mobile Developer'],
+        },
+      ];
+      queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (sql.includes('AS active_count')) {
+          return [{ active_count: 0 }];
+        }
+        if (sql.includes('FROM public.career_roles') && !sql.includes('ANY(')) {
+          return mobileOnlyCatalog;
+        }
+        if (sql.includes('INSERT INTO public.career_goals')) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: params?.[1],
+              status: params?.[2],
+              clarification_round: params?.[3],
+              clarification_question: params?.[4],
+              clarifications: params?.[5] ? JSON.parse(String(params[5])) : [],
+              proposed_role_id: params?.[6],
+              role_name: null,
+              alternative_role_ids: params?.[7] ?? [],
+              suggested_level: params?.[8],
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        return [];
+      });
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      const unrelatedCatalogRes = await service.createGoal(USER_A, {
+        goal_text: 'Data analyst',
+      });
+      expect(unrelatedCatalogRes.status).toBe('clarifying');
+      expect(unrelatedCatalogRes.proposed_role).toBeNull();
     });
   });
 });

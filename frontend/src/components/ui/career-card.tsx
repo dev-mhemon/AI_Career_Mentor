@@ -34,7 +34,7 @@ export function GoalStatusBadge({ status }: { status: GoalStatus }) {
     <span
       data-status={status}
       className={cn(
-        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-caption font-medium',
+        'inline-flex items-center rounded-full border px-2.5 py-1 text-caption leading-none font-medium',
         STATUS_TONE[status],
       )}
     >

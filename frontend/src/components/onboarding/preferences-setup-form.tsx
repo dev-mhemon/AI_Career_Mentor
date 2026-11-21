@@ -59,10 +59,12 @@ export interface PreferencesSetupFormProps {
   onCancel?: () => void;
   /** When true, omits the standalone stepper header so an outer shell owns stepper chrome. */
   embedded?: boolean;
+  /** When true, omits redundant outer header chrome so a parent Modal.Header owns the title/description. */
+  inModal?: boolean;
 }
 
 /**
- * Screen 09 (`/onboarding`, Step 3 of 5) or standalone inline editor on `/career-profile`.
+ * Screen 09 (`/onboarding`, Step 3 of 5) or standalone/modal editor on `/career-profile`.
  * Saves the learning preference via EP-P03.
  */
 export function PreferencesSetupForm({
@@ -75,9 +77,10 @@ export function PreferencesSetupForm({
   onBack,
   onCancel,
   embedded = false,
+  inModal = false,
 }: PreferencesSetupFormProps) {
   const isStandalone = mode === 'standalone';
-  const isEmbedded = embedded || isStandalone;
+  const isEmbedded = embedded || isStandalone || inModal;
   const router = useRouter();
   const [selected, setSelected] = useState<LearningPreference | null>(
     () => initialProfile?.learning_preference ?? null,
@@ -169,9 +172,10 @@ export function PreferencesSetupForm({
       <StepFrame
         currentStep={3}
         embedded={isEmbedded}
-        heading={isStandalone ? undefined : 'How do you like to learn?'}
+        inModal={isStandalone || inModal}
+        heading={isStandalone || inModal ? undefined : 'How do you like to learn?'}
         description={
-          isStandalone
+          isStandalone || inModal
             ? undefined
             : 'Pick the style that fits you best. You can change it later.'
         }

@@ -56,7 +56,30 @@ export function AppShellProvider({
   const syncState = useCallback((next: Partial<AppShellStateValue>) => {
     setState((prev) => {
       const variant = next.variant ?? prev.variant;
-      const user = next.user !== undefined ? next.user : prev.user;
+      const user =
+        next.user !== undefined
+          ? next.user === null
+            ? null
+            : {
+                fullName:
+                  'fullName' in next.user && next.user.fullName !== undefined
+                    ? next.user.fullName
+                    : (prev.user?.fullName ?? null),
+                currentRole:
+                  'currentRole' in next.user &&
+                  next.user.currentRole !== undefined
+                    ? next.user.currentRole
+                    : (prev.user?.currentRole ?? null),
+                email:
+                  'email' in next.user && next.user.email !== undefined
+                    ? next.user.email
+                    : (prev.user?.email ?? null),
+                phone:
+                  'phone' in next.user && next.user.phone !== undefined
+                    ? next.user.phone
+                    : (prev.user?.phone ?? null),
+              }
+          : prev.user;
       const isSuspended =
         next.isSuspended !== undefined ? next.isSuspended : prev.isSuspended;
       const disabled =
@@ -122,10 +145,10 @@ export function AppShellSync({
   const syncState = ctx?.syncState;
   const hasUserProp = user !== undefined;
   const hasUserValue = user !== null && user !== undefined;
-  const fullName = user?.fullName ?? null;
-  const currentRole = user?.currentRole ?? null;
-  const email = user?.email ?? null;
-  const phone = user?.phone ?? null;
+  const fullName = user?.fullName;
+  const currentRole = user?.currentRole;
+  const email = user?.email;
+  const phone = user?.phone;
 
   useEffect(() => {
     if (!syncState) return;
@@ -133,7 +156,16 @@ export function AppShellSync({
     syncState({
       ...(variant ? { variant } : {}),
       ...(hasUserProp
-        ? { user: hasUserValue ? { fullName, currentRole, email, phone } : null }
+        ? {
+            user: hasUserValue
+              ? {
+                  ...(fullName !== undefined ? { fullName } : {}),
+                  ...(currentRole !== undefined ? { currentRole } : {}),
+                  ...(email !== undefined ? { email } : {}),
+                  ...(phone !== undefined ? { phone } : {}),
+                }
+              : null,
+          }
         : {}),
       isSuspended,
       disabled,

@@ -9,9 +9,9 @@ import { CloseIcon } from './icons';
 export type ToastPosition = 'bottom-right' | 'top-right' | 'top-center';
 
 const POSITION_CLASSES: Record<ToastPosition, string> = {
-  'bottom-right': 'bottom-4 right-4 left-4 mx-auto sm:left-auto sm:mx-0',
-  'top-right': 'top-4 right-4 left-4 mx-auto sm:left-auto sm:mx-0',
-  'top-center': 'top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)]',
+  'bottom-right': 'bottom-4 right-4',
+  'top-right': 'top-4 right-4',
+  'top-center': 'top-4 left-1/2 -translate-x-1/2',
 };
 
 const COUNTDOWN_TRACK_CLASSES: Record<AlertVariant, string> = {
@@ -106,7 +106,7 @@ export const Toast = memo(function Toast({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={cn(
-        'pointer-events-auto fixed z-(--z-toast) max-w-md shadow-lg',
+        'pointer-events-auto fixed z-(--z-toast) w-max max-w-[min(92vw,28rem)] shadow-lg',
         POSITION_CLASSES[position],
       )}
     >
@@ -121,7 +121,7 @@ export const Toast = memo(function Toast({
           <IconButton
             aria-label="Dismiss notification"
             onClick={onDismiss}
-            className="absolute right-1 top-1"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2"
           >
             <CloseIcon />
           </IconButton>

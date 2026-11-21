@@ -51,7 +51,8 @@ const PROFILE: ProfileResponse = {
   education: null,
   experience_level: 'junior',
   existing_skills: [
-    { skill_id: 's1', name: 'React', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+    { skill_id: 's1', name: 'React', alias_resolved: false, learning_state: 'learning', source: 'self_reported' },
+    { skill_id: 's2', name: 'Next.js', alias_resolved: false, learning_state: 'learning', source: 'self_reported' },
   ],
   existing_skills_none: false,
   learning_preference: 'hands_on',
@@ -88,18 +89,32 @@ describe('Screen 14 — CareerProfileView', () => {
     ]);
     const confirmed = screen.getByText('Backend developer').closest('li')!;
     expect(within(confirmed).getByText('Confirmed')).toBeInTheDocument();
-    expect(within(confirmed).getByText(/Role: Backend Development · Mid level/)).toBeInTheDocument();
+    expect(
+      within(confirmed).getByText(/Roadmap: Backend Development · Level: Mid/),
+    ).toBeInTheDocument();
 
     const clarifying = screen.getByText('Something with AI').closest('li')!;
     const resumeBtn = within(clarifying).getByRole('button', { name: 'Resume clarification' });
     expect(resumeBtn).toHaveClass('h-8');
     const awaiting = screen.getByText('Data analyst').closest('li')!;
+    expect(within(awaiting).getByText(/Suggested roadmap: Backend Development/)).toBeInTheDocument();
     const reviewBtn = within(awaiting).getByRole('button', { name: 'Review & confirm' });
     expect(reviewBtn).toHaveClass('h-8');
     expect(within(awaiting).getByRole('button', { name: 'Edit goal text' })).toHaveClass('h-8');
     expect(within(awaiting).getByRole('button', { name: /discontinue/i })).toHaveClass('h-8');
+
+    // Discontinued archive is collapsed by default and expands on click
+    const archiveToggle = screen.getByRole('button', { name: /discontinued goals \(1\)/i });
+    expect(archiveToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Old mobile goal')).not.toBeInTheDocument();
+    fireEvent.click(archiveToggle);
+    expect(archiveToggle).toHaveAttribute('aria-expanded', 'true');
     const discontinued = screen.getByText('Old mobile goal').closest('li')!;
     expect(within(discontinued).getByText('Discontinued')).toBeInTheDocument();
+    expect(within(discontinued).getByText(/Roadmap: Backend Development/)).toBeInTheDocument();
+    expect(
+      within(discontinued).getByText('Progress & shared skill evidence preserved'),
+    ).toBeInTheDocument();
     expect(within(discontinued).queryByRole('button')).not.toBeInTheDocument();
   });
 
@@ -108,7 +123,7 @@ describe('Screen 14 — CareerProfileView', () => {
       ...PROFILE,
       existing_skills: [
         ...PROFILE.existing_skills,
-        { skill_id: 's2', name: 'SQL', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+        { skill_id: 's3', name: 'SQL', alias_resolved: false, learning_state: 'learning', source: 'self_reported' },
       ],
     };
     const updatedPrefsProfile: ProfileResponse = {
@@ -118,33 +133,66 @@ describe('Screen 14 — CareerProfileView', () => {
     const invoke = makeInvoke((op) => {
       if (op === 'updateSkills') return { ok: true, data: updatedSkillsProfile };
       if (op === 'updatePreferences') return { ok: true, data: updatedPrefsProfile };
+      if (op === 'interpretSkillAlias') return { ok: true, data: { input: 'boss', candidates: [] } };
       return { ok: true, data: {} };
     });
 
     render(<CareerProfileView initialGoals={[]} profile={PROFILE} invoke={invoke} />);
+    expect(screen.getByRole('heading', { level: 2, name: 'Skills (2)' })).toBeInTheDocument();
     expect(screen.getByText('React')).toBeInTheDocument();
+    expect(screen.getByText('Next.js')).toBeInTheDocument();
+    // Self-reported skills at learning_state='learning' show calm "Self-reported" badge + explanatory tooltip
+    const selfReportedBadges = screen.getAllByText('Self-reported');
+    expect(selfReportedBadges).toHaveLength(2);
+    expect(selfReportedBadges[0].closest('span[title]')).toHaveAttribute(
+      'title',
+      'Self-reported skill — starts at Learning until verified by practice',
+    );
+    // Valid existing_skills with alias_resolved: false must NEVER render "Needs clarification"
+    expect(screen.queryByText('Needs clarification')).not.toBeInTheDocument();
     expect(screen.getByText('Hands-on')).toBeInTheDocument();
     expect(screen.getByText('2 h')).toBeInTheDocument();
     expect(screen.getByText('Asia/Dhaka')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Edit profile' })).toHaveAttribute('href', '/profile');
     expect(screen.getByText(/no career goals yet/i)).toBeInTheDocument();
 
-    // Inline Edit skills (reuses SkillsSetupForm mode="standalone") -> fires Toast
+    // Edit skills opens inside Compound Modal (role="dialog", name="Edit skills") -> fires Toast & closes modal
     fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
-    const skillInput = screen.getByLabelText('Add a skill');
-    fireEvent.change(skillInput, { target: { value: 'SQL' } });
+    const skillsDialog = screen.getByRole('dialog', { name: 'Edit skills' });
+    const skillInput = within(skillsDialog).getByLabelText('Add a skill');
+
+    // Adding an unrecognized custom skill ("Boss") immediately calls interpretSkillAlias, does NOT add "Boss" to the chip list, renders NO Remove button, and shows inline warning message
+    fireEvent.change(skillInput, { target: { value: 'Boss' } });
     fireEvent.keyDown(skillInput, { key: 'Enter' });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Skills' }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', {
+        input: 'Boss',
+        skill_id: '',
+      }),
+    );
+    expect(await within(skillsDialog).findByText('“Boss” is not a recognized skill.')).toBeInTheDocument();
+    const chipList = within(skillsDialog).getByRole('list', { name: 'Your skills' });
+    expect(within(chipList).queryByText('Boss')).not.toBeInTheDocument();
+    expect(within(skillsDialog).queryByRole('button', { name: /remove “?boss”?/i })).not.toBeInTheDocument();
+
+    // Typing / selecting a valid skill ("SQL") automatically clears the unrecognized message
+    fireEvent.change(skillInput, { target: { value: 'SQL' } });
+    expect(within(skillsDialog).queryByText('“Boss” is not a recognized skill.')).not.toBeInTheDocument();
+    fireEvent.keyDown(skillInput, { key: 'Enter' });
+    fireEvent.click(within(skillsDialog).getByRole('button', { name: 'Save Skills' }));
     await waitFor(() => expect(screen.getByText('SQL')).toBeInTheDocument());
-    expect(invoke).toHaveBeenCalledWith('updateSkills', { names: ['React', 'SQL'] });
+    expect(screen.queryByRole('dialog', { name: 'Edit skills' })).not.toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith('updateSkills', { names: ['React', 'Next.js', 'SQL'] });
     expect(screen.getByTestId('toast-container')).toHaveTextContent('Skills updated.');
     expect(screen.getByTestId('toast-countdown-bar')).toBeInTheDocument();
 
-    // Inline Edit preferences (reuses PreferencesSetupForm mode="standalone") -> fires Toast
+    // Edit preferences opens inside Compound Modal (role="dialog", name="Edit learning preferences") -> fires Toast & closes modal
     fireEvent.click(screen.getByRole('button', { name: 'Edit preferences' }));
-    fireEvent.click(screen.getByRole('radio', { name: /^Visual/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save Preferences' }));
+    const prefsDialog = screen.getByRole('dialog', { name: 'Edit learning preferences' });
+    fireEvent.click(within(prefsDialog).getByRole('radio', { name: /^Visual/ }));
+    fireEvent.click(within(prefsDialog).getByRole('button', { name: 'Save Preferences' }));
     await waitFor(() => expect(screen.getByText('Visual')).toBeInTheDocument());
+    expect(screen.queryByRole('dialog', { name: 'Edit learning preferences' })).not.toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith('updatePreferences', { learning_preference: 'visual' });
     expect(screen.getByTestId('toast-container')).toHaveTextContent('Learning preferences updated.');
   });
@@ -234,7 +282,7 @@ describe('Screen 14 — CareerProfileView', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'listCareerGoals', { limit: 100 });
     expect(screen.getByText(/goal discontinued/i)).toBeInTheDocument();
     expect(screen.queryByText('Something with AI')).not.toBeInTheDocument(); // list replaced by refresh
-    expect(screen.getByText('Discontinued goals (1)')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Discontinued goals (1)' })).toBeInTheDocument();
   });
 
   it('cancelling the dialog never calls EP-C07', () => {
@@ -255,18 +303,43 @@ describe('Screen 14 — CareerProfileView', () => {
     render(<CareerProfileView initialGoals={[goal('g1', 'confirmed', 'Backend developer')]} profile={PROFILE} invoke={invoke} />);
     fireEvent.click(screen.getByRole('button', { name: /discontinue goal: backend developer/i }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discontinue goal' }));
-    expect(await screen.findByText('Discontinued goals (1)')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 3, name: 'Discontinued goals (1)' })).toBeInTheDocument();
   });
 
-  it('disables adding a fourth active goal (showing actual count) and opens inline goal form when under cap', () => {
+  it('disables adding a fourth active goal with Info icon + accessible tooltip (showing actual count) and opens inline 2-step Add a career goal flow when under cap', () => {
     const three = [goal('a', 'confirmed', 'A'), goal('b', 'confirmed', 'B'), goal('c', 'clarifying', 'C'), goal('d', 'discontinued', 'D')];
     const { unmount } = render(<CareerProfileView initialGoals={three} profile={PROFILE} invoke={makeInvoke(() => ({ ok: true, data: {} }))} />);
-    expect(screen.queryByRole('button', { name: 'Add a career goal' })).not.toBeInTheDocument();
-    expect(screen.getByText(/3 active goals/i)).toBeInTheDocument();
+    const disabledAddBtn = screen.getByRole('button', { name: 'Add a career goal' });
+    expect(disabledAddBtn).toHaveAttribute('aria-disabled', 'true');
+    expect(disabledAddBtn).toHaveAttribute('aria-describedby', 'goal-limit-tooltip');
+    expect(disabledAddBtn).toHaveClass('bg-slate-100', 'text-slate-400', 'cursor-not-allowed', 'select-none');
+    const capacityPill = screen.getByText('3 / 3 active');
+    expect(capacityPill).toBeInTheDocument();
+    expect(capacityPill).toHaveClass('border-emerald-200', 'bg-emerald-50', 'text-emerald-700');
+    expect(screen.getByRole('complementary', { name: 'Skills and learning preferences' })).toBeInTheDocument();
+    const tooltip = screen.getByRole('tooltip', { hidden: true });
+    expect(tooltip).toHaveAttribute('id', 'goal-limit-tooltip');
+    expect(tooltip).toHaveTextContent(
+      'You have 3 active goals (maximum 3). Discontinue one to add another.',
+    );
+    fireEvent.click(disabledAddBtn);
+    expect(screen.queryByRole('region', { name: 'Add a career goal' })).not.toBeInTheDocument();
     unmount();
     render(<CareerProfileView initialGoals={three.slice(0, 2)} profile={PROFILE} invoke={makeInvoke(() => ({ ok: true, data: {} }))} />);
+    expect(screen.getByText('2 / 3 active')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Add a career goal' }));
-    expect(screen.getByRole('region', { name: 'Add a career goal' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Add a career goal' })).not.toBeInTheDocument();
+    const inlineRegion = screen.getByRole('region', { name: 'Add a career goal' });
+    expect(inlineRegion).toBeInTheDocument();
+    expect(
+      within(inlineRegion).getByRole('progressbar', {
+        name: /add career goal progress: step 1 of 2/i,
+      }),
+    ).toBeInTheDocument();
+    expect(within(inlineRegion).getByText('1. Career Goal')).toBeInTheDocument();
+    expect(within(inlineRegion).getByText('2. Confirm Role')).toBeInTheDocument();
+    fireEvent.click(within(inlineRegion).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('region', { name: 'Add a career goal' })).not.toBeInTheDocument();
   });
 
   it('shows load errors without hiding the other section and loads more goals', async () => {
@@ -314,7 +387,13 @@ describe('Screen 14 — CareerProfileView', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /analyze goal/i }));
 
-    expect(await screen.findByRole('region', { name: 'Review and confirm career goal' })).toBeInTheDocument();
+    const confirmRegion = await screen.findByRole('region', { name: 'Review and confirm career goal' });
+    expect(confirmRegion).toBeInTheDocument();
+    expect(
+      within(confirmRegion).getByRole('progressbar', {
+        name: /add career goal progress: step 2 of 2/i,
+      }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /back to goal/i }));
     expect(screen.queryByRole('region', { name: 'Review and confirm career goal' })).not.toBeInTheDocument();
 
@@ -409,7 +488,7 @@ describe('Screen 14 — CareerProfileView', () => {
         },
       });
     });
-    await waitFor(() => expect(screen.getByText(/Proposed role: AI Engineering/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Suggested roadmap: AI Engineering/)).toBeInTheDocument());
     expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('Frontend Development')).toBeInTheDocument();
   });
 
@@ -461,7 +540,7 @@ describe('Screen 14 — CareerProfileView', () => {
           ...PROFILE,
           existing_skills: [
             ...PROFILE.existing_skills,
-            { skill_id: 's2', name: 'SQL', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+            { skill_id: 's3', name: 'SQL', alias_resolved: false, learning_state: 'learning', source: 'self_reported' },
           ],
           learning_preference: 'hands_on', // stale preference in skills response must NOT wipe 'visual'
           updated_at: '2026-11-01T23:59:59.000Z',
@@ -521,7 +600,7 @@ describe('Screen 14 — CareerProfileView', () => {
       });
     });
     expect(screen.getByText('Edited Cloud Architect')).toBeInTheDocument();
-    expect(screen.queryByText(/Proposed role: AI Engineering/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Suggested roadmap: AI Engineering/)).not.toBeInTheDocument();
   });
 
   it('does not hijack another goal review panel when inline Add Goal resolves late, and isolates inline drafts from onboarding drafts', async () => {
@@ -681,7 +760,7 @@ describe('Screen 14 — CareerProfileView', () => {
       });
     });
     expect(screen.getByText('Confirmed goals (1)')).toBeInTheDocument();
-    expect(screen.getByText('Discontinued goals (1)')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Discontinued goals (1)' })).toBeInTheDocument();
     expect(screen.queryByText('Awaiting confirmation (1)')).not.toBeInTheDocument();
   });
 

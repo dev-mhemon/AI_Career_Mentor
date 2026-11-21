@@ -47,6 +47,10 @@ const TASK_JSON_CONTRACTS: Readonly<Record<AiTask, string>> = {
     '  "alternativeRoles": [{ "canonicalRoleId": string, "name": string, "matchReason": string }],',
     '  "suggestedLevel": "junior" | "mid" | "senior" | null',
     '}',
+    'Set "isTechnologyGoal": true for ALL software, web, mobile, data (including Data Analyst, Data Analytics, Business Intelligence / BI, Data Scientist, and Data Engineer), AI, ML, LLM, cloud, DevOps, SRE, QA, software testing, and cybersecurity career goals.',
+    'Set "isTechnologyGoal": false ONLY for clearly non-technology professions (e.g., chef, doctor, lawyer, fashion designer, accountant).',
+    'When a valid, clear technology role target (such as "Data analyst", "Data analytics", or "Data scientist") does not have a verbatim title in approved_roles, NEVER set "isTechnologyGoal": false. Instead, keep "isTechnologyGoal": true, set "clarificationNeeded": false, and map "proposedRole" to the closest approved canonical role in approved_roles (for "Data analyst" / "Data analytics" / "Data scientist", propose "Data Engineering" when present in approved_roles, and include ONLY those named alternatives such as "AI / Machine Learning Engineering" and "Backend Development" that are also present in approved_roles — include both when both are approved, and never require or invent an unapproved role).',
+    'When the user names only a broad technology field without a specific role (for example, "I want to work in software" or "tech career"), keep "isTechnologyGoal": true, set "clarificationNeeded": true, set "proposedRole": null, and ask a concise "clarificationQuestion" to narrow down their target specialization.',
     'Use ONLY canonicalRoleId and name values from approved_roles in the user context envelope. Never invent role IDs.',
   ].join('\n'),
   roadmap_generate: [

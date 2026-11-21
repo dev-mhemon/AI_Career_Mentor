@@ -234,34 +234,34 @@ describe('Screen 08 — SkillsSetupForm', () => {
     expect(screen.getByText('Removed Go.')).toHaveAttribute('role', 'status');
   });
 
-  it('defers mutating EP-P02 on custom ambiguous alias until explicit Save, shows teal Check suggestion + rose Remove button, and resolves via EP-P05', async () => {
-    const invoke = makeInvoke((op) => {
-      if (op === 'updateSkills') {
+  it('runs immediate read-only interpretSkillAlias on custom ambiguous alias without adding an amber chip, shows teal Check suggestion + Dismiss button, and resolves via EP-P05', async () => {
+    const invoke = makeInvoke((op, input) => {
+      const payload = input as { input?: string; skill_id?: string };
+      if (op === 'interpretSkillAlias' && !payload?.skill_id) {
         return {
           ok: true,
-          data: profile({
-            unresolved_skills: [
-              {
-                input: 'Next',
-                candidates: [
-                  { skill_id: 'sk-next', name: 'Next.js' },
-                  { skill_id: 'sk-nest', name: 'NestJS' },
-                ],
-              },
+          data: {
+            input: 'Next',
+            candidates: [
+              { skill_id: 'sk-next', name: 'Next.js' },
+              { skill_id: 'sk-nest', name: 'NestJS' },
             ],
-          }),
+          },
         };
       }
-      return {
-        ok: true,
-        data: {
-          input: 'Next',
-          skill_id: 'sk-next',
-          scope: 'user',
-          added_to_profile: true,
-          progress_initialization: 'deferred_until_level_confirmation',
-        },
-      };
+      if (op === 'interpretSkillAlias' && payload?.skill_id === 'sk-next') {
+        return {
+          ok: true,
+          data: {
+            input: 'Next',
+            skill_id: 'sk-next',
+            scope: 'user',
+            added_to_profile: true,
+            progress_initialization: 'deferred_until_level_confirmation',
+          },
+        };
+      }
+      return { ok: true, data: profile() };
     });
 
     render(<SkillsSetupForm initialProfile={profile()} invoke={invoke} />);
@@ -269,18 +269,24 @@ describe('Screen 08 — SkillsSetupForm', () => {
     fireEvent.change(input, { target: { value: 'Next' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    // Adding a custom skill must NOT mutate the profile via EP-P02 before explicit Save
-    expect(invoke).not.toHaveBeenCalled();
+    // Immediate read-only EP-P05 validation runs on Enter; mutating EP-P02 (updateSkills) is NOT called
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', {
+        input: 'Next',
+        skill_id: '',
+      }),
+    );
+    expect(invoke).not.toHaveBeenCalledWith('updateSkills', expect.anything());
+    // Ambiguous entry is NOT added to the chip list
+    expect(screen.queryByRole('list', { name: 'Your skills' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     const panel = await screen.findByRole('region', { name: 'Skill clarification' });
-    // Strict submit guard: disabled while ambiguous suggestion is unresolved
+    expect(panel).toHaveTextContent('For “Next”:');
     expect(screen.getByRole('button', { name: /save & next/i })).toBeDisabled();
 
     const nextCandidateBtn = within(panel).getByRole('button', { name: 'Next.js' });
     expect(nextCandidateBtn).toHaveClass('border-teal-200', 'bg-teal-50', 'text-teal-800');
-    const removeNextBtn = within(panel).getByRole('button', { name: 'Remove “Next”' });
-    expect(removeNextBtn).toHaveClass('border-rose-200', 'bg-rose-50', 'text-rose-700');
+    expect(within(panel).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
 
     fireEvent.click(nextCandidateBtn);
     await waitFor(() =>
@@ -294,28 +300,16 @@ describe('Screen 08 — SkillsSetupForm', () => {
     expect(screen.getByRole('button', { name: /save & next/i })).toBeEnabled();
   });
 
-  it('enforces strict at-least-one-valid-skill guard, shows concise unrecognized warning copy + rose Remove pills announcing removal and restoring focus, and filters unrecognized skills on save', async () => {
+  it('never adds unrecognized custom skills (e.g. "Boss") to the chip list, renders no Remove button, shows inline unrecognized message, and clears it on typing or selecting a valid skill', async () => {
     const invoke = makeInvoke((op, input) => {
-      const names = (input as { names?: string[] })?.names ?? [];
-      if (op === 'updateSkills') {
-        const recognized = names
-          .filter((n) => n.toLowerCase() === 'react')
-          .map(() => ({
-            skill_id: 'sk-react',
-            name: 'React',
-            alias_resolved: true,
-            learning_state: 'not_started' as const,
-            source: 'self_reported' as const,
-          }));
-        const unresolved = names
-          .filter((n) => n.toLowerCase() !== 'react')
-          .map((n) => ({ input: n, candidates: [] }));
+      if (op === 'interpretSkillAlias') {
+        const aliasInput = (input as { input?: string })?.input ?? '';
         return {
           ok: true,
-          data: profile({
-            existing_skills: recognized,
-            unresolved_skills: unresolved,
-          }),
+          data: {
+            input: aliasInput,
+            candidates: [],
+          },
         };
       }
       return { ok: true, data: profile() };
@@ -326,44 +320,32 @@ describe('Screen 08 — SkillsSetupForm', () => {
     const saveBtn = screen.getByRole('button', { name: /save & next/i });
     expect(saveBtn).toBeDisabled();
 
-    // Add two unrecognized custom skills ("Dim" and "Reacy") -> zero premature network mutations
-    fireEvent.change(input, { target: { value: 'Dim' } });
+    // Add unrecognized custom skill ("Boss") -> calls interpretSkillAlias, does NOT add chip, shows message only
+    fireEvent.change(input, { target: { value: 'Boss' } });
     expect(screen.queryByRole('listbox', { name: 'Skill suggestions' })).not.toBeInTheDocument();
     expect(screen.getByText('No matching skill')).toHaveAttribute('role', 'status');
     fireEvent.keyDown(input, { key: 'Enter' });
-    fireEvent.change(input, { target: { value: 'Reacy' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(invoke).not.toHaveBeenCalled();
 
-    // Explicit Save returns unresolved_skills -> plural warning, Save disabled
-    fireEvent.click(saveBtn);
-    const panel = await screen.findByRole('region', { name: 'Skill clarification' });
+    expect(await screen.findByText('“Boss” is not a recognized skill.')).toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', { input: 'Boss', skill_id: '' });
+    expect(invoke).not.toHaveBeenCalledWith('updateSkills', expect.anything());
+    expect(screen.queryByRole('list', { name: 'Your skills' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove “?boss”?/i })).not.toBeInTheDocument();
     expect(saveBtn).toBeDisabled();
-    expect(panel).toHaveTextContent('Skills not recognized');
-    expect(panel).not.toHaveTextContent(/aren't in our catalog/i);
-    expect(panel).not.toHaveTextContent(/won't be saved/i);
 
-    const list = screen.getByRole('list', { name: 'Your skills' });
-    const dimChip = within(list).getByText('Dim').closest('li')!;
-    expect(dimChip).toHaveClass('border-amber-300', 'bg-amber-50/70', 'text-amber-900');
+    // Typing a new query automatically clears the unrecognized message
+    fireEvent.change(input, { target: { value: 'R' } });
+    expect(screen.queryByText('“Boss” is not a recognized skill.')).not.toBeInTheDocument();
 
-    // Dedicated Remove button announces removal in status region AND moves focus back to combobox input
-    const removeReacyBtn = within(panel).getByRole('button', { name: 'Remove “Reacy”' });
-    expect(removeReacyBtn).toHaveClass(
-      'border-rose-200',
-      'bg-rose-50',
-      'text-rose-700',
-      'hover:bg-rose-100',
-    );
-    fireEvent.click(removeReacyBtn);
-    expect(panel).toHaveTextContent('Skill not recognized');
-    expect(within(list).queryByText('Reacy')).not.toBeInTheDocument();
-    expect(screen.getByText('Removed “Reacy”.')).toHaveAttribute('role', 'status');
-    expect(input).toHaveFocus();
+    // Another unrecognized skill ("Dim"), then selecting a valid catalog skill ("React") clears message and enables Save
+    fireEvent.change(input, { target: { value: 'Dim' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('“Dim” is not a recognized skill.')).toBeInTheDocument();
 
-    // Add one valid catalog skill ("React") -> Save enables, and submitting sends ONLY valid skills
     fireEvent.change(input, { target: { value: 'React' } });
     fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.queryByText('“Dim” is not a recognized skill.')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Your skills' })).getByText('React')).toBeInTheDocument();
     expect(saveBtn).toBeEnabled();
 
     // Leaving unadded draft text in input must not be auto-committed
@@ -373,7 +355,7 @@ describe('Screen 08 — SkillsSetupForm', () => {
     expect(invoke).toHaveBeenLastCalledWith('updateSkills', { names: ['React'] });
   });
 
-  it('ignores stale in-flight save responses when None is toggled before the request resolves', async () => {
+  it('ignores stale in-flight validation responses when None is toggled before interpretSkillAlias resolves', async () => {
     let resolveDeferred!: (value: unknown) => void;
     const invoke = makeInvoke(
       () =>
@@ -384,21 +366,25 @@ describe('Screen 08 — SkillsSetupForm', () => {
 
     render(<SkillsSetupForm initialProfile={profile()} invoke={invoke} />);
     const input = screen.getByRole('combobox', { name: /add a skill/i });
-    fireEvent.change(input, { target: { value: 'Reacy' } });
+    fireEvent.change(input, { target: { value: 'Boss' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(invoke).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', {
+      input: 'Boss',
+      skill_id: '',
+    });
+    // Save button stays disabled while validation is in flight
+    expect(screen.getByRole('button', { name: /save & next/i })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
-    expect(invoke).toHaveBeenCalledTimes(1);
-
-    // Late response resolves inside act -> cleanly updates clarification panel
+    // Late response resolves inside act -> immediately shows unrecognized message without adding chip
     await act(async () => {
       resolveDeferred({
         ok: true,
-        data: profile({ unresolved_skills: [{ input: 'Reacy', candidates: [] }] }),
+        data: { input: 'Boss', candidates: [] },
       });
     });
-    expect(screen.getByRole('region', { name: 'Skill clarification' })).toBeInTheDocument();
+    expect(screen.getByText('“Boss” is not a recognized skill.')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Your skills' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove “?boss”?/i })).not.toBeInTheDocument();
   });
 
   it('clears apiError when removing a skill pill or clarification entry', async () => {
@@ -415,15 +401,26 @@ describe('Screen 08 — SkillsSetupForm', () => {
   });
 
   it('normalizes padded catalog labels consistently and hydrates canonical skills on standalone save without onSuccess callback', async () => {
-    const invoke = makeInvoke(() => ({
-      ok: true,
-      data: profile({
-        existing_skills: [
-          { skill_id: 'sk-react', name: 'React', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
-          { skill_id: 'sk-py', name: 'Python', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
-        ],
-      }),
-    }));
+    const invoke = makeInvoke((op) => {
+      if (op === 'interpretSkillAlias') {
+        return {
+          ok: true,
+          data: {
+            input: 'py',
+            canonical_name: 'Python',
+          },
+        };
+      }
+      return {
+        ok: true,
+        data: profile({
+          existing_skills: [
+            { skill_id: 'sk-react', name: 'React', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+            { skill_id: 'sk-py', name: 'Python', alias_resolved: true, learning_state: 'learning', source: 'self_reported' },
+          ],
+        }),
+      };
+    });
 
     render(
       <SkillsSetupForm
@@ -443,9 +440,12 @@ describe('Screen 08 — SkillsSetupForm', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(screen.getByRole('alert')).toHaveTextContent('That skill is already in your list.');
 
-    // Add raw alias 'py' and save in standalone mode -> hydrates canonical 'Python' before toast
+    // Add raw alias 'py' -> auto-resolved via interpretSkillAlias to 'Python' -> save in standalone mode
     fireEvent.change(input, { target: { value: 'py' } });
     fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() =>
+      expect(within(screen.getByRole('list', { name: 'Your skills' })).getByText('Python')).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Save Skills' }));
 
     expect(await screen.findByTestId('toast-container')).toHaveTextContent('Skills updated.');
@@ -505,26 +505,36 @@ describe('Screen 08 — SkillsSetupForm', () => {
   });
 
   it('does not mutate saved profile skills when adding a custom skill and toggling None before saving', async () => {
-    const invoke = makeInvoke(() => ({
-      ok: true,
-      data: profile({ existing_skills_none: true }),
-    }));
+    const invoke = makeInvoke((op) => {
+      if (op === 'interpretSkillAlias') {
+        return { ok: true, data: { input: 'Reacy', candidates: [] } };
+      }
+      return {
+        ok: true,
+        data: profile({ existing_skills_none: true }),
+      };
+    });
     render(<SkillsSetupForm initialProfile={profile()} invoke={invoke} />);
     const input = screen.getByRole('combobox', { name: /add a skill/i });
 
     fireEvent.change(input, { target: { value: 'Reacy' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(invoke).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', {
+        input: 'Reacy',
+        skill_id: '',
+      }),
+    );
+    expect(invoke).not.toHaveBeenCalledWith('updateSkills', expect.anything());
 
     fireEvent.click(screen.getByRole('switch', { name: 'No prior technical skills' }));
     fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/onboarding'));
-    expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith('updateSkills', { none: true });
   });
 
-  it('defers custom-skill EP-P02 calls in standalone mode so adding/canceling never mutates saved skills', () => {
-    const invoke = makeInvoke(() => ({ ok: true, data: profile() }));
+  it('defers custom-skill EP-P02 calls in standalone mode so adding/canceling never mutates saved skills', async () => {
+    const invoke = makeInvoke(() => ({ ok: true, data: { input: 'boss', candidates: [] } }));
     const onCancel = vi.fn();
     render(
       <SkillsSetupForm
@@ -541,12 +551,209 @@ describe('Screen 08 — SkillsSetupForm', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove SQL' }));
     const input = screen.getByRole('combobox', { name: /add a skill/i });
-    fireEvent.change(input, { target: { value: 'py' } });
+    fireEvent.change(input, { target: { value: 'boss' } });
     fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', {
+        input: 'boss',
+        skill_id: '',
+      }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(onCancel).toHaveBeenCalledTimes(1);
-    expect(invoke).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith('updateSkills', expect.anything());
+  });
+
+  it('queues multiple unresolved/ambiguous skills and advances cleanly on resolve or dismiss without dropping unseen aliases', async () => {
+    const invoke = makeInvoke((op, input) => {
+      const payload = input as { input?: string; skill_id?: string };
+      if (op === 'interpretSkillAlias' && payload.skill_id === 'sk-next') {
+        return { ok: true, data: { input: 'Next', skill_id: 'sk-next', added_to_profile: true } };
+      }
+      return { ok: true, data: profile() };
+    });
+
+    render(
+      <SkillsSetupForm
+        initialProfile={profile({
+          unresolved_skills: [
+            {
+              input: 'Next',
+              candidates: [{ skill_id: 'sk-next', name: 'Next.js' }],
+            },
+            {
+              input: 'Py',
+              candidates: [{ skill_id: 'sk-py', name: 'Python' }],
+            },
+            {
+              input: 'UnknownFoo',
+              candidates: [],
+            },
+          ],
+        })}
+        invoke={invoke}
+      />,
+    );
+
+    const panel1 = screen.getByRole('region', { name: 'Skill clarification' });
+    expect(panel1).toHaveTextContent('For “Next”:');
+    fireEvent.click(within(panel1).getByRole('button', { name: 'Next.js' }));
+
+    // Advances to second queued ambiguous alias "Py"
+    const panel2 = await screen.findByRole('region', { name: 'Skill clarification' });
+    expect(panel2).toHaveTextContent('For “Py”:');
+    fireEvent.click(within(panel2).getByRole('button', { name: 'Dismiss' }));
+
+    // Advances to third queued unrecognized skill "UnknownFoo"
+    expect(await screen.findByText('“UnknownFoo” is not a recognized skill.')).toBeInTheDocument();
+  });
+
+  it('rechecks the 100-skill limit before appending an async-resolved alias', async () => {
+    const ninetyNine = Array.from({ length: 99 }, (_, i) => ({
+      skill_id: `s${i}`,
+      name: `Skill ${i}`,
+      alias_resolved: true,
+      learning_state: 'learning' as const,
+      source: 'self_reported' as const,
+    }));
+    let resolveAliasCall!: (val: unknown) => void;
+    const invoke = makeInvoke(
+      () =>
+        new Promise((resolve) => {
+          resolveAliasCall = resolve;
+        }),
+    );
+
+    render(
+      <SkillsSetupForm
+        initialProfile={profile({ existing_skills: ninetyNine })}
+        invoke={invoke}
+      />,
+    );
+
+    const input = screen.getByRole('combobox', { name: /add a skill/i });
+    // Start async custom alias validation while at 99 skills
+    fireEvent.change(input, { target: { value: 'pythn' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // User adds a 100th catalog skill before async validation finishes
+    fireEvent.change(input, { target: { value: 'React' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(within(screen.getByRole('list', { name: 'Your skills' })).getAllByRole('listitem')).toHaveLength(100);
+
+    // Async alias resolves to Python -> MUST enforce 100-skill cap instead of appending a 101st skill
+    await act(async () => {
+      resolveAliasCall({ ok: true, data: { input: 'pythn', canonical_name: 'Python' } });
+    });
+
+    expect(within(screen.getByRole('list', { name: 'Your skills' })).getAllByRole('listitem')).toHaveLength(100);
+    expect(screen.getByRole('alert')).toHaveTextContent(/you can add up to 100 skills/i);
+  });
+
+  it('preserves the clarification prompt and displays an error when interpretSkillAlias fails for a catalog candidate', async () => {
+    const invoke = makeInvoke(() => failure('INTERNAL_ERROR', 500));
+
+    render(
+      <SkillsSetupForm
+        initialProfile={profile({
+          unresolved_skills: [
+            {
+              input: 'Next',
+              candidates: [{ skill_id: 'sk-next', name: 'Next.js' }],
+            },
+          ],
+        })}
+        invoke={invoke}
+      />,
+    );
+
+    const panel = screen.getByRole('region', { name: 'Skill clarification' });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Next.js' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Skill clarification' })).toHaveTextContent('For “Next”:');
+    expect(screen.queryByText(/saved your meaning/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Your skills' })).not.toBeInTheDocument();
+  });
+
+  it('clears only the specific inline warning when typing or adding a catalog skill without popping server-queued unresolved items', async () => {
+    const invoke = makeInvoke((op, input) => {
+      if (op === 'interpretSkillAlias') {
+        return {
+          ok: true,
+          data: { input: (input as { input?: string }).input ?? '', candidates: [] },
+        };
+      }
+      return { ok: true, data: profile() };
+    });
+
+    render(
+      <SkillsSetupForm
+        initialProfile={profile({
+          unresolved_skills: [
+            { input: 'ServerUnrecA', candidates: [] },
+            { input: 'ServerUnrecB', candidates: [] },
+          ],
+        })}
+        invoke={invoke}
+      />,
+    );
+
+    expect(screen.getByText('“ServerUnrecA” is not a recognized skill.')).toBeInTheDocument();
+
+    const input = screen.getByRole('combobox', { name: /add a skill/i });
+    // Typing multiple characters must NOT pop queued server unresolved items
+    fireEvent.change(input, { target: { value: 'R' } });
+    fireEvent.change(input, { target: { value: 'Re' } });
+    fireEvent.change(input, { target: { value: 'Rea' } });
+    expect(screen.getByText('“ServerUnrecA” is not a recognized skill.')).toBeInTheDocument();
+
+    // Selecting a catalog skill also preserves server-queued unresolved items
+    fireEvent.change(input, { target: { value: 'React' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByText('“ServerUnrecA” is not a recognized skill.')).toBeInTheDocument();
+  });
+
+  it('tracks concurrent custom lookups independently without discarding an earlier in-flight lookup', async () => {
+    const resolvers: Record<string, (val: unknown) => void> = {};
+    const invoke = makeInvoke((_op, input) => {
+      const label = (input as { input?: string }).input ?? '';
+      return new Promise((resolve) => {
+        resolvers[label] = resolve;
+      });
+    });
+
+    render(<SkillsSetupForm initialProfile={profile()} invoke={invoke} />);
+    const input = screen.getByRole('combobox', { name: /add a skill/i });
+
+    fireEvent.change(input, { target: { value: 'pythn' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.change(input, { target: { value: 'tslang' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await act(async () => {
+      resolvers['pythn']({ ok: true, data: { input: 'pythn', canonical_name: 'Python' } });
+      resolvers['tslang']({ ok: true, data: { input: 'tslang', canonical_name: 'TypeScript' } });
+    });
+
+    const list = screen.getByRole('list', { name: 'Your skills' });
+    expect(within(list).getByText('Python')).toBeInTheDocument();
+    expect(within(list).getByText('TypeScript')).toBeInTheDocument();
+  });
+
+  it('shows mapped request error when custom interpretSkillAlias fails instead of claiming the skill is unrecognized', async () => {
+    const invoke = makeInvoke(() => failure('SERVICE_UNAVAILABLE', 503));
+    render(<SkillsSetupForm initialProfile={profile()} invoke={invoke} />);
+
+    const input = screen.getByRole('combobox', { name: /add a skill/i });
+    fireEvent.change(input, { target: { value: 'RustLang' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/is not a recognized skill/i),
+    ).not.toBeInTheDocument();
   });
 });
 

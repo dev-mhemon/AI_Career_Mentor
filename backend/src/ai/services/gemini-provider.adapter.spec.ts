@@ -179,6 +179,14 @@ describe('GeminiProviderAdapter', () => {
     expect(callArg.config.systemInstruction).toContain(
       'goal_interpretation.v1',
     );
+    expect(callArg.config.systemInstruction).toContain(
+      'include ONLY those named alternatives such as "AI / Machine Learning Engineering" and "Backend Development" that are also present in approved_roles',
+    );
+    expect(callArg.config.systemInstruction).toContain(
+      'When the user names only a broad technology field without a specific role',
+    );
+    expect(callArg.config.systemInstruction).toContain('Data Analyst');
+    expect(callArg.config.systemInstruction).toContain('Data Engineering');
 
     expect(result.output).toEqual(expectedPayload);
     expect(result.inputUnits).toBe(312);
@@ -684,6 +692,89 @@ describe('AiModule provider wiring', () => {
       validator.validate('roadmap_generate', 'roadmap.v1', {
         ...validRoadmap,
         level_outline: ['Plain string outline'],
+      }),
+    ).toThrow(
+      'AI output failed validation and was discarded. Please try again.',
+    );
+  });
+
+  it('rejects malformed non-boolean clarificationNeeded (e.g. string "true") with a clarification question while accepting valid boolean legacy clarification_needed', () => {
+    const validator = new OutputValidatorService();
+
+    expect(() =>
+      validator.validate('goal_interpretation', 'goal_interpretation.v1', {
+        isTechnologyGoal: true,
+        clarificationNeeded: 'true',
+        clarificationRound: 1,
+        clarificationQuestion: 'Which area of software interests you most?',
+        proposedRole: null,
+        alternativeRoles: [],
+        suggestedLevel: null,
+      }),
+    ).toThrow(
+      'AI output failed validation and was discarded. Please try again.',
+    );
+
+    expect(() =>
+      validator.validate('goal_interpretation', 'goal_interpretation.v1', {
+        isTechnologyGoal: true,
+        clarificationRound: 1,
+        clarificationQuestion: 'Which track would you prefer?',
+        proposedRole: null,
+        alternativeRoles: [],
+        suggestedLevel: null,
+      }),
+    ).toThrow(
+      'AI output failed validation and was discarded. Please try again.',
+    );
+
+    const normalized = validator.validate<GoalInterpretationOutput>(
+      'goal_interpretation',
+      'goal_interpretation.v1',
+      {
+        isTechnologyGoal: true,
+        clarification_needed: true,
+        clarification_round: 1,
+        clarification_question: 'Do you prefer frontend or backend?',
+        proposed_role: null,
+        alternative_roles: [],
+        suggested_level: null,
+      },
+    );
+    expect(normalized.clarificationNeeded).toBe(true);
+    expect(normalized.clarificationQuestion).toBe(
+      'Do you prefer frontend or backend?',
+    );
+
+    // Rejects malformed legacy clarification_question (e.g. number 42) instead of substituting null
+    expect(() =>
+      validator.validate('goal_interpretation', 'goal_interpretation.v1', {
+        isTechnologyGoal: true,
+        clarificationNeeded: false,
+        clarificationRound: 0,
+        clarification_question: 42,
+        proposedRole: null,
+        alternativeRoles: [],
+        suggestedLevel: null,
+      }),
+    ).toThrow(
+      'AI output failed validation and was discarded. Please try again.',
+    );
+
+    // Rejects malformed legacy alternative_roles (e.g. object instead of array) instead of substituting []
+    expect(() =>
+      validator.validate('goal_interpretation', 'goal_interpretation.v1', {
+        isTechnologyGoal: true,
+        clarificationNeeded: false,
+        clarificationRound: 0,
+        clarificationQuestion: null,
+        proposedRole: null,
+        alternative_roles: {
+          canonicalRoleId: '22222222-2222-4222-8222-222222222222',
+          name: 'Backend Development',
+          matchReason: 'Not an array',
+        },
+        suggestedLevel: null,
       }),
     ).toThrow(
       'AI output failed validation and was discarded. Please try again.',

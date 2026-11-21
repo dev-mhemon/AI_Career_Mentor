@@ -75,7 +75,9 @@ export function Button({
       {...rest}
     >
       {loading && <SpinnerIcon />}
-      <span>{loading && loadingText ? loadingText : children}</span>
+      <span className="inline-flex items-center justify-center gap-2 leading-none">
+        {loading && loadingText ? loadingText : children}
+      </span>
     </button>
   );
 }

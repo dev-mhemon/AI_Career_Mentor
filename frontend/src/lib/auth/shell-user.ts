@@ -163,12 +163,20 @@ export async function getFastSessionShellUser(): Promise<FastShellSessionResult>
     const appRole = (session.user.app_metadata as Record<string, unknown> | undefined)
       ?.role;
 
+    let profileRole: string | null = null;
+    if (session.access_token) {
+      const profileRes = await getProfile(session.access_token).catch(() => null);
+      if (profileRes?.current_role?.trim()) {
+        profileRole = profileRes.current_role.trim();
+      }
+    }
+
     return {
       unauthenticated: false,
       variant: appRole === 'ADMIN' ? 'admin' : 'authenticated',
       user: {
         fullName: meta.fullName ?? null,
-        currentRole: meta.currentRole ?? null,
+        currentRole: profileRole || meta.currentRole || null,
         email,
         phone,
       },

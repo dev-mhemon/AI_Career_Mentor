@@ -360,8 +360,12 @@ export interface GoalSetupFormProps {
   }) => void;
   /** Optional Back handler when embedded inside a wizard or inline view. */
   onBack?: () => void;
+  /** Optional custom label for the Back/Cancel button when `onBack` is provided. */
+  backLabel?: string;
   /** When true, omits the standalone stepper header so an outer shell owns stepper chrome. */
   embedded?: boolean;
+  /** When true, omits the inner step heading/description so a parent Modal.Header owns the title chrome. */
+  inModal?: boolean;
 }
 
 /**
@@ -384,7 +388,9 @@ export function GoalSetupForm({
   onLearningSettingsSaved,
   onSuccess,
   onBack,
+  backLabel,
   embedded = false,
+  inModal = false,
 }: GoalSetupFormProps) {
   const router = useRouter();
   const fieldId = useId();
@@ -525,8 +531,11 @@ export function GoalSetupForm({
         selectRole(filteredRoles[activeIndex]);
       }
     } else if (event.key === 'Escape') {
-      if (open) {
+      if (showListbox) {
         event.preventDefault();
+        setOpen(false);
+        setActiveIndex(-1);
+      } else if (open) {
         setOpen(false);
         setActiveIndex(-1);
       }
@@ -633,7 +642,9 @@ export function GoalSetupForm({
     }
   }
 
-  const outOfScope = apiError?.code === 'OUT_OF_SCOPE_GOAL';
+  const outOfScope =
+    apiError?.code === 'OUT_OF_SCOPE_GOAL' ||
+    apiError?.code === 'NON_TECH_GOAL';
   const limitReached = apiError?.code === 'ROADMAP_LIMIT_REACHED';
 
   const backControl = onBack ? (
@@ -643,7 +654,7 @@ export function GoalSetupForm({
       disabled={pending}
       className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-border-default px-4 py-2.5 text-label-lg text-text-primary hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)"
     >
-      Back
+      {backLabel ?? (inModal ? 'Cancel' : 'Back')}
     </button>
   ) : (
     <Link
@@ -658,9 +669,14 @@ export function GoalSetupForm({
     <form onSubmit={submit} noValidate>
       <StepFrame
         currentStep={4}
-        embedded={embedded}
-        heading="What is your career goal?"
-        description="Choose or describe the technology role you want to work toward."
+        embedded={embedded || inModal}
+        inModal={inModal}
+        heading={inModal ? undefined : 'What is your career goal?'}
+        description={
+          inModal
+            ? undefined
+            : 'Choose or describe the technology role you want to work toward.'
+        }
         status="editing"
         errorMessage={loadError}
         actions={
@@ -668,11 +684,11 @@ export function GoalSetupForm({
             {backControl}
             <Button
               type="submit"
-              size="lg"
+              size={inModal ? 'md' : 'lg'}
               isLoading={pending}
               disabled={!canSubmit}
               loadingText="Analyzing your goal..."
-              className="min-w-[210px]"
+              className={inModal ? 'min-w-[160px]' : 'min-w-[210px]'}
             >
               Analyze Goal
             </Button>
@@ -744,7 +760,7 @@ export function GoalSetupForm({
                     }
                   }}
                   className={cn(
-                    'min-h-11 w-full rounded-md border bg-surface-default py-2 pl-3 pr-10 text-body text-text-primary placeholder:font-light placeholder:text-slate-500 dark:placeholder:text-slate-400',
+                    'min-h-11 w-full rounded-md border bg-surface-default py-2 pl-3 pr-10 text-body text-text-primary placeholder:font-light placeholder:text-slate-400 dark:placeholder:text-slate-500',
                     'transition-colors duration-(--duration-fast) ease-standard',
                     'focus:outline-none focus:ring-2 read-only:bg-surface-subtle',
                     showValidation
@@ -827,7 +843,8 @@ export function GoalSetupForm({
               readOnly={pending}
               value={dailyHours}
               error={showHoursValidation && !hoursCheck.ok ? hoursCheck.error : undefined}
-              placeholder="2"
+              placeholder="e.g. 2"
+              className="placeholder:text-slate-400 dark:placeholder:text-slate-500"
               onChange={(e) => {
                 const nextHours = e.target.value;
                 writeGoalDraft(
@@ -858,6 +875,11 @@ export function GoalSetupForm({
               placeholder="Select level"
               options={TARGET_LEVEL_OPTIONS}
               error={showLevelValidation ? 'Select your target career level.' : undefined}
+              className={
+                targetLevel === ''
+                  ? 'font-light text-slate-400 dark:text-slate-500'
+                  : undefined
+              }
               onChange={(e) => {
                 const nextLevel = e.target.value as CareerLevel | '';
                 setLevelExplicitlyChosen(nextLevel !== '');

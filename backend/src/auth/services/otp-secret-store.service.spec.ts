@@ -309,15 +309,33 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
       );
     });
 
-    it('verifies reset_password challenge and returns C05 error codes', async () => {
+    it('verifies reset_password challenge with the actual captured setOtpSecret digest for matching (userId, purpose) and passes reset-purpose secret key', async () => {
+      const storedDigests = new Map<string, string>();
+      abuseControl.issueChallenge.mockResolvedValueOnce({
+        expiresInSeconds: 600,
+      });
+      abuseControl.setOtpSecret.mockImplementation(
+        async (uid: string, digest: string, _ttl: number, purpose?: string) => {
+          storedDigests.set(`${uid}:${purpose ?? 'verify_email'}`, digest);
+        },
+      );
+      abuseControl.getOtpSecret.mockImplementation(
+        async (uid: string, purpose?: string) =>
+          storedDigests.get(`${uid}:${purpose ?? 'verify_email'}`) ?? null,
+      );
+
+      await store.storeOtp(userId, email, '123456', 600, 'reset_password');
+
+      expect(storedDigests.get(`${userId}:reset_password`)).toBe(
+        store.computeDigest(userId, email, '123456', 'reset_password'),
+      );
+      expect(storedDigests.get(`${userId}:verify_email`)).toBeUndefined();
+
       abuseControl.verifyChallenge.mockImplementation(
-        async (_contact, _code, verifyFn, secretKey, purpose) => {
+        async (_contact, code, verifyFn, secretKey, purpose) => {
           expect(secretKey).toBe(`auth:v1:otp:secret:reset_password:${userId}`);
           expect(purpose).toBe('reset_password');
-          abuseControl.getOtpSecret.mockResolvedValueOnce(
-            store.computeDigest(userId, email, '123456', 'reset_password'),
-          );
-          const valid = await verifyFn('123456');
+          const valid = await verifyFn(code);
           expect(valid).toBe(true);
         },
       );
@@ -328,6 +346,13 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         email,
         '123456',
         onValid,
+        'reset_password',
+      );
+      expect(abuseControl.verifyChallenge).toHaveBeenCalledWith(
+        { channel: 'email', identifier: email },
+        '123456',
+        expect.any(Function),
+        `auth:v1:otp:secret:reset_password:${userId}`,
         'reset_password',
       );
       expect(onValid).toHaveBeenCalledTimes(1);
@@ -515,6 +540,40 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
       expect(capturedPurpose).toBe('verify_phone');
       expect(capturedValid).toBe(true);
       expect(onValid).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses phone channel for reset_password challenges targeting a phone number', async () => {
+      abuseControl.issueChallenge.mockResolvedValueOnce({
+        expiresInSeconds: 600,
+      });
+
+      await store.storeOtp(userId, phone, '123456', 600, 'reset_password');
+      expect(abuseControl.issueChallenge).toHaveBeenCalledWith(
+        { channel: 'phone', identifier: phone },
+        600,
+        'reset_password',
+      );
+
+      let capturedContact: unknown;
+      abuseControl.verifyChallenge.mockImplementationOnce(
+        async (contact, _code, verifyFn) => {
+          capturedContact = contact;
+          abuseControl.getOtpSecret.mockResolvedValueOnce(
+            store.computeDigest(userId, phone, '123456', 'reset_password'),
+          );
+          const valid = await verifyFn('123456');
+          expect(valid).toBe(true);
+        },
+      );
+
+      await store.verifyAndConsumeOtp(
+        userId,
+        phone,
+        '123456',
+        undefined,
+        'reset_password',
+      );
+      expect(capturedContact).toEqual({ channel: 'phone', identifier: phone });
     });
   });
 });

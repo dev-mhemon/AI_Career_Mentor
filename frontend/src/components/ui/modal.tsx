@@ -1,14 +1,24 @@
 'use client';
 
 import {
+  createContext,
+  useCallback,
+  useContext,
   useEffect,
   useId,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
+  type HTMLAttributes,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
+  type RefObject,
 } from 'react';
 import { Button } from './button';
+import { cn } from './cn';
+import { CloseIcon } from './icons';
 import { Input } from './input';
 
 /**
@@ -50,13 +60,67 @@ export function useBackdropDismiss(onDismiss: () => void, disabled = false) {
   };
 }
 
-export type ModalVariant = 'confirm' | 'hours_prompt' | 'destructive_delete' | 'report_dialog';
+export type ModalVariant =
+  | 'confirm'
+  | 'hours_prompt'
+  | 'destructive_delete'
+  | 'report_dialog';
 
-export interface ModalProps {
+export type ModalSize = 'sm' | 'md' | 'lg';
+
+export interface ModalContextValue {
+  onClose: () => void;
+  titleId: string;
+  descriptionId: string;
+  disableClose: boolean;
+  registerTitleId: (id: string | null) => void;
+  registerDescriptionId: (id: string | null) => void;
+}
+
+const ModalContext = createContext<ModalContextValue | null>(null);
+
+export function useModalContext(): ModalContextValue {
+  const ctx = useContext(ModalContext);
+  if (!ctx) {
+    throw new Error('Modal compound components must be rendered within <Modal>.');
+  }
+  return ctx;
+}
+
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+interface ModalBaseProps {
   open: boolean;
   onClose: () => void;
+  /** Disables closing via Escape key, backdrop click, or Modal.Close button. */
+  disableClose?: boolean;
+  /** Dialog width preset: `'sm'` (max-w-md), `'md'` (max-w-lg), `'lg'` (max-w-xl). */
+  size?: ModalSize;
+  /** Explicit accessible name when rendering a dialog without a visible title. */
+  ariaLabel?: string;
+  /** Optional explicit element ref to restore focus to when the modal closes. */
+  returnFocusTo?: RefObject<HTMLElement | null>;
+  className?: string;
+  loading?: boolean;
+}
+
+export interface CompoundModalProps extends ModalBaseProps {
+  /** Compound component children (`Modal.Header`, `Modal.Body`, `Modal.Footer`). */
+  children: ReactNode;
+  variant?: never;
+  title?: never;
+  description?: never;
+  confirmLabel?: never;
+  cancelLabel?: never;
+  onConfirm?: never;
+  requireLiteral?: never;
+}
+
+interface LegacyModalBaseProps extends ModalBaseProps {
+  children?: undefined;
+  /** Legacy preset variant props kept for backwards compatibility with existing callers. */
   variant?: ModalVariant;
-  title: string;
   description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
@@ -64,18 +128,200 @@ export interface ModalProps {
   onConfirm: (value?: string) => void;
   /** destructive_delete: user must type this literal (e.g. 'DELETE'). */
   requireLiteral?: string;
-  loading?: boolean;
 }
+
+export type LegacyModalProps =
+  | (LegacyModalBaseProps & { title: string; ariaLabel?: string })
+  | (LegacyModalBaseProps & { title?: undefined; ariaLabel: string });
+
+export type ModalProps = CompoundModalProps | LegacyModalProps;
+
+const SIZE_CLASS: Record<ModalSize, string> = {
+  sm: 'max-w-md',
+  md: 'max-w-lg',
+  lg: 'max-w-xl',
+};
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-export function Modal(props: ModalProps) {
+/* -------------------------------------------------------------------------- */
+/* Compound Subcomponents                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface ModalSectionProps extends HTMLAttributes<HTMLDivElement> {
+  children?: ReactNode;
+}
+
+export function ModalHeader({
+  children,
+  className,
+  ...rest
+}: ModalSectionProps) {
+  return (
+    <div
+      className={cn(
+        'flex items-start justify-between gap-4 border-b border-border-subtle px-6 pt-5 pb-4',
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+}
+
+export interface ModalTitleProps extends HTMLAttributes<HTMLHeadingElement> {
+  children: ReactNode;
+}
+
+export function ModalTitle({
+  children,
+  className,
+  id,
+  ...rest
+}: ModalTitleProps) {
+  const { titleId, registerTitleId } = useModalContext();
+  const resolvedId = id ?? titleId;
+  useIsomorphicLayoutEffect(() => {
+    registerTitleId(resolvedId);
+    return () => registerTitleId(null);
+  }, [registerTitleId, resolvedId]);
+
+  return (
+    <h2
+      id={resolvedId}
+      dir="auto"
+      className={cn(
+        'text-[18px] font-semibold tracking-[-0.015em] text-text-primary',
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </h2>
+  );
+}
+
+export interface ModalDescriptionProps
+  extends HTMLAttributes<HTMLParagraphElement> {
+  children: ReactNode;
+}
+
+export function ModalDescription({
+  children,
+  className,
+  id,
+  ...rest
+}: ModalDescriptionProps) {
+  const { descriptionId, registerDescriptionId } = useModalContext();
+  const resolvedId = id ?? descriptionId;
+  useIsomorphicLayoutEffect(() => {
+    registerDescriptionId(resolvedId);
+    return () => registerDescriptionId(null);
+  }, [registerDescriptionId, resolvedId]);
+
+  return (
+    <p
+      id={resolvedId}
+      dir="auto"
+      className={cn(
+        'mt-1 text-[13.5px] leading-relaxed text-text-secondary',
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </p>
+  );
+}
+
+export interface ModalCloseProps
+  extends HTMLAttributes<HTMLButtonElement> {
+  disabled?: boolean;
+}
+
+export function ModalClose({
+  className,
+  'aria-label': ariaLabel = 'Close dialog',
+  disabled,
+  onClick,
+  ...rest
+}: ModalCloseProps) {
+  const { onClose, disableClose } = useModalContext();
+  const isDisabled = Boolean(disableClose || disabled);
+
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      disabled={isDisabled}
+      onClick={(e) => {
+        onClick?.(e);
+        if (!e.defaultPrevented && !isDisabled) {
+          onClose();
+        }
+      }}
+      className={cn(
+        '-mt-1 -mr-1.5 inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-sunken hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50',
+        className,
+      )}
+      {...rest}
+    >
+      <CloseIcon className="h-4 w-4" />
+    </button>
+  );
+}
+
+export function ModalBody({
+  children,
+  className,
+  ...rest
+}: ModalSectionProps) {
+  return (
+    <div
+      className={cn('flex-1 overflow-visible px-6 py-5', className)}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function ModalFooter({
+  children,
+  className,
+  ...rest
+}: ModalSectionProps) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col-reverse gap-2.5 rounded-b-2xl border-t border-border-default bg-surface-subtle px-6 py-4 sm:flex-row sm:items-center sm:justify-end',
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Root Modal Component                                                       */
+/* -------------------------------------------------------------------------- */
+
+function ModalRoot(props: ModalProps) {
   return props.open ? <ModalInner {...props} /> : null;
 }
 
 function ModalInner({
   onClose,
+  disableClose: disableCloseProp = false,
+  size,
+  ariaLabel,
+  returnFocusTo,
+  children,
+  className,
   variant = 'confirm',
   title,
   description,
@@ -83,33 +329,86 @@ function ModalInner({
   cancelLabel = 'Cancel',
   onConfirm,
   requireLiteral,
-  loading,
+  loading = false,
 }: ModalProps) {
   const uid = useId();
+  const titleId = `${uid}-title`;
+  const descriptionId = `${uid}-desc`;
   const panel = useRef<HTMLDivElement>(null);
   const [text, setText] = useState('');
 
+  // Capture the previously focused opener element during render BEFORE React commits
+  // and applies any `autoFocus` attribute on a descendant inside the modal.
+  const [openerElement] = useState<HTMLElement | null>(() =>
+    typeof document !== 'undefined'
+      ? (document.activeElement as HTMLElement | null)
+      : null,
+  );
+  const returnFocusToRef = useRef(returnFocusTo);
+  const openerElementRef = useRef(openerElement);
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
-    const first =
-      panel.current?.querySelector<HTMLElement>(
-        'input:not([disabled]),textarea:not([disabled])',
-      ) ??
-      panel.current?.querySelector<HTMLElement>(FOCUSABLE) ??
-      panel.current;
-    first?.focus();
+    returnFocusToRef.current = returnFocusTo;
+    openerElementRef.current = openerElement;
+  }, [returnFocusTo, openerElement]);
+
+  const isCompound = children !== undefined;
+  const resolvedSize: ModalSize = size ?? (isCompound ? 'md' : 'sm');
+  const disableClose = Boolean(disableCloseProp || loading);
+
+  const [registeredTitleId, setRegisteredTitleId] = useState<string | null>(
+    null,
+  );
+  const registeredTitleIdRef = useRef<string | null>(null);
+  const registerTitleId = useCallback((id: string | null) => {
+    registeredTitleIdRef.current = id;
+    setRegisteredTitleId(id);
+  }, []);
+  const [registeredDescriptionId, setRegisteredDescriptionId] = useState<
+    string | null
+  >(null);
+
+  const onCloseRef = useRef(onClose);
+  const disableCloseRef = useRef(disableClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    disableCloseRef.current = disableClose;
+  }, [onClose, disableClose]);
+
+  useEffect(() => {
+    if (panel.current && !panel.current.contains(document.activeElement)) {
+      panel.current.focus();
+    }
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+
+    const onDocKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+        e.stopPropagation();
+        if (!disableCloseRef.current) {
+          onCloseRef.current();
+        }
+      }
+    };
+    document.addEventListener('keydown', onDocKeyDown);
+
     return () => {
+      document.removeEventListener('keydown', onDocKeyDown);
       document.body.style.overflow = overflow;
-      prev?.focus();
+      const restoreTarget =
+        returnFocusToRef.current?.current ?? openerElementRef.current;
+      restoreTarget?.focus?.();
     };
   }, []);
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
+      if (e.defaultPrevented) return;
       e.stopPropagation();
-      onClose();
+      e.nativeEvent.stopImmediatePropagation?.();
+      if (!disableClose) {
+        onClose();
+      }
       return;
     }
     if (e.key !== 'Tab' || !panel.current) return;
@@ -133,54 +432,175 @@ function ModalInner({
     }
   };
 
-  const literal = variant === 'destructive_delete' ? (requireLiteral ?? 'DELETE') : undefined;
-  const hoursValid = variant !== 'hours_prompt' || (/^\d+(\.\d+)?$/.test(text) && Number(text) > 0 && Number(text) <= 168);
+  const literal =
+    variant === 'destructive_delete' ? (requireLiteral ?? 'DELETE') : undefined;
+  const hoursValid =
+    variant !== 'hours_prompt' ||
+    (/^\d+(\.\d+)?$/.test(text) && Number(text) > 0 && Number(text) <= 168);
   const reportValid = variant !== 'report_dialog' || text.trim().length >= 3;
-  const canConfirm = (literal === undefined || text === literal) && hoursValid && reportValid;
+  const canConfirm =
+    (literal === undefined || text === literal) && hoursValid && reportValid;
 
-  const backdropDismiss = useBackdropDismiss(onClose, Boolean(loading));
-  const defaultLabel = { confirm: 'Confirm', hours_prompt: 'Save', destructive_delete: 'Delete', report_dialog: 'Send report' }[variant];
+  const backdropDismiss = useBackdropDismiss(() => {
+    if (!disableClose) onClose();
+  }, disableClose);
+
+  const defaultLabel = {
+    confirm: 'Confirm',
+    hours_prompt: 'Save',
+    destructive_delete: 'Delete',
+    report_dialog: 'Send report',
+  }[variant];
+
+  const contextValue = useMemo<ModalContextValue>(
+    () => ({
+      onClose,
+      titleId,
+      descriptionId,
+      disableClose,
+      registerTitleId,
+      registerDescriptionId: setRegisteredDescriptionId,
+    }),
+    [onClose, titleId, descriptionId, disableClose, registerTitleId],
+  );
+
+  const activeTitleId = isCompound
+    ? registeredTitleId
+    : (registeredTitleId ?? (title ? titleId : null));
+  const activeDescriptionId = isCompound
+    ? registeredDescriptionId
+    : (registeredDescriptionId ?? (description ? descriptionId : null));
+  const trimmedAriaLabel = ariaLabel?.trim() || undefined;
+  const resolvedAriaLabel = !activeTitleId
+    ? (trimmedAriaLabel ?? 'Dialog')
+    : undefined;
+
+  useEffect(() => {
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      isCompound &&
+      !registeredTitleIdRef.current &&
+      !trimmedAriaLabel
+    ) {
+      console.error(
+        '<Modal> compound dialogs must render a <Modal.Title> or provide a non-empty ariaLabel prop for accessibility.',
+      );
+    }
+  }, [isCompound, registeredTitleId, trimmedAriaLabel]);
+
+  const hasLegacyBodyInputs =
+    variant === 'hours_prompt' ||
+    variant === 'report_dialog' ||
+    literal !== undefined;
 
   return (
-    <div
-      {...backdropDismiss}
-      className="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-surface-overlay sm:items-center sm:p-4"
-    >
+    <ModalContext.Provider value={contextValue}>
       <div
-        ref={panel}
-        role="dialog"
-        tabIndex={-1}
-        aria-modal="true"
-        aria-labelledby={`${uid}-title`}
-        aria-describedby={description ? `${uid}-desc` : undefined}
-        onKeyDown={onKey}
-        className="flex max-h-[90vh] w-full flex-col gap-4 overflow-y-auto rounded-t-xl bg-surface-raised p-6 text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none sm:max-w-md sm:rounded-xl"
+        {...backdropDismiss}
+        className="fixed inset-0 z-(--z-modal) flex min-h-full items-center justify-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-[1px] sm:p-6"
       >
-        <h2 id={`${uid}-title`} className="text-heading-md" dir="auto">{title}</h2>
-        {description && <p id={`${uid}-desc`} className="text-body text-text-secondary" dir="auto">{description}</p>}
+        <div
+          ref={panel}
+          role="dialog"
+          tabIndex={-1}
+          aria-modal="true"
+          aria-labelledby={activeTitleId ?? undefined}
+          aria-describedby={activeDescriptionId ?? undefined}
+          aria-label={resolvedAriaLabel}
+          onKeyDown={onKey}
+          className={cn(
+            'relative z-10 my-auto flex w-full flex-col overflow-visible rounded-2xl border border-border-default bg-surface-raised text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none',
+            SIZE_CLASS[resolvedSize],
+            className,
+          )}
+        >
+          {isCompound ? (
+            children
+          ) : (
+            <>
+              <ModalHeader>
+                <div className="min-w-0">
+                  {title && <ModalTitle>{title}</ModalTitle>}
+                  {description && (
+                    <ModalDescription>{description}</ModalDescription>
+                  )}
+                </div>
+                <ModalClose />
+              </ModalHeader>
 
-        {variant === 'hours_prompt' && (
-          <Input label="Hours per week" variant="text" value={text} onChange={(e) => setText(e.target.value)} hint="Between 1 and 168." />
-        )}
-        {variant === 'report_dialog' && (
-          <Input label="What went wrong?" variant="textarea" value={text} maxLength={500} onChange={(e) => setText(e.target.value)} />
-        )}
-        {literal !== undefined && (
-          <Input label={`Type ${literal} to confirm`} value={text} onChange={(e) => setText(e.target.value)} />
-        )}
+              {hasLegacyBodyInputs && (
+                <ModalBody className="flex flex-col gap-4">
+                  {variant === 'hours_prompt' && (
+                    <Input
+                      label="Hours per week"
+                      variant="text"
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      hint="Between 1 and 168."
+                    />
+                  )}
+                  {variant === 'report_dialog' && (
+                    <Input
+                      label="What went wrong?"
+                      variant="textarea"
+                      value={text}
+                      maxLength={500}
+                      onChange={(e) => setText(e.target.value)}
+                    />
+                  )}
+                  {literal !== undefined && (
+                    <Input
+                      label={`Type ${literal} to confirm`}
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                    />
+                  )}
+                </ModalBody>
+              )}
 
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="secondary" onClick={onClose} disabled={loading}>{cancelLabel}</Button>
-          <Button
-            variant={variant === 'destructive_delete' ? 'destructive' : 'primary'}
-            disabled={!canConfirm}
-            loading={loading}
-            onClick={() => onConfirm(variant === 'confirm' || variant === 'destructive_delete' ? undefined : text.trim())}
-          >
-            {confirmLabel ?? defaultLabel}
-          </Button>
+              <ModalFooter>
+                <Button
+                  variant="secondary"
+                  onClick={onClose}
+                  disabled={disableClose}
+                >
+                  {cancelLabel}
+                </Button>
+                {typeof onConfirm === 'function' && (
+                  <Button
+                    variant={
+                      variant === 'destructive_delete'
+                        ? 'destructive'
+                        : 'primary'
+                    }
+                    disabled={!canConfirm}
+                    loading={loading}
+                    onClick={() =>
+                      onConfirm(
+                        variant === 'confirm' ||
+                          variant === 'destructive_delete'
+                          ? undefined
+                          : text.trim(),
+                      )
+                    }
+                  >
+                    {confirmLabel ?? defaultLabel}
+                  </Button>
+                )}
+              </ModalFooter>
+            </>
+          )}
         </div>
       </div>
-    </div>
+    </ModalContext.Provider>
   );
 }
+
+export const Modal = Object.assign(ModalRoot, {
+  Header: ModalHeader,
+  Title: ModalTitle,
+  Description: ModalDescription,
+  Close: ModalClose,
+  Body: ModalBody,
+  Footer: ModalFooter,
+});

@@ -130,17 +130,17 @@ export function SkillCard({
         {name}
       </span>
       {showAlias && (
-        <span className="inline-flex items-center rounded-full border border-border-default bg-surface-sunken px-2 py-0.5 text-caption text-text-secondary">
+        <span className="inline-flex items-center rounded-full border border-border-default bg-surface-sunken px-2 py-1 text-caption leading-none text-text-secondary">
           Alias: {aliasInput}
         </span>
       )}
       {!aliasResolved && (
-        <span className="inline-flex items-center rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2 py-0.5 text-caption text-feedback-warning-text">
+        <span className="inline-flex items-center rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2 py-1 text-caption leading-none text-feedback-warning-text">
           Needs clarification
         </span>
       )}
       {learningState && (
-        <span className="inline-flex items-center rounded-full border border-border-default px-2 py-0.5 text-caption text-text-secondary">
+        <span className="inline-flex items-center rounded-full border border-border-default px-2 py-1 text-caption leading-none text-text-secondary">
           {LEARNING_STATE_LABEL[learningState]}
         </span>
       )}

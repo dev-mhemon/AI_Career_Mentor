@@ -4199,6 +4199,8 @@ describe('AuthService session approval boundary', () => {
         userId,
         expect.any(Function),
         true,
+        false,
+        false,
       );
     });
 
@@ -4260,11 +4262,13 @@ describe('AuthService session approval boundary', () => {
         password_reset: true,
       });
 
-      // Verify transaction called with user lock
+      // Verify transaction called with user lock and useServiceRole=false (so auth.users subqueries succeed)
       expect(database.transaction).toHaveBeenCalledWith(
         userId,
         expect.any(Function),
         true,
+        false,
+        false,
       );
 
       // Verify GoTrue Admin API called with new password
@@ -4377,7 +4381,8 @@ describe('AuthService session approval boundary', () => {
         query: vi.fn(async (sql: string) => {
           if (
             sql.startsWith('SET LOCAL statement_timeout') ||
-            sql.startsWith('SET LOCAL lock_timeout')
+            sql.startsWith('SET LOCAL lock_timeout') ||
+            sql.includes('pg_advisory_xact_lock')
           ) {
             return [];
           }
@@ -4456,7 +4461,7 @@ describe('AuthService session approval boundary', () => {
       );
     });
 
-    it('retries compensating local session revocation if transaction fails on commit after GoTrue password update', async () => {
+    it('does not call GoTrue password update if the pre-GoTrue DB transaction fails on commit, and never calls GoTrue while a DB transaction is open', async () => {
       const primaryUserRow = {
         id: userId,
         email: 'user@example.com',
@@ -4484,21 +4489,15 @@ describe('AuthService session approval boundary', () => {
       } as unknown as OtpSecretStore;
 
       const mockApprovals = {
-        revokeAllUserSessions: vi
-          .fn()
-          .mockResolvedValueOnce(1)
-          .mockRejectedValueOnce(new Error('Transient DB error'))
-          .mockResolvedValueOnce(1),
+        revokeAllUserSessions: vi.fn().mockResolvedValueOnce(1),
       } as unknown as SessionApprovalService;
 
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: true,
-          status: 200,
-          json: async () => ({ id: userId }),
-        }),
-      );
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: userId }),
+      });
+      vi.stubGlobal('fetch', fetchSpy);
 
       const service = new AuthService(
         database,
@@ -4512,21 +4511,9 @@ describe('AuthService session approval boundary', () => {
         'Transaction commit failed',
       );
 
-      // 1st call inside transaction with mockDbRunner; 2nd and 3rd calls are compensating retries outside transaction
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(3);
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenNthCalledWith(
-        1,
-        userId,
-        mockDbRunner,
-      );
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenNthCalledWith(
-        2,
-        userId,
-      );
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenNthCalledWith(
-        3,
-        userId,
-      );
+      // GoTrue PUT and session revocation are never invoked if the preflight DB transaction failed
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(mockApprovals.revokeAllUserSessions).not.toHaveBeenCalled();
     });
 
     it('cancels blocked cleanup query via transaction-scoped SET LOCAL statement_timeout (57014), awaits rollback/release, and fails with non-retryable 504 PROVIDER_TIMEOUT', async () => {
@@ -4546,7 +4533,8 @@ describe('AuthService session approval boundary', () => {
         query: vi.fn(async (sql: string) => {
           if (
             sql.startsWith('SET LOCAL statement_timeout') ||
-            sql.startsWith('SET LOCAL lock_timeout')
+            sql.startsWith('SET LOCAL lock_timeout') ||
+            sql.includes('pg_advisory_xact_lock')
           ) {
             return [];
           }
@@ -4571,12 +4559,14 @@ describe('AuthService session approval boundary', () => {
           releaseAwaitedCount++;
         }),
       };
+      let txIndex = 0;
       const database = {
         query: vi.fn().mockResolvedValueOnce([primaryUserRow]),
-        transaction: vi.fn(async (targetUserId, operation) => {
+        transaction: vi.fn(async (_targetUserId, operation) => {
+          txIndex += 1;
           try {
             const res = await operation(mockDbRunner as never);
-            if (targetUserId !== null) {
+            if (txIndex <= 2) {
               transactionCommitted = true;
             }
             return res;
@@ -4632,9 +4622,9 @@ describe('AuthService session approval boundary', () => {
       expect(transactionCommitted).toBe(true);
       expect(otpConsumed).toBe(true);
       expect(rollbackAwaitedCount).toBe(3);
-      expect(releaseAwaitedCount).toBe(4);
+      expect(releaseAwaitedCount).toBe(5);
       expect(mockDbRunner.rollbackTransaction).toHaveBeenCalledTimes(3);
-      expect(mockDbRunner.release).toHaveBeenCalledTimes(4);
+      expect(mockDbRunner.release).toHaveBeenCalledTimes(5);
       expect(mockDbRunner.query).toHaveBeenCalledWith(
         'SET LOCAL statement_timeout = 25',
       );
@@ -9130,7 +9120,7 @@ describe('AuthService session approval boundary', () => {
       }
     });
 
-    it('re-verifies live account suspension and deleted state after session revocation and before GoTrue password update', async () => {
+    it('re-verifies live account suspension and deleted state before GoTrue password update without prematurely revoking sessions', async () => {
       const targetEmail = 'suspend-race@example.com';
 
       for (const scenario of [
@@ -9173,7 +9163,6 @@ describe('AuthService session approval boundary', () => {
           expectedCode: 'VERIFICATION_CODE_EXPIRED',
         },
       ]) {
-        let sessionsRevoked = false;
         const fetchSpy = vi.fn();
         vi.stubGlobal('fetch', fetchSpy);
 
@@ -9195,15 +9184,7 @@ describe('AuthService session approval boundary', () => {
               sql.includes('FROM public.users') &&
               sql.includes('FOR UPDATE')
             ) {
-              return sessionsRevoked
-                ? scenario.statusRows
-                : [
-                    {
-                      status: 'active',
-                      suspended_at: null,
-                      auth_deleted_at: null,
-                    },
-                  ];
+              return scenario.statusRows;
             }
             return [];
           }),
@@ -9214,10 +9195,7 @@ describe('AuthService session approval boundary', () => {
           transaction: vi.fn(async (_sub: unknown, fn: any) => fn(runner)),
         } as unknown as DatabaseService;
 
-        const revokeAllUserSessions = vi.fn(async () => {
-          sessionsRevoked = true;
-          return 1;
-        });
+        const revokeAllUserSessions = vi.fn(async () => 1);
 
         const service = new AuthService(
           db,
@@ -9253,9 +9231,205 @@ describe('AuthService session approval boundary', () => {
           response: { code: scenario.expectedCode },
         });
 
-        expect(revokeAllUserSessions).toHaveBeenCalledTimes(1);
+        expect(revokeAllUserSessions).not.toHaveBeenCalled();
         expect(fetchSpy).not.toHaveBeenCalled();
       }
+    });
+
+    it('keeps zero open DB transactions during GoTrue PUT and does not revoke sessions if GoTrue rejects with 422', async () => {
+      const targetEmail = 'policy-reject@example.com';
+      let openTransactions = 0;
+      let sawOpenTxInGoTrue = false;
+
+      const initialRow = {
+        id: userId,
+        email: targetEmail,
+        status: 'active',
+        verified_contact: true,
+        verified_at: '2026-01-01T00:00:00Z',
+        is_oauth_provider: false,
+      };
+
+      const runner = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM public.users u')) {
+            return [initialRow];
+          }
+          if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+            return [
+              {
+                status: 'active',
+                suspended_at: null,
+                auth_deleted_at: null,
+              },
+            ];
+          }
+          return [];
+        }),
+      };
+
+      const db = {
+        query: vi.fn().mockResolvedValueOnce([initialRow]),
+        transaction: vi.fn(async (_sub: unknown, fn: any) => {
+          openTransactions += 1;
+          try {
+            return await fn(runner);
+          } finally {
+            openTransactions -= 1;
+          }
+        }),
+      } as unknown as DatabaseService;
+
+      const revokeAllUserSessions = vi.fn().mockResolvedValue(1);
+
+      const fetchSpy = vi.fn(async () => {
+        if (openTransactions > 0) {
+          sawOpenTxInGoTrue = true;
+        }
+        return {
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'weak_password',
+            msg: 'Password is too weak.',
+          }),
+        };
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          isReady: vi.fn().mockReturnValue(true),
+          clearSendCooldown: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          revokeAllUserSessions,
+        } as unknown as SessionApprovalService,
+        {
+          verifyAndConsumeOtp: vi.fn(
+            async (
+              _u: string,
+              _i: string,
+              _c: string,
+              onSuccess: () => Promise<void>,
+            ) => onSuccess(),
+          ),
+        } as unknown as OtpSecretStore,
+      );
+
+      await expect(
+        service.resetPassword({
+          identifier: targetEmail,
+          code: '123456',
+          new_password: 'WeakPassword1!',
+          confirm_new_password: 'WeakPassword1!',
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'PASSWORD_POLICY_FAILED' },
+      });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(sawOpenTxInGoTrue).toBe(false);
+      expect(revokeAllUserSessions).not.toHaveBeenCalled();
+    });
+
+    it('rejects fallback recovery contact conflicts BEFORE calling GoTrue password update', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const fallbackAuthRow = {
+        id: userId,
+        email: null,
+        phone: '+8801711111111',
+        email_confirmed_at: null,
+        phone_confirmed_at: '2026-01-01T00:00:00Z',
+        oauth_provider: null,
+        oauth_subject: null,
+        oauth_confirmed_at: null,
+        app_status: null,
+        app_verified_contact: null,
+      };
+
+      const runner = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) {
+            return [fallbackAuthRow];
+          }
+          if (
+            sql.includes(
+              'SELECT status, suspended_at, verified_contact, email, phone FROM public.users',
+            )
+          ) {
+            return [
+              {
+                status: 'active',
+                suspended_at: null,
+                verified_contact: true,
+                email: null,
+                phone: '+8801799999999',
+              },
+            ];
+          }
+          return [];
+        }),
+      };
+
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM public.users u')) return [];
+          if (sql.includes('FROM auth.users u')) return [fallbackAuthRow];
+          return [];
+        }),
+        transaction: vi.fn(async (_sub: unknown, fn: any) => fn(runner)),
+      } as unknown as DatabaseService;
+
+      const revokeAllUserSessions = vi.fn().mockResolvedValue(1);
+      const smsProvider = {
+        ready: vi.fn(),
+        sendOtp: vi.fn(),
+      };
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          isReady: vi.fn().mockReturnValue(true),
+          clearSendCooldown: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          revokeAllUserSessions,
+        } as unknown as SessionApprovalService,
+        {
+          verifyAndConsumeOtp: vi.fn(
+            async (
+              _u: string,
+              _i: string,
+              _c: string,
+              onSuccess: () => Promise<void>,
+            ) => onSuccess(),
+          ),
+        } as unknown as OtpSecretStore,
+        undefined,
+        smsProvider as never,
+      );
+
+      await expect(
+        service.resetPassword({
+          identifier: '+8801711111111',
+          code: '123456',
+          new_password: 'FallbackPassword1!',
+          confirm_new_password: 'FallbackPassword1!',
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'PHONE_CONFLICT' },
+      });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(revokeAllUserSessions).not.toHaveBeenCalled();
     });
 
     it('rejects resetPassword when refreshed primary row has verified secondary contact but unverified target channel (verified_at: null, is_oauth_provider: false), while allowing OAuth provider target', async () => {

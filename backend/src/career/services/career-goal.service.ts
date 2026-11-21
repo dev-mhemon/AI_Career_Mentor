@@ -570,8 +570,624 @@ export class CareerGoalService {
       if (bySubstring) {
         return bySubstring;
       }
+      const fallbackSlug = this.inferCanonicalSlugFromText(candidateName);
+      if (fallbackSlug) {
+        const byInferredSlug = roles.find(
+          (r) =>
+            typeof r.slug === 'string' &&
+            r.slug.trim().toLowerCase() === fallbackSlug,
+        );
+        if (byInferredSlug) {
+          return byInferredSlug;
+        }
+      }
     }
     return null;
+  }
+
+  private normalizeSeparatorsPreservingClauses(text: string): string {
+    return text
+      .trim()
+      .replace(/\s*[/&_]+\s*/g, ' ')
+      .replace(/(?<=[\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu, ' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  private normalizePresetRoleText(text: string): string {
+    return text
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/\bfront\s+end\b/g, 'frontend')
+      .replace(/\bback\s+end\b/g, 'backend')
+      .replace(/\bfull\s+stack\b/g, 'full stack')
+      .replace(/\bdev\s+ops\b/g, 'devops')
+      .replace(/\bcyber\s+security\b/g, 'cybersecurity')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Splits a goal statement into individual clauses on punctuation and coordinating/contrast
+   * boundaries (`and`, `but`, `however`, `whereas`, `while`, `yet`) while keeping exclusion
+   * phrases (`anything but`, `everything but`, `all but`, `nothing but`, `anyone but`) intact.
+   */
+  private splitIntoClausesPreservingExclusions(text: string): string[] {
+    return text
+      .split(
+        /[.!?;,]+|\b(?:however|whereas|while|yet|and)\b|(?<!\b(?:anything|everything|all|nothing|anyone)\s)\bbut\b/gi,
+      )
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+  }
+
+  private extractClauseCareerIntent(clause: string): {
+    fullTarget: string;
+    primaryTarget: string;
+    matchStart: number;
+  } | null {
+    const match =
+      /(?:^|\s)(?:i\s+)?(?:(?:do\s+not|don't|dont|did\s+not|didn't|will\s+not|won't|would\s+not|wouldn't|never)\s+)?(?:want\s+to\s+(?:become|be|work\s+as|transition\s+(?:to|into)|switch\s+to|move\s+into|pursue)|would\s+like\s+to\s+(?:become|be|work\s+as)|(?:my\s+)?goal\s+is\s+(?:to\s+(?:become|be|work\s+as)\s+)?|(?:i\s+am\s+|i'm\s+)?(?:aiming|looking|planning|trying|hoping)\s+to\s+(?:become|be|work\s+as)|become|becoming|aspiring|transition(?:ing)?\s+(?:to|into)|switch(?:ing)?\s+to|career\s+(?:as|in)|work\s+as)\s+(.+)$/i.exec(
+        clause.trim(),
+      );
+    if (!match?.[1]) {
+      return null;
+    }
+    const fullTarget = match[1].trim();
+    // Isolate the primary requested occupation BEFORE trailing relative/tool/project clauses
+    // bounded strictly to THIS clause.
+    const trailingModifierMatch =
+      /\s+(?:(?:who|that|which)\s+(?:uses?|works?|builds?|knows?|learns?|does?|writes?|creates?)\b|working\s+(?:on|with)\b|using\b|with\s+experience\s+in\b|specializing\s+in\b|focusing\s+on\b)/i.exec(
+        fullTarget,
+      );
+    const primaryTarget = trailingModifierMatch
+      ? fullTarget.slice(0, trailingModifierMatch.index).trim()
+      : fullTarget;
+    const matchStart = clause.indexOf(fullTarget, match.index);
+    return {
+      fullTarget,
+      primaryTarget: primaryTarget || fullTarget,
+      matchStart: matchStart >= 0 ? matchStart : match.index,
+    };
+  }
+
+  private isMatchNegatedInClause(
+    clause: string,
+    matchIndex: number,
+    matchLength: number,
+  ): boolean {
+    const before = clause.slice(0, matchIndex);
+    const hasLeadingNegation =
+      /\b(?:not|no|never|don't|dont|do\s+not|doesn't|does\s+not|didn't|did\s+not|won't|will\s+not|wouldn't|would\s+not|can't|cannot|rather\s+than|instead\s+of|without|except|anything\s+but|everything\s+but|all\s+but|nothing\s+but|anyone\s+but|stop\s+being|quit|leave|leaving|avoid|hate|dislike)\b/i.test(
+        before,
+      );
+    if (hasLeadingNegation) {
+      return true;
+    }
+
+    const after = clause.slice(matchIndex + matchLength);
+    const hasTrailingNegation =
+      /^\s*(?:is|are|was|were|feels?|seems?|looks?|sounds?)?\s*(?:not\s+(?:for\s+me|what\s+i\s+want|my\s+goal|my\s+thing|something\s+i\s+want|interesting|right\s+for\s+me|the\s+path\s+for\s+me)|isn't\s+(?:for\s+me|what\s+i\s+want|my\s+goal|my\s+thing|right\s+for\s+me)|aren't\s+(?:for\s+me|what\s+i\s+want)|no\s+longer\s+(?:my\s+goal|interests?\s+me)|is\s+not\b|isn't\b|is\s+never\b)/i.test(
+        after,
+      );
+    return hasTrailingNegation;
+  }
+
+  private inferCanonicalSlugFromText(
+    text: string,
+    options?: { roleTargetsOnly?: boolean },
+  ): string | null {
+    const normalized = this.normalizeSeparatorsPreservingClauses(text);
+    if (!normalized) {
+      return null;
+    }
+
+    const nonTechOverride =
+      /\b(chef|pastry|cook|doctor|physician|nurse|surgeon|lawyer|attorney|accountant|plumber|carpenter|tailor|dentist|farmer|barber|teacher|photographer|painter|portrait\s+artist|paint\s+portraits|fashion\s+designer)\b/i;
+
+    const roleTargetRules: ReadonlyArray<{ pattern: RegExp; slug: string }> = [
+      {
+        pattern:
+          /\bdata\s+(analyst|analytics|analysis|scientist|science|engineer|engineering)\b|\bbusiness\s+intelligence\b|\bbi\s+(analyst|developer|engineer)\b/gi,
+        slug: 'data-engineering',
+      },
+      {
+        pattern:
+          /\b(llm\s+(?:engineer|developer|engineering)|gen\s*ai\s+(?:engineer|developer|engineering)|generative\s+ai\s+(?:engineer|developer|engineering)|ai\s+app(?:lication)?\s*(?:engineer|developer|engineering)|prompt\s+engineer(?:ing)?)\b/gi,
+        slug: 'ai-application-llm-engineering',
+      },
+      {
+        pattern:
+          /\b(ai\s+ml(?:\s+engineering)?|ml\s+engineer(?:ing)?|ai\s+engineer(?:ing)?|ai\s+developer|machine\s+learning(?:\s+(?:engineer|engineering|developer))?|deep\s+learning\s+(?:engineer|engineering)|artificial\s+intelligence\s+(?:engineer|engineering))\b/gi,
+        slug: 'ai-ml-engineering',
+      },
+      {
+        pattern:
+          /\bfull\s*stack(?:\s+(?:developer|development|engineer|engineering))?\b/gi,
+        slug: 'full-stack-development',
+      },
+      {
+        pattern:
+          /\b(front\s*end(?:\s+(?:developer|development|engineer|engineering))?|ui\s+developer|web\s+developer)\b/gi,
+        slug: 'frontend-development',
+      },
+      {
+        pattern:
+          /\b(back\s*end(?:\s+(?:developer|development|engineer|engineering))?|api\s+developer)\b/gi,
+        slug: 'backend-development',
+      },
+      {
+        pattern:
+          /\b(mobile\s+development|mobile\s+dev|mobile\s+app(?:\s+(?:developer|development|engineer))?|mobile\s+developer|mobile\s+engineer|(?:android|ios|flutter|react\s+native)\s+(?:developer|development|engineer|engineering))\b/gi,
+        slug: 'mobile-development',
+      },
+      {
+        pattern:
+          /\b(sre|site\s+reliability(?:\s+(?:engineer|engineering))?)\b/gi,
+        slug: 'site-reliability-engineering',
+      },
+      {
+        pattern: /\b(dev\s*ops(?:\s+(?:engineer|engineering))?)\b/gi,
+        slug: 'devops',
+      },
+      {
+        pattern:
+          /\b(cloud\s+engineer(?:ing)?|cloud\s+architect|cloud\s+developer)\b/gi,
+        slug: 'cloud-engineering',
+      },
+      {
+        pattern:
+          /\b(cyber\s*security(?:\s+(?:engineer|engineering|analyst))?|infosec|appsec|security\s+engineer(?:ing)?|security\s+analyst|penetration\s+tester|pentester|soc\s+analyst)\b/gi,
+        slug: 'cybersecurity',
+      },
+      {
+        pattern:
+          /\b(sdet|qa\s+automation(?:\s+(?:engineer|engineering))?|test\s+automation(?:\s+(?:engineer|engineering))?|automation\s+tester)\b/gi,
+        slug: 'qa-automation-sdet',
+      },
+      {
+        pattern:
+          /\b(qa\s+engineer(?:ing)?|qa\s+analyst|quality\s+assurance(?:\s+(?:engineer|analyst))?|software\s+tester|software\s+testing)\b/gi,
+        slug: 'qa-software-testing',
+      },
+    ];
+
+    const toolHintRules: ReadonlyArray<{ pattern: RegExp; slug: string }> = [
+      {
+        pattern: /\b(data\s+(?:pipeline|warehouse)|etl)\b/gi,
+        slug: 'data-engineering',
+      },
+      {
+        pattern: /\b(llm|gen\s*ai|generative\s+ai)\b/gi,
+        slug: 'ai-application-llm-engineering',
+      },
+      {
+        pattern:
+          /\b(react(?:\.js)?(?!\s+native)|next\.?js|vue(?:\.js)?|angular)\b/gi,
+        slug: 'frontend-development',
+      },
+      {
+        pattern:
+          /\b(node(?:\.js)?|nestjs|express(?:\.js)?|django|fastapi|spring\s+boot)\b/gi,
+        slug: 'backend-development',
+      },
+      {
+        pattern: /\b(android|ios|flutter|react\s+native|kotlin|swift)\b/gi,
+        slug: 'mobile-development',
+      },
+      {
+        pattern: /\b(ci\s*cd|kubernetes|k8s|docker|terraform)\b/gi,
+        slug: 'devops',
+      },
+      {
+        pattern: /\b(aws|azure|gcp)\b/gi,
+        slug: 'cloud-engineering',
+      },
+    ];
+
+    const rulesToApply = options?.roleTargetsOnly
+      ? roleTargetRules
+      : [...roleTargetRules, ...toolHintRules];
+
+    const clauses = this.splitIntoClausesPreservingExclusions(normalized);
+    const intentClauses = clauses
+      .map((clause) => ({
+        clause,
+        intent: this.extractClauseCareerIntent(clause),
+      }))
+      .filter(
+        (
+          entry,
+        ): entry is {
+          clause: string;
+          intent: NonNullable<
+            ReturnType<CareerGoalService['extractClauseCareerIntent']>
+          >;
+        } => entry.intent !== null,
+      );
+
+    // When one or more explicit career-intent clauses exist ("want to become ...", "want to be ..."),
+    // evaluate ONLY those career-intent clauses so background/experience clauses ("I have no experience",
+    // "I am a teacher") never pollute polarity or override target occupations, while later affirmative
+    // career clauses remain reachable when an earlier career clause is negated.
+    if (intentClauses.length > 0) {
+      for (const { clause, intent } of intentClauses) {
+        if (nonTechOverride.test(intent.primaryTarget)) {
+          continue;
+        }
+        for (const rule of rulesToApply) {
+          for (const match of intent.primaryTarget.matchAll(rule.pattern)) {
+            const matchIndex = intent.matchStart + (match.index ?? 0);
+            if (
+              !this.isMatchNegatedInClause(clause, matchIndex, match[0].length)
+            ) {
+              return rule.slug;
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    // No explicit career-intent verb: evaluate each clause independently (e.g. "Data analyst", "Frontend").
+    for (const clause of clauses) {
+      if (nonTechOverride.test(clause)) {
+        continue;
+      }
+      for (const rule of rulesToApply) {
+        for (const match of clause.matchAll(rule.pattern)) {
+          const matchIndex = match.index ?? 0;
+          if (
+            !this.isMatchNegatedInClause(clause, matchIndex, match[0].length)
+          ) {
+            return rule.slug;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  private isExactTechnologyPresetRole(text: string): boolean {
+    const normalized = this.normalizePresetRoleText(text);
+    const exactPresets = new Set([
+      'backend developer',
+      'backend development',
+      'backend engineer',
+      'frontend',
+      'frontend developer',
+      'frontend development',
+      'frontend engineer',
+      'full stack developer',
+      'full stack development',
+      'fullstack developer',
+      'data analyst',
+      'data analytics',
+      'data scientist',
+      'data engineer',
+      'data engineering',
+      'business intelligence analyst',
+      'bi analyst',
+      'ai engineer',
+      'ai developer',
+      'ai ml engineering',
+      'machine learning engineer',
+      'ml engineer',
+      'llm engineer',
+      'ai application engineer',
+      'devops',
+      'devops engineer',
+      'site reliability engineer',
+      'sre',
+      'cloud engineer',
+      'cloud engineering',
+      'mobile app developer',
+      'mobile developer',
+      'mobile development',
+      'qa engineer',
+      'qa automation engineer',
+      'sdet',
+      'software tester',
+      'cybersecurity',
+      'cybersecurity engineer',
+      'security analyst',
+    ]);
+    return exactPresets.has(normalized);
+  }
+
+  private isClearTechnologyCareerTarget(text: string): boolean {
+    if (this.isExactTechnologyPresetRole(text)) {
+      return true;
+    }
+    const normalized = this.normalizeSeparatorsPreservingClauses(text);
+    const clauses = this.splitIntoClausesPreservingExclusions(normalized);
+    for (const clause of clauses) {
+      const intent = this.extractClauseCareerIntent(clause);
+      if (!intent) {
+        continue;
+      }
+      if (
+        this.isMatchNegatedInClause(
+          clause,
+          intent.matchStart,
+          intent.primaryTarget.length,
+        )
+      ) {
+        continue;
+      }
+      const cleanedTarget = intent.primaryTarget
+        .replace(/^(?:a|an|the)\s+/i, '')
+        .replace(
+          /\s+(?:in\s+(?:tech|technology|bangladesh|the\s+future|the\s+industry)|someday|soon|one\s+day|please)[.!?]*$/i,
+          '',
+        )
+        .replace(/[.!?]+$/, '')
+        .trim();
+      if (this.isExactTechnologyPresetRole(cleanedTarget)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private coerceTechnologyGoalInterpretation(
+    goalText: string,
+    aiOutput: GoalInterpretationOutput,
+    approvedRoles: readonly CareerRoleRow[],
+  ): GoalInterpretationOutput {
+    // Scope recovery when AI rejected (isTechnologyGoal === false) requires an affirmative
+    // technology career role target (never incidental tools like Docker or trailing tool clauses).
+    const inferredSlug = this.inferCanonicalSlugFromText(goalText, {
+      roleTargetsOnly: !aiOutput.isTechnologyGoal,
+    });
+    if (!inferredSlug) {
+      return aiOutput;
+    }
+
+    const isClearPresetTarget = this.isClearTechnologyCareerTarget(goalText);
+    const matchedAiPrimary = this.matchApprovedCareerRole(
+      approvedRoles,
+      aiOutput.proposedRole,
+    );
+
+    const findRoleBySlug = (slug: string): CareerRoleRow | undefined =>
+      approvedRoles.find(
+        (r) =>
+          typeof r.slug === 'string' &&
+          r.slug.trim().toLowerCase() === slug.toLowerCase(),
+      );
+
+    const deterministicRole = findRoleBySlug(inferredSlug);
+    const isDataAnalyticsPreset =
+      isClearPresetTarget && inferredSlug === 'data-engineering';
+
+    if (aiOutput.isTechnologyGoal) {
+      if (isClearPresetTarget && deterministicRole) {
+        const aiMatchesDeterministic =
+          matchedAiPrimary !== null &&
+          String(matchedAiPrimary.id).toLowerCase() ===
+            String(deterministicRole.id).toLowerCase();
+        // Keep early return for non-data exact presets when already matched & no clarification;
+        // for Data Analyst presets, continue below to ensure both approved alternatives are populated.
+        if (
+          aiMatchesDeterministic &&
+          !aiOutput.clarificationNeeded &&
+          !isDataAnalyticsPreset
+        ) {
+          return aiOutput;
+        }
+      } else {
+        // Free-text technology goal without a deterministic preset target: keep model choice.
+        return aiOutput;
+      }
+    }
+
+    // Never substitute an unrelated approvedRoles[0] when no relevant approved role exists.
+    const matchedPrimary =
+      (isClearPresetTarget ? deterministicRole : undefined) ??
+      deterministicRole ??
+      matchedAiPrimary ??
+      null;
+
+    if (!matchedPrimary) {
+      return {
+        ...aiOutput,
+        isTechnologyGoal: true,
+        clarificationNeeded: true,
+        clarificationQuestion:
+          aiOutput.clarificationQuestion ??
+          'Which approved technology career track best fits your goal?',
+        proposedRole: null,
+        alternativeRoles: [],
+      };
+    }
+
+    const fallbackAlternativesBySlug: Readonly<
+      Record<string, ReadonlyArray<{ slug: string; matchReason: string }>>
+    > = {
+      'data-engineering': [
+        {
+          slug: 'ai-ml-engineering',
+          matchReason:
+            'Builds predictive analytics and machine learning models on top of structured data.',
+        },
+        {
+          slug: 'backend-development',
+          matchReason:
+            'Shares SQL, data modeling, and analytical API service engineering.',
+        },
+      ],
+      'ai-ml-engineering': [
+        {
+          slug: 'ai-application-llm-engineering',
+          matchReason:
+            'Focuses on building production applications with large language models.',
+        },
+        {
+          slug: 'data-engineering',
+          matchReason:
+            'Strengthens data pipelines and feature infrastructure for AI systems.',
+        },
+      ],
+      'ai-application-llm-engineering': [
+        {
+          slug: 'ai-ml-engineering',
+          matchReason:
+            'Deepens foundational machine learning and model training skills.',
+        },
+        {
+          slug: 'backend-development',
+          matchReason:
+            'Applies API design and backend service integration to AI products.',
+        },
+      ],
+      'backend-development': [
+        {
+          slug: 'full-stack-development',
+          matchReason: 'Overlapping API and web engineering skills.',
+        },
+        {
+          slug: 'cloud-engineering',
+          matchReason:
+            'Extends backend services into scalable cloud infrastructure.',
+        },
+      ],
+      'frontend-development': [
+        {
+          slug: 'full-stack-development',
+          matchReason:
+            'Combines frontend UI expertise with backend API development.',
+        },
+        {
+          slug: 'mobile-development',
+          matchReason:
+            'Transfers component-driven UI engineering skills to mobile apps.',
+        },
+      ],
+      devops: [
+        {
+          slug: 'cloud-engineering',
+          matchReason:
+            'Specializes in cloud architecture and infrastructure provisioning.',
+        },
+        {
+          slug: 'site-reliability-engineering',
+          matchReason:
+            'Focuses on production observability, reliability, and incident response.',
+        },
+      ],
+      'cloud-engineering': [
+        {
+          slug: 'devops',
+          matchReason:
+            'Shares CI/CD automation, containerization, and cloud infrastructure operations.',
+        },
+        {
+          slug: 'backend-development',
+          matchReason:
+            'Builds distributed APIs and cloud-native backend services.',
+        },
+      ],
+      'mobile-development': [
+        {
+          slug: 'frontend-development',
+          matchReason:
+            'Shares component-based UI engineering and modern web frameworks.',
+        },
+        {
+          slug: 'full-stack-development',
+          matchReason:
+            'Pairs mobile clients with backend APIs and web interfaces.',
+        },
+      ],
+    };
+
+    const primaryIdLower = matchedPrimary
+      ? String(matchedPrimary.id).toLowerCase()
+      : null;
+    const seenAltIds = new Set<string>();
+    const existingDistinctAlts: Array<{
+      canonicalRoleId: string;
+      name: string;
+      matchReason: string;
+    }> = [];
+    for (const alt of Array.isArray(aiOutput.alternativeRoles)
+      ? aiOutput.alternativeRoles
+      : []) {
+      const matchedAlt = this.matchApprovedCareerRole(approvedRoles, alt);
+      if (!matchedAlt) {
+        continue;
+      }
+      const altIdLower = String(matchedAlt.id).toLowerCase();
+      if (
+        (primaryIdLower && altIdLower === primaryIdLower) ||
+        seenAltIds.has(altIdLower)
+      ) {
+        continue;
+      }
+      seenAltIds.add(altIdLower);
+      existingDistinctAlts.push({
+        canonicalRoleId: String(matchedAlt.id),
+        name: String(matchedAlt.name),
+        matchReason: alt.matchReason,
+      });
+    }
+
+    const fallbackCatalogAlts = (fallbackAlternativesBySlug[inferredSlug] ?? [])
+      .map((spec) => {
+        const roleRow = findRoleBySlug(spec.slug);
+        if (
+          !roleRow ||
+          (primaryIdLower &&
+            String(roleRow.id).toLowerCase() === primaryIdLower)
+        ) {
+          return null;
+        }
+        const modelMatch = existingDistinctAlts.find(
+          (alt) =>
+            alt.canonicalRoleId.toLowerCase() ===
+            String(roleRow.id).toLowerCase(),
+        );
+        return {
+          canonicalRoleId: String(roleRow.id),
+          name: String(roleRow.name),
+          matchReason: modelMatch?.matchReason || spec.matchReason,
+        };
+      })
+      .filter(
+        (
+          item,
+        ): item is {
+          canonicalRoleId: string;
+          name: string;
+          matchReason: string;
+        } => item !== null,
+      );
+
+    // For Data Analyst / Data Analytics / Data Scientist targets, consistently populate
+    // both approved catalog alternatives (ai-ml-engineering & backend-development) when present.
+    const synthesizedAlts = isDataAnalyticsPreset
+      ? fallbackCatalogAlts.length > 0
+        ? fallbackCatalogAlts
+        : existingDistinctAlts
+      : existingDistinctAlts.length > 0
+        ? existingDistinctAlts
+        : fallbackCatalogAlts;
+
+    return {
+      ...aiOutput,
+      isTechnologyGoal: true,
+      clarificationNeeded: false,
+      clarificationQuestion: null,
+      proposedRole: matchedPrimary
+        ? {
+            canonicalRoleId: String(matchedPrimary.id),
+            name: String(matchedPrimary.name),
+          }
+        : aiOutput.proposedRole,
+      alternativeRoles: synthesizedAlts,
+      suggestedLevel: aiOutput.suggestedLevel ?? 'junior',
+    };
   }
 
   private resolveInterpretationAgainstCatalog(
@@ -952,7 +1568,11 @@ export class CareerGoalService {
         true,
       );
     }
-    const aiOutput = aiResponse.output;
+    const aiOutput = this.coerceTechnologyGoalInterpretation(
+      goalText,
+      aiResponse.output,
+      preflight.roles,
+    );
     if (!aiOutput.isTechnologyGoal) {
       fail(
         422,
@@ -1331,7 +1951,13 @@ export class CareerGoalService {
         true,
       );
     }
-    const aiOutput = aiResponse.output;
+    // Evaluate ONLY the current clarification answer for deterministic scope recovery so
+    // older historical goal text never overrides an out-of-scope clarification answer.
+    const aiOutput = this.coerceTechnologyGoalInterpretation(
+      answer,
+      aiResponse.output,
+      preflight.roles,
+    );
     if (!aiOutput.isTechnologyGoal) {
       fail(
         422,
@@ -1681,7 +2307,11 @@ export class CareerGoalService {
         true,
       );
     }
-    const aiOutput = aiResponse.output;
+    const aiOutput = this.coerceTechnologyGoalInterpretation(
+      goalText,
+      aiResponse.output,
+      preflight.roles,
+    );
     if (!aiOutput.isTechnologyGoal) {
       fail(
         422,

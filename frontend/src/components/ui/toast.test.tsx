@@ -17,6 +17,9 @@ describe('Toast (#11) with countdown progress bar', () => {
       </Toast>,
     );
 
+    const container = screen.getByTestId('toast-container');
+    expect(container).toHaveClass('w-max', 'max-w-[min(92vw,28rem)]');
+    expect(container).not.toHaveClass('w-[calc(100%-2rem)]', 'w-full', 'w-fit');
     const bar = screen.getByTestId('toast-countdown-bar');
     expect(bar).toHaveClass('agy-toast-bar', 'origin-left', 'bg-emerald-500', 'motion-reduce:[animation:none]');
     expect(bar.style.getPropertyValue('--toast-duration')).toBe('4000ms');
@@ -48,6 +51,8 @@ describe('Toast (#11) with countdown progress bar', () => {
     );
 
     const container = screen.getByTestId('toast-container');
+    expect(container).toHaveClass('w-max', 'max-w-[min(92vw,28rem)]');
+    expect(container).not.toHaveClass('w-[calc(100%-2rem)]', 'w-full', 'w-fit');
     const bar = screen.getByTestId('toast-countdown-bar');
     expect(bar).toHaveClass('bg-amber-500');
 

@@ -1884,86 +1884,95 @@ export class AuthService {
       ? nonSyntheticEmail(user.email)?.trim().toLowerCase() || null
       : null;
 
-    return this.database
-      .transaction(
-        identity.sub,
-        async (db) => {
-          const [account] = await db.query(
-            'SELECT verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
-            [identity.sub],
-          );
-          if (!account) {
-            fail(401, 'AUTH_REQUIRED', 'Application account not found');
-          }
-          if (!account.verified_contact) {
-            fail(
-              403,
-              'VERIFIED_CONTACT_REQUIRED',
-              'A verified contact is required before linking a social identity',
+    const fenceToken =
+      (await this.abuse?.acquireUserMutationFence?.(identity.sub, 15_000)) ??
+      null;
+    try {
+      return await this.database
+        .transaction(
+          identity.sub,
+          async (db) => {
+            const [account] = await db.query(
+              'SELECT verified_contact FROM public.users WHERE id = $1 FOR UPDATE',
+              [identity.sub],
             );
-          }
+            if (!account) {
+              fail(401, 'AUTH_REQUIRED', 'Application account not found');
+            }
+            if (!account.verified_contact) {
+              fail(
+                403,
+                'VERIFIED_CONTACT_REQUIRED',
+                'A verified contact is required before linking a social identity',
+              );
+            }
 
-          const [conflict] = await db.query(
-            `SELECT user_id
-               FROM public.user_auth_providers
-              WHERE provider = $1::public.auth_provider
-                AND provider_subject = $2
-                AND user_id <> $3
-              LIMIT 1`,
-            [provider, providerSubject, identity.sub],
-          );
-          if (conflict) {
+            const [conflict] = await db.query(
+              `SELECT user_id
+                 FROM public.user_auth_providers
+                WHERE provider = $1::public.auth_provider
+                  AND provider_subject = $2
+                  AND user_id <> $3
+                LIMIT 1`,
+              [provider, providerSubject, identity.sub],
+            );
+            if (conflict) {
+              fail(
+                409,
+                'IDENTITY_LINK_CONFLICT',
+                'Identity belongs to another application account',
+              );
+            }
+
+            await db.query(
+              `INSERT INTO public.user_auth_providers
+                 (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
+               VALUES ($1, $2::public.auth_provider, $3, $4, $5, false)
+               ON CONFLICT (user_id, provider) DO UPDATE
+                 SET provider_subject = EXCLUDED.provider_subject,
+                     contact_value = COALESCE(EXCLUDED.contact_value, public.user_auth_providers.contact_value),
+                     verified_at = COALESCE(EXCLUDED.verified_at, public.user_auth_providers.verified_at),
+                     updated_at = now()`,
+              [
+                identity.sub,
+                provider,
+                providerSubject,
+                confirmedEmail,
+                user.email_confirmed_at || null,
+              ],
+            );
+
+            const [row] = await db.query(
+              `SELECT ARRAY(
+                 SELECT provider::text
+                   FROM public.user_auth_providers
+                  WHERE user_id = $1
+                  ORDER BY provider
+               ) AS linked_providers`,
+              [identity.sub],
+            );
+            return {
+              linked_providers: (row?.linked_providers ?? [
+                provider,
+              ]) as string[],
+            };
+          },
+          true,
+          true,
+        )
+        .catch((error: unknown) => {
+          if (isPgUniqueViolation(error)) {
             fail(
               409,
               'IDENTITY_LINK_CONFLICT',
               'Identity belongs to another application account',
             );
           }
-
-          await db.query(
-            `INSERT INTO public.user_auth_providers
-               (user_id, provider, provider_subject, contact_value, verified_at, is_primary)
-             VALUES ($1, $2::public.auth_provider, $3, $4, $5, false)
-             ON CONFLICT (user_id, provider) DO UPDATE
-               SET provider_subject = EXCLUDED.provider_subject,
-                   contact_value = COALESCE(EXCLUDED.contact_value, public.user_auth_providers.contact_value),
-                   verified_at = COALESCE(EXCLUDED.verified_at, public.user_auth_providers.verified_at),
-                   updated_at = now()`,
-            [
-              identity.sub,
-              provider,
-              providerSubject,
-              confirmedEmail,
-              user.email_confirmed_at || null,
-            ],
-          );
-
-          const [row] = await db.query(
-            `SELECT ARRAY(
-               SELECT provider::text
-                 FROM public.user_auth_providers
-                WHERE user_id = $1
-                ORDER BY provider
-             ) AS linked_providers`,
-            [identity.sub],
-          );
-          return {
-            linked_providers: (row?.linked_providers ?? [provider]) as string[],
-          };
-        },
-        true,
-        true,
-      )
-      .catch((error: unknown) => {
-        if (isPgUniqueViolation(error)) {
-          fail(
-            409,
-            'IDENTITY_LINK_CONFLICT',
-            'Identity belongs to another application account',
-          );
-        }
-        throw error;
-      });
+          throw error;
+        });
+    } finally {
+      await this.abuse?.releaseUserMutationFence?.(identity.sub, fenceToken);
+    }
   }
 
   /**
@@ -2195,6 +2204,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(
@@ -2475,6 +2485,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'Email provider timed out', [], true);
@@ -2547,6 +2558,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'SMS provider timed out', [], true);
@@ -2812,6 +2824,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
@@ -2884,6 +2897,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
@@ -3023,6 +3037,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(504, 'PROVIDER_TIMEOUT', 'Auth provider timed out', [], true);
@@ -3255,15 +3270,34 @@ export class AuthService {
     const userId = user.id;
 
     let committed = false;
+    let localSessionRevocationSucceeded = false;
+    let accountSyncSucceeded = true;
+    let postCommitNeedsChannelSync = false;
+    let postCommitCurrentUser: typeof user | null = null;
+    const fenceTtlMs = 15_000;
+    const mutationFenceToken =
+      (await this.abuse?.acquireUserMutationFence?.(userId, fenceTtlMs)) ??
+      null;
+    let fenceRenewalTimer: ReturnType<typeof setInterval> | undefined;
+    if (mutationFenceToken && this.abuse?.renewUserMutationFence) {
+      fenceRenewalTimer = setInterval(() => {
+        void this.abuse
+          ?.renewUserMutationFence?.(userId, mutationFenceToken, fenceTtlMs)
+          .catch(() => undefined);
+      }, 5_000);
+      fenceRenewalTimer.unref?.();
+    }
     try {
-      await this.otpStore.verifyAndConsumeOtp(
-        userId,
-        input.identifier,
-        input.code,
-        async () => {
-          let passwordUpdated = false;
-          try {
-            await this.database.transaction(
+      try {
+        await this.otpStore.verifyAndConsumeOtp(
+          userId,
+          input.identifier,
+          input.code,
+          async () => {
+            // Step 1: Read-only preflight verification inside a short user-scoped DB transaction.
+            // DatabaseService.transaction(userId, ...) acquires the per-user advisory lock BEFORE
+            // locking public.users FOR UPDATE (matching OAuth bootstrap) and releases both on commit.
+            const preflight = await this.database.transaction(
               userId,
               async (db) => {
                 let currentUser: typeof user;
@@ -3315,7 +3349,13 @@ export class AuthService {
                   currentUser = livePrimary;
                 }
 
-                await this.approvals.revokeAllUserSessions(userId, db);
+                // Re-verify active, non-suspended, non-deleted state before GoTrue call (read-only).
+                if (currentUser.from_auth_fallback !== true) {
+                  await this.ensureAccountActiveBeforePasswordUpdate(
+                    db,
+                    userId,
+                  );
+                }
 
                 let needsAuthContactSync =
                   currentUser.needs_auth_contact_sync === true;
@@ -3361,76 +3401,311 @@ export class AuthService {
                     (currentUser.has_verified_channel_provider === false ||
                       (channel === 'email' &&
                         currentUser.has_verified_email_provider === false)));
+
+                // Verify no conflicting verified contact or provider mapping exists BEFORE calling GoTrue (read-only).
+                // Advisory lock is already held by DatabaseService.transaction(userId, ...).
                 if (currentUser.from_auth_fallback === true) {
-                  await this.bootstrapRecoveredAuthAccount(
+                  await this.assertNoFallbackRecoveryConflict(
                     db,
                     currentUser,
                     channel,
                     input.identifier,
                     true,
+                    true,
                   );
                 } else if (needsChannelSync) {
-                  await this.ensureVerifiedChannelProvider(
+                  await this.assertNoVerifiedChannelConflict(
                     db,
                     userId,
                     channel,
                     input.identifier,
+                    true,
                   );
                 }
-                await this.ensureAccountActiveBeforePasswordUpdate(db, userId);
-                const confirmChannel =
+
+                const confirmChannel: 'email' | 'phone' | undefined =
                   needsAuthConfirm || needsAuthContactSync
                     ? channel
                     : undefined;
                 const syncContactIdentifier = confirmChannel
                   ? input.identifier
                   : undefined;
-                await this.updateGoTrueUserPassword(
-                  userId,
-                  input.new_password,
+
+                return {
+                  currentUser,
+                  needsChannelSync,
                   confirmChannel,
                   syncContactIdentifier,
-                );
-                passwordUpdated = true;
+                };
               },
               user.from_auth_fallback !== true,
+              false,
+              false,
+            );
+
+            // Confirm mutation fence ownership immediately before the external GoTrue write.
+            if (mutationFenceToken) {
+              await this.abuse?.assertUserMutationFenceOwned?.(
+                userId,
+                mutationFenceToken,
+                fenceTtlMs,
+              );
+            }
+
+            // Step 2: Execute GoTrue password update STRICTLY OUTSIDE any open DB transaction.
+            await this.updateGoTrueUserPassword(
+              userId,
+              input.new_password,
+              preflight.confirmChannel,
+              preflight.syncContactIdentifier,
             );
             committed = true;
-          } catch (error) {
-            if (passwordUpdated) {
-              for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                  await this.approvals.revokeAllUserSessions(userId);
-                  break;
-                } catch {
-                  // Best-effort compensating local session revocation
-                }
+            postCommitCurrentUser = preflight.currentUser;
+            postCommitNeedsChannelSync = preflight.needsChannelSync;
+            const requiresAccountSync =
+              preflight.currentUser.from_auth_fallback === true ||
+              preflight.needsChannelSync;
+            accountSyncSucceeded = !requiresAccountSync;
+
+            // Step 3a: Commit local session revocation in its OWN transaction so a mapping/bootstrap
+            // failure can never roll back session revocation.
+            try {
+              await this.commitLocalSessionRevocation(
+                userId,
+                preflight.currentUser.from_auth_fallback !== true,
+              );
+              localSessionRevocationSucceeded = true;
+            } catch (revokeErr) {
+              localSessionRevocationSucceeded = false;
+              this.logger.error(
+                `Post-password-reset local session revocation failed for user ${user.id}; will retry after GoTrue session cleanup`,
+                revokeErr instanceof Error
+                  ? revokeErr.stack
+                  : String(revokeErr),
+              );
+            }
+
+            // Step 3b: Commit fallback account bootstrap or channel mapping sync independently.
+            if (requiresAccountSync) {
+              try {
+                await this.commitPostResetAccountSync(
+                  userId,
+                  preflight.currentUser,
+                  channel,
+                  input.identifier,
+                  preflight.needsChannelSync,
+                );
+                accountSyncSucceeded = true;
+              } catch (syncErr) {
+                accountSyncSucceeded = false;
+                this.logger.error(
+                  `Post-password-reset account/channel sync failed for user ${user.id}; will retry after GoTrue session cleanup`,
+                  syncErr instanceof Error ? syncErr.stack : String(syncErr),
+                );
               }
             }
-            throw error;
-          }
-        },
+          },
+          'reset_password',
+        );
+      } catch (error) {
+        if (!committed) {
+          throw error;
+        }
+        this.logger.error(
+          `OTP consumption failed after password reset commit for user ${user.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+
+      let goTrueCleanupSucceeded = false;
+      let goTrueCleanupError: unknown = null;
+      try {
+        await this.revokeGoTrueUserSessions(userId);
+        goTrueCleanupSucceeded = true;
+      } catch (cleanupErr) {
+        goTrueCleanupSucceeded = false;
+        goTrueCleanupError = cleanupErr;
+      }
+
+      // Always retry unfinished local session revocation and/or account sync independently
+      // even if GoTrue session cleanup threw.
+      if (!localSessionRevocationSucceeded && postCommitCurrentUser) {
+        try {
+          await this.commitLocalSessionRevocation(
+            userId,
+            postCommitCurrentUser.from_auth_fallback !== true,
+          );
+          localSessionRevocationSucceeded = true;
+        } catch (retryErr) {
+          localSessionRevocationSucceeded = false;
+          this.logger.error(
+            `Post-password-reset local session revocation retry failed for user ${user.id}`,
+            retryErr instanceof Error ? retryErr.stack : String(retryErr),
+          );
+        }
+      }
+
+      if (!accountSyncSucceeded && postCommitCurrentUser) {
+        try {
+          await this.commitPostResetAccountSync(
+            userId,
+            postCommitCurrentUser,
+            channel,
+            input.identifier,
+            postCommitNeedsChannelSync,
+          );
+          accountSyncSucceeded = true;
+        } catch (retryErr) {
+          accountSyncSucceeded = false;
+          this.logger.error(
+            `Post-password-reset account/channel sync retry failed for user ${user.id}`,
+            retryErr instanceof Error ? retryErr.stack : String(retryErr),
+          );
+        }
+      }
+
+      await this.abuse?.clearSendCooldown?.(
+        { channel, identifier: input.identifier },
         'reset_password',
       );
-    } catch (error) {
-      if (!committed) {
-        throw error;
+
+      const fallbackBootstrapPending =
+        postCommitCurrentUser?.from_auth_fallback === true &&
+        !accountSyncSucceeded;
+      const requiredChannelMappingPending =
+        postCommitCurrentUser?.from_auth_fallback !== true &&
+        postCommitNeedsChannelSync &&
+        !accountSyncSucceeded;
+      const localCleanupFullySucceeded =
+        localSessionRevocationSucceeded && accountSyncSucceeded;
+
+      if (localCleanupFullySucceeded && goTrueCleanupSucceeded) {
+        return {
+          password_reset: true as const,
+        };
       }
-      this.logger.error(
-        `OTP consumption failed after password reset commit for user ${user.id}`,
-        error instanceof Error ? error.stack : String(error),
-      );
+
+      // Persist non-secret, non-PII cleanup/bootstrap metadata so unfinished steps can be reconciled without resubmitting OTP.
+      await this.abuse?.recordUnfinishedPasswordResetCleanup?.(userId, {
+        localSyncPending: !localCleanupFullySucceeded,
+        localSessionRevocationPending: !localSessionRevocationSucceeded,
+        accountSyncPending: !accountSyncSucceeded,
+        fallbackBootstrapPending,
+        goTrueRevocationPending: !goTrueCleanupSucceeded,
+        channel,
+        recordedAt: new Date().toISOString(),
+      });
+
+      // If fallback account bootstrap OR required channel sign-in mapping sync did not commit,
+      // the application account is NOT sign-in-ready; NEVER direct the user to sign in yet.
+      if (fallbackBootstrapPending || requiredChannelMappingPending) {
+        return {
+          password_reset: true as const,
+          cleanup_status: fallbackBootstrapPending
+            ? ('pending_account_bootstrap' as const)
+            : ('pending_account_sync' as const),
+          account_ready_for_signin: false as const,
+          pending_cleanup: {
+            local_session_revocation: !localSessionRevocationSucceeded,
+            account_bootstrap: fallbackBootstrapPending,
+            channel_mapping_sync: requiredChannelMappingPending,
+            provider_session_revocation: !goTrueCleanupSucceeded,
+          },
+          message: fallbackBootstrapPending
+            ? 'Password was updated, but application account setup did not finish yet. Do not resubmit the reset code; wait a moment or contact support to resume account setup.'
+            : 'Password was updated, but required sign-in provider mapping sync did not finish yet. Do not resubmit the reset code; wait a moment or contact support to finish account sync.',
+        };
+      }
+
+      if (localCleanupFullySucceeded && !goTrueCleanupSucceeded) {
+        throw goTrueCleanupError;
+      }
+
+      if (!localCleanupFullySucceeded && !goTrueCleanupSucceeded) {
+        const isTimeout =
+          goTrueCleanupError instanceof HttpException &&
+          goTrueCleanupError.getStatus() === 504;
+        const message = !localSessionRevocationSucceeded
+          ? 'Password was updated, but local session sync and auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.'
+          : 'Password was updated and local sessions were revoked, but account mapping sync and auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.';
+        if (isTimeout) {
+          fail(504, 'PROVIDER_TIMEOUT', message, [], false);
+        }
+        fail(502, 'PROVIDER_ERROR', message, [], false);
+      }
+
+      // GoTrue password update & auth session revocation succeeded, OTP consumed, and application account is ready,
+      // while local session revocation or channel mapping sync remained pending.
+      return {
+        password_reset: true as const,
+        cleanup_status: 'partial' as const,
+        pending_cleanup: {
+          local_session_revocation: !localSessionRevocationSucceeded,
+          local_session_sync: !localSessionRevocationSucceeded,
+          channel_mapping_sync: !accountSyncSucceeded,
+          provider_session_revocation: false as const,
+        },
+        message:
+          'Password was updated, but local session cleanup is still pending. Sign in with your new password.',
+      };
+    } finally {
+      if (fenceRenewalTimer !== undefined) {
+        clearInterval(fenceRenewalTimer);
+      }
+      await this.abuse?.releaseUserMutationFence?.(userId, mutationFenceToken);
     }
+  }
 
-    await this.revokeGoTrueUserSessions(userId);
-    await this.abuse?.clearSendCooldown?.(
-      { channel, identifier: input.identifier },
-      'reset_password',
+  private async commitLocalSessionRevocation(
+    userId: string,
+    requireActiveRow: boolean,
+  ): Promise<void> {
+    await this.database.transaction(
+      userId,
+      async (db) => {
+        await this.approvals.revokeAllUserSessions(userId, db);
+      },
+      requireActiveRow,
+      false,
+      false,
     );
+  }
 
-    return {
-      password_reset: true as const,
-    };
+  private async commitPostResetAccountSync(
+    userId: string,
+    currentUser: { from_auth_fallback?: boolean; [key: string]: unknown },
+    channel: 'email' | 'phone',
+    identifier: string,
+    needsChannelSync: boolean,
+  ): Promise<void> {
+    await this.database.transaction(
+      userId,
+      async (db) => {
+        if (currentUser.from_auth_fallback === true) {
+          await this.bootstrapRecoveredAuthAccount(
+            db,
+            currentUser as Parameters<
+              AuthService['bootstrapRecoveredAuthAccount']
+            >[1],
+            channel,
+            identifier,
+            true,
+            true,
+          );
+        } else if (needsChannelSync) {
+          await this.ensureVerifiedChannelProvider(
+            db,
+            userId,
+            channel,
+            identifier,
+            true,
+          );
+        }
+      },
+      currentUser.from_auth_fallback !== true,
+      false,
+      false,
+    );
   }
 
   private buildPrimaryRecoveryLookupSql(
@@ -3877,17 +4152,20 @@ export class AuthService {
     }
   }
 
-  private async ensureVerifiedChannelProvider(
+  private async assertNoVerifiedChannelConflict(
     db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
     userId: string,
     channel: 'email' | 'phone',
     identifier: string,
+    advisoryLockAlreadyHeld = false,
   ): Promise<void> {
     const column = channel === 'phone' ? 'phone' : 'email';
     const provider = channel === 'phone' ? 'phone' : 'email';
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
-      userId,
-    ]);
+    if (!advisoryLockAlreadyHeld) {
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+        userId,
+      ]);
+    }
     const existingUsers = (await db.query(
       `SELECT status, suspended_at, verified_contact, ${column} AS current_contact
          FROM public.users
@@ -3946,6 +4224,24 @@ export class AuthService {
     ) {
       this.failVerifiedContactConflict(channel);
     }
+  }
+
+  private async ensureVerifiedChannelProvider(
+    db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+    userId: string,
+    channel: 'email' | 'phone',
+    identifier: string,
+    advisoryLockAlreadyHeld = false,
+  ): Promise<void> {
+    const column = channel === 'phone' ? 'phone' : 'email';
+    const provider = channel === 'phone' ? 'phone' : 'email';
+    await this.assertNoVerifiedChannelConflict(
+      db,
+      userId,
+      channel,
+      identifier,
+      advisoryLockAlreadyHeld,
+    );
 
     await db.query(
       `INSERT INTO public.users
@@ -3991,6 +4287,136 @@ export class AuthService {
     );
   }
 
+  private async assertNoFallbackRecoveryConflict(
+    db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+    account: {
+      id: string;
+      email?: string | null;
+      phone?: string | null;
+      email_confirmed_at?: string | null;
+      phone_confirmed_at?: string | null;
+      oauth_confirmed_at?: string | null;
+      oauth_provider?: 'google' | 'facebook' | null;
+      oauth_subject?: string | null;
+    },
+    channel: 'email' | 'phone',
+    identifier: string,
+    includeChannelProvider: boolean,
+    advisoryLockAlreadyHeld = false,
+  ): Promise<void> {
+    const normalizedAccountEmail =
+      typeof account.email === 'string' &&
+      account.email.trim() &&
+      !account.email.trim().toLowerCase().endsWith('@synthetic.mentor')
+        ? account.email.trim().toLowerCase()
+        : null;
+
+    if (!advisoryLockAlreadyHeld) {
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+        account.id,
+      ]);
+    }
+    const existingRows = (await db.query(
+      'SELECT status, suspended_at, verified_contact, email, phone FROM public.users WHERE id = $1::uuid FOR UPDATE',
+      [account.id],
+    )) as
+      | Array<{
+          status?: string;
+          suspended_at?: string | Date | null;
+          verified_contact?: boolean;
+          email?: string | null;
+          phone?: string | null;
+        }>
+      | undefined;
+    const existingRow = Array.isArray(existingRows)
+      ? existingRows[0]
+      : undefined;
+    if (
+      (existingRow?.status && existingRow.status !== 'active') ||
+      (existingRow?.suspended_at !== undefined &&
+        existingRow.suspended_at !== null)
+    ) {
+      fail(403, 'ACCOUNT_SUSPENDED', 'Account suspended');
+    }
+    if (existingRow?.verified_contact === true) {
+      const existingContact =
+        channel === 'phone' ? existingRow.phone : existingRow.email;
+      if (
+        typeof existingContact === 'string' &&
+        existingContact.trim() &&
+        !this.contactsMatch(channel, existingContact, identifier)
+      ) {
+        this.failVerifiedContactConflict(channel);
+      }
+    }
+
+    if (account.oauth_provider) {
+      const oauthEmail =
+        channel === 'email'
+          ? identifier
+          : account.email_confirmed_at
+            ? normalizedAccountEmail
+            : null;
+      const oauthContactChannel: 'email' | 'phone' | null = oauthEmail
+        ? 'email'
+        : null;
+      const oauthContactValue = oauthEmail;
+
+      const existingOAuthRows = (await db.query(
+        `SELECT contact_value, verified_at
+           FROM public.user_auth_providers
+          WHERE user_id = $1::uuid
+            AND provider = $2::public.auth_provider
+          FOR UPDATE`,
+        [account.id, account.oauth_provider],
+      )) as
+        | Array<{
+            contact_value?: string | null;
+            verified_at?: string | Date | null;
+          }>
+        | undefined;
+      const existingOAuthRow = Array.isArray(existingOAuthRows)
+        ? existingOAuthRows[0]
+        : undefined;
+      const existingOAuthContact =
+        typeof existingOAuthRow?.contact_value === 'string'
+          ? existingOAuthRow.contact_value.trim()
+          : '';
+      const existingOAuthIsEmail = existingOAuthContact.includes('@');
+      const incomingOAuthIsEmail = oauthContactChannel === 'email';
+      const comparableOAuthTypes =
+        oauthContactChannel !== null &&
+        (!existingOAuthContact ||
+          existingOAuthIsEmail === incomingOAuthIsEmail);
+
+      if (
+        comparableOAuthTypes &&
+        oauthContactChannel !== null &&
+        oauthContactValue &&
+        existingOAuthRow?.verified_at !== undefined &&
+        existingOAuthRow.verified_at !== null &&
+        existingOAuthContact &&
+        !this.contactsMatch(
+          oauthContactChannel,
+          existingOAuthContact,
+          oauthContactValue,
+        )
+      ) {
+        this.failVerifiedContactConflict(oauthContactChannel);
+      }
+    }
+
+    if (includeChannelProvider) {
+      await this.assertNoVerifiedChannelConflict(
+        db,
+        account.id,
+        channel,
+        identifier,
+        true,
+      );
+    }
+  }
+
   private async bootstrapRecoveredAuthAccount(
     db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
     account: {
@@ -4006,6 +4432,7 @@ export class AuthService {
     channel: 'email' | 'phone',
     identifier: string,
     includeChannelProvider: boolean,
+    advisoryLockAlreadyHeld = false,
   ): Promise<void> {
     const normalizedAccountEmail =
       typeof account.email === 'string' &&
@@ -4035,9 +4462,11 @@ export class AuthService {
           ? normalizedAccountPhone
           : null;
 
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
-      account.id,
-    ]);
+    if (!advisoryLockAlreadyHeld) {
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+        account.id,
+      ]);
+    }
     const existingRows = (await db.query(
       'SELECT status, suspended_at, verified_contact, email, phone FROM public.users WHERE id = $1::uuid FOR UPDATE',
       [account.id],
@@ -4192,6 +4621,7 @@ export class AuthService {
         account.id,
         channel,
         identifier,
+        true,
       );
     }
     await db.query(
@@ -4246,6 +4676,7 @@ export class AuthService {
       if (
         error instanceof Error &&
         (error.name === 'AbortError' ||
+          error.name === 'TimeoutError' ||
           /timeout|timed out/i.test(error.message))
       ) {
         fail(
@@ -4260,6 +4691,64 @@ export class AuthService {
     }
 
     if (!response.ok) {
+      if (response.status === 422) {
+        const errBody =
+          typeof response.json === 'function'
+            ? ((await response.json().catch(() => null)) as {
+                error_code?: string;
+                code?: string | number;
+                msg?: string;
+                message?: string;
+              } | null)
+            : null;
+        const errCode =
+          typeof errBody?.error_code === 'string'
+            ? errBody.error_code.toLowerCase()
+            : typeof errBody?.code === 'string'
+              ? errBody.code.toLowerCase()
+              : '';
+        const rawMsg =
+          typeof errBody?.msg === 'string' && errBody.msg.trim()
+            ? errBody.msg.trim()
+            : typeof errBody?.message === 'string' && errBody.message.trim()
+              ? errBody.message.trim()
+              : '';
+
+        if (
+          errCode === 'same_password' ||
+          (!errCode &&
+            /same password|different from (the )?old password/i.test(rawMsg))
+        ) {
+          const message =
+            'New password must be different from your current password.';
+          fail(422, 'PASSWORD_POLICY_FAILED', message, [
+            {
+              field: 'new_password',
+              code: 'PASSWORD_POLICY_FAILED',
+              message,
+            },
+          ]);
+        }
+
+        if (
+          errCode === 'weak_password' ||
+          (!errCode &&
+            /password (?:is )?(?:known to be )?weak|weak password|easy to guess|password should be at least|password must (?:contain|be at least)/i.test(
+              rawMsg,
+            ))
+        ) {
+          const message =
+            'Password does not meet security requirements. Choose a stronger password with a mix of letters, numbers, and symbols.';
+          fail(422, 'PASSWORD_POLICY_FAILED', message, [
+            {
+              field: 'new_password',
+              code: 'PASSWORD_POLICY_FAILED',
+              message,
+            },
+          ]);
+        }
+      }
+
       fail(
         502,
         'PROVIDER_ERROR',

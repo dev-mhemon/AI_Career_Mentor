@@ -9,11 +9,11 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type SVGProps,
 } from 'react';
 import type {
   ProfileResponse,
   ProfileSkillDTO,
+  UnresolvedSkillCandidateDTO,
   UnresolvedSkillDTO,
 } from '@/lib/api/client';
 import {
@@ -42,40 +42,47 @@ import { Toast } from '@/components/ui/toast';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
 import { StepFrame } from './step-shell';
 
-function TrashIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      width={16}
-      height={16}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      {...props}
-    >
-      <path d="M3 6h18" />
-      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-      <line x1="10" y1="11" x2="10" y2="17" />
-      <line x1="14" y1="11" x2="14" y2="17" />
-    </svg>
-  );
-}
-
 export const MAX_SKILLS = 100;
 export const MAX_SKILL_NAME_CODE_POINTS = 80;
-
-type SkillEntryStatus = 'valid' | 'ambiguous' | 'unrecognized';
 
 interface SkillEntry {
   key: string;
   label: string;
-  status: SkillEntryStatus;
-  candidates?: UnresolvedSkillDTO['candidates'];
+}
+
+interface QueuedUnresolvedSkill extends UnresolvedSkillDTO {
+  /** True only for an inline custom entry typed by the user; cleared when the user edits/replaces it. */
+  clearOnQueryEdit?: boolean;
+}
+
+function normalizeUnresolvedQueue(
+  items: readonly UnresolvedSkillDTO[] | undefined,
+): QueuedUnresolvedSkill[] {
+  if (!items || items.length === 0) return [];
+  const seen = new Set<string>();
+  const ambiguous: QueuedUnresolvedSkill[] = [];
+  const unrecognized: QueuedUnresolvedSkill[] = [];
+  for (const item of items) {
+    const trimmed = item.input.trim();
+    const key = trimmed.toLowerCase();
+    if (!trimmed || seen.has(key)) continue;
+    seen.add(key);
+    const validCandidates = Array.isArray(item.candidates)
+      ? item.candidates.filter(
+          (c) =>
+            c &&
+            typeof c.skill_id === 'string' &&
+            typeof c.name === 'string' &&
+            c.name.trim().length > 0,
+        )
+      : [];
+    if (validCandidates.length > 0) {
+      ambiguous.push({ input: trimmed, candidates: validCandidates });
+    } else {
+      unrecognized.push({ input: trimmed, candidates: [] });
+    }
+  }
+  return [...ambiguous, ...unrecognized];
 }
 
 export interface SkillsSetupFormProps {
@@ -88,9 +95,9 @@ export interface SkillsSetupFormProps {
    */
   suggestedSkills?: string[];
   invoke: M05Invoke;
-  /** Rendering mode: `'wizard'` (onboarding step) or `'standalone'` (inline editing on `/career-profile`). */
+  /** Rendering mode: `'wizard'` (onboarding step) or `'standalone'` (editing on `/career-profile`). */
   mode?: 'wizard' | 'standalone';
-  /** Notifies an outer wizard container whenever submission enters or exits pending state. */
+  /** Notifies an outer wizard or modal container whenever submission enters or exits pending state. */
   onPendingChange?: (pending: boolean) => void;
   /** Fired whenever EP-P02 commits skills on the server even if unresolved aliases keep the user on this step. */
   onProfileCommitted?: (profile: ProfileResponse) => void;
@@ -102,6 +109,8 @@ export interface SkillsSetupFormProps {
   onCancel?: () => void;
   /** When true, omits the standalone stepper header so an outer shell owns stepper chrome. */
   embedded?: boolean;
+  /** When true, right-aligns modal footer actions and omits outer header chrome. */
+  inModal?: boolean;
 }
 
 /** Returns an inline validation message for a candidate skill name, or `null` when it can be added. */
@@ -120,10 +129,7 @@ export function validateNewSkill(raw: string, existing: string[]): string | null
   return null;
 }
 
-function hydrateEntries(
-  existing: ProfileSkillDTO[],
-  unresolved: UnresolvedSkillDTO[] = [],
-): SkillEntry[] {
+function hydrateValidEntries(existing: ProfileSkillDTO[]): SkillEntry[] {
   const seen = new Set<string>();
   const entries: SkillEntry[] = [];
   for (const skill of existing) {
@@ -131,38 +137,39 @@ function hydrateEntries(
     const key = label.toLowerCase();
     if (label && !seen.has(key)) {
       seen.add(key);
-      entries.push({ key, label, status: 'valid' });
-    }
-  }
-  for (const item of unresolved) {
-    const label = item.input.trim();
-    const key = label.toLowerCase();
-    if (label && !seen.has(key)) {
-      seen.add(key);
-      entries.push(
-        item.candidates.length > 0
-          ? {
-              key,
-              label,
-              status: 'ambiguous',
-              candidates: item.candidates,
-            }
-          : { key, label, status: 'unrecognized' },
-      );
+      entries.push({ key, label });
     }
   }
   return entries;
 }
 
-const REMOVE_PILL_CLASS =
-  'inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-2xs transition-colors hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800 active:bg-rose-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)';
+function findCatalogSubstringCandidates(
+  rawInput: string,
+  options: readonly MultiSelectOption[],
+): UnresolvedSkillCandidateDTO[] {
+  const q = rawInput.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const matches: UnresolvedSkillCandidateDTO[] = [];
+  for (const opt of options) {
+    const label = opt.label.trim();
+    const labelLower = label.toLowerCase();
+    const keywordMatch =
+      opt.keywords?.some((kw) => kw.trim().toLowerCase().includes(q)) ?? false;
+    if (labelLower.includes(q) || keywordMatch) {
+      matches.push({ skill_id: opt.id, name: label });
+    }
+  }
+  return matches.slice(0, 5);
+}
 
 const CANDIDATE_PILL_CLASS =
   'inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-800 shadow-2xs transition-colors hover:border-teal-300 hover:bg-teal-100 hover:text-teal-900 active:bg-teal-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)';
 
 /**
- * Screen 08 (`/onboarding`, Step 2 of 5) and standalone inline skills editor (`/career-profile`).
- * Uses `MultiSelectCombobox` over the approved skill catalog with immediate validation for custom entries.
+ * Screen 08 (`/onboarding`, Step 2 of 5) and standalone/modal skills editor (`/career-profile`).
+ * Uses `MultiSelectCombobox` over the approved skill catalog with immediate read-only validation
+ * (`interpretSkillAlias`, EP-P05) for custom non-catalog entries. Unrecognized entries are never
+ * added to the chip list and instead display a concise inline message.
  */
 export function SkillsSetupForm({
   initialProfile,
@@ -177,26 +184,36 @@ export function SkillsSetupForm({
   onBack,
   onCancel,
   embedded = false,
+  inModal = false,
 }: SkillsSetupFormProps) {
   const isStandalone = mode === 'standalone';
-  const isEmbedded = embedded || isStandalone;
+  const isEmbedded = embedded || isStandalone || inModal;
   const router = useRouter();
   const fieldId = useId();
   const inputId = `${fieldId}-skill-input`;
   const errorId = `${fieldId}-skill-error`;
 
   const [entries, setEntries] = useState<SkillEntry[]>(() =>
-    hydrateEntries(
-      initialProfile?.existing_skills ?? [],
-      initialProfile?.unresolved_skills ?? [],
-    ),
+    hydrateValidEntries(initialProfile?.existing_skills ?? []),
   );
   const [none, setNone] = useState<boolean>(
     () =>
       Boolean(initialProfile?.existing_skills_none) &&
-      (initialProfile?.existing_skills.length ?? 0) === 0 &&
-      (initialProfile?.unresolved_skills?.length ?? 0) === 0,
+      (initialProfile?.existing_skills.length ?? 0) === 0,
   );
+  const [isValidating, setIsValidating] = useState(false);
+  const [unresolvedQueue, setUnresolvedQueue] = useState<
+    QueuedUnresolvedSkill[]
+  >(() => normalizeUnresolvedQueue(initialProfile?.unresolved_skills));
+  const currentUnresolved = unresolvedQueue[0] ?? null;
+  const ambiguousPrompt =
+    currentUnresolved && currentUnresolved.candidates.length > 0
+      ? currentUnresolved
+      : null;
+  const unrecognizedSkill =
+    currentUnresolved && currentUnresolved.candidates.length === 0
+      ? currentUnresolved.input
+      : null;
   const [draftError, setDraftError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -213,50 +230,68 @@ export function SkillsSetupForm({
   const entriesRef = useRef<SkillEntry[]>(entries);
   const noneRef = useRef<boolean>(none);
   const saveRequestTokenRef = useRef(0);
-  const pendingFocusInputRef = useRef(false);
+  const lookupSessionRef = useRef(0);
+  const nextLookupIdRef = useRef(0);
+  const inFlightLookupIdsRef = useRef<Set<number>>(new Set());
 
   function commitEntries(next: SkillEntry[]) {
     entriesRef.current = next;
     setEntries(next);
   }
 
-  const validEntries = useMemo(
-    () => entries.filter((e) => e.status === 'valid'),
-    [entries],
-  );
-  const ambiguousEntries = useMemo(
-    () => entries.filter((e) => e.status === 'ambiguous'),
-    [entries],
-  );
-  const unrecognizedEntries = useMemo(
-    () => entries.filter((e) => e.status === 'unrecognized'),
-    [entries],
-  );
-  const hasAmbiguous = ambiguousEntries.length > 0;
-  const hasUnrecognized = unrecognizedEntries.length > 0;
-
-  useEffect(() => {
-    if (!pendingFocusInputRef.current || pending || hasAmbiguous || none) return;
-    pendingFocusInputRef.current = false;
-    if (typeof document !== 'undefined') {
-      document.getElementById(inputId)?.focus();
+  function appendValidSkill(canonicalLabel: string): boolean {
+    const trimmed = canonicalLabel.trim();
+    const key = trimmed.toLowerCase();
+    if (!trimmed) return false;
+    if (entriesRef.current.some((e) => e.key === key)) return true;
+    if (entriesRef.current.length >= MAX_SKILLS) {
+      setDraftError(
+        `You can add up to ${MAX_SKILLS} skills. Remove a skill before adding another.`,
+      );
+      return false;
     }
-  }, [entries, pending, hasAmbiguous, none, inputId]);
+    commitEntries([...entriesRef.current, { key, label: trimmed }]);
+    return true;
+  }
+
+  function enqueueUnresolvedHead(item: QueuedUnresolvedSkill) {
+    const trimmed = item.input.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    setUnresolvedQueue((prev) => [
+      {
+        input: trimmed,
+        candidates: item.candidates,
+        clearOnQueryEdit: item.clearOnQueryEdit,
+      },
+      ...prev.filter((existing) => existing.input.trim().toLowerCase() !== key),
+    ]);
+  }
+
+  function shiftUnresolvedHead() {
+    setUnresolvedQueue((prev) => prev.slice(1));
+  }
+
+  function clearInlineUnrecognizedWarning() {
+    setUnresolvedQueue((prev) =>
+      prev.filter(
+        (item) => !(item.candidates.length === 0 && item.clearOnQueryEdit),
+      ),
+    );
+  }
+
   const canSubmit =
     !pending &&
+    !isValidating &&
     !loadError &&
-    (none || (validEntries.length > 0 && !hasAmbiguous));
+    (none || entries.length > 0);
 
   const selectedItems = useMemo<MultiSelectSelectedItem[]>(
     () =>
       entries.map((entry) => ({
         id: entry.key,
         label: entry.label,
-        tone: entry.status === 'valid' ? 'default' : 'warning',
-        statusLabel:
-          entry.status === 'ambiguous' || entry.status === 'unrecognized'
-            ? 'Needs clarification'
-            : undefined,
+        tone: 'default',
       })),
     [entries],
   );
@@ -267,6 +302,132 @@ export function SkillsSetupForm({
       !entries.some((e) => e.key === s.trim().toLowerCase()),
   );
 
+  async function validateCustomSkill(
+    rawLabel: string,
+    requestId: number,
+    session: number,
+  ) {
+    let result: Awaited<ReturnType<typeof invoke<'interpretSkillAlias'>>>;
+    try {
+      result = await invoke('interpretSkillAlias', {
+        input: rawLabel,
+        skill_id: '',
+      });
+    } catch (err) {
+      inFlightLookupIdsRef.current.delete(requestId);
+      if (inFlightLookupIdsRef.current.size === 0) {
+        setIsValidating(false);
+      }
+      if (noneRef.current || lookupSessionRef.current !== session) {
+        return;
+      }
+      setApiError(mapApiError(err));
+      return;
+    }
+
+    inFlightLookupIdsRef.current.delete(requestId);
+    if (inFlightLookupIdsRef.current.size === 0) {
+      setIsValidating(false);
+    }
+
+    if (noneRef.current || lookupSessionRef.current !== session) {
+      return;
+    }
+
+    if (!result.ok) {
+      setApiError(result.error);
+      return;
+    }
+
+    const data =
+      result.data && typeof result.data === 'object'
+        ? (result.data as unknown as Record<string, unknown>)
+        : null;
+
+    if (data) {
+      // 1. Auto-resolved canonical match
+      const directCanonical =
+        typeof data.canonical_name === 'string' && data.canonical_name.trim()
+          ? data.canonical_name.trim()
+          : typeof data.name === 'string' && data.name.trim()
+            ? data.name.trim()
+            : data.resolved_skill &&
+                typeof (data.resolved_skill as { name?: unknown }).name ===
+                  'string' &&
+                ((data.resolved_skill as { name: string }).name.trim() || '')
+              ? (data.resolved_skill as { name: string }).name.trim()
+              : null;
+
+      if (directCanonical) {
+        clearInlineUnrecognizedWarning();
+        appendValidSkill(directCanonical);
+        return;
+      }
+
+      if (
+        data.added_to_profile === true &&
+        typeof data.skill_id === 'string' &&
+        data.skill_id.trim()
+      ) {
+        const matchedOpt = catalogOptions.find((o) => o.id === data.skill_id);
+        clearInlineUnrecognizedWarning();
+        appendValidSkill(matchedOpt ? matchedOpt.label.trim() : rawLabel);
+        return;
+      }
+
+      // 2. Ambiguous match (candidate suggestions)
+      if (Array.isArray(data.candidates)) {
+        const candidates = (
+          data.candidates as UnresolvedSkillCandidateDTO[]
+        ).filter(
+          (c) =>
+            c &&
+            typeof c.skill_id === 'string' &&
+            typeof c.name === 'string' &&
+            c.name.trim().length > 0,
+        );
+        enqueueUnresolvedHead({
+          input: rawLabel,
+          candidates,
+          clearOnQueryEdit: candidates.length === 0,
+        });
+        return;
+      }
+
+      // 3. Profile-shaped response with unresolved_skills
+      if (Array.isArray(data.unresolved_skills)) {
+        const normalized = normalizeUnresolvedQueue(
+          data.unresolved_skills as UnresolvedSkillDTO[],
+        );
+        if (normalized.length > 0) {
+          setUnresolvedQueue((prev) => {
+            const incomingKeys = new Set(
+              normalized.map((item) => item.input.toLowerCase()),
+            );
+            return [
+              ...normalized,
+              ...prev.filter(
+                (existing) => !incomingKeys.has(existing.input.toLowerCase()),
+              ),
+            ];
+          });
+          return;
+        }
+      }
+    }
+
+    // Fallback after a successful no-match response: check substring candidates in catalogOptions; otherwise show unrecognized warning
+    const fallbackCandidates = findCatalogSubstringCandidates(
+      rawLabel,
+      catalogOptions,
+    );
+    enqueueUnresolvedHead({
+      input: rawLabel,
+      candidates: fallbackCandidates,
+      clearOnQueryEdit: fallbackCandidates.length === 0,
+    });
+  }
+
   function addCatalogSkill(option: MultiSelectOption): boolean {
     const trimmedLabel = option.label.trim();
     const existingLabels = entriesRef.current.map((e) => e.label);
@@ -276,6 +437,7 @@ export function SkillsSetupForm({
       return false;
     }
     setDraftError(null);
+    clearInlineUnrecognizedWarning();
     setNotice(null);
     setApiError(null);
     noneRef.current = false;
@@ -285,7 +447,6 @@ export function SkillsSetupForm({
       {
         key: trimmedLabel.toLowerCase(),
         label: trimmedLabel,
-        status: 'valid',
       },
     ]);
     return true;
@@ -305,21 +466,19 @@ export function SkillsSetupForm({
       return false;
     }
 
-    const customKey = trimmed.toLowerCase();
+    const requestId = ++nextLookupIdRef.current;
+    const session = lookupSessionRef.current;
+    inFlightLookupIdsRef.current.add(requestId);
 
     setDraftError(null);
+    clearInlineUnrecognizedWarning();
     setNotice(null);
     setApiError(null);
     noneRef.current = false;
     setNone(false);
+    setIsValidating(true);
 
-    // Never call mutating EP-P02 (updateSkills) on draft skill entry: EP-P05 requires a chosen
-    // skill_id and also mutates user_profiles, so deferring EP-P02 strictly to explicit Save
-    // guarantees adding/canceling a custom skill never persists draft skills or races against None.
-    commitEntries([
-      ...entriesRef.current,
-      { key: customKey, label: trimmed, status: 'valid' },
-    ]);
+    void validateCustomSkill(trimmed, requestId, session);
     return true;
   }
 
@@ -332,20 +491,15 @@ export function SkillsSetupForm({
     setNotice(removed ? `Removed ${removed.label}.` : null);
   }
 
-  function removeClarificationEntry(entry: SkillEntry) {
-    const target = entry.key.trim().toLowerCase();
-    pendingFocusInputRef.current = true;
-    commitEntries(entriesRef.current.filter((e) => e.key !== target));
-    setDraftError(null);
-    setApiError(null);
-    setNotice(`Removed “${entry.label}”.`);
-  }
-
   function changeNone(next: boolean) {
     saveRequestTokenRef.current += 1;
+    lookupSessionRef.current += 1;
+    inFlightLookupIdsRef.current.clear();
+    setIsValidating(false);
     noneRef.current = next;
     setNone(next);
     setDraftError(null);
+    setUnresolvedQueue([]);
     setNotice(null);
     setApiError(null);
     if (next) {
@@ -354,13 +508,24 @@ export function SkillsSetupForm({
   }
 
   async function resolveAlias(
-    entryKey: string,
     inputLabel: string,
     skillId: string,
     candidateName: string,
   ) {
+    const candidateKey = candidateName.trim().toLowerCase();
+    if (
+      !entriesRef.current.some((e) => e.key === candidateKey) &&
+      entriesRef.current.length >= MAX_SKILLS
+    ) {
+      setDraftError(
+        `You can add up to ${MAX_SKILLS} skills. Remove a skill before adding another.`,
+      );
+      return;
+    }
+
     setPending(true);
     setApiError(null);
+    setDraftError(null);
     let result: Awaited<ReturnType<typeof invoke<'interpretSkillAlias'>>>;
     try {
       result = await invoke('interpretSkillAlias', {
@@ -377,21 +542,13 @@ export function SkillsSetupForm({
       setApiError(result.error);
       return;
     }
-    const canonicalLabel = candidateName.trim();
-    const canonicalKey = canonicalLabel.toLowerCase();
-    const nextEntries: SkillEntry[] = [];
-    const seen = new Set<string>();
-    for (const entry of entriesRef.current) {
-      const updated: SkillEntry =
-        entry.key === entryKey
-          ? { key: canonicalKey, label: canonicalLabel, status: 'valid' }
-          : entry;
-      if (!seen.has(updated.key)) {
-        seen.add(updated.key);
-        nextEntries.push(updated);
-      }
+    if (!appendValidSkill(candidateName)) {
+      return;
     }
-    commitEntries(nextEntries);
+    const resolvedKey = inputLabel.trim().toLowerCase();
+    setUnresolvedQueue((prev) =>
+      prev.filter((item) => item.input.trim().toLowerCase() !== resolvedKey),
+    );
     setNotice(`Saved your meaning for “${inputLabel}”.`);
   }
 
@@ -402,8 +559,7 @@ export function SkillsSetupForm({
     setPending(true);
     setApiError(null);
     const requestToken = ++saveRequestTokenRef.current;
-    // Internally submit only valid skills (unrecognized entries are silently excluded)
-    const namesToSave = validEntries.map((e) => e.label);
+    const namesToSave = entries.map((e) => e.label);
     let result: Awaited<ReturnType<typeof invoke<'updateSkills'>>>;
     try {
       result = await invoke(
@@ -422,13 +578,12 @@ export function SkillsSetupForm({
       setApiError(result.error);
       return;
     }
-    const pendingAliases = result.data.unresolved_skills ?? [];
+    const pendingAliases = normalizeUnresolvedQueue(
+      result.data.unresolved_skills,
+    );
     if (pendingAliases.length > 0) {
-      const nextEntries = hydrateEntries(
-        result.data.existing_skills,
-        pendingAliases,
-      );
-      commitEntries(nextEntries);
+      commitEntries(hydrateValidEntries(result.data.existing_skills));
+      setUnresolvedQueue(pendingAliases);
       noneRef.current = false;
       setNone(false);
       onProfileCommitted?.(result.data);
@@ -441,7 +596,7 @@ export function SkillsSetupForm({
       return;
     }
     if (isStandalone) {
-      commitEntries(hydrateEntries(result.data.existing_skills));
+      commitEntries(hydrateValidEntries(result.data.existing_skills));
       const nextNone =
         Boolean(result.data.existing_skills_none) &&
         result.data.existing_skills.length === 0;
@@ -497,9 +652,10 @@ export function SkillsSetupForm({
       <StepFrame
         currentStep={2}
         embedded={isEmbedded}
-        heading={isStandalone ? undefined : 'Your Skills'}
+        inModal={isStandalone || inModal}
+        heading={isStandalone || inModal ? undefined : 'Your Skills'}
         description={
-          isStandalone
+          isStandalone || inModal
             ? undefined
             : 'Add the technology skills you already have, or confirm that you are starting from zero. You are never blocked for being a beginner.'
         }
@@ -553,10 +709,15 @@ export function SkillsSetupForm({
                 onSelectOption={addCatalogSkill}
                 onCreateCustom={handleCreateCustom}
                 onRemove={removeEntry}
-                onQueryChange={() => setDraftError(null)}
+                onQueryChange={(q) => {
+                  setDraftError(null);
+                  if (q.trim().length > 0) {
+                    clearInlineUnrecognizedWarning();
+                  }
+                }}
                 placeholder="Search or type a skill (e.g., React, SQL, Python)"
                 secondaryPlaceholder="Add another skill..."
-                disabled={pending || hasAmbiguous}
+                disabled={pending}
                 selectedListAriaLabel="Your skills"
                 listboxAriaLabel="Skill suggestions"
                 emptyMessage="No matching skill"
@@ -576,9 +737,73 @@ export function SkillsSetupForm({
                   <span dir="auto">{draftError}</span>
                 </p>
               )}
+
+              {unrecognizedSkill && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-feedback-warning-border bg-feedback-warning-background px-3 py-2 text-caption font-medium leading-snug text-feedback-warning-text"
+                >
+                  <span className="flex items-center gap-2">
+                    <WarningIcon className="h-4 w-4 shrink-0 text-amber-600" />
+                    <span dir="auto">
+                      “{unrecognizedSkill}” is not a recognized skill.
+                    </span>
+                  </span>
+                  {unresolvedQueue.length > 1 && (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={shiftUnresolvedHead}
+                      className="cursor-pointer rounded-md px-2 py-0.5 text-caption font-medium text-text-secondary transition-colors hover:bg-black/5 hover:text-text-primary"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {ambiguousPrompt && (
+                <section
+                  aria-label="Skill clarification"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-feedback-warning-border bg-feedback-warning-background px-3.5 py-2.5"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-caption font-medium text-feedback-warning-text">
+                      For “{ambiguousPrompt.input}”:
+                    </span>
+                    {ambiguousPrompt.candidates.map((candidate) => (
+                      <button
+                        key={candidate.skill_id}
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          resolveAlias(
+                            ambiguousPrompt.input,
+                            candidate.skill_id,
+                            candidate.name,
+                          )
+                        }
+                        className={CANDIDATE_PILL_CLASS}
+                      >
+                        <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                        <span>{candidate.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={shiftUnresolvedHead}
+                    className="cursor-pointer rounded-md px-2 py-1 text-caption font-medium text-text-secondary transition-colors hover:bg-black/5 hover:text-text-primary"
+                  >
+                    Dismiss
+                  </button>
+                </section>
+              )}
             </div>
 
-            {availableSuggestions.length > 0 && !hasAmbiguous && (
+            {availableSuggestions.length > 0 && (
               <div className="flex flex-col gap-2">
                 <p className="text-caption text-text-muted">Suggested skills</p>
                 <ul aria-label="Suggested skills" className="flex flex-wrap gap-2">
@@ -598,85 +823,6 @@ export function SkillsSetupForm({
               </div>
             )}
           </>
-        )}
-
-        {(hasAmbiguous || hasUnrecognized) && (
-          <section
-            aria-label="Skill clarification"
-            className="flex flex-col gap-4 rounded-lg border border-feedback-warning-border bg-feedback-warning-background p-4"
-          >
-            {hasAmbiguous && (
-              <div className="flex flex-col gap-3">
-                <p className="text-label-lg text-feedback-warning-text">
-                  Help us understand these skills
-                </p>
-                {ambiguousEntries.map((entry) => (
-                  <div key={entry.key} className="flex flex-col gap-2">
-                    <p className="text-body-sm text-text-primary">
-                      What did you mean by “{entry.label}”?
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {(entry.candidates ?? []).map((candidate) => (
-                        <button
-                          key={candidate.skill_id}
-                          type="button"
-                          disabled={pending}
-                          onClick={() =>
-                            resolveAlias(
-                              entry.key,
-                              entry.label,
-                              candidate.skill_id,
-                              candidate.name,
-                            )
-                          }
-                          className={CANDIDATE_PILL_CLASS}
-                        >
-                          <CheckIcon className="h-3.5 w-3.5 shrink-0" />
-                          <span>{candidate.name}</span>
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => removeClarificationEntry(entry)}
-                        className={REMOVE_PILL_CLASS}
-                      >
-                        <TrashIcon className="h-3.5 w-3.5 shrink-0" />
-                        <span>Remove “{entry.label}”</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {hasUnrecognized && (
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-center gap-2">
-                  <WarningIcon className="h-4 w-4 shrink-0 text-amber-600" />
-                  <p className="text-label-lg text-feedback-warning-text">
-                    {unrecognizedEntries.length === 1
-                      ? 'Skill not recognized'
-                      : 'Skills not recognized'}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {unrecognizedEntries.map((entry) => (
-                    <button
-                      key={entry.key}
-                      type="button"
-                      disabled={pending}
-                      onClick={() => removeClarificationEntry(entry)}
-                      className={REMOVE_PILL_CLASS}
-                    >
-                      <TrashIcon className="h-3.5 w-3.5 shrink-0" />
-                      <span>Remove “{entry.label}”</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
         )}
 
         <p role="status" aria-live="polite" className="text-caption text-text-secondary empty:hidden">

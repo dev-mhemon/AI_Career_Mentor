@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import Link from "next/link";
 import {
@@ -26,20 +27,22 @@ import { PasswordStrengthHint } from "@/components/auth/password-strength-hint";
 import { Alert, formatCountdown } from "@/components/ui/alert";
 import { Toast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
+import { ClockIcon } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
 import type { ActionErrorLike } from "@/lib/api/error-mapper";
 import {
+  getRawVerificationDraft,
   loadVerificationDraft,
   clearVerificationDraft,
   updateVerificationDraftExpiry,
   saveVerificationDraft,
+  MAX_VERIFICATION_DRAFT_TTL_SECONDS,
   type VerificationChannel,
   type VerificationDraft,
 } from "@/lib/auth/verification-draft";
 import { useResendCooldown } from "@/lib/auth/use-resend-cooldown";
 import {
   PASSWORD_MAX,
-  validateIdentifier,
   validateOtp,
   validatePassword,
   validatePasswordMatch,
@@ -47,9 +50,73 @@ import {
 
 const MemoizedInput = memo(Input);
 
+type ResetSessionStatus = "checking" | "active" | "expired";
+
+interface ResetSessionState {
+  status: "active" | "expired";
+  draft: VerificationDraft | null;
+}
+
+const subscribeNoop = () => () => {};
+const getClientTrue = () => true;
+const getServerFalse = () => false;
+
+const ALLOWED_RECOVERY_DRAFT_KEYS = new Set([
+  "channel",
+  "normalized_identifier",
+  "contact_masked",
+  "expires_at",
+  "context",
+]);
+
+/**
+ * Pure, read-only snapshot of any existing `password_recovery` draft in `sessionStorage`.
+ * Never mutates storage so React 19 StrictMode double-initialization stays idempotent;
+ * storage cleanup of expired/malformed drafts runs in a mount effect without calling setState.
+ */
+function readInitialResetSession(): ResetSessionState {
+  if (typeof window === "undefined") {
+    return { status: "expired", draft: null };
+  }
+  const raw = getRawVerificationDraft();
+  if (!raw) {
+    return { status: "expired", draft: null };
+  }
+  const keys = Object.keys(raw);
+  if (
+    keys.length !== ALLOWED_RECOVERY_DRAFT_KEYS.size ||
+    keys.some((key) => !ALLOWED_RECOVERY_DRAFT_KEYS.has(key)) ||
+    typeof raw.contact_masked !== "string" ||
+    !raw.contact_masked.trim() ||
+    typeof raw.expires_at !== "string" ||
+    raw.context !== "password_recovery"
+  ) {
+    return { status: "expired", draft: null };
+  }
+
+  const nowMs = Date.now();
+  const expiresAtMs = Date.parse(raw.expires_at);
+  const isExpired =
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= nowMs ||
+    expiresAtMs - nowMs > MAX_VERIFICATION_DRAFT_TTL_SECONDS * 1000;
+
+  if (isExpired) {
+    return { status: "expired", draft: null };
+  }
+
+  return {
+    status: "active",
+    draft: raw,
+  };
+}
+
 /**
  * Screen 06: Password Reset Form component.
- * Verifies OTP code, validates password confirmation, and updates password (EP-A09).
+ * Clean 3-state session flow (`checking` -> `active` | `expired`):
+ * - `checking`: compact skeleton preventing SSR/hydration flicker on refresh.
+ * - `active`: masked contact banner + controlled 6-digit OTP + new/confirm password (EP-A09).
+ * - `expired`: focused recovery-expired / code-required view with primary CTA to `/forgot-password`.
  */
 export function ResetPasswordForm() {
   const [state, formAction, isPending] = useActionState<
@@ -57,10 +124,20 @@ export function ResetPasswordForm() {
     FormData
   >(resetPasswordAction, {});
 
-  const [draft, setDraft] = useState<VerificationDraft | null>(null);
-  const [isDraftExpired, setIsDraftExpired] = useState<boolean>(false);
-  const draftLoaded = useRef(false);
-  const [enteredIdentifier, setEnteredIdentifier] = useState("");
+  const isClient = useSyncExternalStore(
+    subscribeNoop,
+    getClientTrue,
+    getServerFalse,
+  );
+  const [session, setSession] = useState<ResetSessionState>(
+    readInitialResetSession,
+  );
+  const sessionStatus: ResetSessionStatus = isClient
+    ? session.status
+    : "checking";
+  const draft = isClient ? session.draft : null;
+  const [expiredDuringSubmit, setExpiredDuringSubmit] = useState(false);
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [isResending, setIsResending] = useState(false);
@@ -75,22 +152,22 @@ export function ResetPasswordForm() {
   } | null>(null);
 
   const stateRef = useRef(state);
+  const isPendingRef = useRef(isPending);
   const resendErrorRef = useRef(resendError);
   const confirmRef = useRef(confirm);
-  const draftRef = useRef(draft);
   const handledSuccessStateRef = useRef<AuthActionResult | null>(null);
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+  useEffect(() => {
+    isPendingRef.current = isPending;
+  }, [isPending]);
   useEffect(() => {
     resendErrorRef.current = resendError;
   }, [resendError]);
   useEffect(() => {
     confirmRef.current = confirm;
   }, [confirm]);
-  useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
 
   const handleFormActivity = useCallback(
     (e: SyntheticEvent<HTMLFormElement>) => {
@@ -108,21 +185,12 @@ export function ResetPasswordForm() {
   );
 
   const resolvedContact = useMemo(() => {
-    if (draft?.normalized_identifier) {
-      return {
-        channel: draft.channel as VerificationChannel,
-        identifier: draft.normalized_identifier,
-      };
-    }
-    const trimmed = enteredIdentifier.trim();
-    if (!trimmed) return null;
-    const check = validateIdentifier(trimmed);
-    if (!check.ok) return null;
+    if (!draft?.normalized_identifier) return null;
     return {
-      channel: check.value.kind as VerificationChannel,
-      identifier: check.value.value,
+      channel: draft.channel as VerificationChannel,
+      identifier: draft.normalized_identifier,
     };
-  }, [draft, enteredIdentifier]);
+  }, [draft]);
 
   const activeContactKey = resolvedContact
     ? `${resolvedContact.channel}:${resolvedContact.identifier}`
@@ -142,17 +210,42 @@ export function ResetPasswordForm() {
     identifier: resolvedContact?.identifier ?? null,
   });
 
+  const isMountedRef = useRef(true);
   useEffect(() => {
-    if (draftLoaded.current) return;
-    draftLoaded.current = true;
-    const { draft: loaded, expired } = loadVerificationDraft(
-      null,
-      Date.now(),
-      "password_recovery",
-    );
-    setDraft(loaded?.context === "password_recovery" ? loaded : null);
-    setIsDraftExpired(expired);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
+
+  // Clean up any expired or malformed draft entries in sessionStorage on mount without calling setState.
+  useEffect(() => {
+    loadVerificationDraft(null, Date.now(), "password_recovery");
+  }, []);
+
+  // Transition cleanly to `'expired'` if the active session expires while the user is on the page.
+  // If a reset submission is currently in flight, keep the form mounted so the action result
+  // (e.g. password policy error or partial-completion notice) remains visible, while blocking new submits.
+  useEffect(() => {
+    if (sessionStatus !== "active" || !draft?.expires_at || state?.success) {
+      return;
+    }
+    const expiresMs = Date.parse(draft.expires_at);
+    if (!Number.isFinite(expiresMs)) return;
+
+    const expireNow = () => {
+      clearVerificationDraft();
+      if (isPendingRef.current) {
+        setExpiredDuringSubmit(true);
+        return;
+      }
+      setSession({ status: "expired", draft: null });
+    };
+
+    const remainingMs = Math.max(0, expiresMs - Date.now());
+    const timer = setTimeout(expireNow, remainingMs);
+    return () => clearTimeout(timer);
+  }, [sessionStatus, draft?.expires_at, state?.success]);
 
   useEffect(() => {
     if (state?.success && handledSuccessStateRef.current !== state) {
@@ -163,88 +256,6 @@ export function ResetPasswordForm() {
       }
     }
   }, [state, draft, clearCooldown, resolvedContact?.identifier]);
-
-  const handleResend = useCallback(async () => {
-    if (!resolvedContact || cooldown > 0 || isResending || isPending) return;
-
-    const requestContact = resolvedContact;
-    const requestKey = `${requestContact.channel}:${requestContact.identifier}`;
-
-    setIsResending(true);
-    setResendError(null);
-    setResendSuccess(null);
-
-    try {
-      const formData = new FormData();
-      formData.set("identifier", requestContact.identifier);
-      formData.set("mode", "resend");
-      const result = await forgotPasswordAction({}, formData);
-
-      if (activeContactRef.current !== requestKey) {
-        return;
-      }
-
-      if (result?.error) {
-        if (isCooldownWaitResult(result)) {
-          setResendError(null);
-          startCooldown(
-            typeof result.retryAfterSeconds === "number" && result.retryAfterSeconds > 0
-              ? result.retryAfterSeconds
-              : 60,
-            undefined,
-            requestContact.identifier,
-          );
-        } else {
-          setResendError(result);
-          if (typeof result.retryAfterSeconds === "number" && result.retryAfterSeconds > 0) {
-            startCooldown(result.retryAfterSeconds, undefined, requestContact.identifier);
-          }
-        }
-      } else {
-        setResendSuccess("Verification code sent.");
-        startCooldown(60, undefined, requestContact.identifier);
-        const candidate = updateVerificationDraftExpiry(
-          600,
-          draft?.contact_masked,
-          Date.now(),
-          requestContact.channel,
-          requestContact.identifier,
-        );
-        const updated =
-          candidate?.context === "password_recovery"
-            ? candidate
-            : saveVerificationDraft({
-                channel: requestContact.channel,
-                identifier: requestContact.identifier,
-                contactMasked: draft?.contact_masked,
-                context: "password_recovery",
-              });
-        if (updated) {
-          setDraft(updated);
-          setIsDraftExpired(false);
-        }
-      }
-    } catch {
-      if (activeContactRef.current === requestKey) {
-        setResendError({
-          error: "Failed to resend verification code. Please try again.",
-        });
-      }
-    } finally {
-      setIsResending(false);
-    }
-  }, [
-    cooldown,
-    draft,
-    isPending,
-    isResending,
-    resolvedContact,
-    startCooldown,
-  ]);
-
-  const handleDismissResendSuccess = useCallback(() => {
-    setResendSuccess(null);
-  }, []);
 
   const setFieldError = useCallback(
     (field: string, error?: string) =>
@@ -276,28 +287,122 @@ export function ResetPasswordForm() {
     [],
   );
 
-  const handleIdentifierChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      const nextVal = e.target.value;
-      setEnteredIdentifier(nextVal);
-      if (!draftRef.current?.normalized_identifier) {
-        const nextCheck = validateIdentifier(nextVal.trim());
-        activeContactRef.current = nextCheck.ok
-          ? `${nextCheck.value.kind}:${nextCheck.value.value}`
-          : null;
+  const handleResend = useCallback(async () => {
+    if (!resolvedContact || cooldown > 0 || isResending || isPending) return;
+
+    const requestContact = resolvedContact;
+    const requestContactMasked = draft?.contact_masked;
+    const requestKey = `${requestContact.channel}:${requestContact.identifier}`;
+
+    setIsResending(true);
+    setResendError(null);
+    setResendSuccess(null);
+
+    try {
+      const formData = new FormData();
+      formData.set("identifier", requestContact.identifier);
+      formData.set("mode", "resend");
+      const result = await forgotPasswordAction({}, formData);
+
+      // Discard if user left the flow or switched to a different active contact.
+      // Allow null activeContactRef (old draft expired while resend was in flight) to renew on success.
+      if (!isMountedRef.current) {
+        return;
       }
-      setResendError(null);
-      setResendSuccess(null);
-      dismissServerField("identifier");
-      setFieldError("identifier", undefined);
+      const currentContactKey = activeContactRef.current;
+      if (currentContactKey !== null && currentContactKey !== requestKey) {
+        return;
+      }
+
+      if (result?.error) {
+        // If the old draft already expired while resend failed, stay in `'expired'` state.
+        if (currentContactKey === null) {
+          return;
+        }
+        if (isCooldownWaitResult(result)) {
+          setResendError(null);
+          startCooldown(
+            typeof result.retryAfterSeconds === "number" &&
+              result.retryAfterSeconds > 0
+              ? result.retryAfterSeconds
+              : 60,
+            undefined,
+            requestContact.identifier,
+          );
+        } else {
+          setResendError(result);
+          if (
+            typeof result.retryAfterSeconds === "number" &&
+            result.retryAfterSeconds > 0
+          ) {
+            startCooldown(
+              result.retryAfterSeconds,
+              undefined,
+              requestContact.identifier,
+            );
+          }
+        }
+      } else {
+        setCode("");
+        setFieldError("code", undefined);
+        dismissServerField("code");
+        setResendSuccess("Verification code sent.");
+        startCooldown(60, undefined, requestContact.identifier);
+        const candidate = updateVerificationDraftExpiry(
+          600,
+          requestContactMasked,
+          Date.now(),
+          requestContact.channel,
+          requestContact.identifier,
+        );
+        const updated =
+          candidate?.context === "password_recovery"
+            ? candidate
+            : saveVerificationDraft({
+                channel: requestContact.channel,
+                identifier: requestContact.identifier,
+                contactMasked: requestContactMasked,
+                context: "password_recovery",
+              });
+        if (updated) {
+          setExpiredDuringSubmit(false);
+          setSession({ status: "active", draft: updated });
+        }
+      }
+    } catch {
+      if (isMountedRef.current && activeContactRef.current === requestKey) {
+        setResendError({
+          error: "Failed to resend verification code. Please try again.",
+        });
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsResending(false);
+      }
+    }
+  }, [
+    cooldown,
+    dismissServerField,
+    draft,
+    isPending,
+    isResending,
+    resolvedContact,
+    setFieldError,
+    startCooldown,
+  ]);
+
+  const handleDismissResendSuccess = useCallback(() => {
+    setResendSuccess(null);
+  }, []);
+
+  const handleCodeChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setCode(e.target.value);
+      dismissServerField("code");
+      setFieldError("code", undefined);
     },
     [dismissServerField, setFieldError],
   );
-
-  const handleCodeChange = useCallback(() => {
-    dismissServerField("code");
-    setFieldError("code", undefined);
-  }, [dismissServerField, setFieldError]);
 
   const handlePasswordChange = useCallback(
     (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -333,17 +438,94 @@ export function ResetPasswordForm() {
       ? undefined
       : state?.fieldErrors?.[field];
 
+  const isChecking = sessionStatus === "checking";
+
+  if (!isChecking && (sessionStatus === "expired" || !draft?.normalized_identifier)) {
+    return (
+      <div className="flex flex-col items-center gap-5 py-2 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-amber-200/80 bg-amber-50 text-amber-600 dark:border-amber-800/60 dark:bg-amber-950/50 dark:text-amber-400">
+          <ClockIcon className="h-6 w-6" />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-heading-lg text-text-primary">
+            Reset session expired
+          </h1>
+          <p className="text-body-sm leading-relaxed text-text-secondary">
+            Request a new verification code to continue.
+          </p>
+        </div>
+
+        <Link
+          href="/forgot-password"
+          className="inline-flex h-12 w-full items-center justify-center rounded-md bg-action-primary-background px-6 text-label-lg leading-none font-medium text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        >
+          Request a new code
+        </Link>
+
+        <p className="text-body-sm text-text-secondary">
+          Remember your password?{" "}
+          <Link
+            href="/login"
+            className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+          >
+            Sign in
+          </Link>
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6">
-      {draft?.contact_masked ? (
-        <Alert variant="info">
-          Reset code sent to: <span className="font-semibold">{draft.contact_masked}</span>
-        </Alert>
-      ) : isDraftExpired ? (
+      <div className="flex flex-col gap-1">
+        <h1 className="text-heading-lg text-text-primary">Set New Password</h1>
+        <p className="text-body-sm text-text-secondary">
+          Enter the 6-digit verification code you received and choose a new
+          password.
+        </p>
+      </div>
+
+      {isChecking ? (
+        <div
+          role="status"
+          aria-busy="true"
+          aria-label="Checking reset session"
+          className="flex items-center gap-3 rounded-lg border border-transparent bg-slate-100 p-4 animate-pulse dark:bg-surface-subtle"
+        >
+          <span className="h-5 w-5 shrink-0 rounded-full bg-slate-200/80 dark:bg-surface-muted" />
+          <span className="h-5 w-48 rounded bg-slate-200/80 dark:bg-surface-muted" />
+        </div>
+      ) : expiredDuringSubmit ? (
         <Alert variant="warning">
-          Recovery session expired. Please re-enter your email or phone below.
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Your reset session expired. Request a new code to try again.
+            </span>
+            <Link
+              href="/forgot-password"
+              className="text-caption font-semibold text-text-link underline underline-offset-4 hover:text-text-link-hover"
+            >
+              Request a new code
+            </Link>
+          </div>
         </Alert>
-      ) : null}
+      ) : (
+        <Alert variant="info">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Reset code sent to:{" "}
+              <span className="font-semibold">{draft?.contact_masked}</span>
+            </span>
+            <Link
+              href="/forgot-password"
+              className="text-caption font-semibold text-text-link underline underline-offset-4 hover:text-text-link-hover"
+            >
+              Change
+            </Link>
+          </div>
+        </Alert>
+      )}
 
       <form
         action={formAction}
@@ -351,22 +533,16 @@ export function ResetPasswordForm() {
         onFocusCapture={handleFormActivity}
         onChangeCapture={handleFormActivity}
         onSubmit={(e) => {
+          if (isChecking || expiredDuringSubmit) {
+            e.preventDefault();
+            return;
+          }
           const form = e.currentTarget;
           const errors: Record<string, string> = {};
-          const idEl = form.elements.namedItem("identifier") as HTMLInputElement | null;
-          if (idEl && idEl.type !== "hidden") {
-            const id = validateIdentifier(idEl.value);
-            if (!id.ok) {
-              errors.identifier = id.error;
-            } else {
-              idEl.value = id.value.value;
-              setEnteredIdentifier(id.value.value);
-            }
-          }
-          const code = validateOtp(
+          const otpCheck = validateOtp(
             (form.elements.namedItem("code") as HTMLInputElement).value,
           );
-          if (!code.ok) errors.code = code.error;
+          if (!otpCheck.ok) errors.code = otpCheck.error;
           const pw = validatePassword(password);
           if (!pw.ok) errors.new_password = pw.error;
           const match = validatePasswordMatch(password, confirm);
@@ -375,12 +551,7 @@ export function ResetPasswordForm() {
             e.preventDefault();
             setClientErrors(errors);
             const firstField = (
-              [
-                "identifier",
-                "code",
-                "new_password",
-                "confirm_new_password",
-              ] as const
+              ["code", "new_password", "confirm_new_password"] as const
             ).find((key) => Boolean(errors[key]));
             if (firstField) {
               form
@@ -395,36 +566,78 @@ export function ResetPasswordForm() {
         }}
         className="flex flex-col gap-4"
       >
-        {draft?.normalized_identifier ? (
-          <input
-            type="hidden"
-            name="identifier"
-            value={draft.normalized_identifier}
-          />
-        ) : (
-          <MemoizedInput
-            id="identifier"
-            name="identifier"
-            label="Email or Phone"
-            required
-            value={enteredIdentifier}
-            readOnly={isPending || isResending}
-            error={clientErrors.identifier ?? serverFieldError("identifier")}
-            onChange={handleIdentifierChange}
-            placeholder="Enter your email or 01XXXXXXXXX"
-          />
-        )}
-
-        <MemoizedInput
-          id="code"
-          name="code"
-          variant="otp_6"
-          label="6-Digit Verification Code"
-          required
-          readOnly={isPending}
-          error={clientErrors.code ?? serverFieldError("code")}
-          onChange={handleCodeChange}
+        <input
+          type="hidden"
+          name="identifier"
+          value={draft?.normalized_identifier ?? ""}
         />
+
+        <div className="flex flex-col gap-2">
+          <MemoizedInput
+            id="code"
+            name="code"
+            variant="otp_6"
+            label="6-Digit Verification Code"
+            required
+            readOnly={isPending}
+            value={code}
+            error={clientErrors.code ?? serverFieldError("code")}
+            onChange={handleCodeChange}
+          />
+
+          <div className="flex flex-col gap-2 text-body-sm text-text-secondary">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span>Didn&apos;t receive a code?</span>
+              <Button
+                type="button"
+                variant="link"
+                isLoading={isResending}
+                loadingText="Sending…"
+                disabled={
+                  isChecking ||
+                  !isCooldownHydrated ||
+                  cooldown > 0 ||
+                  isResending ||
+                  isPending
+                }
+                onClick={handleResend}
+                className={
+                  cooldown > 0
+                    ? "no-underline tabular-nums"
+                    : "underline-offset-4"
+                }
+              >
+                {cooldown > 0
+                  ? `Resend code in ${formatCountdown(cooldown)}`
+                  : "Resend code"}
+              </Button>
+              <div
+                role="region"
+                aria-live="polite"
+                aria-label="Resend code cooldown status"
+                className="sr-only"
+              >
+                {isCooldownHydrated && cooldown > 0
+                  ? "Verification code cooldown started. You must wait until the timer finishes before resending a code."
+                  : isCooldownHydrated && cooldown === 0
+                    ? "You can now resend the verification code."
+                    : ""}
+              </div>
+            </div>
+            <AuthAlert result={resendAlertResult} />
+            {resendSuccess && (
+              <Toast
+                variant="success"
+                role="status"
+                ariaLive="polite"
+                autoDismissMs={4000}
+                onDismiss={handleDismissResendSuccess}
+              >
+                {resendSuccess}
+              </Toast>
+            )}
+          </div>
+        </div>
 
         <div className="flex flex-col gap-2">
           <MemoizedInput
@@ -466,74 +679,27 @@ export function ResetPasswordForm() {
 
         <AuthAlert result={visibleAlertState} />
 
-        <Button type="submit" size="lg" fullWidth isLoading={isPending} loadingText="Resetting password…">
+        <Button
+          type="submit"
+          size="lg"
+          fullWidth
+          disabled={isChecking || expiredDuringSubmit}
+          isLoading={isPending}
+          loadingText="Resetting password…"
+        >
           Set New Password
         </Button>
       </form>
 
-      <div className="flex flex-col items-center gap-2 text-body-sm text-text-secondary">
-        {resolvedContact ? (
-          <div className="flex w-full flex-col items-center gap-2">
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
-              <span>Didn&apos;t receive a code?</span>
-              <Button
-                type="button"
-                variant="link"
-                isLoading={isResending}
-                loadingText="Sending…"
-                disabled={!isCooldownHydrated || cooldown > 0 || isResending || isPending}
-                onClick={handleResend}
-                className={cooldown > 0 ? "no-underline tabular-nums" : "underline-offset-4"}
-              >
-                {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : "Resend code"}
-              </Button>
-              <div
-                role="region"
-                aria-live="polite"
-                aria-label="Resend code cooldown status"
-                className="sr-only"
-              >
-                {isCooldownHydrated && cooldown > 0
-                  ? "Verification code cooldown started. You must wait until the timer finishes before resending a code."
-                  : isCooldownHydrated && cooldown === 0
-                    ? "You can now resend the verification code."
-                    : ""}
-              </div>
-            </div>
-            <AuthAlert result={resendAlertResult} />
-            {resendSuccess && (
-              <Toast
-                variant="success"
-                role="status"
-                ariaLive="polite"
-                autoDismissMs={4000}
-                onDismiss={handleDismissResendSuccess}
-              >
-                {resendSuccess}
-              </Toast>
-            )}
-          </div>
-        ) : (
-          <p>
-            Didn&apos;t receive a code?{" "}
-            <Link
-              href="/forgot-password"
-              className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
-            >
-              Resend code
-            </Link>
-          </p>
-        )}
-        <p>
-          Remember your password?{" "}
-          <Link
-            href="/login"
-            className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
-          >
-            Sign in
-          </Link>
-        </p>
-      </div>
+      <p className="text-center text-body-sm text-text-secondary">
+        Remember your password?{" "}
+        <Link
+          href="/login"
+          className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+        >
+          Sign in
+        </Link>
+      </p>
     </div>
   );
 }
