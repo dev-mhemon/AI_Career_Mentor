@@ -3808,15 +3808,26 @@ export class AuthService {
     }
   }
 
+  private normalizeRecoveryPhone(rawPhone: unknown): string {
+    if (typeof rawPhone !== 'string') return '';
+    const trimmed = rawPhone.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('+')) return trimmed;
+    if (/^01[3-9][0-9]{8}$/.test(trimmed)) return `+88${trimmed}`;
+    return `+${trimmed}`;
+  }
+
   private computeRecoveryContactHash(
     userId: string,
     channel: 'email' | 'phone',
     identifier: string,
   ): string {
+    const normalizedIdentifier =
+      channel === 'phone'
+        ? this.normalizeRecoveryPhone(identifier)
+        : identifier.trim().toLowerCase();
     return createHash('sha256')
-      .update(
-        `reset-cleanup:${userId}:${channel}:${identifier.trim().toLowerCase()}`,
-      )
+      .update(`reset-cleanup:${userId}:${channel}:${normalizedIdentifier}`)
       .digest('hex');
   }
 
@@ -3914,9 +3925,7 @@ export class AuthService {
         const authRow = Array.isArray(authRows) ? authRows[0] : undefined;
         const authoritativeIdentifier =
           metadata.channel === 'phone'
-            ? typeof authRow?.phone === 'string'
-              ? authRow.phone.trim()
-              : ''
+            ? this.normalizeRecoveryPhone(authRow?.phone)
             : typeof authRow?.email === 'string'
               ? authRow.email.trim().toLowerCase()
               : '';
@@ -4807,15 +4816,8 @@ export class AuthService {
       !account.email.trim().toLowerCase().endsWith('@synthetic.mentor')
         ? account.email.trim().toLowerCase()
         : null;
-    const rawAccountPhone =
-      typeof account.phone === 'string' ? account.phone.trim() : '';
-    const normalizedAccountPhone = rawAccountPhone
-      ? rawAccountPhone.startsWith('+')
-        ? rawAccountPhone
-        : /^01[3-9][0-9]{8}$/.test(rawAccountPhone)
-          ? `+88${rawAccountPhone}`
-          : `+${rawAccountPhone}`
-      : null;
+    const normalizedAccountPhone =
+      this.normalizeRecoveryPhone(account.phone) || null;
     const resolvedEmail =
       channel === 'email'
         ? identifier
