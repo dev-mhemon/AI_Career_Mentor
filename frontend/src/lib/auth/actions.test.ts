@@ -1916,6 +1916,56 @@ describe('Auth Actions', () => {
         },
       });
     });
+
+    it('returns pending state without redirecting when account_ready_for_signin is false or post-commit 5xx cleanup is pending', async () => {
+      const makeForm = () => {
+        const fd = new FormData();
+        fd.set('identifier', 'user@example.com');
+        fd.set('code', '123456');
+        fd.set('new_password', 'NewStrong1!@');
+        fd.set('confirm_new_password', 'NewStrong1!@');
+        return fd;
+      };
+
+      vi.mocked(resetPassword).mockResolvedValueOnce({
+        password_reset: true,
+        cleanup_status: 'pending_account_sync',
+        account_ready_for_signin: false,
+        message:
+          'Password was updated, but required sign-in provider mapping sync did not finish yet.',
+      });
+
+      const pendingRes = await resetPasswordAction({}, makeForm());
+      expect(redirect).not.toHaveBeenCalled();
+      expect(pendingRes).toMatchObject({
+        success: true,
+        accountReadyForSignin: false,
+        cleanupStatus: 'pending_account_sync',
+        otpConsumed: true,
+        error: expect.stringContaining('required sign-in provider mapping sync'),
+      });
+
+      const postCommitMsg =
+        'Password was updated, but local session sync and auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.';
+      vi.mocked(resetPassword).mockRejectedValueOnce(
+        new ApiError(504, postCommitMsg, 'PROVIDER_TIMEOUT', undefined, [
+          {
+            field: 'password_reset',
+            code: 'PASSWORD_RESET_POST_COMMIT_CLEANUP_PENDING',
+            message: postCommitMsg,
+          },
+        ]),
+      );
+
+      const postCommitErrRes = await resetPasswordAction({}, makeForm());
+      expect(redirect).not.toHaveBeenCalled();
+      expect(postCommitErrRes).toMatchObject({
+        error: postCommitMsg,
+        status: 504,
+        code: 'PROVIDER_TIMEOUT',
+        otpConsumed: true,
+      });
+    });
   });
 
   describe('linkIdentityAction (EP-A11)', () => {

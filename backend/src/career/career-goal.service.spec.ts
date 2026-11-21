@@ -1962,7 +1962,7 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
 
       await expect(
         service.answerClarification(USER_A, GOAL_1, {
-          answer: 'I want to become a teacher',
+          answer: 'I want to write novels',
         }),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
@@ -2595,6 +2595,199 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
         return true;
+      });
+
+      // (d) Curly apostrophe negation ("don’t") stays rejected as OUT_OF_SCOPE_GOAL
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text: 'I don\u2019t want to become a frontend developer',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // (e) Background statement without tech career intent stays rejected as OUT_OF_SCOPE_GOAL
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text: 'I am a backend developer and want to open a bakery',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // (f) Dotted tech names ("Node.js", ".NET") are preserved across clause splitting without false sentence splits
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: false,
+          clarificationNeeded: false,
+          clarificationRound: 0,
+          clarificationQuestion: null,
+          proposedRole: null,
+          alternativeRoles: [],
+          suggestedLevel: null,
+        }),
+      );
+      await expect(
+        service.createGoal(USER_A, {
+          goal_text:
+            'I do not want to work with Node.js or become a backend developer',
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'OUT_OF_SCOPE_GOAL');
+        return true;
+      });
+
+      // (g) Competing role options preserve clarification instead of forcing a single preset
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: true,
+          clarificationRound: 1,
+          clarificationQuestion:
+            'Do you prefer focusing on frontend interfaces or backend APIs first?',
+          proposedRole: {
+            canonicalRoleId: roleFrontend,
+            name: 'Frontend Development',
+          },
+          alternativeRoles: [
+            {
+              canonicalRoleId: ROLE_BACKEND,
+              name: 'Backend Development',
+              matchReason: 'Focuses on APIs and server systems.',
+            },
+          ],
+          suggestedLevel: 'junior',
+        }),
+      );
+      const competingRes = await service.createGoal(USER_A, {
+        goal_text:
+          'I want to become a frontend developer, or a backend developer',
+      });
+      expect(competingRes.status).toBe('clarifying');
+
+      // (h) Tool hint in another clause ("AWS") never hijacks the clear preset role ("frontend developer")
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: true,
+          clarificationRound: 1,
+          clarificationQuestion: 'Which track?',
+          proposedRole: {
+            canonicalRoleId: ROLE_BACKEND,
+            name: 'Backend Development',
+          },
+          alternativeRoles: [],
+          suggestedLevel: 'junior',
+        }),
+      );
+      const awsPlusFrontend = await service.createGoal(USER_A, {
+        goal_text:
+          'I want a career in AWS; I want to become a frontend developer',
+      });
+      expect(awsPlusFrontend.status).toBe('awaiting_confirmation');
+      expect(awsPlusFrontend.proposed_role?.canonical_role_id).toBe(
+        roleFrontend,
+      );
+
+      // (i) Answering a current-role clarification question with a bare role label must NOT overwrite AI's target role
+      queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('private.effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        if (
+          sql.includes('FROM public.career_goals') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: 'I want to transition into AI/ML engineering',
+              status: 'clarifying',
+              clarification_round: 1,
+              clarification_question:
+                'What is your current role or background?',
+              clarifications: [],
+              proposed_role_id: roleAiMl,
+              role_name: 'AI/ML Engineering',
+              alternative_role_ids: [],
+              suggested_level: 'mid',
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+              updated_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.career_goals')) {
+          return [
+            {
+              id: GOAL_1,
+              user_id: USER_A,
+              goal_text: 'I want to transition into AI/ML engineering',
+              status: 'clarifying',
+              clarification_round: 1,
+              clarification_question:
+                'What is your current role or background?',
+              clarifications: [],
+              proposed_role_id: roleAiMl,
+              role_name: 'AI/ML Engineering',
+              alternative_role_ids: [],
+              suggested_level: 'mid',
+              target_level: null,
+              created_at: '2026-10-10T08:00:00.000Z',
+              updated_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (sql.includes('UPDATE public.career_goals')) {
+          expect(params?.[6]).toBe(roleAiMl);
+          return [];
+        }
+        if (sql.includes('FROM public.career_roles') && !sql.includes('ANY(')) {
+          return EXTENDED_ROLES;
+        }
+        return [];
+      });
+      aiExecuteMock.mockResolvedValueOnce(
+        buildAiResponse({
+          isTechnologyGoal: true,
+          clarificationNeeded: false,
+          clarificationRound: 2,
+          clarificationQuestion: null,
+          proposedRole: {
+            canonicalRoleId: roleAiMl,
+            name: 'AI/ML Engineering',
+          },
+          alternativeRoles: [],
+          suggestedLevel: 'mid',
+        }),
+      );
+      await service.answerClarification(USER_A, GOAL_1, {
+        answer: 'Backend developer',
       });
 
       // 16. Never substitute unrelated approvedRoles[0] when Data Engineering is not approved (only Mobile Development approved -> routes to clarification with null proposed_role)

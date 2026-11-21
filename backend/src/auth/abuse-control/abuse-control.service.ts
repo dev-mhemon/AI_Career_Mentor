@@ -608,19 +608,110 @@ export class AuthAbuseControl implements OnModuleDestroy {
   }
 
   /**
+   * Persists a non-secret, non-PII pre-provider password-reset operation record
+   * before calling GoTrue so uncertain provider outcomes can be reconciled safely.
+   */
+  async recordPasswordResetOperation(
+    userId: string,
+    record: {
+      operationId: string;
+      userId: string;
+      channel: 'email' | 'phone';
+      status:
+        'pending_provider_update' | 'provider_updated' | 'provider_uncertain';
+      fromAuthFallback: boolean;
+      needsChannelSync: boolean;
+      contactHash?: string;
+      startedAt: string;
+      updatedAt: string;
+    },
+    ttlSeconds = 86_400,
+  ): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:reset-op:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client
+          .withCommandOptions({ timeout })
+          .set(key, JSON.stringify(record), { EX: ttlSeconds }),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /** Reads any recorded non-secret password-reset operation state for reconciliation. */
+  async getPasswordResetOperation(userId: string): Promise<{
+    operationId: string;
+    userId: string;
+    channel: 'email' | 'phone';
+    status:
+      'pending_provider_update' | 'provider_updated' | 'provider_uncertain';
+    fromAuthFallback: boolean;
+    needsChannelSync: boolean;
+    contactHash?: string;
+    startedAt: string;
+    updatedAt: string;
+  } | null> {
+    if (!this.configuration || this.stopped) return null;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:reset-op:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      const raw = await this.withDeadline(
+        client.withCommandOptions({ timeout }).get(key),
+        timeout,
+      );
+      if (typeof raw !== 'string' || !raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      return null;
+    }
+  }
+
+  /** Clears a resolved or confirmed-rejected password-reset operation record. */
+  async clearPasswordResetOperation(userId: string): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:reset-op:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).del(key),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /**
    * Persists non-secret, non-PII unfinished password-reset cleanup or bootstrap metadata in Redis
-   * so incomplete local session revocation, provider session cleanup, or fallback account bootstrap
-   * can be reconciled without resubmitting an OTP.
+   * so incomplete local session revocation, provider session cleanup, fallback account bootstrap,
+   * or channel mapping sync can be reconciled without resubmitting an OTP.
    */
   async recordUnfinishedPasswordResetCleanup(
     userId: string,
     metadata: {
+      operationId?: string;
       localSyncPending: boolean;
       localSessionRevocationPending?: boolean;
       accountSyncPending?: boolean;
       fallbackBootstrapPending?: boolean;
+      channelMappingSyncPending?: boolean;
       goTrueRevocationPending: boolean;
+      providerUpdateUncertain?: boolean;
       channel: 'email' | 'phone';
+      contactHash?: string;
+      needsAuthConfirm?: boolean;
+      needsAuthContactSync?: boolean;
       recordedAt: string;
     },
     ttlSeconds = 86_400,
@@ -634,6 +725,57 @@ export class AuthAbuseControl implements OnModuleDestroy {
         client
           .withCommandOptions({ timeout })
           .set(key, JSON.stringify(metadata), { EX: ttlSeconds }),
+        timeout,
+      );
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+    }
+  }
+
+  /** Reads unfinished password-reset cleanup metadata for background/operator reconciliation. */
+  async getUnfinishedPasswordResetCleanup(userId: string): Promise<{
+    operationId?: string;
+    localSyncPending: boolean;
+    localSessionRevocationPending?: boolean;
+    accountSyncPending?: boolean;
+    fallbackBootstrapPending?: boolean;
+    channelMappingSyncPending?: boolean;
+    goTrueRevocationPending: boolean;
+    providerUpdateUncertain?: boolean;
+    channel: 'email' | 'phone';
+    contactHash?: string;
+    needsAuthConfirm?: boolean;
+    needsAuthContactSync?: boolean;
+    recordedAt: string;
+  } | null> {
+    if (!this.configuration || this.stopped) return null;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:reset-cleanup:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      const raw = await this.withDeadline(
+        client.withCommandOptions({ timeout }).get(key),
+        timeout,
+      );
+      if (typeof raw !== 'string' || !raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      if (this.client?.isOpen) this.client.destroy();
+      this.client = undefined;
+      return null;
+    }
+  }
+
+  /** Clears finished password-reset cleanup metadata once reconciliation completes. */
+  async clearUnfinishedPasswordResetCleanup(userId: string): Promise<void> {
+    if (!this.configuration || this.stopped) return;
+    const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
+    const key = `auth:v1:reset-cleanup:${userId}`;
+    try {
+      const client = await this.getConnectedClient();
+      await this.withDeadline(
+        client.withCommandOptions({ timeout }).del(key),
         timeout,
       );
     } catch {

@@ -811,9 +811,13 @@ describe("ResetPasswordForm", () => {
         screen.getByRole("heading", { name: /reset session expired/i }),
       ).toBeInTheDocument();
 
-      // Deferred resend fails after expiry -> stays expired, OTP field remains absent
+      // Deferred resend fails after expiry with 429 cooldown -> stays expired, persists cooldown for original contact
       await act(async () => {
-        resolveResend({ error: "Service temporarily unavailable." });
+        resolveResend({
+          error: "Too many attempts",
+          code: "RESEND_COOLDOWN_ACTIVE",
+          retryAfterSeconds: 45,
+        } as { success?: boolean; error?: string });
         await Promise.resolve();
       });
       expect(
@@ -822,9 +826,85 @@ describe("ResetPasswordForm", () => {
       expect(
         screen.queryByLabelText(/6-digit verification code/i),
       ).not.toBeInTheDocument();
+      const rawCooldown = window.sessionStorage.getItem(
+        "mentor_resend_cooldown_email_failrenew@example.com",
+      );
+      expect(rawCooldown).not.toBeNull();
+      expect(JSON.parse(rawCooldown!)).toMatchObject({
+        originalSeconds: 45,
+      });
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("disables Set New Password while resend is in flight and preserves entered OTP if resend fails", async () => {
+    seedActiveRecoveryDraft();
+    let resolveResend!: (val: { error?: string }) => void;
+    vi.mocked(forgotPasswordAction).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResend = resolve;
+        }),
+    );
+
+    render(<ResetPasswordForm />);
+    const otpInput = screen.getByLabelText(
+      /6-digit verification code/i,
+    ) as HTMLInputElement;
+    fireEvent.change(otpInput, { target: { value: "654321" } });
+
+    const resendBtn = await screen.findByRole("button", {
+      name: /^resend code$/i,
+    });
+    await waitFor(() => expect(resendBtn).toBeEnabled());
+    fireEvent.click(resendBtn);
+
+    const submitBtn = screen.getByRole("button", { name: /set new password/i });
+    expect(submitBtn).toBeDisabled();
+
+    await act(async () => {
+      resolveResend({ error: "Resend failed" });
+      await Promise.resolve();
+    });
+
+    expect(submitBtn).toBeEnabled();
+    expect(otpInput.value).toBe("654321");
+  });
+
+  it("displays backend pending message and blocks OTP resubmission when accountReadyForSignin is false", async () => {
+    seedActiveRecoveryDraft();
+    vi.mocked(resetPasswordAction).mockResolvedValueOnce({
+      success: true,
+      accountReadyForSignin: false,
+      cleanupStatus: "pending_account_sync",
+      otpConsumed: true,
+      error:
+        "Password was updated, but required sign-in provider mapping sync did not finish yet. Do not resubmit the reset code.",
+    });
+
+    render(<ResetPasswordForm />);
+    fireEvent.change(screen.getByLabelText(/6-digit verification code/i), {
+      target: { value: "123456" },
+    });
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPassw0rd!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "NewPassw0rd!" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /set new password/i }));
+    });
+
+    expect(
+      screen.getByText(/required sign-in provider mapping sync did not finish yet/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /set new password/i }),
+    ).toBeDisabled();
+    expect(mockClearVerificationDraft).toHaveBeenCalled();
   });
 
   it("keeps the reset action result visible when draft expires during an in-flight submission and blocks resubmission", async () => {

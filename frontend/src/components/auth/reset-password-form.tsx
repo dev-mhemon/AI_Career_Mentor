@@ -223,11 +223,20 @@ export function ResetPasswordForm() {
     loadVerificationDraft(null, Date.now(), "password_recovery");
   }, []);
 
+  const isOtpConsumedLocked = Boolean(
+    state?.otpConsumed || state?.accountReadyForSignin === false,
+  );
+
   // Transition cleanly to `'expired'` if the active session expires while the user is on the page.
   // If a reset submission is currently in flight, keep the form mounted so the action result
   // (e.g. password policy error or partial-completion notice) remains visible, while blocking new submits.
   useEffect(() => {
-    if (sessionStatus !== "active" || !draft?.expires_at || state?.success) {
+    if (
+      sessionStatus !== "active" ||
+      !draft?.expires_at ||
+      state?.success ||
+      isOtpConsumedLocked
+    ) {
       return;
     }
     const expiresMs = Date.parse(draft.expires_at);
@@ -245,17 +254,26 @@ export function ResetPasswordForm() {
     const remainingMs = Math.max(0, expiresMs - Date.now());
     const timer = setTimeout(expireNow, remainingMs);
     return () => clearTimeout(timer);
-  }, [sessionStatus, draft?.expires_at, state?.success]);
+  }, [sessionStatus, draft?.expires_at, state?.success, isOtpConsumedLocked]);
 
   useEffect(() => {
-    if (state?.success && handledSuccessStateRef.current !== state) {
+    if (
+      (state?.success || isOtpConsumedLocked) &&
+      handledSuccessStateRef.current !== state
+    ) {
       handledSuccessStateRef.current = state;
       clearCooldown(draft?.normalized_identifier ?? resolvedContact?.identifier);
       if (draft?.context === "password_recovery") {
         clearVerificationDraft();
       }
     }
-  }, [state, draft, clearCooldown, resolvedContact?.identifier]);
+  }, [
+    state,
+    isOtpConsumedLocked,
+    draft,
+    clearCooldown,
+    resolvedContact?.identifier,
+  ]);
 
   const setFieldError = useCallback(
     (field: string, error?: string) =>
@@ -315,8 +333,28 @@ export function ResetPasswordForm() {
       }
 
       if (result?.error) {
-        // If the old draft already expired while resend failed, stay in `'expired'` state.
+        // If the old draft already expired while resend failed, persist any resend cooldown
+        // for the original request contact before returning so the form stays in `'expired'` state.
         if (currentContactKey === null) {
+          if (isCooldownWaitResult(result)) {
+            startCooldown(
+              typeof result.retryAfterSeconds === "number" &&
+                result.retryAfterSeconds > 0
+                ? result.retryAfterSeconds
+                : 60,
+              undefined,
+              requestContact.identifier,
+            );
+          } else if (
+            typeof result.retryAfterSeconds === "number" &&
+            result.retryAfterSeconds > 0
+          ) {
+            startCooldown(
+              result.retryAfterSeconds,
+              undefined,
+              requestContact.identifier,
+            );
+          }
           return;
         }
         if (isCooldownWaitResult(result)) {
@@ -530,10 +568,15 @@ export function ResetPasswordForm() {
       <form
         action={formAction}
         noValidate
-        onFocusCapture={handleFormActivity}
-        onChangeCapture={handleFormActivity}
+        onFocusCapture={isOtpConsumedLocked ? undefined : handleFormActivity}
+        onChangeCapture={isOtpConsumedLocked ? undefined : handleFormActivity}
         onSubmit={(e) => {
-          if (isChecking || expiredDuringSubmit) {
+          if (
+            isChecking ||
+            expiredDuringSubmit ||
+            isResending ||
+            isOtpConsumedLocked
+          ) {
             e.preventDefault();
             return;
           }
@@ -579,7 +622,7 @@ export function ResetPasswordForm() {
             variant="otp_6"
             label="6-Digit Verification Code"
             required
-            readOnly={isPending}
+            readOnly={isPending || isOtpConsumedLocked}
             value={code}
             error={clientErrors.code ?? serverFieldError("code")}
             onChange={handleCodeChange}
@@ -598,7 +641,8 @@ export function ResetPasswordForm() {
                   !isCooldownHydrated ||
                   cooldown > 0 ||
                   isResending ||
-                  isPending
+                  isPending ||
+                  isOtpConsumedLocked
                 }
                 onClick={handleResend}
                 className={
@@ -649,7 +693,7 @@ export function ResetPasswordForm() {
             required
             minLength={8}
             maxLength={PASSWORD_MAX}
-            readOnly={isPending}
+            readOnly={isPending || isOtpConsumedLocked}
             value={password}
             error={clientErrors.new_password ?? serverFieldError("new_password")}
             onChange={handlePasswordChange}
@@ -667,7 +711,7 @@ export function ResetPasswordForm() {
           required
           minLength={8}
           maxLength={PASSWORD_MAX}
-          readOnly={isPending}
+          readOnly={isPending || isOtpConsumedLocked}
           value={confirm}
           error={
             clientErrors.confirm_new_password ??
@@ -677,13 +721,18 @@ export function ResetPasswordForm() {
           placeholder="Confirm new password"
         />
 
-        <AuthAlert result={visibleAlertState} />
+        <AuthAlert result={isOtpConsumedLocked ? state : visibleAlertState} />
 
         <Button
           type="submit"
           size="lg"
           fullWidth
-          disabled={isChecking || expiredDuringSubmit}
+          disabled={
+            isChecking ||
+            expiredDuringSubmit ||
+            isResending ||
+            isOtpConsumedLocked
+          }
           isLoading={isPending}
           loadingText="Resetting password…"
         >

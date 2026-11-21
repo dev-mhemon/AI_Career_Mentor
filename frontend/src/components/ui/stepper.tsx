@@ -57,15 +57,14 @@ export function Stepper({
   const clampedPercent = Math.round(boundedPercent);
   const resolvedValueNow =
     progressValueNow ??
-    Math.round(
-      progressValueMin +
-        ((progressValueMax - progressValueMin) * boundedPercent) / 100,
-    );
+    progressValueMin +
+      ((progressValueMax - progressValueMin) * boundedPercent) / 100;
   const resolvedProgressLabel =
     progressAriaLabel ?? `${title} (${stepCounterText})`;
 
   const stepList = (
     <ol
+      role="list"
       aria-label={!isInteractive ? ariaLabel : undefined}
       className="relative flex items-start justify-between"
     >

@@ -177,6 +177,7 @@ export function CareerProfileView({
     targetLevel: CareerLevel | null;
   } | null>(null);
   const clarifyingGoalRef = useRef(clarifyingGoal);
+  const goalsHeadingRef = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => {
     clarifyingGoalRef.current = clarifyingGoal;
   }, [clarifyingGoal]);
@@ -640,7 +641,9 @@ export function CareerProfileView({
             <div className="flex flex-wrap items-center gap-2.5">
               <h2
                 id="goals-heading"
-                className="text-[17px] font-semibold tracking-[-0.015em] text-text-primary"
+                ref={goalsHeadingRef}
+                tabIndex={-1}
+                className="text-[17px] font-semibold tracking-[-0.015em] text-text-primary focus:outline-none focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 Career goals
               </h2>
@@ -944,6 +947,7 @@ export function CareerProfileView({
           if (!pending) setDiscontinueTarget(null);
         }}
         disableClose={pending}
+        fallbackReturnFocusTo={goalsHeadingRef}
         size="sm"
       >
         <Modal.Header>

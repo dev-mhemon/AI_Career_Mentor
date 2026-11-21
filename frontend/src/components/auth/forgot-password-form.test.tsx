@@ -484,4 +484,25 @@ describe("ForgotPasswordForm", () => {
       vi.useRealTimers();
     }
   });
+
+  it("blocks submission with an actionable error when sessionStorage is unavailable so users do not dead-end on /reset-password", () => {
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("Storage disabled", "SecurityError");
+      });
+    try {
+      render(<ForgotPasswordForm />);
+      const input = screen.getByLabelText(/^email$/i);
+      fireEvent.change(input, { target: { value: "user@example.com" } });
+      fireEvent.submit(input.closest("form")!);
+
+      expect(forgotPasswordAction).not.toHaveBeenCalled();
+      expect(
+        screen.getByText(/browser session storage is unavailable/i),
+      ).toBeInTheDocument();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+  });
 });

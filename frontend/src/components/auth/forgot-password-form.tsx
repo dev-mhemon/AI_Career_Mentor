@@ -231,11 +231,18 @@ export function ForgotPasswordForm() {
             if (existing) {
               previousDraftRef.current = existing;
             }
-            saveVerificationDraft({
+            const savedDraft = saveVerificationDraft({
               channel,
               identifier: normalized,
               context: "password_recovery",
             });
+            if (!savedDraft) {
+              e.preventDefault();
+              setClientError(
+                "Browser session storage is unavailable. Enable storage or exit private mode to continue resetting your password.",
+              );
+              return;
+            }
             submittedCooldownTargetRef.current = { channel, identifier: normalized };
             const nowMs = Date.now();
             setPersistedCooldown(channel, nowMs + 60 * 1000, 60, nowMs, normalized);

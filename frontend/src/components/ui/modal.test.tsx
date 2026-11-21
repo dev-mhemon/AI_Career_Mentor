@@ -1,3 +1,4 @@
+import { StrictMode, createRef } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Modal } from './modal';
@@ -307,5 +308,137 @@ describe('Compound Component Modal', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('excludes hidden inputs from Tab trapping and traps Tab at document level while buttons are disabled', () => {
+    render(
+      <Modal open onClose={vi.fn()} disableClose>
+        <Modal.Header>
+          <Modal.Title>Pending Modal</Modal.Title>
+          <Modal.Close />
+        </Modal.Header>
+        <Modal.Body>
+          <input type="hidden" name="secret" value="1" />
+          <button type="button" disabled>
+            Saving...
+          </button>
+        </Modal.Body>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Pending Modal' });
+    // Simulate browser dropping focus to document.body when active button becomes disabled
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: false });
+    expect(dialog).toHaveFocus();
+  });
+
+  it('preserves autoFocus inside React StrictMode without premature opener restoration and restores opener on actual close', () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'StrictMode Opener';
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const { rerender } = render(
+      <StrictMode>
+        <Modal open onClose={vi.fn()}>
+          <Modal.Header>
+            <Modal.Title>StrictMode Dialog</Modal.Title>
+            <Modal.Close />
+          </Modal.Header>
+          <Modal.Body>
+            <input aria-label="StrictMode input" autoFocus />
+          </Modal.Body>
+        </Modal>
+      </StrictMode>,
+    );
+
+    expect(screen.getByLabelText('StrictMode input')).toHaveFocus();
+
+    rerender(
+      <StrictMode>
+        <Modal open={false} onClose={vi.fn()}>
+          <Modal.Header>
+            <Modal.Title>StrictMode Dialog</Modal.Title>
+            <Modal.Close />
+          </Modal.Header>
+          <Modal.Body>
+            <input aria-label="StrictMode input" autoFocus />
+          </Modal.Body>
+        </Modal>
+      </StrictMode>,
+    );
+
+    expect(opener).toHaveFocus();
+    document.body.removeChild(opener);
+  });
+
+  it('restores original opener on Cancel and falls back to fallbackReturnFocusTo when opener is removed from DOM', () => {
+    const fallbackRef = createRef<HTMLHeadingElement>();
+    const opener = document.createElement('button');
+    opener.textContent = 'Discontinue';
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const { rerender } = render(
+      <div>
+        <h2 ref={fallbackRef} tabIndex={-1}>
+          Career goals
+        </h2>
+        <Modal open onClose={vi.fn()} fallbackReturnFocusTo={fallbackRef}>
+          <Modal.Header>
+            <Modal.Title>Discontinue this goal?</Modal.Title>
+            <Modal.Close />
+          </Modal.Header>
+        </Modal>
+      </div>,
+    );
+
+    // Cancel path: opener still in DOM -> restores opener
+    rerender(
+      <div>
+        <h2 ref={fallbackRef} tabIndex={-1}>
+          Career goals
+        </h2>
+        <Modal open={false} onClose={vi.fn()} fallbackReturnFocusTo={fallbackRef}>
+          <Modal.Header>
+            <Modal.Title>Discontinue this goal?</Modal.Title>
+            <Modal.Close />
+          </Modal.Header>
+        </Modal>
+      </div>,
+    );
+    expect(opener).toHaveFocus();
+
+    // Confirm path: re-open, remove opener from DOM before close -> falls back to heading ref
+    rerender(
+      <div>
+        <h2 ref={fallbackRef} tabIndex={-1}>
+          Career goals
+        </h2>
+        <Modal open onClose={vi.fn()} fallbackReturnFocusTo={fallbackRef}>
+          <Modal.Header>
+            <Modal.Title>Discontinue this goal?</Modal.Title>
+            <Modal.Close />
+          </Modal.Header>
+        </Modal>
+      </div>,
+    );
+    document.body.removeChild(opener);
+
+    rerender(
+      <div>
+        <h2 ref={fallbackRef} tabIndex={-1}>
+          Career goals
+        </h2>
+        <Modal open={false} onClose={vi.fn()} fallbackReturnFocusTo={fallbackRef}>
+          <Modal.Header>
+            <Modal.Title>Discontinue this goal?</Modal.Title>
+            <Modal.Close />
+          </Modal.Header>
+        </Modal>
+      </div>,
+    );
+    expect(fallbackRef.current).toHaveFocus();
   });
 });

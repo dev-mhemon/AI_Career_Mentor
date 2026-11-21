@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager } from 'typeorm';
@@ -3273,7 +3274,15 @@ export class AuthService {
     let localSessionRevocationSucceeded = false;
     let accountSyncSucceeded = true;
     let postCommitNeedsChannelSync = false;
+    let postCommitNeedsAuthConfirm = false;
+    let postCommitNeedsAuthContactSync = false;
     let postCommitCurrentUser: typeof user | null = null;
+    const operationId = randomUUID();
+    const contactHash = this.computeRecoveryContactHash(
+      userId,
+      channel,
+      input.identifier,
+    );
     const fenceTtlMs = 15_000;
     const mutationFenceToken =
       (await this.abuse?.acquireUserMutationFence?.(userId, fenceTtlMs)) ??
@@ -3434,6 +3443,8 @@ export class AuthService {
                 return {
                   currentUser,
                   needsChannelSync,
+                  needsAuthConfirm,
+                  needsAuthContactSync,
                   confirmChannel,
                   syncContactIdentifier,
                 };
@@ -3452,16 +3463,89 @@ export class AuthService {
               );
             }
 
-            // Step 2: Execute GoTrue password update STRICTLY OUTSIDE any open DB transaction.
-            await this.updateGoTrueUserPassword(
+            // Persist a non-secret, non-PII pre-GoTrue recovery operation record so uncertain
+            // provider outcomes can be reconciled cleanly without storing secrets or raw contact PII.
+            const startedAt = new Date().toISOString();
+            await this.abuse?.recordPasswordResetOperation?.(userId, {
+              operationId,
               userId,
-              input.new_password,
-              preflight.confirmChannel,
-              preflight.syncContactIdentifier,
-            );
+              channel,
+              status: 'pending_provider_update',
+              fromAuthFallback:
+                preflight.currentUser.from_auth_fallback === true,
+              needsChannelSync: preflight.needsChannelSync,
+              contactHash,
+              startedAt,
+              updatedAt: startedAt,
+            });
+
+            // Step 2: Execute GoTrue password update STRICTLY OUTSIDE any open DB transaction.
+            try {
+              await this.updateGoTrueUserPassword(
+                userId,
+                input.new_password,
+                preflight.confirmChannel,
+                preflight.syncContactIdentifier,
+              );
+            } catch (providerErr) {
+              const isConfirmedRejection =
+                providerErr instanceof HttpException &&
+                providerErr.getStatus() >= 400 &&
+                providerErr.getStatus() < 500;
+              if (isConfirmedRejection) {
+                await this.abuse?.clearPasswordResetOperation?.(userId);
+              } else {
+                const uncertainAt = new Date().toISOString();
+                await this.abuse?.recordPasswordResetOperation?.(userId, {
+                  operationId,
+                  userId,
+                  channel,
+                  status: 'provider_uncertain',
+                  fromAuthFallback:
+                    preflight.currentUser.from_auth_fallback === true,
+                  needsChannelSync: preflight.needsChannelSync,
+                  contactHash,
+                  startedAt,
+                  updatedAt: uncertainAt,
+                });
+                await this.abuse?.recordUnfinishedPasswordResetCleanup?.(
+                  userId,
+                  {
+                    operationId,
+                    localSyncPending: false,
+                    localSessionRevocationPending: false,
+                    accountSyncPending: false,
+                    fallbackBootstrapPending: false,
+                    channelMappingSyncPending: false,
+                    goTrueRevocationPending: false,
+                    providerUpdateUncertain: true,
+                    channel,
+                    contactHash,
+                    needsAuthConfirm: preflight.needsAuthConfirm,
+                    needsAuthContactSync: preflight.needsAuthContactSync,
+                    recordedAt: uncertainAt,
+                  },
+                );
+              }
+              throw providerErr;
+            }
             committed = true;
+            await this.abuse?.recordPasswordResetOperation?.(userId, {
+              operationId,
+              userId,
+              channel,
+              status: 'provider_updated',
+              fromAuthFallback:
+                preflight.currentUser.from_auth_fallback === true,
+              needsChannelSync: preflight.needsChannelSync,
+              contactHash,
+              startedAt,
+              updatedAt: new Date().toISOString(),
+            });
             postCommitCurrentUser = preflight.currentUser;
             postCommitNeedsChannelSync = preflight.needsChannelSync;
+            postCommitNeedsAuthConfirm = preflight.needsAuthConfirm;
+            postCommitNeedsAuthContactSync = preflight.needsAuthContactSync;
             const requiresAccountSync =
               preflight.currentUser.from_auth_fallback === true ||
               preflight.needsChannelSync;
@@ -3580,19 +3664,29 @@ export class AuthService {
         localSessionRevocationSucceeded && accountSyncSucceeded;
 
       if (localCleanupFullySucceeded && goTrueCleanupSucceeded) {
+        await this.abuse?.clearPasswordResetOperation?.(userId);
+        await this.abuse?.clearUnfinishedPasswordResetCleanup?.(userId);
         return {
           password_reset: true as const,
         };
       }
 
-      // Persist non-secret, non-PII cleanup/bootstrap metadata so unfinished steps can be reconciled without resubmitting OTP.
+      // Persist non-secret, non-PII cleanup/bootstrap metadata so unfinished steps (including
+      // channel mapping sync via authoritative auth.users contact lookup verified by contactHash)
+      // can be reconciled via reconcilePendingPasswordResetCleanup without resubmitting OTP.
+      await this.abuse?.clearPasswordResetOperation?.(userId);
       await this.abuse?.recordUnfinishedPasswordResetCleanup?.(userId, {
+        operationId,
         localSyncPending: !localCleanupFullySucceeded,
         localSessionRevocationPending: !localSessionRevocationSucceeded,
         accountSyncPending: !accountSyncSucceeded,
         fallbackBootstrapPending,
+        channelMappingSyncPending: requiredChannelMappingPending,
         goTrueRevocationPending: !goTrueCleanupSucceeded,
         channel,
+        contactHash,
+        needsAuthConfirm: postCommitNeedsAuthConfirm,
+        needsAuthContactSync: postCommitNeedsAuthContactSync,
         recordedAt: new Date().toISOString(),
       });
 
@@ -3618,7 +3712,22 @@ export class AuthService {
       }
 
       if (localCleanupFullySucceeded && !goTrueCleanupSucceeded) {
-        throw goTrueCleanupError;
+        const isTimeout =
+          goTrueCleanupError instanceof HttpException &&
+          goTrueCleanupError.getStatus() === 504;
+        const message =
+          'Password was updated and local sessions were revoked, but auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.';
+        const details = [
+          {
+            field: 'password_reset',
+            code: 'PASSWORD_RESET_POST_COMMIT_CLEANUP_PENDING',
+            message,
+          },
+        ];
+        if (isTimeout) {
+          fail(504, 'PROVIDER_TIMEOUT', message, details, false);
+        }
+        fail(502, 'PROVIDER_ERROR', message, details, false);
       }
 
       if (!localCleanupFullySucceeded && !goTrueCleanupSucceeded) {
@@ -3628,10 +3737,17 @@ export class AuthService {
         const message = !localSessionRevocationSucceeded
           ? 'Password was updated, but local session sync and auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.'
           : 'Password was updated and local sessions were revoked, but account mapping sync and auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.';
+        const details = [
+          {
+            field: 'password_reset',
+            code: 'PASSWORD_RESET_POST_COMMIT_CLEANUP_PENDING',
+            message,
+          },
+        ];
         if (isTimeout) {
-          fail(504, 'PROVIDER_TIMEOUT', message, [], false);
+          fail(504, 'PROVIDER_TIMEOUT', message, details, false);
         }
-        fail(502, 'PROVIDER_ERROR', message, [], false);
+        fail(502, 'PROVIDER_ERROR', message, details, false);
       }
 
       // GoTrue password update & auth session revocation succeeded, OTP consumed, and application account is ready,
@@ -3639,6 +3755,7 @@ export class AuthService {
       return {
         password_reset: true as const,
         cleanup_status: 'partial' as const,
+        account_ready_for_signin: true as const,
         pending_cleanup: {
           local_session_revocation: !localSessionRevocationSucceeded,
           local_session_sync: !localSessionRevocationSucceeded,
@@ -3654,6 +3771,189 @@ export class AuthService {
       }
       await this.abuse?.releaseUserMutationFence?.(userId, mutationFenceToken);
     }
+  }
+
+  private computeRecoveryContactHash(
+    userId: string,
+    channel: 'email' | 'phone',
+    identifier: string,
+  ): string {
+    return createHash('sha256')
+      .update(
+        `reset-cleanup:${userId}:${channel}:${identifier.trim().toLowerCase()}`,
+      )
+      .digest('hex');
+  }
+
+  /**
+   * Consumable reconciliation retry path for unfinished password-reset cleanup metadata
+   * stored under `auth:v1:reset-cleanup:${userId}` (local session revocation, fallback account
+   * bootstrap, verified channel mapping sync, and GoTrue session revocation).
+   * Resolves the authoritative contact from `auth.users` (verified against `contactHash`) so
+   * Redis never stores raw PII.
+   */
+  async reconcilePendingPasswordResetCleanup(userId: string): Promise<{
+    found: boolean;
+    completed: boolean;
+    remaining: {
+      local_session_revocation: boolean;
+      account_bootstrap: boolean;
+      channel_mapping_sync: boolean;
+      provider_session_revocation: boolean;
+    };
+  }> {
+    const metadata =
+      await this.abuse?.getUnfinishedPasswordResetCleanup?.(userId);
+    if (!metadata) {
+      return {
+        found: false,
+        completed: true,
+        remaining: {
+          local_session_revocation: false,
+          account_bootstrap: false,
+          channel_mapping_sync: false,
+          provider_session_revocation: false,
+        },
+      };
+    }
+
+    let localSessionRevocationPending = Boolean(
+      metadata.localSessionRevocationPending,
+    );
+    let fallbackBootstrapPending = Boolean(metadata.fallbackBootstrapPending);
+    let channelMappingSyncPending = Boolean(
+      metadata.channelMappingSyncPending ??
+      (metadata.accountSyncPending && !fallbackBootstrapPending),
+    );
+    let goTrueRevocationPending = Boolean(metadata.goTrueRevocationPending);
+
+    if (localSessionRevocationPending) {
+      try {
+        await this.commitLocalSessionRevocation(
+          userId,
+          !fallbackBootstrapPending,
+        );
+        localSessionRevocationPending = false;
+      } catch (err) {
+        this.logger.error(
+          `Reconciliation local session revocation failed for user ${userId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+
+    if (fallbackBootstrapPending || channelMappingSyncPending) {
+      try {
+        const authRows = await this.database.query(
+          `SELECT id, email, phone, email_confirmed_at, phone_confirmed_at
+             FROM auth.users
+            WHERE id = $1
+              AND deleted_at IS NULL
+            LIMIT 1`,
+          [userId],
+        );
+        const authRow = Array.isArray(authRows) ? authRows[0] : undefined;
+        const authoritativeIdentifier =
+          metadata.channel === 'phone'
+            ? typeof authRow?.phone === 'string'
+              ? authRow.phone.trim()
+              : ''
+            : typeof authRow?.email === 'string'
+              ? authRow.email.trim().toLowerCase()
+              : '';
+        const hashMatches =
+          authoritativeIdentifier.length > 0 &&
+          (!metadata.contactHash ||
+            this.computeRecoveryContactHash(
+              userId,
+              metadata.channel,
+              authoritativeIdentifier,
+            ) === metadata.contactHash);
+
+        if (hashMatches) {
+          if (fallbackBootstrapPending) {
+            const fallbackUser = await this.findFallbackRecoveryAccount(
+              metadata.channel,
+              authoritativeIdentifier,
+            );
+            if (fallbackUser && fallbackUser.id === userId) {
+              await this.commitPostResetAccountSync(
+                userId,
+                fallbackUser,
+                metadata.channel,
+                authoritativeIdentifier,
+                true,
+              );
+              fallbackBootstrapPending = false;
+            }
+          } else if (channelMappingSyncPending) {
+            await this.commitPostResetAccountSync(
+              userId,
+              { id: userId, from_auth_fallback: false },
+              metadata.channel,
+              authoritativeIdentifier,
+              true,
+            );
+            channelMappingSyncPending = false;
+          }
+        }
+      } catch (err) {
+        this.logger.error(
+          `Reconciliation account/channel sync failed for user ${userId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+
+    if (goTrueRevocationPending) {
+      try {
+        await this.revokeGoTrueUserSessions(userId);
+        goTrueRevocationPending = false;
+      } catch (err) {
+        this.logger.error(
+          `Reconciliation GoTrue session revocation failed for user ${userId}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+
+    const completed =
+      !localSessionRevocationPending &&
+      !fallbackBootstrapPending &&
+      !channelMappingSyncPending &&
+      !goTrueRevocationPending &&
+      !metadata.providerUpdateUncertain;
+
+    if (completed) {
+      await this.abuse?.clearUnfinishedPasswordResetCleanup?.(userId);
+      await this.abuse?.clearPasswordResetOperation?.(userId);
+    } else {
+      await this.abuse?.recordUnfinishedPasswordResetCleanup?.(userId, {
+        ...metadata,
+        localSyncPending:
+          localSessionRevocationPending ||
+          fallbackBootstrapPending ||
+          channelMappingSyncPending,
+        localSessionRevocationPending,
+        accountSyncPending:
+          fallbackBootstrapPending || channelMappingSyncPending,
+        fallbackBootstrapPending,
+        channelMappingSyncPending,
+        goTrueRevocationPending,
+        recordedAt: new Date().toISOString(),
+      });
+    }
+
+    return {
+      found: true,
+      completed,
+      remaining: {
+        local_session_revocation: localSessionRevocationPending,
+        account_bootstrap: fallbackBootstrapPending,
+        channel_mapping_sync: channelMappingSyncPending,
+        provider_session_revocation: goTrueRevocationPending,
+      },
+    };
   }
 
   private async commitLocalSessionRevocation(

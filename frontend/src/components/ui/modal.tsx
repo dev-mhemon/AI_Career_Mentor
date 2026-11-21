@@ -101,6 +101,8 @@ interface ModalBaseProps {
   ariaLabel?: string;
   /** Optional explicit element ref to restore focus to when the modal closes. */
   returnFocusTo?: RefObject<HTMLElement | null>;
+  /** Optional fallback focus target when the original opener has been removed or disabled on close. */
+  fallbackReturnFocusTo?: RefObject<HTMLElement | null>;
   className?: string;
   loading?: boolean;
 }
@@ -143,7 +145,24 @@ const SIZE_CLASS: Record<ModalSize, string> = {
 };
 
 const FOCUSABLE =
-  'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  'a[href]:not([tabindex="-1"]),button:not([disabled]):not([tabindex="-1"]),input:not([disabled]):not([type="hidden"]):not([tabindex="-1"]),textarea:not([disabled]):not([tabindex="-1"]),select:not([disabled]):not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])';
+
+function getSequentialTabStops(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => {
+    if (el.hasAttribute('disabled') || el.tabIndex < 0) return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.closest('[inert], [hidden]')) return false;
+    if (el instanceof HTMLInputElement && el.type === 'hidden') return false;
+    return true;
+  });
+}
+
+function isFocusableRestoreTarget(el: HTMLElement | null | undefined): el is HTMLElement {
+  if (!el || !el.isConnected) return false;
+  if (el.hasAttribute('disabled')) return false;
+  if (el.closest('[inert], [hidden]')) return false;
+  return true;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Compound Subcomponents                                                     */
@@ -320,6 +339,7 @@ function ModalInner({
   size,
   ariaLabel,
   returnFocusTo,
+  fallbackReturnFocusTo,
   children,
   className,
   variant = 'confirm',
@@ -345,11 +365,13 @@ function ModalInner({
       : null,
   );
   const returnFocusToRef = useRef(returnFocusTo);
+  const fallbackReturnFocusToRef = useRef(fallbackReturnFocusTo);
   const openerElementRef = useRef(openerElement);
   useEffect(() => {
     returnFocusToRef.current = returnFocusTo;
+    fallbackReturnFocusToRef.current = fallbackReturnFocusTo;
     openerElementRef.current = openerElement;
-  }, [returnFocusTo, openerElement]);
+  }, [returnFocusTo, fallbackReturnFocusTo, openerElement]);
 
   const isCompound = children !== undefined;
   const resolvedSize: ModalSize = size ?? (isCompound ? 'md' : 'sm');
@@ -361,6 +383,12 @@ function ModalInner({
   const registeredTitleIdRef = useRef<string | null>(null);
   const registerTitleId = useCallback((id: string | null) => {
     registeredTitleIdRef.current = id;
+    if (panel.current) {
+      if (id) {
+        panel.current.setAttribute('aria-labelledby', id);
+        panel.current.removeAttribute('aria-label');
+      }
+    }
     setRegisteredTitleId(id);
   }, []);
   const [registeredDescriptionId, setRegisteredDescriptionId] = useState<
@@ -375,8 +403,19 @@ function ModalInner({
   }, [onClose, disableClose]);
 
   useEffect(() => {
-    if (panel.current && !panel.current.contains(document.activeElement)) {
-      panel.current.focus();
+    const panelNode = panel.current;
+    if (panelNode) {
+      // Ensure accessible name attribute is applied BEFORE focusing the dialog panel.
+      if (
+        registeredTitleIdRef.current &&
+        panelNode.getAttribute('aria-labelledby') !== registeredTitleIdRef.current
+      ) {
+        panelNode.setAttribute('aria-labelledby', registeredTitleIdRef.current);
+        panelNode.removeAttribute('aria-label');
+      }
+      if (!panelNode.contains(document.activeElement)) {
+        panelNode.focus();
+      }
     }
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -388,6 +427,26 @@ function ModalInner({
         if (!disableCloseRef.current) {
           onCloseRef.current();
         }
+        return;
+      }
+      if (e.key !== 'Tab' || !panel.current) return;
+      const nodes = getSequentialTabStops(panel.current);
+      if (!nodes.length) {
+        e.preventDefault();
+        panel.current.focus();
+        return;
+      }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement;
+      const onPanelOrOutside =
+        active === panel.current || !panel.current.contains(active);
+      if (e.shiftKey && (active === first || onPanelOrOutside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || onPanelOrOutside)) {
+        e.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener('keydown', onDocKeyDown);
@@ -395,9 +454,21 @@ function ModalInner({
     return () => {
       document.removeEventListener('keydown', onDocKeyDown);
       document.body.style.overflow = overflow;
-      const restoreTarget =
-        returnFocusToRef.current?.current ?? openerElementRef.current;
-      restoreTarget?.focus?.();
+      // Restore opener focus ONLY when the dialog actually unmounts/closes (DOM detached),
+      // NOT during React Strict Mode effect replay while `panelNode` remains connected.
+      if (!panelNode || !panelNode.isConnected) {
+        const explicitTarget = returnFocusToRef.current?.current;
+        const opener = openerElementRef.current;
+        const fallbackTarget = fallbackReturnFocusToRef.current?.current;
+        const restoreTarget = isFocusableRestoreTarget(explicitTarget)
+          ? explicitTarget
+          : isFocusableRestoreTarget(opener)
+            ? opener
+            : isFocusableRestoreTarget(fallbackTarget)
+              ? fallbackTarget
+              : null;
+        restoreTarget?.focus?.();
+      }
     };
   }, []);
 
@@ -409,26 +480,6 @@ function ModalInner({
       if (!disableClose) {
         onClose();
       }
-      return;
-    }
-    if (e.key !== 'Tab' || !panel.current) return;
-    const nodes = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-    if (!nodes.length) {
-      e.preventDefault();
-      panel.current.focus();
-      return;
-    }
-    const first = nodes[0];
-    const last = nodes[nodes.length - 1];
-    const active = document.activeElement;
-    const onPanelOrOutside =
-      active === panel.current || !panel.current.contains(active);
-    if (e.shiftKey && (active === first || onPanelOrOutside)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && (active === last || onPanelOrOutside)) {
-      e.preventDefault();
-      first.focus();
     }
   };
 

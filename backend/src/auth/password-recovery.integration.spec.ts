@@ -460,8 +460,13 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
               email: TEST_EMAIL,
               status: 'active',
               verified_contact: true,
-              provider_subject: TEST_USER_ID,
+              provider_subject: 'google-sub-123',
               verified_at: '2026-01-01T00:00:00Z',
+              is_oauth_provider: true,
+              has_verified_channel_provider: false,
+              has_verified_email_provider: false,
+              needs_auth_confirm: false,
+              needs_auth_contact_sync: false,
             },
           ];
         }
@@ -770,6 +775,7 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
       expect(partialRes).toEqual({
         password_reset: true,
         cleanup_status: 'partial',
+        account_ready_for_signin: true,
         pending_cleanup: {
           local_session_revocation: true,
           local_session_sync: true,
@@ -951,9 +957,156 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
           localSessionRevocationPending: false,
           accountSyncPending: true,
           fallbackBootstrapPending: false,
+          channelMappingSyncPending: true,
           goTrueRevocationPending: false,
+          contactHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         }),
       );
+
+      // Case 5: Consumable reconciliation retries pending channel mapping sync using authoritative auth.users contact verified against contactHash
+      const recordedCleanupMeta = (
+        recordCleanup.mock.calls[
+          recordCleanup.mock.calls.length - 1
+        ] as unknown[]
+      )?.[1];
+      const getCleanup = vi.fn(async () => recordedCleanupMeta);
+      const clearCleanup = vi.fn(async () => undefined);
+      const clearOp = vi.fn(async () => undefined);
+      const reconcileService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        {
+          ...abuseWithTracking,
+          getUnfinishedPasswordResetCleanup: getCleanup,
+          clearUnfinishedPasswordResetCleanup: clearCleanup,
+          clearPasswordResetOperation: clearOp,
+        } as unknown as AuthAbuseControl,
+        approvals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM auth.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              email_confirmed_at: '2026-01-01T00:00:00Z',
+              phone_confirmed_at: null,
+            },
+          ];
+        }
+        return [];
+      });
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => op({ query: database.query } as unknown as EntityManager),
+      );
+      const reconRes =
+        await reconcileService.reconcilePendingPasswordResetCleanup(
+          TEST_USER_ID,
+        );
+      expect(reconRes).toEqual({
+        found: true,
+        completed: true,
+        remaining: {
+          local_session_revocation: false,
+          account_bootstrap: false,
+          channel_mapping_sync: false,
+          provider_session_revocation: false,
+        },
+      });
+      expect(clearCleanup).toHaveBeenCalledWith(TEST_USER_ID);
+    });
+
+    it('records pre-GoTrue operation state, clears it on confirmed rejection, and marks provider_uncertain without revoking sessions on provider timeout', async () => {
+      const recordOp = vi.fn(async () => undefined);
+      const clearOp = vi.fn(async () => undefined);
+      const recordCleanup = vi.fn(async () => undefined);
+      const trackedService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        {
+          ...abuse,
+          recordPasswordResetOperation: recordOp,
+          clearPasswordResetOperation: clearOp,
+          recordUnfinishedPasswordResetCleanup: recordCleanup,
+        } as unknown as AuthAbuseControl,
+        approvals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      // Confirmed 422 rejection -> clears operation record, does NOT revoke sessions or mark uncertain
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          code: 422,
+          error_code: 'weak_password',
+          msg: 'weak',
+        }),
+      });
+      await expect(
+        trackedService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({ status: 422 });
+      expect(recordOp).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({ status: 'pending_provider_update' }),
+      );
+      expect(clearOp).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(recordCleanup).not.toHaveBeenCalled();
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
+
+      // Uncertain 504 timeout -> marks provider_uncertain and records cleanup metadata without revoking sessions
+      recordOp.mockClear();
+      clearOp.mockClear();
+      recordCleanup.mockClear();
+      const abortErr = new Error('aborted');
+      abortErr.name = 'AbortError';
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        abortErr,
+      );
+      await expect(
+        trackedService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({ status: 504 });
+      expect(recordOp).toHaveBeenLastCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({ status: 'provider_uncertain' }),
+      );
+      expect(recordCleanup).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({ providerUpdateUncertain: true }),
+      );
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
     });
 
     it('returns 504 PROVIDER_TIMEOUT when GoTrue session revocation times out after password commit', async () => {

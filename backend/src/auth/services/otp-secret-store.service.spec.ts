@@ -543,6 +543,21 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
     });
 
     it('uses phone channel for reset_password challenges targeting a phone number', async () => {
+      const secretStore = new Map<string, string>();
+      abuseControl.setOtpSecret.mockImplementation(
+        async (
+          uid: string,
+          digest: string,
+          _ttl: number,
+          purpose = 'verify_email',
+        ) => {
+          secretStore.set(`auth:v1:otp:secret:${purpose}:${uid}`, digest);
+        },
+      );
+      abuseControl.getOtpSecret.mockImplementation(
+        async (uid: string, purpose = 'verify_email') =>
+          secretStore.get(`auth:v1:otp:secret:${purpose}:${uid}`) ?? null,
+      );
       abuseControl.issueChallenge.mockResolvedValueOnce({
         expiresInSeconds: 600,
       });
@@ -554,15 +569,10 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         'reset_password',
       );
 
-      let capturedContact: unknown;
+      let capturedValid: boolean | undefined;
       abuseControl.verifyChallenge.mockImplementationOnce(
-        async (contact, _code, verifyFn) => {
-          capturedContact = contact;
-          abuseControl.getOtpSecret.mockResolvedValueOnce(
-            store.computeDigest(userId, phone, '123456', 'reset_password'),
-          );
-          const valid = await verifyFn('123456');
-          expect(valid).toBe(true);
+        async (_contact, _code, verifyFn) => {
+          capturedValid = await verifyFn('123456');
         },
       );
 
@@ -573,7 +583,14 @@ describe('OtpSecretStore (Candidate S1 Redis OTP Secret Store)', () => {
         undefined,
         'reset_password',
       );
-      expect(capturedContact).toEqual({ channel: 'phone', identifier: phone });
+      expect(abuseControl.verifyChallenge).toHaveBeenCalledWith(
+        { channel: 'phone', identifier: phone },
+        '123456',
+        expect.any(Function),
+        `auth:v1:otp:secret:reset_password:${userId}`,
+        'reset_password',
+      );
+      expect(capturedValid).toBe(true);
     });
   });
 });

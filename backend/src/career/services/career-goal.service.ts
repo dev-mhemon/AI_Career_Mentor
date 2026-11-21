@@ -585,8 +585,12 @@ export class CareerGoalService {
     return null;
   }
 
+  private normalizeApostrophes(text: string): string {
+    return text.replace(/[\u2018\u2019\u2032]/g, "'");
+  }
+
   private normalizeSeparatorsPreservingClauses(text: string): string {
-    return text
+    return this.normalizeApostrophes(text)
       .trim()
       .replace(/\s*[/&_]+\s*/g, ' ')
       .replace(/(?<=[\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu, ' ')
@@ -594,7 +598,7 @@ export class CareerGoalService {
   }
 
   private normalizePresetRoleText(text: string): string {
-    return text
+    return this.normalizeApostrophes(text)
       .trim()
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
@@ -608,14 +612,16 @@ export class CareerGoalService {
   }
 
   /**
-   * Splits a goal statement into individual clauses on punctuation and coordinating/contrast
-   * boundaries (`and`, `but`, `however`, `whereas`, `while`, `yet`) while keeping exclusion
-   * phrases (`anything but`, `everything but`, `all but`, `nothing but`, `anyone but`) intact.
+   * Splits a goal statement into individual clauses on sentence/clause punctuation and
+   * coordinating/contrast boundaries (`and`, `but`, `however`, `whereas`, `while`, `yet`)
+   * while preserving periods inside dotted tech names (`Node.js`, `Next.js`, `Vue.js`, `.NET`)
+   * and keeping exclusion phrases (`anything but`, `everything but`, `all but`, `nothing but`,
+   * `anyone but`) intact.
    */
   private splitIntoClausesPreservingExclusions(text: string): string[] {
-    return text
+    return this.normalizeApostrophes(text)
       .split(
-        /[.!?;,]+|\b(?:however|whereas|while|yet|and)\b|(?<!\b(?:anything|everything|all|nothing|anyone)\s)\bbut\b/gi,
+        /(?:\.(?!(?:js|net)\b)|[!?;,])+|\b(?:however|whereas|while|yet|and)\b|(?<!\b(?:anything|everything|all|nothing|anyone)\s)\bbut\b/gi,
       )
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
@@ -626,9 +632,10 @@ export class CareerGoalService {
     primaryTarget: string;
     matchStart: number;
   } | null {
+    const normalizedClause = this.normalizeApostrophes(clause).trim();
     const match =
       /(?:^|\s)(?:i\s+)?(?:(?:do\s+not|don't|dont|did\s+not|didn't|will\s+not|won't|would\s+not|wouldn't|never)\s+)?(?:want\s+to\s+(?:become|be|work\s+as|transition\s+(?:to|into)|switch\s+to|move\s+into|pursue)|would\s+like\s+to\s+(?:become|be|work\s+as)|(?:my\s+)?goal\s+is\s+(?:to\s+(?:become|be|work\s+as)\s+)?|(?:i\s+am\s+|i'm\s+)?(?:aiming|looking|planning|trying|hoping)\s+to\s+(?:become|be|work\s+as)|become|becoming|aspiring|transition(?:ing)?\s+(?:to|into)|switch(?:ing)?\s+to|career\s+(?:as|in)|work\s+as)\s+(.+)$/i.exec(
-        clause.trim(),
+        normalizedClause,
       );
     if (!match?.[1]) {
       return null;
@@ -643,7 +650,7 @@ export class CareerGoalService {
     const primaryTarget = trailingModifierMatch
       ? fullTarget.slice(0, trailingModifierMatch.index).trim()
       : fullTarget;
-    const matchStart = clause.indexOf(fullTarget, match.index);
+    const matchStart = normalizedClause.indexOf(fullTarget, match.index);
     return {
       fullTarget,
       primaryTarget: primaryTarget || fullTarget,
@@ -656,7 +663,8 @@ export class CareerGoalService {
     matchIndex: number,
     matchLength: number,
   ): boolean {
-    const before = clause.slice(0, matchIndex);
+    const normalizedClause = this.normalizeApostrophes(clause);
+    const before = normalizedClause.slice(0, matchIndex);
     const hasLeadingNegation =
       /\b(?:not|no|never|don't|dont|do\s+not|doesn't|does\s+not|didn't|did\s+not|won't|will\s+not|wouldn't|would\s+not|can't|cannot|rather\s+than|instead\s+of|without|except|anything\s+but|everything\s+but|all\s+but|nothing\s+but|anyone\s+but|stop\s+being|quit|leave|leaving|avoid|hate|dislike)\b/i.test(
         before,
@@ -665,7 +673,7 @@ export class CareerGoalService {
       return true;
     }
 
-    const after = clause.slice(matchIndex + matchLength);
+    const after = normalizedClause.slice(matchIndex + matchLength);
     const hasTrailingNegation =
       /^\s*(?:is|are|was|were|feels?|seems?|looks?|sounds?)?\s*(?:not\s+(?:for\s+me|what\s+i\s+want|my\s+goal|my\s+thing|something\s+i\s+want|interesting|right\s+for\s+me|the\s+path\s+for\s+me)|isn't\s+(?:for\s+me|what\s+i\s+want|my\s+goal|my\s+thing|right\s+for\s+me)|aren't\s+(?:for\s+me|what\s+i\s+want)|no\s+longer\s+(?:my\s+goal|interests?\s+me)|is\s+not\b|isn't\b|is\s+never\b)/i.test(
         after,
@@ -829,7 +837,53 @@ export class CareerGoalService {
       return null;
     }
 
-    // No explicit career-intent verb: evaluate each clause independently (e.g. "Data analyst", "Frontend").
+    // No explicit career-intent verb:
+    // For scope recovery (roleTargetsOnly=true), restrict fallback strictly to standalone
+    // role labels (e.g. "Data analyst", "Frontend", "Junior backend developer") so background
+    // statements ("I am a backend developer and want to open a bakery") remain OUT_OF_SCOPE_GOAL.
+    if (options?.roleTargetsOnly) {
+      if (clauses.length !== 1) {
+        return null;
+      }
+      const singleClause = clauses[0];
+      if (nonTechOverride.test(singleClause)) {
+        return null;
+      }
+      const cleanedStandalone = singleClause
+        .replace(
+          /^(?:a|an|the|junior|mid(?:\s+level)?|senior|entry\s+level)\s+/i,
+          '',
+        )
+        .replace(
+          /\s+(?:role|job|position|track|career|path|please)[.!?]*$/i,
+          '',
+        )
+        .replace(/[.!?]+$/, '')
+        .trim();
+      if (!cleanedStandalone) {
+        return null;
+      }
+      for (const rule of roleTargetRules) {
+        for (const match of cleanedStandalone.matchAll(rule.pattern)) {
+          if (match[0].length === cleanedStandalone.length) {
+            const matchIdxInClause = singleClause
+              .toLowerCase()
+              .indexOf(cleanedStandalone.toLowerCase());
+            if (
+              !this.isMatchNegatedInClause(
+                singleClause,
+                matchIdxInClause >= 0 ? matchIdxInClause : 0,
+                cleanedStandalone.length,
+              )
+            ) {
+              return rule.slug;
+            }
+          }
+        }
+      }
+      return null;
+    }
+
     for (const clause of clauses) {
       if (nonTechOverride.test(clause)) {
         continue;
@@ -895,56 +949,172 @@ export class CareerGoalService {
     return exactPresets.has(normalized);
   }
 
-  private isClearTechnologyCareerTarget(text: string): boolean {
-    if (this.isExactTechnologyPresetRole(text)) {
-      return true;
+  private isTargetRoleClarificationQuestion(
+    question: string | null | undefined,
+  ): boolean {
+    if (!question || !question.trim()) {
+      return false;
     }
+    const normalized = this.normalizeApostrophes(question).trim();
+    const asksTargetRole =
+      /\b(target\s+(?:role|track|career|path)|which\s+(?:technology\s+|tech\s+|approved\s+)?(?:role|track|career|path|area|specialization|discipline)|what\s+(?:role|career|track|job|path)\s+(?:do\s+you\s+want|are\s+you\s+(?:aiming|targeting|interested|pursuing)|would\s+you\s+like)|want\s+to\s+(?:become|pursue|focus\s+on|specialize\s+in)|prefer\s+to\s+(?:focus|pursue|become))\b/i.test(
+        normalized,
+      );
+    const asksBackgroundOrLevel =
+      /\b(current\s+(?:role|job|title|position)|currently\s+(?:work|working|do|doing)|your\s+background|years?\s+of\s+experience|experience\s+level|current\s+skills?|skills?\s+you\s+(?:have|know)|target\s+level|career\s+level|junior\s*,?\s*mid\s*(?:,?\s*or)?\s*senior)\b/i.test(
+        normalized,
+      );
+    if (asksBackgroundOrLevel && !asksTargetRole) {
+      return false;
+    }
+    return asksTargetRole;
+  }
+
+  /**
+   * Resolves a clear, unambiguous deterministic preset role slug directly from `text`.
+   * Returns `null` when the text expresses competing role options (e.g. "frontend developer, or a backend developer")
+   * or has no exact preset target.
+   */
+  private resolveClearTechnologyPresetSlug(
+    text: string,
+    options?: { requireExplicitTargetIntent?: boolean },
+  ): string | null {
     const normalized = this.normalizeSeparatorsPreservingClauses(text);
+    if (!normalized) {
+      return null;
+    }
+
+    // Standalone exact preset role (e.g. "Data analyst", "Backend developer")
+    if (this.isExactTechnologyPresetRole(normalized)) {
+      if (options?.requireExplicitTargetIntent) {
+        return null;
+      }
+      return this.inferCanonicalSlugFromText(normalized, {
+        roleTargetsOnly: true,
+      });
+    }
+
     const clauses = this.splitIntoClausesPreservingExclusions(normalized);
+    const matchedPresetSlugs = new Set<string>();
+    const competingTargetSlugs = new Set<string>();
+
+    const collectDisjunctionRoleSlugs = (segment: string) => {
+      const alternatives = segment
+        .split(/\b(?:or|vs\.?|versus)\b/gi)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+      for (const alt of alternatives) {
+        const cleanedAlt = alt
+          .replace(/^(?:maybe|perhaps|either|a|an|the)\s+/i, '')
+          .replace(
+            /\s+(?:in\s+(?:tech|technology|bangladesh|the\s+future|the\s+industry)|someday|soon|one\s+day|please)[.!?]*$/i,
+            '',
+          )
+          .replace(/[.!?]+$/, '')
+          .trim();
+        const slug = this.inferCanonicalSlugFromText(cleanedAlt, {
+          roleTargetsOnly: true,
+        });
+        if (slug) {
+          competingTargetSlugs.add(slug);
+        }
+      }
+    };
+
     for (const clause of clauses) {
       const intent = this.extractClauseCareerIntent(clause);
-      if (!intent) {
-        continue;
-      }
-      if (
-        this.isMatchNegatedInClause(
-          clause,
-          intent.matchStart,
-          intent.primaryTarget.length,
-        )
-      ) {
-        continue;
-      }
-      const cleanedTarget = intent.primaryTarget
-        .replace(/^(?:a|an|the)\s+/i, '')
-        .replace(
-          /\s+(?:in\s+(?:tech|technology|bangladesh|the\s+future|the\s+industry)|someday|soon|one\s+day|please)[.!?]*$/i,
-          '',
-        )
-        .replace(/[.!?]+$/, '')
-        .trim();
-      if (this.isExactTechnologyPresetRole(cleanedTarget)) {
-        return true;
+      if (intent) {
+        if (
+          this.isMatchNegatedInClause(
+            clause,
+            intent.matchStart,
+            intent.primaryTarget.length,
+          )
+        ) {
+          continue;
+        }
+        // Check if primaryTarget itself lists competing alternatives ("frontend developer or backend developer")
+        if (/\b(?:or|vs\.?|versus)\b/i.test(intent.primaryTarget)) {
+          collectDisjunctionRoleSlugs(intent.primaryTarget);
+          continue;
+        }
+        const cleanedTarget = intent.primaryTarget
+          .replace(/^(?:a|an|the)\s+/i, '')
+          .replace(
+            /\s+(?:in\s+(?:tech|technology|bangladesh|the\s+future|the\s+industry)|someday|soon|one\s+day|please)[.!?]*$/i,
+            '',
+          )
+          .replace(/[.!?]+$/, '')
+          .trim();
+        if (this.isExactTechnologyPresetRole(cleanedTarget)) {
+          const presetSlug = this.inferCanonicalSlugFromText(cleanedTarget, {
+            roleTargetsOnly: true,
+          });
+          if (presetSlug) {
+            matchedPresetSlugs.add(presetSlug);
+            competingTargetSlugs.add(presetSlug);
+          }
+        } else {
+          const roleSlug = this.inferCanonicalSlugFromText(cleanedTarget, {
+            roleTargetsOnly: true,
+          });
+          if (roleSlug) {
+            competingTargetSlugs.add(roleSlug);
+          }
+        }
+      } else if (/^\s*(?:or|vs\.?|versus)\b/i.test(clause)) {
+        // Disjunction clause following a comma/punctuation (e.g. "I want to become a frontend developer, or a backend developer")
+        collectDisjunctionRoleSlugs(clause);
       }
     }
-    return false;
+
+    // Preserve clarification whenever the user offered competing distinct role options.
+    if (competingTargetSlugs.size > 1 || matchedPresetSlugs.size !== 1) {
+      return null;
+    }
+
+    return [...matchedPresetSlugs][0] ?? null;
+  }
+
+  private isTechnologyGoalInScope(
+    goalText: string,
+    aiOutput: GoalInterpretationOutput,
+  ): boolean {
+    if (aiOutput.isTechnologyGoal) {
+      return true;
+    }
+    return (
+      this.inferCanonicalSlugFromText(goalText, { roleTargetsOnly: true }) !==
+      null
+    );
   }
 
   private coerceTechnologyGoalInterpretation(
     goalText: string,
     aiOutput: GoalInterpretationOutput,
     approvedRoles: readonly CareerRoleRow[],
+    options?: { clarificationQuestion?: string | null },
   ): GoalInterpretationOutput {
-    // Scope recovery when AI rejected (isTechnologyGoal === false) requires an affirmative
-    // technology career role target (never incidental tools like Docker or trailing tool clauses).
-    const inferredSlug = this.inferCanonicalSlugFromText(goalText, {
-      roleTargetsOnly: !aiOutput.isTechnologyGoal,
+    const requireExplicitTargetIntent =
+      options?.clarificationQuestion !== undefined &&
+      !this.isTargetRoleClarificationQuestion(options.clarificationQuestion);
+
+    const clearPresetSlug = this.resolveClearTechnologyPresetSlug(goalText, {
+      requireExplicitTargetIntent,
     });
+    const isClearPresetTarget = clearPresetSlug !== null;
+
+    // Scope recovery when AI rejected (isTechnologyGoal === false) requires an affirmative
+    // technology career role target (never incidental tools or background statements).
+    const inferredSlug =
+      clearPresetSlug ??
+      this.inferCanonicalSlugFromText(goalText, {
+        roleTargetsOnly: !aiOutput.isTechnologyGoal,
+      });
     if (!inferredSlug) {
       return aiOutput;
     }
 
-    const isClearPresetTarget = this.isClearTechnologyCareerTarget(goalText);
     const matchedAiPrimary = this.matchApprovedCareerRole(
       approvedRoles,
       aiOutput.proposedRole,
@@ -957,9 +1127,12 @@ export class CareerGoalService {
           r.slug.trim().toLowerCase() === slug.toLowerCase(),
       );
 
-    const deterministicRole = findRoleBySlug(inferredSlug);
+    // Use the exact matched preset slug for clear preset overrides so a tool hint in
+    // another clause (e.g. "I want a career in AWS; I want to become a frontend developer")
+    // never hijacks the override.
+    const deterministicRole = findRoleBySlug(clearPresetSlug ?? inferredSlug);
     const isDataAnalyticsPreset =
-      isClearPresetTarget && inferredSlug === 'data-engineering';
+      isClearPresetTarget && clearPresetSlug === 'data-engineering';
 
     if (aiOutput.isTechnologyGoal) {
       if (isClearPresetTarget && deterministicRole) {
@@ -1568,12 +1741,7 @@ export class CareerGoalService {
         true,
       );
     }
-    const aiOutput = this.coerceTechnologyGoalInterpretation(
-      goalText,
-      aiResponse.output,
-      preflight.roles,
-    );
-    if (!aiOutput.isTechnologyGoal) {
+    if (!this.isTechnologyGoalInScope(goalText, aiResponse.output)) {
       fail(
         422,
         'OUT_OF_SCOPE_GOAL',
@@ -1600,6 +1768,11 @@ export class CareerGoalService {
         }
 
         const approvedRoles = await this.loadApprovedCareerRoles(db);
+        const aiOutput = this.coerceTechnologyGoalInterpretation(
+          goalText,
+          aiResponse.output!,
+          approvedRoles,
+        );
         const resolved = this.resolveInterpretationAgainstCatalog(
           aiOutput,
           approvedRoles,
@@ -1951,14 +2124,9 @@ export class CareerGoalService {
         true,
       );
     }
-    // Evaluate ONLY the current clarification answer for deterministic scope recovery so
+    // Evaluate ONLY the current clarification answer for catalog-independent scope recovery so
     // older historical goal text never overrides an out-of-scope clarification answer.
-    const aiOutput = this.coerceTechnologyGoalInterpretation(
-      answer,
-      aiResponse.output,
-      preflight.roles,
-    );
-    if (!aiOutput.isTechnologyGoal) {
+    if (!this.isTechnologyGoalInScope(answer, aiResponse.output)) {
       fail(
         422,
         'OUT_OF_SCOPE_GOAL',
@@ -2030,6 +2198,12 @@ export class CareerGoalService {
         const forceConfirmation = newRound >= MAX_CLARIFICATION_ROUNDS;
 
         const approvedRoles = await this.loadApprovedCareerRoles(db);
+        const aiOutput = this.coerceTechnologyGoalInterpretation(
+          answer,
+          aiResponse.output!,
+          approvedRoles,
+          { clarificationQuestion: lockedGoal.clarification_question ?? null },
+        );
         const resolved = this.resolveInterpretationAgainstCatalog(
           aiOutput,
           approvedRoles,
@@ -2307,12 +2481,7 @@ export class CareerGoalService {
         true,
       );
     }
-    const aiOutput = this.coerceTechnologyGoalInterpretation(
-      goalText,
-      aiResponse.output,
-      preflight.roles,
-    );
-    if (!aiOutput.isTechnologyGoal) {
+    if (!this.isTechnologyGoalInScope(goalText, aiResponse.output)) {
       fail(
         422,
         'OUT_OF_SCOPE_GOAL',
@@ -2364,6 +2533,11 @@ export class CareerGoalService {
         }
 
         const approvedRoles = await this.loadApprovedCareerRoles(db);
+        const aiOutput = this.coerceTechnologyGoalInterpretation(
+          goalText,
+          aiResponse.output!,
+          approvedRoles,
+        );
         const resolved = this.resolveInterpretationAgainstCatalog(
           aiOutput,
           approvedRoles,

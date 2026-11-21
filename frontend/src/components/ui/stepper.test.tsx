@@ -96,8 +96,8 @@ describe('Stepper reusable UI primitive', () => {
     expect(onStepClick).not.toHaveBeenCalled();
   });
 
-  it('maps percentComplete onto custom [progressValueMin, progressValueMax] when progressValueNow is omitted', () => {
-    render(
+  it('maps percentComplete onto custom [progressValueMin, progressValueMax] without integer rounding when progressValueNow is omitted', () => {
+    const { rerender } = render(
       <Stepper
         steps={FIVE_STEPS}
         title="Preferences"
@@ -112,9 +112,34 @@ describe('Stepper reusable UI primitive', () => {
     expect(progressbar).toHaveAttribute('aria-valuemin', '1');
     expect(progressbar).toHaveAttribute('aria-valuemax', '5');
     expect(progressbar).toHaveAttribute('aria-valuenow', '3');
+
+    rerender(
+      <Stepper
+        steps={FIVE_STEPS}
+        title="Preferences"
+        stepCounterText="Step 2 of 5"
+        percentComplete={25}
+        progressValueMin={1}
+        progressValueMax={5}
+      />,
+    );
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
+
+    rerender(
+      <Stepper
+        steps={FIVE_STEPS}
+        title="Preferences"
+        stepCounterText="Step 2 of 5"
+        percentComplete={37.5}
+        progressValueMin={1}
+        progressValueMax={5}
+      />,
+    );
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2.5');
+    expect(screen.getByText('38% Complete')).toBeInTheDocument();
   });
 
-  it('renders static <ol> without <nav> or <button> elements when onStepClick is omitted', () => {
+  it('renders static <ol role="list"> without <nav> or <button> elements when onStepClick is omitted', () => {
     render(
       <Stepper
         steps={TWO_STEPS}
@@ -133,6 +158,7 @@ describe('Stepper reusable UI primitive', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
 
     const list = screen.getByRole('list', { name: 'Add career goal steps' });
+    expect(list).toHaveAttribute('role', 'list');
     const items = within(list).getAllByRole('listitem');
     expect(items).toHaveLength(2);
     expect(items[0]).not.toHaveAttribute('aria-current');

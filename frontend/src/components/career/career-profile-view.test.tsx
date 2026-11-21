@@ -161,16 +161,12 @@ describe('Screen 14 — CareerProfileView', () => {
     const skillsDialog = screen.getByRole('dialog', { name: 'Edit skills' });
     const skillInput = within(skillsDialog).getByLabelText('Add a skill');
 
-    // Adding an unrecognized custom skill ("Boss") immediately calls interpretSkillAlias, does NOT add "Boss" to the chip list, renders NO Remove button, and shows inline warning message
+    // Adding an unrecognized custom skill ("Boss") resolves locally without calling EP-P05 with an empty UUID,
+    // does NOT add "Boss" to the chip list, renders NO Remove button, and shows inline warning message
     fireEvent.change(skillInput, { target: { value: 'Boss' } });
     fireEvent.keyDown(skillInput, { key: 'Enter' });
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith('interpretSkillAlias', {
-        input: 'Boss',
-        skill_id: '',
-      }),
-    );
     expect(await within(skillsDialog).findByText('“Boss” is not a recognized skill.')).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith('interpretSkillAlias', expect.anything());
     const chipList = within(skillsDialog).getByRole('list', { name: 'Your skills' });
     expect(within(chipList).queryByText('Boss')).not.toBeInTheDocument();
     expect(within(skillsDialog).queryByRole('button', { name: /remove “?boss”?/i })).not.toBeInTheDocument();

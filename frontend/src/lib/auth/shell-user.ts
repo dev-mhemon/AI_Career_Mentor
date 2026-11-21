@@ -1,7 +1,11 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { getProfile, type UserResponse } from '@/lib/api/client';
+import {
+  DEFAULT_AUTH_STATE_TIMEOUT_MS,
+  getProfile,
+  type UserResponse,
+} from '@/lib/api/client';
 import { normalizeBdPhone, normalizeEmail } from '@/lib/validation/auth-schemas';
 import { isNonSyntheticEmail, normalizeFullName } from '@/lib/validation/profile-schemas';
 import type { ShellUserInfo } from './user-display';
@@ -138,9 +142,9 @@ export type FastShellSessionResult =
   | AuthenticatedFastShellSession;
 
 /**
- * Non-blocking cookie session reader for the persistent `(app)` shell layout.
- * Never performs backend HTTP calls so Sidebar and Header mount immediately without
- * waiting on slow per-page profile/account requests.
+ * Fast cookie-session reader for the persistent `(app)` shell layout.
+ * Bounds its optional `getProfile` role enrichment with `DEFAULT_AUTH_STATE_TIMEOUT_MS`
+ * (covering headers and body consumption) and falls back cleanly to session metadata on timeout.
  */
 export async function getFastSessionShellUser(): Promise<FastShellSessionResult> {
   try {
@@ -165,7 +169,9 @@ export async function getFastSessionShellUser(): Promise<FastShellSessionResult>
 
     let profileRole: string | null = null;
     if (session.access_token) {
-      const profileRes = await getProfile(session.access_token).catch(() => null);
+      const profileRes = await getProfile(session.access_token, {
+        timeoutMs: DEFAULT_AUTH_STATE_TIMEOUT_MS,
+      }).catch(() => null);
       if (profileRes?.current_role?.trim()) {
         profileRole = profileRes.current_role.trim();
       }

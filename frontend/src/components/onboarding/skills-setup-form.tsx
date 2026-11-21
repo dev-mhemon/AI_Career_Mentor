@@ -51,6 +51,11 @@ interface SkillEntry {
 }
 
 interface QueuedUnresolvedSkill extends UnresolvedSkillDTO {
+  /**
+   * `'server'` items come from EP-P01/EP-P02 and carry real skill UUIDs confirmed via EP-P05.
+   * `'local_catalog'` items come from client-side catalog lookup before save and never invoke EP-P05.
+   */
+  source: 'server' | 'local_catalog';
   /** True only for an inline custom entry typed by the user; cleared when the user edits/replaces it. */
   clearOnQueryEdit?: boolean;
 }
@@ -77,9 +82,13 @@ function normalizeUnresolvedQueue(
         )
       : [];
     if (validCandidates.length > 0) {
-      ambiguous.push({ input: trimmed, candidates: validCandidates });
+      ambiguous.push({
+        input: trimmed,
+        candidates: validCandidates,
+        source: 'server',
+      });
     } else {
-      unrecognized.push({ input: trimmed, candidates: [] });
+      unrecognized.push({ input: trimmed, candidates: [], source: 'server' });
     }
   }
   return [...ambiguous, ...unrecognized];
@@ -167,9 +176,10 @@ const CANDIDATE_PILL_CLASS =
 
 /**
  * Screen 08 (`/onboarding`, Step 2 of 5) and standalone/modal skills editor (`/career-profile`).
- * Uses `MultiSelectCombobox` over the approved skill catalog with immediate read-only validation
- * (`interpretSkillAlias`, EP-P05) for custom non-catalog entries. Unrecognized entries are never
- * added to the chip list and instead display a concise inline message.
+ * Uses `MultiSelectCombobox` over the approved skill catalog with immediate local catalog
+ * matching for custom entries. Unrecognized entries are never added to the chip list and
+ * instead display a concise inline message; EP-P05 (`interpretSkillAlias`) is invoked
+ * strictly when confirming a server-returned candidate with its real skill UUID.
  */
 export function SkillsSetupForm({
   initialProfile,
@@ -201,7 +211,6 @@ export function SkillsSetupForm({
       Boolean(initialProfile?.existing_skills_none) &&
       (initialProfile?.existing_skills.length ?? 0) === 0,
   );
-  const [isValidating, setIsValidating] = useState(false);
   const [unresolvedQueue, setUnresolvedQueue] = useState<
     QueuedUnresolvedSkill[]
   >(() => normalizeUnresolvedQueue(initialProfile?.unresolved_skills));
@@ -230,9 +239,6 @@ export function SkillsSetupForm({
   const entriesRef = useRef<SkillEntry[]>(entries);
   const noneRef = useRef<boolean>(none);
   const saveRequestTokenRef = useRef(0);
-  const lookupSessionRef = useRef(0);
-  const nextLookupIdRef = useRef(0);
-  const inFlightLookupIdsRef = useRef<Set<number>>(new Set());
 
   function commitEntries(next: SkillEntry[]) {
     entriesRef.current = next;
@@ -262,6 +268,7 @@ export function SkillsSetupForm({
       {
         input: trimmed,
         candidates: item.candidates,
+        source: item.source,
         clearOnQueryEdit: item.clearOnQueryEdit,
       },
       ...prev.filter((existing) => existing.input.trim().toLowerCase() !== key),
@@ -280,11 +287,7 @@ export function SkillsSetupForm({
     );
   }
 
-  const canSubmit =
-    !pending &&
-    !isValidating &&
-    !loadError &&
-    (none || entries.length > 0);
+  const canSubmit = !pending && !loadError && (none || entries.length > 0);
 
   const selectedItems = useMemo<MultiSelectSelectedItem[]>(
     () =>
@@ -301,132 +304,6 @@ export function SkillsSetupForm({
       s.trim().length > 0 &&
       !entries.some((e) => e.key === s.trim().toLowerCase()),
   );
-
-  async function validateCustomSkill(
-    rawLabel: string,
-    requestId: number,
-    session: number,
-  ) {
-    let result: Awaited<ReturnType<typeof invoke<'interpretSkillAlias'>>>;
-    try {
-      result = await invoke('interpretSkillAlias', {
-        input: rawLabel,
-        skill_id: '',
-      });
-    } catch (err) {
-      inFlightLookupIdsRef.current.delete(requestId);
-      if (inFlightLookupIdsRef.current.size === 0) {
-        setIsValidating(false);
-      }
-      if (noneRef.current || lookupSessionRef.current !== session) {
-        return;
-      }
-      setApiError(mapApiError(err));
-      return;
-    }
-
-    inFlightLookupIdsRef.current.delete(requestId);
-    if (inFlightLookupIdsRef.current.size === 0) {
-      setIsValidating(false);
-    }
-
-    if (noneRef.current || lookupSessionRef.current !== session) {
-      return;
-    }
-
-    if (!result.ok) {
-      setApiError(result.error);
-      return;
-    }
-
-    const data =
-      result.data && typeof result.data === 'object'
-        ? (result.data as unknown as Record<string, unknown>)
-        : null;
-
-    if (data) {
-      // 1. Auto-resolved canonical match
-      const directCanonical =
-        typeof data.canonical_name === 'string' && data.canonical_name.trim()
-          ? data.canonical_name.trim()
-          : typeof data.name === 'string' && data.name.trim()
-            ? data.name.trim()
-            : data.resolved_skill &&
-                typeof (data.resolved_skill as { name?: unknown }).name ===
-                  'string' &&
-                ((data.resolved_skill as { name: string }).name.trim() || '')
-              ? (data.resolved_skill as { name: string }).name.trim()
-              : null;
-
-      if (directCanonical) {
-        clearInlineUnrecognizedWarning();
-        appendValidSkill(directCanonical);
-        return;
-      }
-
-      if (
-        data.added_to_profile === true &&
-        typeof data.skill_id === 'string' &&
-        data.skill_id.trim()
-      ) {
-        const matchedOpt = catalogOptions.find((o) => o.id === data.skill_id);
-        clearInlineUnrecognizedWarning();
-        appendValidSkill(matchedOpt ? matchedOpt.label.trim() : rawLabel);
-        return;
-      }
-
-      // 2. Ambiguous match (candidate suggestions)
-      if (Array.isArray(data.candidates)) {
-        const candidates = (
-          data.candidates as UnresolvedSkillCandidateDTO[]
-        ).filter(
-          (c) =>
-            c &&
-            typeof c.skill_id === 'string' &&
-            typeof c.name === 'string' &&
-            c.name.trim().length > 0,
-        );
-        enqueueUnresolvedHead({
-          input: rawLabel,
-          candidates,
-          clearOnQueryEdit: candidates.length === 0,
-        });
-        return;
-      }
-
-      // 3. Profile-shaped response with unresolved_skills
-      if (Array.isArray(data.unresolved_skills)) {
-        const normalized = normalizeUnresolvedQueue(
-          data.unresolved_skills as UnresolvedSkillDTO[],
-        );
-        if (normalized.length > 0) {
-          setUnresolvedQueue((prev) => {
-            const incomingKeys = new Set(
-              normalized.map((item) => item.input.toLowerCase()),
-            );
-            return [
-              ...normalized,
-              ...prev.filter(
-                (existing) => !incomingKeys.has(existing.input.toLowerCase()),
-              ),
-            ];
-          });
-          return;
-        }
-      }
-    }
-
-    // Fallback after a successful no-match response: check substring candidates in catalogOptions; otherwise show unrecognized warning
-    const fallbackCandidates = findCatalogSubstringCandidates(
-      rawLabel,
-      catalogOptions,
-    );
-    enqueueUnresolvedHead({
-      input: rawLabel,
-      candidates: fallbackCandidates,
-      clearOnQueryEdit: fallbackCandidates.length === 0,
-    });
-  }
 
   function addCatalogSkill(option: MultiSelectOption): boolean {
     const trimmedLabel = option.label.trim();
@@ -466,19 +343,25 @@ export function SkillsSetupForm({
       return false;
     }
 
-    const requestId = ++nextLookupIdRef.current;
-    const session = lookupSessionRef.current;
-    inFlightLookupIdsRef.current.add(requestId);
-
     setDraftError(null);
     clearInlineUnrecognizedWarning();
     setNotice(null);
     setApiError(null);
     noneRef.current = false;
     setNone(false);
-    setIsValidating(true);
 
-    void validateCustomSkill(trimmed, requestId, session);
+    // Resolve non-exact custom entries locally against the approved catalog without
+    // calling EP-P05 with an empty UUID or mutating saved profile state prematurely.
+    const localCandidates = findCatalogSubstringCandidates(
+      trimmed,
+      catalogOptions,
+    );
+    enqueueUnresolvedHead({
+      input: trimmed,
+      candidates: localCandidates,
+      source: 'local_catalog',
+      clearOnQueryEdit: localCandidates.length === 0,
+    });
     return true;
   }
 
@@ -493,9 +376,6 @@ export function SkillsSetupForm({
 
   function changeNone(next: boolean) {
     saveRequestTokenRef.current += 1;
-    lookupSessionRef.current += 1;
-    inFlightLookupIdsRef.current.clear();
-    setIsValidating(false);
     noneRef.current = next;
     setNone(next);
     setDraftError(null);
@@ -511,6 +391,7 @@ export function SkillsSetupForm({
     inputLabel: string,
     skillId: string,
     candidateName: string,
+    source: 'server' | 'local_catalog',
   ) {
     const candidateKey = candidateName.trim().toLowerCase();
     if (
@@ -523,9 +404,22 @@ export function SkillsSetupForm({
       return;
     }
 
-    setPending(true);
     setApiError(null);
     setDraftError(null);
+
+    if (source === 'local_catalog') {
+      if (!appendValidSkill(candidateName)) {
+        return;
+      }
+      const resolvedKey = inputLabel.trim().toLowerCase();
+      setUnresolvedQueue((prev) =>
+        prev.filter((item) => item.input.trim().toLowerCase() !== resolvedKey),
+      );
+      setNotice(`Added ${candidateName}.`);
+      return;
+    }
+
+    setPending(true);
     let result: Awaited<ReturnType<typeof invoke<'interpretSkillAlias'>>>;
     try {
       result = await invoke('interpretSkillAlias', {
@@ -782,6 +676,7 @@ export function SkillsSetupForm({
                             ambiguousPrompt.input,
                             candidate.skill_id,
                             candidate.name,
+                            ambiguousPrompt.source,
                           )
                         }
                         className={CANDIDATE_PILL_CLASS}
