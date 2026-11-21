@@ -97,15 +97,21 @@ export default async function CareerProfilePage() {
     redirect('/login');
   }
 
+  const resolvedProfile = profileResult.ok ? profileResult.data : null;
+  const resolvedRole = resolvedProfile?.current_role?.trim() || undefined;
+
   return (
     <>
-      <AppShellSync variant={user?.role === 'ADMIN' ? 'admin' : 'authenticated'} />
-      <main className="mx-auto w-full max-w-4xl px-4 py-8 sm:py-12">
+      <AppShellSync
+        variant={user?.role === 'ADMIN' ? 'admin' : 'authenticated'}
+        user={resolvedRole ? { currentRole: resolvedRole } : undefined}
+      />
+      <main className="mx-auto w-full max-w-[1040px] px-4 py-7 sm:px-6 sm:py-10 lg:px-8">
         <CareerProfileView
           initialGoals={goalsResult.ok ? goalsResult.data.items : []}
           initialNextCursor={goalsResult.ok ? goalsResult.data.meta.next_cursor : null}
           goalsError={goalsResult.ok ? null : goalsResult.error.message}
-          profile={profileResult.ok ? profileResult.data : null}
+          profile={resolvedProfile}
           profileError={profileResult.ok ? null : profileResult.error.message}
           userId={user?.id}
           invoke={invoke}

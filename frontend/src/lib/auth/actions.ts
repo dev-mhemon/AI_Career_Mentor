@@ -60,6 +60,12 @@ export interface AuthActionResult {
   retryAfterSeconds?: number;
   /** Per-field messages from details[] or server-side validation. */
   fieldErrors?: Record<string, string>;
+  /** Explicit post-reset sign-in readiness flag when password updated but account sync/bootstrap is pending. */
+  accountReadyForSignin?: boolean;
+  /** Post-reset cleanup status reported by EP-A09. */
+  cleanupStatus?: 'partial' | 'pending_account_bootstrap' | 'pending_account_sync';
+  /** True when the reset OTP was already consumed on the backend and must not be resubmitted. */
+  otpConsumed?: boolean;
 }
 
 /** Structured metadata for UI error mapping; only non-default signals are emitted. */
@@ -1374,7 +1380,12 @@ export async function resetPasswordAction(
   }
 
   try {
-    await resetPassword(identifier, code, newPassword, confirmNewPassword);
+    const resetResult = await resetPassword(
+      identifier,
+      code,
+      newPassword,
+      confirmNewPassword,
+    );
     const store = await cookies();
     store.set(RECOVERY_CONTEXT_COOKIE, '', {
       path: '/reset-password',
@@ -1382,11 +1393,43 @@ export async function resetPasswordAction(
       httpOnly: true,
       sameSite: 'strict',
     });
+    if (resetResult?.account_ready_for_signin === false) {
+      return {
+        success: true,
+        accountReadyForSignin: false,
+        cleanupStatus: resetResult.cleanup_status,
+        otpConsumed: true,
+        error:
+          resetResult.message ||
+          'Password was updated, but account setup is still finishing. Do not resubmit the reset code; wait a moment or contact support.',
+      };
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
     }
     if (err instanceof ApiError) {
+      const isPostCommitCleanupPending = err.details.some(
+        (d) => d.code === 'PASSWORD_RESET_POST_COMMIT_CLEANUP_PENDING',
+      );
+      if (isPostCommitCleanupPending) {
+        try {
+          const store = await cookies();
+          store.set(RECOVERY_CONTEXT_COOKIE, '', {
+            path: '/reset-password',
+            maxAge: 0,
+            httpOnly: true,
+            sameSite: 'strict',
+          });
+        } catch {
+          // Best-effort cookie cleanup after consumed OTP
+        }
+        return {
+          error: err.message,
+          ...apiMeta(err),
+          otpConsumed: true,
+        };
+      }
       return mapAuthApiError(err, idCheck.value.kind);
     }
     return { error: 'An unexpected error occurred while resetting password.' };

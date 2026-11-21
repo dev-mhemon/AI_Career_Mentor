@@ -161,11 +161,25 @@ export function Alert({
   const counting = hasRetryWait && !elapsed;
   const live = variant === 'error_retryable';
 
+  const singleLineFriendly = !title && !counting && !onRetry && !action;
+
   return (
     <div
-      className={cn('flex gap-3 rounded-lg border p-4', tone[variant], className)}
+      className={cn(
+        'flex gap-3 rounded-lg border p-4',
+        singleLineFriendly ? 'items-center' : 'items-start',
+        tone[variant],
+        className,
+      )}
     >
-      <span className="mt-0.5 shrink-0">{icons[variant]}</span>
+      <span
+        className={cn(
+          'flex shrink-0 items-center justify-center',
+          !singleLineFriendly && 'mt-0.5',
+        )}
+      >
+        {icons[variant]}
+      </span>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div
           role={role ?? (live ? 'alert' : 'status')}
@@ -173,7 +187,7 @@ export function Alert({
           className="flex flex-col gap-2"
         >
           {title && <p className="text-label-lg">{title}</p>}
-          <div className="text-body-sm" dir="auto">{children}</div>
+          <div className="text-body-sm leading-snug" dir="auto">{children}</div>
         </div>
         {counting && (
           <p className="text-body-sm" aria-live="off">

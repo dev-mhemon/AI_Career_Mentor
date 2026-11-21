@@ -10,6 +10,11 @@ export interface StepFrameProps {
   currentStep: OnboardingStepNumber;
   /** When true, omits the step progress header because an outer shell (e.g., OnboardingWizard or CareerProfile) owns chrome. */
   embedded?: boolean;
+  /**
+   * When true, right-aligns footer action buttons for modal dialogs.
+   * Implies `embedded` (omits the standalone `MultiStepFormWrapper` chrome).
+   */
+  inModal?: boolean;
   heading?: string;
   description?: ReactNode;
   status?: MultiStepFormStatus;
@@ -25,6 +30,7 @@ export interface StepFrameProps {
 export function StepFrame({
   currentStep,
   embedded = false,
+  inModal = false,
   heading,
   description,
   status = 'editing',
@@ -32,7 +38,7 @@ export function StepFrame({
   children,
   actions,
 }: StepFrameProps) {
-  if (!embedded) {
+  if (!embedded && !inModal) {
     return (
       <MultiStepFormWrapper
         currentStep={currentStep}
@@ -80,7 +86,13 @@ export function StepFrame({
       </div>
 
       {actions && (
-        <div className="flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className={
+            inModal
+              ? 'flex flex-col-reverse gap-2.5 border-t border-border-subtle pt-5 sm:flex-row sm:items-center sm:justify-end'
+              : 'flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-between'
+          }
+        >
           {actions}
         </div>
       )}

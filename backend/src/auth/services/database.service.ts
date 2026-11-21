@@ -26,6 +26,11 @@ export class DatabaseService {
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
           [userId],
         );
+        // Acquire the same per-user hashtext advisory lock used by OAuth bootstrap and recovery
+        // conflict checks BEFORE locking public.users FOR UPDATE to prevent AB-BA lock inversion.
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [
+          userId,
+        ]);
         const [account] = await db.query(
           'SELECT status FROM public.users WHERE id=$1 FOR UPDATE',
           [userId],

@@ -275,8 +275,11 @@ export function MultiSelectCombobox({
     }
 
     if (event.key === 'Escape') {
-      if (open) {
+      if (showDropdown) {
         event.preventDefault();
+        setOpen(false);
+        setActiveOptionId(null);
+      } else if (open) {
         setOpen(false);
         setActiveOptionId(null);
       }

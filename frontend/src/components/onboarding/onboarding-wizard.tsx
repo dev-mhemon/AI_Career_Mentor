@@ -6,10 +6,10 @@ import type { CareerGoalResponse, ProfileResponse } from '@/lib/api/client';
 import type { M05Invoke } from '@/lib/api/error-mapper';
 import type { ProfileContactInfo } from '@/lib/profile/actions';
 import type { OnboardingStepKey } from '@/lib/onboarding/completion';
-import { cn } from '@/components/ui/cn';
 import { ProfileSetupForm } from './profile-setup-form';
 import { SkillsSetupForm } from './skills-setup-form';
 import { PreferencesSetupForm } from './preferences-setup-form';
+import { Stepper } from '@/components/ui/stepper';
 import { GoalSetupForm } from './goal-setup-form';
 import { GoalClarifyForm } from './goal-clarify-form';
 import {
@@ -57,115 +57,30 @@ const OnboardingWizardStepper = memo(function OnboardingWizardStepper() {
   const active = WIZARD_STEPS[currentStepNumber - 1];
 
   return (
-    <div className="flex flex-col gap-5 rounded-xl bg-surface-subtle px-6 py-5">
-      <div
-        role="progressbar"
-        aria-valuenow={completion.percentage}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuetext={`Step ${currentStepNumber} of ${total}: ${active.title} (${completion.percentage}% complete)`}
-        aria-label={`Onboarding progress: Step ${currentStepNumber} of ${total}`}
-        className="flex flex-wrap items-center justify-between gap-2"
-      >
-        <div className="flex items-center gap-2.5">
-          <span className="text-label-lg font-semibold text-text-primary">
-            {active.title}
-          </span>
-          <span className="inline-flex items-center rounded-full border border-border-default bg-surface-default px-2.5 py-0.5 text-caption font-medium text-text-secondary">
-            Step {currentStepNumber} of {total}
-          </span>
-        </div>
-        <span className="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 font-mono text-caption font-semibold tabular-nums text-teal-700 dark:text-teal-300">
-          {completion.percentage}% Complete
-        </span>
-      </div>
-
-      <nav aria-label="Onboarding steps">
-        <ol className="grid grid-cols-5 items-start">
-          {WIZARD_STEPS.map((step, idx) => {
-            const isActive = step.key === state.currentStep;
-            const isDone = completion.steps[step.key];
-            const isLast = idx === total - 1;
-            const isUnlocked = idx <= maxUnlockedIndex;
-            const isLocked = !isUnlocked;
-            const isDisabled = isLocked || (isStepSubmitting && !isActive);
-            const canNavigate = isUnlocked && !isActive && !isStepSubmitting;
-
-            return (
-              <li
-                key={step.key}
-                className="relative flex flex-col items-center px-1 text-center"
-              >
-                {!isLast && (
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'pointer-events-none absolute top-3.5 left-1/2 z-0 h-0.5 w-full -translate-y-1/2 transition-colors duration-(--duration-fast)',
-                      isDone ? 'bg-teal-500/60' : 'bg-border-subtle',
-                    )}
-                  />
-                )}
-                <button
-                  type="button"
-                  disabled={isDisabled}
-                  aria-disabled={isDisabled ? 'true' : undefined}
-                  aria-current={isActive ? 'step' : undefined}
-                  onClick={() => {
-                    if (canNavigate) goToStep(step.key);
-                  }}
-                  aria-label={
-                    isDone
-                      ? `${step.label} (completed)`
-                      : isActive
-                        ? `${step.label} (current step)`
-                        : step.label
-                  }
-                  className={cn(
-                    'group relative z-10 flex flex-col items-center rounded-lg px-1.5 transition-colors duration-(--duration-fast) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2',
-                    isDisabled
-                      ? 'cursor-not-allowed opacity-60'
-                      : canNavigate
-                        ? 'cursor-pointer'
-                        : 'cursor-default',
-                  )}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-colors duration-(--duration-fast) motion-reduce:transition-none',
-                      isActive
-                        ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
-                        : isDone
-                          ? 'border border-teal-500 bg-teal-50 font-medium text-text-brand group-hover:border-teal-600 group-hover:bg-teal-100 dark:bg-teal-950 dark:group-hover:bg-teal-900'
-                          : isUnlocked
-                            ? 'border border-teal-500/60 bg-surface-default font-medium text-text-primary group-hover:border-teal-500 group-hover:bg-teal-50 dark:group-hover:bg-teal-950'
-                            : 'border border-border-default bg-surface-default font-medium text-text-muted',
-                    )}
-                  >
-                    {isDone && !isActive ? '✓' : step.number}
-                  </span>
-                  <span
-                    className={cn(
-                      'mt-2.5 text-[11px] leading-tight transition-colors duration-(--duration-fast) sm:text-caption',
-                      isActive
-                        ? 'font-semibold text-text-brand'
-                        : canNavigate
-                          ? isDone
-                            ? 'font-medium text-text-primary group-hover:text-text-brand'
-                            : 'font-medium text-text-secondary group-hover:text-text-brand'
-                          : 'text-text-muted',
-                    )}
-                  >
-                    {step.label}
-                  </span>
-                  {isDone && <span className="sr-only">(completed)</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      </nav>
-    </div>
+    <Stepper
+      title={active.title}
+      stepCounterText={`Step ${currentStepNumber} of ${total}`}
+      percentComplete={completion.percentage}
+      ariaLabel="Onboarding steps"
+      progressAriaLabel={`Onboarding progress: Step ${currentStepNumber} of ${total}`}
+      progressValueNow={completion.percentage}
+      progressValueMin={0}
+      progressValueMax={100}
+      progressValueText={`Step ${currentStepNumber} of ${total}: ${active.title} (${completion.percentage}% complete)`}
+      disabled={isStepSubmitting}
+      onStepClick={(stepId) => goToStep(stepId as OnboardingStepKey)}
+      steps={WIZARD_STEPS.map((step, idx) => {
+        const isActive = step.key === state.currentStep;
+        const isDone = completion.steps[step.key];
+        return {
+          id: step.key,
+          label: step.label,
+          status: isActive ? 'current' : isDone ? 'completed' : 'upcoming',
+          completed: isDone,
+          interactive: idx <= maxUnlockedIndex,
+        };
+      })}
+    />
   );
 });
 

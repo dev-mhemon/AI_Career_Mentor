@@ -241,26 +241,35 @@ async function apiFetchEnvelope<T>(
       typeof error?.requestId === 'string'
         ? error.requestId
         : response.headers?.get('X-Request-Id') || undefined;
-    const details: FieldError[] =
-      response.status < 500 && Array.isArray(error?.details)
-        ? error.details.filter(
-            (d: FieldError) =>
-              typeof d?.field === 'string' &&
-              typeof d?.code === 'string' &&
-              typeof d?.message === 'string',
-          )
-        : [];
+    const rawDetails: FieldError[] = Array.isArray(error?.details)
+      ? error.details.filter(
+          (d: FieldError) =>
+            typeof d?.field === 'string' &&
+            typeof d?.code === 'string' &&
+            typeof d?.message === 'string',
+        )
+      : [];
     const retryable =
       typeof error?.retryable === 'boolean'
         ? error.retryable
         : [429, 502, 503, 504].includes(response.status);
+    const isStructuredPostCommitResetOutcome =
+      response.status >= 500 &&
+      retryable === false &&
+      rawDetails.some(
+        (d) => d.code === 'PASSWORD_RESET_POST_COMMIT_CLEANUP_PENDING',
+      );
+    const details: FieldError[] =
+      response.status < 500 || isStructuredPostCommitResetOutcome
+        ? rawDetails
+        : [];
     const headerRetry = response.headers?.get('Retry-After');
     const retryValue =
       error?.retryAfterSeconds ??
       (headerRetry && /^\d+$/.test(headerRetry) ? Number(headerRetry) : null);
     const retryAfterSeconds = Number.isInteger(retryValue) && retryValue >= 0 ? retryValue : null;
     const message =
-      response.status >= 500
+      response.status >= 500 && !isStructuredPostCommitResetOutcome
         ? 'Service temporarily unavailable. Please try again.'
         : typeof error?.message === 'string'
           ? error.message
@@ -376,8 +385,23 @@ export function forgotPassword(
   });
 }
 
+export interface ResetPasswordPendingCleanup {
+  local_session_revocation?: boolean;
+  local_session_sync?: boolean;
+  account_bootstrap?: boolean;
+  channel_mapping_sync?: boolean;
+  provider_session_revocation?: boolean;
+}
+
 export interface ResetPasswordResponse {
   password_reset: true;
+  cleanup_status?:
+    | 'partial'
+    | 'pending_account_bootstrap'
+    | 'pending_account_sync';
+  account_ready_for_signin?: boolean;
+  pending_cleanup?: ResetPasswordPendingCleanup;
+  message?: string;
 }
 
 export function resetPassword(
@@ -567,8 +591,14 @@ export interface UpdateLearningSettingsBody {
  * GET /profile (EP-P01)
  * Loads the authenticated user's profile, skills, learning settings, and completeness state.
  */
-export function getProfile(accessToken: string): Promise<ProfileResponse> {
-  return apiFetch<ProfileResponse>('/profile', accessToken);
+export function getProfile(
+  accessToken: string,
+  options?: AuthStateRequestOptions,
+): Promise<ProfileResponse> {
+  return apiFetch<ProfileResponse>('/profile', accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
 }
 
 /**

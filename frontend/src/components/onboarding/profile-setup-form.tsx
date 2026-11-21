@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { CheckCircleIcon } from '@/components/ui/icons';
 import { cn } from '@/components/ui/cn';
+import { useOptionalAppShellContext } from '@/components/ui/app-shell-context';
 import { OnboardingStepHeader } from '@/components/ui/multi-step-form-wrapper';
 import {
   normalizeBdPhone,
@@ -343,6 +344,7 @@ function ProfileSetupFormInner({
 }: ProfileSetupFormProps) {
   const isStandalone = mode === 'standalone';
   const router = useRouter();
+  const appShell = useOptionalAppShellContext();
   const isMountedRef = useRef(true);
   const draftVersionRef = useRef(0);
 
@@ -357,13 +359,24 @@ function ProfileSetupFormInner({
       draftVersionRef.current !== submittedDraftVersion;
     if (result?.success && !isSuperseded) {
       clearDraft(userId);
+      const submittedFullName = formData.get('full_name');
+      const committedFullName =
+        result.values?.full_name ??
+        (typeof submittedFullName === 'string' ? submittedFullName.trim() : '');
+      const committedRole =
+        result.profile?.current_role?.trim() ??
+        result.values?.current_role?.trim() ??
+        '';
+      appShell?.syncState({
+        user: {
+          ...(committedFullName ? { fullName: committedFullName } : {}),
+          ...(committedRole ? { currentRole: committedRole } : {}),
+        },
+      });
       if (onSuccess) {
-        const submittedFullName = formData.get('full_name');
         onSuccess({
           profile: result.profile ?? null,
-          fullName:
-            result.values?.full_name ??
-            (typeof submittedFullName === 'string' ? submittedFullName.trim() : ''),
+          fullName: committedFullName,
           values: result.values,
         });
       } else if (!isStandalone) {

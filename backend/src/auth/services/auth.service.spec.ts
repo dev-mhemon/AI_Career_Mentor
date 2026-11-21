@@ -4199,6 +4199,8 @@ describe('AuthService session approval boundary', () => {
         userId,
         expect.any(Function),
         true,
+        false,
+        false,
       );
     });
 
@@ -4260,11 +4262,13 @@ describe('AuthService session approval boundary', () => {
         password_reset: true,
       });
 
-      // Verify transaction called with user lock
+      // Verify transaction called with user lock and useServiceRole=false (so auth.users subqueries succeed)
       expect(database.transaction).toHaveBeenCalledWith(
         userId,
         expect.any(Function),
         true,
+        false,
+        false,
       );
 
       // Verify GoTrue Admin API called with new password
@@ -4377,7 +4381,8 @@ describe('AuthService session approval boundary', () => {
         query: vi.fn(async (sql: string) => {
           if (
             sql.startsWith('SET LOCAL statement_timeout') ||
-            sql.startsWith('SET LOCAL lock_timeout')
+            sql.startsWith('SET LOCAL lock_timeout') ||
+            sql.includes('pg_advisory_xact_lock')
           ) {
             return [];
           }
@@ -4456,7 +4461,7 @@ describe('AuthService session approval boundary', () => {
       );
     });
 
-    it('retries compensating local session revocation if transaction fails on commit after GoTrue password update', async () => {
+    it('does not call GoTrue password update if the pre-GoTrue DB transaction fails on commit, and never calls GoTrue while a DB transaction is open', async () => {
       const primaryUserRow = {
         id: userId,
         email: 'user@example.com',
@@ -4484,21 +4489,15 @@ describe('AuthService session approval boundary', () => {
       } as unknown as OtpSecretStore;
 
       const mockApprovals = {
-        revokeAllUserSessions: vi
-          .fn()
-          .mockResolvedValueOnce(1)
-          .mockRejectedValueOnce(new Error('Transient DB error'))
-          .mockResolvedValueOnce(1),
+        revokeAllUserSessions: vi.fn().mockResolvedValueOnce(1),
       } as unknown as SessionApprovalService;
 
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: true,
-          status: 200,
-          json: async () => ({ id: userId }),
-        }),
-      );
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: userId }),
+      });
+      vi.stubGlobal('fetch', fetchSpy);
 
       const service = new AuthService(
         database,
@@ -4512,21 +4511,9 @@ describe('AuthService session approval boundary', () => {
         'Transaction commit failed',
       );
 
-      // 1st call inside transaction with mockDbRunner; 2nd and 3rd calls are compensating retries outside transaction
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenCalledTimes(3);
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenNthCalledWith(
-        1,
-        userId,
-        mockDbRunner,
-      );
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenNthCalledWith(
-        2,
-        userId,
-      );
-      expect(mockApprovals.revokeAllUserSessions).toHaveBeenNthCalledWith(
-        3,
-        userId,
-      );
+      // GoTrue PUT and session revocation are never invoked if the preflight DB transaction failed
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(mockApprovals.revokeAllUserSessions).not.toHaveBeenCalled();
     });
 
     it('cancels blocked cleanup query via transaction-scoped SET LOCAL statement_timeout (57014), awaits rollback/release, and fails with non-retryable 504 PROVIDER_TIMEOUT', async () => {
@@ -4546,7 +4533,8 @@ describe('AuthService session approval boundary', () => {
         query: vi.fn(async (sql: string) => {
           if (
             sql.startsWith('SET LOCAL statement_timeout') ||
-            sql.startsWith('SET LOCAL lock_timeout')
+            sql.startsWith('SET LOCAL lock_timeout') ||
+            sql.includes('pg_advisory_xact_lock')
           ) {
             return [];
           }
@@ -4571,12 +4559,14 @@ describe('AuthService session approval boundary', () => {
           releaseAwaitedCount++;
         }),
       };
+      let txIndex = 0;
       const database = {
         query: vi.fn().mockResolvedValueOnce([primaryUserRow]),
-        transaction: vi.fn(async (targetUserId, operation) => {
+        transaction: vi.fn(async (_targetUserId, operation) => {
+          txIndex += 1;
           try {
             const res = await operation(mockDbRunner as never);
-            if (targetUserId !== null) {
+            if (txIndex <= 2) {
               transactionCommitted = true;
             }
             return res;
@@ -4632,9 +4622,9 @@ describe('AuthService session approval boundary', () => {
       expect(transactionCommitted).toBe(true);
       expect(otpConsumed).toBe(true);
       expect(rollbackAwaitedCount).toBe(3);
-      expect(releaseAwaitedCount).toBe(4);
+      expect(releaseAwaitedCount).toBe(5);
       expect(mockDbRunner.rollbackTransaction).toHaveBeenCalledTimes(3);
-      expect(mockDbRunner.release).toHaveBeenCalledTimes(4);
+      expect(mockDbRunner.release).toHaveBeenCalledTimes(5);
       expect(mockDbRunner.query).toHaveBeenCalledWith(
         'SET LOCAL statement_timeout = 25',
       );
@@ -9130,7 +9120,7 @@ describe('AuthService session approval boundary', () => {
       }
     });
 
-    it('re-verifies live account suspension and deleted state after session revocation and before GoTrue password update', async () => {
+    it('re-verifies live account suspension and deleted state before GoTrue password update without prematurely revoking sessions', async () => {
       const targetEmail = 'suspend-race@example.com';
 
       for (const scenario of [
@@ -9173,7 +9163,6 @@ describe('AuthService session approval boundary', () => {
           expectedCode: 'VERIFICATION_CODE_EXPIRED',
         },
       ]) {
-        let sessionsRevoked = false;
         const fetchSpy = vi.fn();
         vi.stubGlobal('fetch', fetchSpy);
 
@@ -9195,15 +9184,7 @@ describe('AuthService session approval boundary', () => {
               sql.includes('FROM public.users') &&
               sql.includes('FOR UPDATE')
             ) {
-              return sessionsRevoked
-                ? scenario.statusRows
-                : [
-                    {
-                      status: 'active',
-                      suspended_at: null,
-                      auth_deleted_at: null,
-                    },
-                  ];
+              return scenario.statusRows;
             }
             return [];
           }),
@@ -9214,10 +9195,7 @@ describe('AuthService session approval boundary', () => {
           transaction: vi.fn(async (_sub: unknown, fn: any) => fn(runner)),
         } as unknown as DatabaseService;
 
-        const revokeAllUserSessions = vi.fn(async () => {
-          sessionsRevoked = true;
-          return 1;
-        });
+        const revokeAllUserSessions = vi.fn(async () => 1);
 
         const service = new AuthService(
           db,
@@ -9253,9 +9231,205 @@ describe('AuthService session approval boundary', () => {
           response: { code: scenario.expectedCode },
         });
 
-        expect(revokeAllUserSessions).toHaveBeenCalledTimes(1);
+        expect(revokeAllUserSessions).not.toHaveBeenCalled();
         expect(fetchSpy).not.toHaveBeenCalled();
       }
+    });
+
+    it('keeps zero open DB transactions during GoTrue PUT and does not revoke sessions if GoTrue rejects with 422', async () => {
+      const targetEmail = 'policy-reject@example.com';
+      let openTransactions = 0;
+      let sawOpenTxInGoTrue = false;
+
+      const initialRow = {
+        id: userId,
+        email: targetEmail,
+        status: 'active',
+        verified_contact: true,
+        verified_at: '2026-01-01T00:00:00Z',
+        is_oauth_provider: false,
+      };
+
+      const runner = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM public.users u')) {
+            return [initialRow];
+          }
+          if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+            return [
+              {
+                status: 'active',
+                suspended_at: null,
+                auth_deleted_at: null,
+              },
+            ];
+          }
+          return [];
+        }),
+      };
+
+      const db = {
+        query: vi.fn().mockResolvedValueOnce([initialRow]),
+        transaction: vi.fn(async (_sub: unknown, fn: any) => {
+          openTransactions += 1;
+          try {
+            return await fn(runner);
+          } finally {
+            openTransactions -= 1;
+          }
+        }),
+      } as unknown as DatabaseService;
+
+      const revokeAllUserSessions = vi.fn().mockResolvedValue(1);
+
+      const fetchSpy = vi.fn(async () => {
+        if (openTransactions > 0) {
+          sawOpenTxInGoTrue = true;
+        }
+        return {
+          ok: false,
+          status: 422,
+          json: async () => ({
+            code: 422,
+            error_code: 'weak_password',
+            msg: 'Password is too weak.',
+          }),
+        };
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          isReady: vi.fn().mockReturnValue(true),
+          clearSendCooldown: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          revokeAllUserSessions,
+        } as unknown as SessionApprovalService,
+        {
+          verifyAndConsumeOtp: vi.fn(
+            async (
+              _u: string,
+              _i: string,
+              _c: string,
+              onSuccess: () => Promise<void>,
+            ) => onSuccess(),
+          ),
+        } as unknown as OtpSecretStore,
+      );
+
+      await expect(
+        service.resetPassword({
+          identifier: targetEmail,
+          code: '123456',
+          new_password: 'WeakPassword1!',
+          confirm_new_password: 'WeakPassword1!',
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { code: 'PASSWORD_POLICY_FAILED' },
+      });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(sawOpenTxInGoTrue).toBe(false);
+      expect(revokeAllUserSessions).not.toHaveBeenCalled();
+    });
+
+    it('rejects fallback recovery contact conflicts BEFORE calling GoTrue password update', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const fallbackAuthRow = {
+        id: userId,
+        email: null,
+        phone: '+8801711111111',
+        email_confirmed_at: null,
+        phone_confirmed_at: '2026-01-01T00:00:00Z',
+        oauth_provider: null,
+        oauth_subject: null,
+        oauth_confirmed_at: null,
+        app_status: null,
+        app_verified_contact: null,
+      };
+
+      const runner = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) {
+            return [fallbackAuthRow];
+          }
+          if (
+            sql.includes(
+              'SELECT status, suspended_at, verified_contact, email, phone FROM public.users',
+            )
+          ) {
+            return [
+              {
+                status: 'active',
+                suspended_at: null,
+                verified_contact: true,
+                email: null,
+                phone: '+8801799999999',
+              },
+            ];
+          }
+          return [];
+        }),
+      };
+
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM public.users u')) return [];
+          if (sql.includes('FROM auth.users u')) return [fallbackAuthRow];
+          return [];
+        }),
+        transaction: vi.fn(async (_sub: unknown, fn: any) => fn(runner)),
+      } as unknown as DatabaseService;
+
+      const revokeAllUserSessions = vi.fn().mockResolvedValue(1);
+      const smsProvider = {
+        ready: vi.fn(),
+        sendOtp: vi.fn(),
+      };
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          isReady: vi.fn().mockReturnValue(true),
+          clearSendCooldown: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          revokeAllUserSessions,
+        } as unknown as SessionApprovalService,
+        {
+          verifyAndConsumeOtp: vi.fn(
+            async (
+              _u: string,
+              _i: string,
+              _c: string,
+              onSuccess: () => Promise<void>,
+            ) => onSuccess(),
+          ),
+        } as unknown as OtpSecretStore,
+        undefined,
+        smsProvider as never,
+      );
+
+      await expect(
+        service.resetPassword({
+          identifier: '+8801711111111',
+          code: '123456',
+          new_password: 'FallbackPassword1!',
+          confirm_new_password: 'FallbackPassword1!',
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'PHONE_CONFLICT' },
+      });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(revokeAllUserSessions).not.toHaveBeenCalled();
     });
 
     it('rejects resetPassword when refreshed primary row has verified secondary contact but unverified target channel (verified_at: null, is_oauth_provider: false), while allowing OAuth provider target', async () => {
@@ -9479,6 +9653,406 @@ describe('AuthService session approval boundary', () => {
       );
       expect(userInsert?.params?.[1]).toBe(recoveredEmail);
       expect(userInsert?.params?.[2]).toBe('+8801712345678');
+    });
+
+    it('login reconciles pending auth:v1:reset-cleanup channel mapping via getPendingResetCleanup and clears key once synced', async () => {
+      const recoveredEmail = 'resume-login@example.invalid';
+      const token = accessToken([{ method: 'password' }], {
+        email: recoveredEmail,
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              access_token: token,
+              refresh_token: 'refresh-resume',
+              expires_in: 3600,
+            }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ id: userId, email: recoveredEmail }),
+          }),
+      );
+
+      let syncedChannel = false;
+      const clearPendingResetCleanup = vi.fn().mockResolvedValue(undefined);
+      const getPendingResetCleanup = vi.fn().mockResolvedValue({
+        recoveryOpId: 'op-resume-1',
+        localSyncPending: true,
+        localSessionRevocationPending: false,
+        accountSyncPending: true,
+        fallbackBootstrapPending: false,
+        channelMappingSyncPending: true,
+        goTrueRevocationPending: false,
+        channel: 'email',
+        recordedAt: '2026-11-21T00:00:00Z',
+      });
+
+      const txQuery = vi.fn(async (sql: string) => {
+        if (sql.includes('INSERT INTO public.user_auth_providers')) {
+          syncedChannel = true;
+          return [];
+        }
+        if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: recoveredEmail,
+            },
+          ];
+        }
+        if (sql.includes('SELECT u.verified_contact,p.verified_at')) {
+          return syncedChannel
+            ? [
+                {
+                  verified_contact: true,
+                  verified_at: '2026-11-21T00:00:00Z',
+                  contact_value: recoveredEmail,
+                },
+              ]
+            : [
+                {
+                  verified_contact: true,
+                  verified_at: null,
+                  contact_value: null,
+                },
+              ];
+        }
+        if (sql.includes('SELECT u.id,u.email')) {
+          return [
+            {
+              id: userId,
+              email: recoveredEmail,
+              phone: null,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['email', 'google'],
+            },
+          ];
+        }
+        if (sql.includes('SELECT p.*,pr.learning_preference')) {
+          return [];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        return [];
+      });
+
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) {
+            return [{ id: userId }];
+          }
+          if (sql.includes('FROM auth.users')) {
+            return [
+              {
+                id: userId,
+                email: recoveredEmail,
+                phone: null,
+                email_confirmed_at: '2026-11-21T00:00:00Z',
+                phone_confirmed_at: null,
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(async (_sub: unknown, fn: any) =>
+          fn({ query: txQuery }),
+        ),
+      } as unknown as DatabaseService;
+
+      const service = new AuthService(
+        db,
+        configuration(),
+        {
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+          login: vi.fn(async (_c, _ip, exec) => (await exec()).value),
+          getPendingResetCleanup,
+          clearPendingResetCleanup,
+          clearPasswordResetOperation: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          approve: vi.fn().mockResolvedValue(undefined),
+        } as unknown as SessionApprovalService,
+      );
+
+      const res = await service.login(
+        { identifier: recoveredEmail, password: 'RecoveredPassword1!' },
+        {
+          socket: { remoteAddress: '127.0.0.1' },
+          ip: '127.0.0.1',
+          ips: [],
+          headers: {},
+          app: { get: vi.fn() },
+        } as unknown as Request,
+      );
+
+      expect(getPendingResetCleanup).toHaveBeenCalledWith(userId);
+      expect(syncedChannel).toBe(true);
+      expect(clearPendingResetCleanup).toHaveBeenCalledWith(userId);
+      expect(res.access_token).toBe(token);
+      expect(res.user.email).toBe(recoveredEmail);
+    });
+
+    it('phone recovery normalizes stored auth.users.phone lacking leading + before contactHash comparison and completes channel mapping sync on login', async () => {
+      const normalizedPhone = '+8801712345678';
+      const storedGoTruePhone = '8801712345678';
+      const newPassword = 'PhoneRecoveryPassword1!';
+      const redisCleanupStore = new Map<string, Record<string, unknown>>();
+      const recordCleanup = vi.fn(
+        async (uid: string, meta: Record<string, unknown>) => {
+          redisCleanupStore.set(`auth:v1:reset-cleanup:${uid}`, meta);
+        },
+      );
+      const getPendingResetCleanup = vi.fn(
+        async (uid: string) =>
+          redisCleanupStore.get(`auth:v1:reset-cleanup:${uid}`) ?? null,
+      );
+      const clearPendingResetCleanup = vi.fn(async (uid: string) => {
+        redisCleanupStore.delete(`auth:v1:reset-cleanup:${uid}`);
+      });
+
+      const oauthPhoneRow = {
+        id: userId,
+        phone: normalizedPhone,
+        status: 'active',
+        verified_contact: true,
+        provider_subject: 'google-sub-phone-reset',
+        verified_at: '2026-01-01T00:00:00Z',
+        is_oauth_provider: true,
+        has_verified_channel_provider: false,
+        needs_auth_confirm: false,
+        needs_auth_contact_sync: false,
+      };
+
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: userId }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const resetDbQuery = vi.fn(async (sql: string) => {
+        if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: normalizedPhone,
+            },
+          ];
+        }
+        if (sql.includes('FROM public.users')) {
+          return [oauthPhoneRow];
+        }
+        return [];
+      });
+
+      let resetTxCount = 0;
+      const db = {
+        query: resetDbQuery,
+        transaction: vi.fn(async (_sub: unknown, fn: any) => {
+          resetTxCount += 1;
+          // tx 1 = preflight, tx 2 = local revoke, tx 3 = channel sync #1 (fail),
+          // tx 4 = GoTrue cleanup, tx 5 = channel sync retry (fail)
+          if (resetTxCount === 3 || resetTxCount === 5) {
+            throw new Error('transient DB outage during phone channel sync');
+          }
+          return fn({ query: resetDbQuery });
+        }),
+      } as unknown as DatabaseService;
+
+      const smsProvider = {
+        ready: vi.fn(),
+        assertConfigured: vi.fn(),
+        isEnabled: vi.fn().mockReturnValue(true),
+      } as unknown as TextBeeSmsProvider;
+
+      const service = new AuthService(
+        db,
+        configuration({ AUTH_PHONE_ENABLED: 'true' }),
+        {
+          isReady: vi.fn().mockReturnValue(true),
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+          login: vi.fn(async (_c, _ip, exec) => (await exec()).value),
+          clearSendCooldown: vi.fn().mockResolvedValue(undefined),
+          recordUnfinishedPasswordResetCleanup: recordCleanup,
+          getPendingResetCleanup,
+          clearPendingResetCleanup,
+          clearPasswordResetOperation: vi.fn().mockResolvedValue(undefined),
+        } as unknown as AuthAbuseControl,
+        {
+          revokeAllUserSessions: vi.fn().mockResolvedValue(undefined),
+          approve: vi.fn().mockResolvedValue(undefined),
+        } as unknown as SessionApprovalService,
+        {
+          verifyAndConsumeOtp: vi.fn(
+            async (
+              _u: string,
+              _i: string,
+              _c: string,
+              onSuccess: () => Promise<void>,
+            ) => onSuccess(),
+          ),
+        } as unknown as OtpSecretStore,
+        undefined,
+        smsProvider,
+      );
+
+      // Step 1: Phone password reset fails channel-mapping sync -> persists hashed +8801712345678
+      const resetRes = await service.resetPassword({
+        identifier: normalizedPhone,
+        code: '123456',
+        new_password: newPassword,
+        confirm_new_password: newPassword,
+      });
+      expect(resetRes).toMatchObject({
+        password_reset: true,
+        cleanup_status: 'pending_account_sync',
+        account_ready_for_signin: false,
+      });
+      const storedMeta = redisCleanupStore.get(
+        `auth:v1:reset-cleanup:${userId}`,
+      );
+      expect(storedMeta).toMatchObject({
+        channel: 'phone',
+        channelMappingSyncPending: true,
+        contactHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(JSON.stringify(storedMeta)).not.toContain(normalizedPhone);
+      expect(JSON.stringify(storedMeta)).not.toContain(storedGoTruePhone);
+
+      // Step 2: Subsequent login reads auth.users.phone stored WITHOUT leading '+' ("8801712345678"),
+      // normalizes it to "+8801712345678", matches contactHash, syncs channel mapping, clears Redis, and succeeds
+      const token = accessToken([{ method: 'password' }], {
+        phone: normalizedPhone,
+      });
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: token,
+            refresh_token: 'refresh-phone-resume',
+            expires_in: 3600,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: userId, phone: storedGoTruePhone }),
+        });
+
+      let syncedPhoneContact: unknown = null;
+      const loginTxQuery = vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('INSERT INTO public.user_auth_providers')) {
+          syncedPhoneContact = params?.[1] ?? null;
+          return [];
+        }
+        if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: normalizedPhone,
+            },
+          ];
+        }
+        if (sql.includes('SELECT u.verified_contact,p.verified_at')) {
+          return syncedPhoneContact
+            ? [
+                {
+                  verified_contact: true,
+                  verified_at: '2026-11-21T00:00:00Z',
+                  contact_value: syncedPhoneContact,
+                },
+              ]
+            : [
+                {
+                  verified_contact: true,
+                  verified_at: null,
+                  contact_value: null,
+                },
+              ];
+        }
+        if (sql.includes('SELECT u.id,u.email')) {
+          return [
+            {
+              id: userId,
+              email: null,
+              phone: normalizedPhone,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['phone', 'google'],
+            },
+          ];
+        }
+        if (sql.includes('SELECT p.*,pr.learning_preference')) {
+          return [];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        return [];
+      });
+
+      (db.query as ReturnType<typeof vi.fn>).mockImplementation(
+        async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) {
+            return [{ id: userId, has_app_row: true }];
+          }
+          if (sql.includes('FROM auth.users')) {
+            return [
+              {
+                id: userId,
+                email: null,
+                phone: storedGoTruePhone,
+                email_confirmed_at: null,
+                phone_confirmed_at: '2026-11-21T00:00:00Z',
+              },
+            ];
+          }
+          return [];
+        },
+      );
+      (db.transaction as ReturnType<typeof vi.fn>).mockImplementation(
+        async (_sub: unknown, fn: any) => fn({ query: loginTxQuery }),
+      );
+
+      const loginRes = await service.login(
+        { identifier: normalizedPhone, password: newPassword },
+        {
+          socket: { remoteAddress: '127.0.0.1' },
+          ip: '127.0.0.1',
+          ips: [],
+          headers: {},
+          app: { get: vi.fn() },
+        } as unknown as Request,
+      );
+
+      expect(syncedPhoneContact).toBe(normalizedPhone);
+      expect(clearPendingResetCleanup).toHaveBeenCalledWith(userId);
+      expect(redisCleanupStore.has(`auth:v1:reset-cleanup:${userId}`)).toBe(
+        false,
+      );
+      expect(loginRes.access_token).toBe(token);
+      expect(loginRes.user.phone).toBe(normalizedPhone);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { HttpException, Injectable } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { fail } from '../../common/http.js';
@@ -8,6 +8,8 @@ export type OtpPurpose = 'verify_email' | 'verify_phone' | 'reset_password';
 
 @Injectable()
 export class OtpSecretStore {
+  private readonly logger = new Logger(OtpSecretStore.name);
+
   constructor(
     private readonly abuse: AuthAbuseControl,
     private readonly config: ConfigService,
@@ -65,7 +67,11 @@ export class OtpSecretStore {
     purpose: OtpPurpose = 'verify_email',
   ): Promise<{ expiresInSeconds: number }> {
     const normalizedContact = contact.toLowerCase().trim();
-    const channel = purpose === 'verify_phone' ? 'phone' : 'email';
+    const channel: 'email' | 'phone' =
+      purpose === 'verify_phone' ||
+      (purpose === 'reset_password' && !normalizedContact.includes('@'))
+        ? 'phone'
+        : 'email';
     const challenge =
       purpose === 'verify_email'
         ? await this.abuse.issueChallenge(
@@ -126,7 +132,11 @@ export class OtpSecretStore {
     }
 
     const normalizedContact = contact.toLowerCase().trim();
-    const channel = purpose === 'verify_phone' ? 'phone' : 'email';
+    const channel: 'email' | 'phone' =
+      purpose === 'verify_phone' ||
+      (purpose === 'reset_password' && !normalizedContact.includes('@'))
+        ? 'phone'
+        : 'email';
     const secretKey =
       purpose === 'verify_email'
         ? `auth:v1:otp:secret:${userId}`
@@ -161,6 +171,16 @@ export class OtpSecretStore {
             await onValid();
           } catch (err) {
             if (err instanceof HttpException) throw err;
+            if (process.env.NODE_ENV !== 'production') {
+              const errObj = err as {
+                name?: unknown;
+                code?: unknown;
+                message?: unknown;
+              };
+              this.logger.error(
+                `OTP callback error (purpose=${purpose}, name=${String(errObj?.name ?? 'Error')}, code=${String(errObj?.code ?? 'unknown')}): ${String(errObj?.message ?? 'unexpected error')}`,
+              );
+            }
             fail(
               503,
               'SERVICE_UNAVAILABLE',

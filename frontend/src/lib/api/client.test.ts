@@ -1036,4 +1036,94 @@ describe('M05 EP-P03/EP-P05 and EP-C01–EP-C07 typed fetchers', () => {
       dispatchM05Operation(MOCK_TOKEN, 'nope' as never, undefined as never),
     ).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
   });
+
+  it('preserves explicit structured post-commit password-reset 5xx messages while sanitizing unclassified 5xx errors', async () => {
+    const postCommitMessage =
+      'Password was updated, but local session sync and auth session revocation did not complete. Do not resubmit the reset code; sign in with your new password.';
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 504,
+      headers: { get: () => null },
+      json: () =>
+        Promise.resolve({
+          success: false,
+          error: {
+            code: 'PROVIDER_TIMEOUT',
+            message: postCommitMessage,
+            retryable: false,
+            details: [
+              {
+                field: 'password_reset',
+                code: 'PASSWORD_RESET_POST_COMMIT_CLEANUP_PENDING',
+                message: postCommitMessage,
+              },
+            ],
+          },
+        }),
+    });
+
+    const { resetPassword } = await import('@/lib/api/client');
+    await expect(
+      resetPassword('user@example.com', '123456', 'NewPassw0rd!', 'NewPassw0rd!'),
+    ).rejects.toMatchObject({
+      statusCode: 504,
+      code: 'PROVIDER_TIMEOUT',
+      message: postCommitMessage,
+      retryable: false,
+    });
+
+    // Pre-write 504 timeout (retryable, no post-commit detail) stays sanitized
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 504,
+      headers: { get: () => null },
+      json: () =>
+        Promise.resolve({
+          success: false,
+          error: {
+            code: 'PROVIDER_TIMEOUT',
+            message: 'Internal GoTrue timeout stack trace',
+            retryable: true,
+          },
+        }),
+    });
+    await expect(
+      resetPassword('user@example.com', '123456', 'NewPassw0rd!', 'NewPassw0rd!'),
+    ).rejects.toMatchObject({
+      statusCode: 504,
+      code: 'PROVIDER_TIMEOUT',
+      message: 'Service temporarily unavailable. Please try again.',
+    });
+  });
+
+  it('supports timeoutMs on getProfile via AbortSignal across fetch and response body consumption', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            current_role: 'Backend Developer',
+            education: null,
+            experience_level: 'mid',
+            existing_skills: [],
+            existing_skills_none: true,
+            learning_preference: 'hands_on',
+            preferred_daily_hours: 2,
+            timezone: 'Asia/Dhaka',
+            timezone_detected: false,
+            active_career_goal_ids: [],
+            profile_complete: false,
+            missing_fields: [],
+            updated_at: '2026-11-21T00:00:00Z',
+          },
+        }),
+    });
+
+    const result = await getProfile(MOCK_TOKEN, { timeoutMs: 2500 });
+    expect(result.current_role).toBe('Backend Developer');
+    const [, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1]!;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });

@@ -13,15 +13,5 @@ export default async function ResetPasswordPage() {
     redirect("/dashboard");
   }
 
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-heading-lg text-text-primary">Set New Password</h1>
-        <p className="text-body-sm text-text-secondary">
-          Enter the 6-digit verification code you received and choose a new password.
-        </p>
-      </div>
-      <ResetPasswordForm />
-    </div>
-  );
+  return <ResetPasswordForm />;
 }

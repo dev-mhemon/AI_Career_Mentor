@@ -6,7 +6,8 @@ import type { EntityManager } from 'typeorm';
 import type { ArgumentsHost } from '@nestjs/common';
 import { AuthService } from './services/auth.service.js';
 import { ApiExceptionFilter, fail } from '../common/http.js';
-import type { DatabaseService } from './services/database.service.js';
+import { DatabaseService } from './services/database.service.js';
+import type { DataSource } from 'typeorm';
 import type { SessionApprovalService } from './services/session-approval.service.js';
 import type { AuthAbuseControl } from './abuse-control/abuse-control.service.js';
 import type { EmailRegistrationProvider } from './services/email-registration.provider.js';
@@ -324,6 +325,1086 @@ describe('M02-01 Canonical Password Recovery Integration Matrix (EP-A08 & EP-A09
       expect(result).toEqual({
         password_reset: true,
       });
+      expect(database.transaction).toHaveBeenNthCalledWith(
+        1,
+        TEST_USER_ID,
+        expect.any(Function),
+        true,
+        false,
+        false,
+      );
+    });
+
+    it('runs the inner resetPassword transaction with useServiceRole=false so auth.users subqueries never fail with 42501 permission denied (swallowed as 503 SERVICE_UNAVAILABLE)', async () => {
+      let roleSwitchedToServiceRole = false;
+      const roleCheckingDb = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('SET LOCAL ROLE service_role')) {
+            roleSwitchedToServiceRole = true;
+            return [];
+          }
+          if (sql.includes('FROM auth.users') && roleSwitchedToServiceRole) {
+            throw Object.assign(
+              new Error('permission denied for table users'),
+              { code: '42501' },
+            );
+          }
+          if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+            return [
+              {
+                id: TEST_USER_ID,
+                email: TEST_EMAIL,
+                status: 'active',
+                verified_contact: true,
+                provider_subject: TEST_USER_ID,
+                verified_at: '2026-01-01T00:00:00Z',
+              },
+            ];
+          }
+          return [];
+        }),
+        transaction: vi.fn(
+          async (
+            _id: string | null,
+            op: (db: EntityManager) => Promise<unknown>,
+            active?: boolean,
+            foreground?: boolean,
+            useServiceRole = true,
+          ) => {
+            void active;
+            void foreground;
+            roleSwitchedToServiceRole = false;
+            if (useServiceRole) {
+              await roleCheckingDb.query('SET LOCAL ROLE service_role');
+            }
+            const txDb = {
+              query: roleCheckingDb.query,
+            } as unknown as EntityManager;
+            return op(txDb);
+          },
+        ),
+      };
+
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+
+      const realStoreAuthService = new AuthService(
+        roleCheckingDb as unknown as DatabaseService,
+        config,
+        abuse as unknown as AuthAbuseControl,
+        approvals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      const res = await realStoreAuthService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+
+      expect(res).toEqual({ password_reset: true });
+    });
+
+    it('exercises real DatabaseService.transaction to acquire advisory lock before public.users FOR UPDATE, avoids duplicate callback locks, and runs GoTrue PUT strictly after preflight commit', async () => {
+      let openTransactions = 0;
+      let goTrueSawOpenTx = false;
+      const callOrder: string[] = [];
+      let txSeq = 0;
+      let preflightAdvisoryLockCount = 0;
+
+      const queryHandler = vi.fn(async (sql: string) => {
+        if (
+          typeof sql === 'string' &&
+          sql.includes('pg_advisory_xact_lock(hashtext($1::text))')
+        ) {
+          if (txSeq === 1) preflightAdvisoryLockCount += 1;
+          callOrder.push('advisory_lock');
+          return [];
+        }
+        if (
+          typeof sql === 'string' &&
+          sql.includes('pg_advisory_xact_lock(hashtextextended')
+        ) {
+          return [];
+        }
+        if (
+          typeof sql === 'string' &&
+          sql.includes('SELECT status FROM public.users WHERE id=$1 FOR UPDATE')
+        ) {
+          callOrder.push('wrapper_users_for_update');
+          return [{ status: 'active' }];
+        }
+        if (
+          typeof sql === 'string' &&
+          sql.includes('FROM public.users') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          callOrder.push('callback_users_for_update');
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+            },
+          ];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: 'google-sub-123',
+              verified_at: '2026-01-01T00:00:00Z',
+              is_oauth_provider: true,
+              has_verified_channel_provider: false,
+              has_verified_email_provider: false,
+              needs_auth_confirm: false,
+              needs_auth_contact_sync: false,
+            },
+          ];
+        }
+        return [];
+      });
+
+      const fakeDataSource = {
+        query: queryHandler,
+        createQueryRunner: vi.fn(() => {
+          txSeq += 1;
+          const label =
+            txSeq === 1
+              ? 'preflight'
+              : txSeq === 2
+                ? 'local_revoke'
+                : 'cleanup';
+          return {
+            connect: vi.fn(async () => undefined),
+            startTransaction: vi.fn(async () => {
+              openTransactions += 1;
+              callOrder.push(`tx_begin:${label}`);
+            }),
+            manager: { query: queryHandler },
+            commitTransaction: vi.fn(async () => {
+              callOrder.push(`tx_commit:${label}`);
+              openTransactions -= 1;
+            }),
+            rollbackTransaction: vi.fn(async () => {
+              callOrder.push(`tx_rollback:${label}`);
+              openTransactions -= 1;
+            }),
+            release: vi.fn(async () => undefined),
+          };
+        }),
+      } as unknown as DataSource;
+
+      const realDatabaseService = new DatabaseService(fakeDataSource);
+
+      const trackingApprovals = {
+        revokeAllUserSessions: vi.fn(async () => {
+          callOrder.push('revoke_approved_sessions');
+          return 1;
+        }),
+      };
+
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        async () => {
+          callOrder.push('gotrue_put');
+          if (openTransactions > 0) {
+            goTrueSawOpenTx = true;
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ id: TEST_USER_ID }),
+          };
+        },
+      );
+
+      const trackedService = new AuthService(
+        realDatabaseService,
+        config,
+        abuse as unknown as AuthAbuseControl,
+        trackingApprovals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      const res = await trackedService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+
+      expect(res).toEqual({ password_reset: true });
+      expect(goTrueSawOpenTx).toBe(false);
+      // Real DatabaseService.transaction acquired advisory lock once (no duplicate lock inside callback)
+      expect(preflightAdvisoryLockCount).toBe(1);
+      expect(callOrder.indexOf('advisory_lock')).toBeLessThan(
+        callOrder.indexOf('wrapper_users_for_update'),
+      );
+      expect(callOrder.indexOf('tx_commit:preflight')).toBeLessThan(
+        callOrder.indexOf('gotrue_put'),
+      );
+      expect(callOrder.indexOf('gotrue_put')).toBeLessThan(
+        callOrder.indexOf('revoke_approved_sessions'),
+      );
+    });
+
+    it('maps GoTrue 422 weak_password and same_password to application-owned 422 PASSWORD_POLICY_FAILED (never raw provider text or broad fallback on unrelated error_code) and does NOT revoke existing sessions', async () => {
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          code: 422,
+          error_code: 'weak_password',
+          msg: 'RAW provider leak: pwned password internal reason',
+        }),
+      });
+
+      await expect(
+        authService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: expect.objectContaining({
+          code: 'PASSWORD_POLICY_FAILED',
+          message:
+            'Password does not meet security requirements. Choose a stronger password with a mix of letters, numbers, and symbols.',
+          details: [
+            expect.objectContaining({
+              field: 'new_password',
+              code: 'PASSWORD_POLICY_FAILED',
+              message:
+                'Password does not meet security requirements. Choose a stronger password with a mix of letters, numbers, and symbols.',
+            }),
+          ],
+        }),
+      });
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
+
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          code: 422,
+          error_code: 'same_password',
+          msg: 'New password should be different from the old password.',
+        }),
+      });
+
+      await expect(
+        authService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: expect.objectContaining({
+          code: 'PASSWORD_POLICY_FAILED',
+          message: 'New password must be different from your current password.',
+        }),
+      });
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
+
+      // Unrelated GoTrue error_code mentioning "password" must NOT map to PASSWORD_POLICY_FAILED
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          code: 422,
+          error_code: 'user_banned',
+          msg: 'User cannot change password right now',
+        }),
+      });
+
+      await expect(
+        authService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 502,
+        response: expect.objectContaining({
+          code: 'PROVIDER_ERROR',
+        }),
+      });
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
+    });
+
+    it('retries local sync even if GoTrue session cleanup throws, records unfinished cleanup metadata, and returns distinct partial-completion result when only local sync fails', async () => {
+      const recordCleanup = vi.fn(async () => undefined);
+      const abuseWithTracking = {
+        ...abuse,
+        recordUnfinishedPasswordResetCleanup: recordCleanup,
+      };
+
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      // Case 1: Both local sync attempts fail AND GoTrue session cleanup fails -> retry still runs, never claims local sessions were revoked
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+
+      let txCount = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          txCount += 1;
+          if (txCount === 1) {
+            return op({ query: database.query } as unknown as EntityManager);
+          }
+          const err = new Error('statement timeout');
+          (err as { code?: string }).code = '57014';
+          throw err;
+        },
+      );
+
+      const trackedService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        abuseWithTracking as unknown as AuthAbuseControl,
+        approvals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      await expect(
+        trackedService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({
+        status: 504,
+        response: expect.objectContaining({
+          code: 'PROVIDER_TIMEOUT',
+          retryable: false,
+          message: expect.stringContaining(
+            'local session sync and auth session revocation did not complete',
+          ),
+        }),
+      });
+      // 1 preflight + 1 initial local sync + 3 GoTrue cleanup attempts + 1 local sync retry = 6 transactions
+      expect(txCount).toBe(6);
+      expect(recordCleanup).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({
+          localSyncPending: true,
+          goTrueRevocationPending: true,
+          channel: 'email',
+        }),
+      );
+
+      // Case 2: GoTrue password update & GoTrue cleanup succeed, but both local sync attempts fail -> returns distinct partial-completion result (never retryable 503 asking to resubmit OTP)
+      recordCleanup.mockClear();
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+      let txCount2 = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          txCount2 += 1;
+          // tx 1 = preflight (ok), tx 2 = local sync #1 (fail), tx 3 = GoTrue cleanup (ok), tx 4 = local sync retry (fail)
+          if (txCount2 === 2 || txCount2 === 4) {
+            throw new Error('local sync db failure');
+          }
+          return op({ query: database.query } as unknown as EntityManager);
+        },
+      );
+
+      const partialRes = await trackedService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+
+      expect(partialRes).toEqual({
+        password_reset: true,
+        cleanup_status: 'partial',
+        account_ready_for_signin: true,
+        pending_cleanup: {
+          local_session_revocation: true,
+          local_session_sync: true,
+          channel_mapping_sync: false,
+          provider_session_revocation: false,
+        },
+        message:
+          'Password was updated, but local session cleanup is still pending. Sign in with your new password.',
+      });
+      expect(recordCleanup).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({
+          localSyncPending: true,
+          localSessionRevocationPending: true,
+          accountSyncPending: false,
+          fallbackBootstrapPending: false,
+          goTrueRevocationPending: false,
+          channel: 'email',
+        }),
+      );
+
+      // Case 3: Fallback account bootstrap fails while local session revocation commits independently -> returns pending_account_bootstrap and NEVER directs user to sign in
+      recordCleanup.mockClear();
+      approvals.revokeAllUserSessions.mockClear();
+      const fallbackAuthRow = {
+        id: TEST_USER_ID,
+        email: TEST_EMAIL,
+        phone: null,
+        email_confirmed_at: '2026-01-01T00:00:00Z',
+        phone_confirmed_at: null,
+        oauth_provider: null,
+        oauth_subject: null,
+        oauth_confirmed_at: null,
+        app_status: null,
+        app_verified_contact: null,
+      };
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users u')) {
+          return [];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM auth.users u')) {
+          return [fallbackAuthRow];
+        }
+        return [];
+      });
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+      let fallbackTxCount = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          fallbackTxCount += 1;
+          // tx 1 = preflight (ok), tx 2 = local session revocation (ok),
+          // tx 3 = fallback bootstrap #1 (fail), tx 4 = GoTrue cleanup (ok), tx 5 = fallback bootstrap retry (fail)
+          if (fallbackTxCount === 3 || fallbackTxCount === 5) {
+            throw new Error('bootstrap write failed');
+          }
+          return op({ query: database.query } as unknown as EntityManager);
+        },
+      );
+
+      const bootstrapPendingRes = await trackedService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+
+      expect(approvals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
+      expect(bootstrapPendingRes).toEqual({
+        password_reset: true,
+        cleanup_status: 'pending_account_bootstrap',
+        account_ready_for_signin: false,
+        pending_cleanup: {
+          local_session_revocation: false,
+          account_bootstrap: true,
+          channel_mapping_sync: false,
+          provider_session_revocation: false,
+        },
+        message: expect.not.stringMatching(/sign in with your new password/i),
+      });
+      expect(recordCleanup).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({
+          localSessionRevocationPending: false,
+          accountSyncPending: true,
+          fallbackBootstrapPending: true,
+          goTrueRevocationPending: false,
+        }),
+      );
+
+      // Case 4: Verified OAuth application account requires channel mapping sync (needsChannelSync=true)
+      // and both post-password-update sync attempts fail -> returns pending_account_sync with account_ready_for_signin=false (never directs user to sign in)
+      recordCleanup.mockClear();
+      approvals.revokeAllUserSessions.mockClear();
+      const oauthAccountRow = {
+        id: TEST_USER_ID,
+        email: TEST_EMAIL,
+        status: 'active',
+        verified_contact: true,
+        provider_subject: 'google-sub-123',
+        verified_at: '2026-01-01T00:00:00Z',
+        is_oauth_provider: true,
+        has_verified_channel_provider: false,
+        has_verified_email_provider: false,
+        needs_auth_confirm: false,
+        needs_auth_contact_sync: false,
+      };
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          typeof sql === 'string' &&
+          sql.includes('FROM public.users') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: TEST_EMAIL,
+            },
+          ];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [oauthAccountRow];
+        }
+        return [];
+      });
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+      let oauthTxCount = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          oauthTxCount += 1;
+          // tx 1 = preflight (ok), tx 2 = local session revocation (ok),
+          // tx 3 = channel mapping sync #1 (fail), tx 4 = GoTrue cleanup (ok), tx 5 = channel mapping sync retry (fail)
+          if (oauthTxCount === 3 || oauthTxCount === 5) {
+            throw new Error('channel mapping sync failed');
+          }
+          return op({ query: database.query } as unknown as EntityManager);
+        },
+      );
+
+      const oauthSyncPendingRes = await trackedService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+
+      expect(approvals.revokeAllUserSessions).toHaveBeenCalledTimes(1);
+      expect(oauthSyncPendingRes).toEqual({
+        password_reset: true,
+        cleanup_status: 'pending_account_sync',
+        account_ready_for_signin: false,
+        pending_cleanup: {
+          local_session_revocation: false,
+          account_bootstrap: false,
+          channel_mapping_sync: true,
+          provider_session_revocation: false,
+        },
+        message: expect.not.stringMatching(/sign in with your new password/i),
+      });
+      expect(recordCleanup).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({
+          localSessionRevocationPending: false,
+          accountSyncPending: true,
+          fallbackBootstrapPending: false,
+          channelMappingSyncPending: true,
+          goTrueRevocationPending: false,
+          contactHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      );
+
+      // Case 5: Consumable reconciliation retries pending channel mapping sync using authoritative auth.users contact verified against contactHash
+      const recordedCleanupMeta = (
+        recordCleanup.mock.calls[
+          recordCleanup.mock.calls.length - 1
+        ] as unknown[]
+      )?.[1];
+      const getCleanup = vi.fn(async () => recordedCleanupMeta);
+      const clearCleanup = vi.fn(async () => undefined);
+      const clearOp = vi.fn(async () => undefined);
+      const reconcileService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        {
+          ...abuseWithTracking,
+          getUnfinishedPasswordResetCleanup: getCleanup,
+          clearUnfinishedPasswordResetCleanup: clearCleanup,
+          clearPasswordResetOperation: clearOp,
+        } as unknown as AuthAbuseControl,
+        approvals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM auth.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              email_confirmed_at: '2026-01-01T00:00:00Z',
+              phone_confirmed_at: null,
+            },
+          ];
+        }
+        return [];
+      });
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => op({ query: database.query } as unknown as EntityManager),
+      );
+      const reconRes =
+        await reconcileService.reconcilePendingPasswordResetCleanup(
+          TEST_USER_ID,
+        );
+      expect(reconRes).toEqual({
+        found: true,
+        completed: true,
+        remaining: {
+          local_session_revocation: false,
+          account_bootstrap: false,
+          channel_mapping_sync: false,
+          provider_session_revocation: false,
+        },
+      });
+      expect(clearCleanup).toHaveBeenCalledWith(TEST_USER_ID);
+    });
+
+    it('consumes auth:v1:reset-cleanup on subsequent login to resume channel-mapping sync without another OTP, and returns retryable 503 keeping Redis intact if DB is still down', async () => {
+      const redisCleanupStore = new Map<string, Record<string, unknown>>();
+      const recordCleanup = vi.fn(
+        async (uid: string, meta: Record<string, unknown>) => {
+          redisCleanupStore.set(`auth:v1:reset-cleanup:${uid}`, meta);
+        },
+      );
+      const getPendingResetCleanup = vi.fn(
+        async (uid: string) =>
+          redisCleanupStore.get(`auth:v1:reset-cleanup:${uid}`) ?? null,
+      );
+      const clearPendingResetCleanup = vi.fn(async (uid: string) => {
+        redisCleanupStore.delete(`auth:v1:reset-cleanup:${uid}`);
+      });
+
+      const abuseWithRedis = {
+        ...abuse,
+        enforceIpQuota: vi.fn(async () => undefined),
+        login: vi.fn(
+          async (
+            _contact: unknown,
+            _ip: string,
+            execute: () => Promise<{ success: true; value: unknown }>,
+          ) => {
+            const res = await execute();
+            return res.value;
+          },
+        ),
+        recordUnfinishedPasswordResetCleanup: recordCleanup,
+        getPendingResetCleanup,
+        clearPendingResetCleanup,
+      };
+
+      const recoveryService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        abuseWithRedis as unknown as AuthAbuseControl,
+        {
+          ...approvals,
+          approve: vi.fn(async () => undefined),
+        } as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      // Step 1: Verified OAuth user resets password, GoTrue succeeds, channel-mapping sync fails -> Redis record persisted
+      const oauthAccountRow = {
+        id: TEST_USER_ID,
+        email: TEST_EMAIL,
+        status: 'active',
+        verified_contact: true,
+        provider_subject: 'google-sub-123',
+        verified_at: '2026-01-01T00:00:00Z',
+        is_oauth_provider: true,
+        has_verified_channel_provider: false,
+        has_verified_email_provider: false,
+        needs_auth_confirm: false,
+        needs_auth_contact_sync: false,
+      };
+      database.query.mockImplementation(async (sql: string) => {
+        if (
+          typeof sql === 'string' &&
+          sql.includes('FROM public.users') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: TEST_EMAIL,
+            },
+          ];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [oauthAccountRow];
+        }
+        return [];
+      });
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: TEST_USER_ID }),
+      });
+      let resetTx = 0;
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => {
+          resetTx += 1;
+          if (resetTx === 3 || resetTx === 5) {
+            throw new Error('transient DB outage during channel sync');
+          }
+          return op({ query: database.query } as unknown as EntityManager);
+        },
+      );
+
+      const resetRes = await recoveryService.resetPassword({
+        identifier: TEST_EMAIL,
+        code: '123456',
+        new_password: TEST_NEW_PASSWORD,
+        confirm_new_password: TEST_NEW_PASSWORD,
+      });
+      expect(resetRes).toMatchObject({
+        password_reset: true,
+        cleanup_status: 'pending_account_sync',
+        account_ready_for_signin: false,
+      });
+      const storedMeta = redisCleanupStore.get(
+        `auth:v1:reset-cleanup:${TEST_USER_ID}`,
+      );
+      expect(storedMeta).toMatchObject({
+        recoveryOpId: expect.any(String),
+        channel: 'email',
+        channelMappingSyncPending: true,
+        contactHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      // Non-secret / non-PII guard
+      expect(JSON.stringify(storedMeta)).not.toContain(TEST_NEW_PASSWORD);
+      expect(JSON.stringify(storedMeta)).not.toContain('123456');
+      expect(JSON.stringify(storedMeta)).not.toContain(TEST_EMAIL);
+
+      const makeJwt = () => {
+        const enc = (obj: object) =>
+          Buffer.from(JSON.stringify(obj)).toString('base64url');
+        return `${enc({ alg: 'HS256' })}.${enc({
+          sub: TEST_USER_ID,
+          session_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        })}.sig`;
+      };
+
+      // Step 2: Login while DB is STILL unavailable -> keeps Redis record intact and returns retryable 503
+      const token1 = makeJwt();
+      (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: token1,
+            refresh_token: 'refresh-1',
+            expires_in: 3600,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: TEST_USER_ID, email: TEST_EMAIL }),
+        });
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM auth.users u')) {
+          return [{ id: TEST_USER_ID }];
+        }
+        if (typeof sql === 'string' && sql.includes('FROM auth.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              email_confirmed_at: '2026-01-01T00:00:00Z',
+              phone_confirmed_at: null,
+            },
+          ];
+        }
+        return [];
+      });
+      database.transaction.mockRejectedValueOnce(
+        new Error('DB still unavailable'),
+      );
+
+      const fakeReq = {
+        socket: { remoteAddress: '127.0.0.1' },
+        ip: '127.0.0.1',
+        ips: [],
+        headers: {},
+        app: { get: vi.fn() },
+      } as never;
+
+      await expect(
+        recoveryService.login(
+          { identifier: TEST_EMAIL, password: TEST_NEW_PASSWORD },
+          fakeReq,
+        ),
+      ).rejects.toMatchObject({
+        status: 503,
+        response: expect.objectContaining({
+          code: 'SERVICE_UNAVAILABLE',
+          retryable: true,
+        }),
+      });
+      expect(clearPendingResetCleanup).not.toHaveBeenCalled();
+      expect(
+        redisCleanupStore.has(`auth:v1:reset-cleanup:${TEST_USER_ID}`),
+      ).toBe(true);
+
+      // Step 3: DB recovers -> subsequent login consumes Redis record, syncs channel mapping, clears Redis, and succeeds without another OTP
+      const token2 = makeJwt();
+      (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: token2,
+            refresh_token: 'refresh-2',
+            expires_in: 3600,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: TEST_USER_ID, email: TEST_EMAIL }),
+        });
+
+      let channelMappingSynced = false;
+      const loginQuery = vi.fn(async (sql: string) => {
+        if (sql.includes('INSERT INTO public.user_auth_providers')) {
+          channelMappingSynced = true;
+          return [];
+        }
+        if (sql.includes('FROM public.users') && sql.includes('FOR UPDATE')) {
+          return [
+            {
+              status: 'active',
+              suspended_at: null,
+              auth_deleted_at: null,
+              verified_contact: true,
+              current_contact: TEST_EMAIL,
+            },
+          ];
+        }
+        if (sql.includes('SELECT u.verified_contact,p.verified_at')) {
+          return channelMappingSynced
+            ? [
+                {
+                  verified_contact: true,
+                  verified_at: '2026-01-01T00:00:00Z',
+                  contact_value: TEST_EMAIL,
+                },
+              ]
+            : [
+                {
+                  verified_contact: true,
+                  verified_at: null,
+                  contact_value: null,
+                },
+              ];
+        }
+        if (sql.includes('SELECT u.id,u.email')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              phone: null,
+              status: 'active',
+              verified_contact: true,
+              role: 'USER',
+              linked_providers: ['email', 'google'],
+            },
+          ];
+        }
+        if (sql.includes('SELECT p.*,pr.learning_preference')) {
+          return [];
+        }
+        if (sql.includes('effective_feature_access')) {
+          return [{ enabled: true }];
+        }
+        return [];
+      });
+      database.transaction.mockImplementation(
+        async (
+          _id: string | null,
+          op: (db: EntityManager) => Promise<unknown>,
+        ) => op({ query: loginQuery } as unknown as EntityManager),
+      );
+
+      const loginRes = await recoveryService.login(
+        { identifier: TEST_EMAIL, password: TEST_NEW_PASSWORD },
+        fakeReq,
+      );
+
+      expect(channelMappingSynced).toBe(true);
+      expect(clearPendingResetCleanup).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(
+        redisCleanupStore.has(`auth:v1:reset-cleanup:${TEST_USER_ID}`),
+      ).toBe(false);
+      expect(loginRes).toMatchObject({
+        access_token: token2,
+        refresh_token: 'refresh-2',
+        token_type: 'Bearer',
+        user: expect.objectContaining({
+          id: TEST_USER_ID,
+          email: TEST_EMAIL,
+        }),
+      });
+    });
+
+    it('records pre-GoTrue operation state, clears it on confirmed rejection, and marks provider_uncertain without revoking sessions on provider timeout', async () => {
+      const recordOp = vi.fn(async () => undefined);
+      const clearOp = vi.fn(async () => undefined);
+      const recordCleanup = vi.fn(async () => undefined);
+      const trackedService = new AuthService(
+        database as unknown as DatabaseService,
+        config,
+        {
+          ...abuse,
+          recordPasswordResetOperation: recordOp,
+          clearPasswordResetOperation: clearOp,
+          recordUnfinishedPasswordResetCleanup: recordCleanup,
+        } as unknown as AuthAbuseControl,
+        approvals as unknown as SessionApprovalService,
+        otpStore as unknown as OtpSecretStore,
+        emailProvider as unknown as EmailRegistrationProvider,
+      );
+
+      database.query.mockImplementation(async (sql: string) => {
+        if (typeof sql === 'string' && sql.includes('FROM public.users')) {
+          return [
+            {
+              id: TEST_USER_ID,
+              email: TEST_EMAIL,
+              status: 'active',
+              verified_contact: true,
+              provider_subject: TEST_USER_ID,
+            },
+          ];
+        }
+        return [];
+      });
+
+      // Confirmed 422 rejection -> clears operation record, does NOT revoke sessions or mark uncertain
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          code: 422,
+          error_code: 'weak_password',
+          msg: 'weak',
+        }),
+      });
+      await expect(
+        trackedService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({ status: 422 });
+      expect(recordOp).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({ status: 'pending_provider_update' }),
+      );
+      expect(clearOp).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(recordCleanup).not.toHaveBeenCalled();
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
+
+      // Uncertain 504 timeout -> marks provider_uncertain and records cleanup metadata without revoking sessions
+      recordOp.mockClear();
+      clearOp.mockClear();
+      recordCleanup.mockClear();
+      const abortErr = new Error('aborted');
+      abortErr.name = 'AbortError';
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        abortErr,
+      );
+      await expect(
+        trackedService.resetPassword({
+          identifier: TEST_EMAIL,
+          code: '123456',
+          new_password: TEST_NEW_PASSWORD,
+          confirm_new_password: TEST_NEW_PASSWORD,
+        }),
+      ).rejects.toMatchObject({ status: 504 });
+      expect(recordOp).toHaveBeenLastCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({ status: 'provider_uncertain' }),
+      );
+      expect(recordCleanup).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        expect.objectContaining({ providerUpdateUncertain: true }),
+      );
+      expect(approvals.revokeAllUserSessions).not.toHaveBeenCalled();
     });
 
     it('returns 504 PROVIDER_TIMEOUT when GoTrue session revocation times out after password commit', async () => {

@@ -127,6 +127,112 @@ function assertDagAcyclic(edges: Map<string, string[]>): void {
 }
 
 function validateGoalInterpretation(raw: Record<string, unknown>): void {
+  if (typeof raw.isTechnologyGoal !== 'boolean') {
+    if (typeof raw.is_tech_goal === 'boolean') {
+      raw.isTechnologyGoal = raw.is_tech_goal;
+    } else if (typeof raw.is_technology_goal === 'boolean') {
+      raw.isTechnologyGoal = raw.is_technology_goal;
+    } else if (typeof raw.out_of_domain === 'boolean') {
+      raw.isTechnologyGoal = !raw.out_of_domain;
+    }
+  }
+  if (typeof raw.clarificationNeeded !== 'boolean') {
+    if (typeof raw.clarification_needed === 'boolean') {
+      raw.clarificationNeeded = raw.clarification_needed;
+    } else if (
+      raw.clarificationNeeded !== undefined ||
+      raw.clarification_needed !== undefined
+    ) {
+      validationFail();
+    } else {
+      const candidateQuestion =
+        raw.clarificationQuestion ?? raw.clarification_question;
+      if (
+        typeof candidateQuestion === 'string' &&
+        candidateQuestion.trim().length > 0
+      ) {
+        validationFail();
+      }
+      raw.clarificationNeeded = false;
+    }
+  }
+  if (![0, 1, 2].includes(raw.clarificationRound as number)) {
+    if ([0, 1, 2].includes(raw.clarification_round as number)) {
+      raw.clarificationRound = raw.clarification_round;
+    } else {
+      raw.clarificationRound = 0;
+    }
+  }
+  if (
+    raw.clarificationQuestion === undefined &&
+    raw.clarification_question !== undefined
+  ) {
+    raw.clarificationQuestion = raw.clarification_question;
+  }
+  if (raw.clarificationQuestion === undefined) {
+    raw.clarificationQuestion = null;
+  }
+  if (raw.proposedRole === undefined && raw.proposed_role !== undefined) {
+    raw.proposedRole = raw.proposed_role;
+  }
+  if (raw.proposedRole === undefined) {
+    raw.proposedRole = null;
+  }
+  if (
+    raw.proposedRole !== null &&
+    typeof raw.proposedRole === 'object' &&
+    !Array.isArray(raw.proposedRole)
+  ) {
+    const roleRec = raw.proposedRole as Record<string, unknown>;
+    if (
+      roleRec.canonicalRoleId === undefined &&
+      typeof roleRec.canonical_role_id === 'string'
+    ) {
+      roleRec.canonicalRoleId = roleRec.canonical_role_id;
+    }
+  }
+  if (
+    raw.alternativeRoles === undefined &&
+    raw.alternative_roles !== undefined
+  ) {
+    raw.alternativeRoles = raw.alternative_roles;
+  }
+  if (raw.alternativeRoles === undefined) {
+    raw.alternativeRoles = [];
+  }
+  if (Array.isArray(raw.alternativeRoles)) {
+    for (const alt of raw.alternativeRoles) {
+      if (alt && typeof alt === 'object' && !Array.isArray(alt)) {
+        const altRec = alt as Record<string, unknown>;
+        if (
+          altRec.canonicalRoleId === undefined &&
+          typeof altRec.canonical_role_id === 'string'
+        ) {
+          altRec.canonicalRoleId = altRec.canonical_role_id;
+        }
+        if (
+          (typeof altRec.matchReason !== 'string' ||
+            !altRec.matchReason.trim()) &&
+          typeof altRec.rationale === 'string' &&
+          altRec.rationale.trim()
+        ) {
+          altRec.matchReason = altRec.rationale;
+        }
+      }
+    }
+  }
+  if (raw.suggestedLevel === undefined && raw.suggested_level !== undefined) {
+    raw.suggestedLevel = raw.suggested_level;
+  }
+  if (typeof raw.suggestedLevel === 'string') {
+    const normalizedLevel = raw.suggestedLevel.trim().toLowerCase();
+    raw.suggestedLevel = CAREER_LEVELS.has(normalizedLevel)
+      ? normalizedLevel
+      : null;
+  } else if (raw.suggestedLevel === undefined) {
+    raw.suggestedLevel = null;
+  }
+
   if (
     typeof raw.isTechnologyGoal !== 'boolean' ||
     typeof raw.clarificationNeeded !== 'boolean' ||

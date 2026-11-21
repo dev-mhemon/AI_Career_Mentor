@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
-import { cn } from './cn';
 import { Alert } from './alert';
+import { Stepper } from './stepper';
 import type { ErrorTone } from '@/lib/api/error-mapper';
 
 export const ONBOARDING_STEPS = [
@@ -25,75 +25,27 @@ export const OnboardingStepHeader = memo(function OnboardingStepHeader({
   const total = ONBOARDING_STEPS.length;
   const active = ONBOARDING_STEPS[currentStep - 1];
   return (
-    <div className="flex flex-col gap-5 rounded-xl border border-border-subtle bg-surface-subtle px-6 py-5">
-      <div
-        role="progressbar"
-        aria-valuenow={currentStep}
-        aria-valuemin={1}
-        aria-valuemax={total}
-        aria-valuetext={`Step ${currentStep} of ${total}: ${active.title}`}
-        aria-label={`Onboarding progress: Step ${currentStep} of ${total}`}
-        className="flex flex-wrap items-center justify-between gap-2"
-      >
-        <div className="flex items-center gap-2.5">
-          <span className="text-label-lg font-semibold text-text-primary">
-            {active.title}
-          </span>
-          <span className="inline-flex items-center rounded-full border border-border-default bg-surface-default px-2.5 py-0.5 text-caption font-medium text-text-secondary">
-            Step {currentStep} of {total}
-          </span>
-        </div>
-        <span className="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-0.5 font-mono text-caption font-semibold tabular-nums text-teal-700 dark:text-teal-300">
-          {Math.round((currentStep / total) * 100)}% Complete
-        </span>
-      </div>
-
-      <ol aria-label="Onboarding steps" className="grid grid-cols-5 items-start">
-          {ONBOARDING_STEPS.map((step, idx) => {
-            const isActive = step.number === currentStep;
-            const isDone = step.number < currentStep;
-            const isLast = idx === total - 1;
-            return (
-              <li
-                key={step.label}
-                aria-current={isActive ? 'step' : undefined}
-                className="relative flex flex-col items-center px-1 text-center"
-              >
-                {!isLast && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute top-3.5 left-1/2 h-0.5 w-full bg-border-subtle"
-                  />
-                )}
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-caption transition-all motion-reduce:transition-none',
-                    isActive
-                      ? 'bg-teal-500 font-semibold text-slate-950 ring-4 ring-teal-500/20'
-                      : isDone
-                        ? 'border border-teal-500 bg-teal-500/15 font-medium text-text-brand'
-                        : 'border border-border-default bg-surface-default font-medium text-text-muted',
-                  )}
-                >
-                  {isDone ? '✓' : step.number}
-                </span>
-                <span
-                  className={cn(
-                    'mt-2.5 text-[11px] leading-tight sm:text-caption',
-                    isActive
-                      ? 'font-semibold text-text-brand'
-                      : 'text-text-muted',
-                  )}
-                >
-                  {step.label}
-                </span>
-                {isDone && <span className="sr-only">(completed)</span>}
-              </li>
-            );
-          })}
-      </ol>
-    </div>
+    <Stepper
+      title={active.title}
+      stepCounterText={`Step ${currentStep} of ${total}`}
+      percentComplete={Math.round((currentStep / total) * 100)}
+      ariaLabel="Onboarding steps"
+      progressAriaLabel={`Onboarding progress: Step ${currentStep} of ${total}`}
+      progressValueNow={currentStep}
+      progressValueMin={1}
+      progressValueMax={total}
+      progressValueText={`Step ${currentStep} of ${total}: ${active.title}`}
+      steps={ONBOARDING_STEPS.map((step) => ({
+        id: String(step.number),
+        label: step.label,
+        status:
+          step.number === currentStep
+            ? 'current'
+            : step.number < currentStep
+              ? 'completed'
+              : 'upcoming',
+      }))}
+    />
   );
 });
 

@@ -126,4 +126,36 @@ describe('AuthenticatedAppLayout', () => {
     );
     expect(screen.getByText('Settings Child')).toBeInTheDocument();
   });
+
+  it('preserves fullName and email from initial layout user when AppShellSync updates currentRole on /career-profile hard refresh', async () => {
+    mockRequireFastSessionShell.mockResolvedValue({
+      unauthenticated: false,
+      variant: 'authenticated',
+      user: {
+        fullName: 'Mosad',
+        currentRole: 'Fronted developer',
+        email: 'mosad@example.com',
+        phone: null,
+      },
+    });
+
+    const tree = await AuthenticatedAppLayout({
+      children: (
+        <>
+          <AppShellSync
+            variant="authenticated"
+            user={{ currentRole: 'Fronted developer' }}
+          />
+          <div>Career Profile Child</div>
+        </>
+      ),
+    });
+
+    render(tree);
+
+    const trigger = screen.getByRole('button', { name: /Mosad/i });
+    expect(trigger).toHaveTextContent('MO');
+    expect(trigger).toHaveTextContent('Fronted developer');
+    expect(trigger).not.toHaveTextContent('Learner');
+  });
 });

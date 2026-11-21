@@ -103,6 +103,12 @@ const M05_SAFE_ERRORS: Readonly<
     tone: 'warning',
     retryable: false,
   },
+  NON_TECH_GOAL: {
+    message:
+      'This goal is outside what we support. AI Career Mentor covers technology careers only. Try a technology role such as "Backend developer" or "Data analyst".',
+    tone: 'warning',
+    retryable: false,
+  },
   CLARIFICATION_LIMIT_REACHED: {
     message:
       'The clarification limit was reached. Review the best interpretation below and confirm it.',

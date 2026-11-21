@@ -12,7 +12,11 @@ vi.mock('@/lib/auth/actions', () => ({
 }));
 
 import { AppShell } from './app-shell';
-import { AppShellProvider, AppShellSync } from './app-shell-context';
+import {
+  AppShellProvider,
+  AppShellSync,
+  useOptionalAppShellContext,
+} from './app-shell-context';
 import { Header } from './header';
 import { resolveShellUserDisplay } from '@/lib/auth/user-display';
 
@@ -575,6 +579,43 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(
       screen.queryByRole('complementary', { name: 'Primary sidebar' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('preserves explicit null field updates in AppShellSync while retaining omitted fields', () => {
+    const seen: Array<ReturnType<typeof useOptionalAppShellContext>> = [];
+    function ContextProbe() {
+      const ctx = useOptionalAppShellContext();
+      seen.push(ctx);
+      return (
+        <div data-testid="shell-user-probe">
+          {JSON.stringify(ctx?.user ?? null)}
+        </div>
+      );
+    }
+
+    render(
+      <AppShellProvider
+        initialUser={{
+          fullName: 'Mehedi Hasan',
+          currentRole: 'Backend Developer',
+          email: 'mehedi@example.com',
+          phone: '+8801712345678',
+        }}
+      >
+        <AppShell>
+          <AppShellSync user={{ email: null }} />
+          <ContextProbe />
+        </AppShell>
+      </AppShellProvider>,
+    );
+
+    expect(JSON.parse(screen.getByTestId('shell-user-probe').textContent ?? 'null')).toEqual({
+      fullName: 'Mehedi Hasan',
+      currentRole: 'Backend Developer',
+      email: null,
+      phone: '+8801712345678',
+    });
+    expect(seen.at(-1)?.user?.email).toBeNull();
   });
 
   it('keeps Header variant="public" compatible for public nav usage', () => {
