@@ -101,7 +101,12 @@ describe('Screen 14 — CareerProfileView', () => {
     const reviewBtn = within(awaiting).getByRole('button', { name: 'Review & confirm' });
     expect(reviewBtn).toHaveClass('h-8');
     expect(within(awaiting).getByRole('button', { name: 'Edit goal text' })).toHaveClass('h-8');
-    expect(within(awaiting).getByRole('button', { name: /discontinue/i })).toHaveClass('h-8');
+    expect(within(awaiting).getByRole('button', { name: /discontinue/i })).toHaveClass(
+      'h-9',
+      'rounded-xl',
+      'border-slate-200',
+      'bg-white',
+    );
 
     // Discontinued archive is collapsed by default and expands on click
     const archiveToggle = screen.getByRole('button', { name: /discontinued goals \(1\)/i });
@@ -270,6 +275,10 @@ describe('Screen 14 — CareerProfileView', () => {
     expect(dialog).toHaveTextContent(/roadmap will be archived/i);
     expect(dialog).toHaveTextContent(/focus will move/i);
     expect(dialog).toHaveTextContent(/progress and learning evidence are kept/i);
+    expect(within(dialog).getByText('Career goal')).toBeInTheDocument();
+    expect(within(dialog).getByText('Backend developer')).toBeInTheDocument();
+    expect(within(dialog).getByText('Roadmap:')).toBeInTheDocument();
+    expect(within(dialog).getByText('Backend Development')).toBeInTheDocument();
     expect(invoke).not.toHaveBeenCalled(); // nothing happens before explicit confirm
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Discontinue goal' }));
@@ -849,5 +858,177 @@ describe('Screen 14 — CareerProfileView', () => {
     // Open panel for Goal B updates cleanly to the refreshed awaiting_confirmation snapshot
     expect(await screen.findByRole('heading', { name: 'Confirm your role' })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Review and confirm career goal' })).getByText('AI Engineering')).toBeInTheDocument();
+  });
+
+  it('renders Generate Roadmap Draft handoff on confirmed goals without a roadmap and dispatches generateRoadmap + getJobStatus via invoke without 403 INVALID_OPERATION', async () => {
+    vi.useFakeTimers();
+    try {
+      const confirmedGoal = goal('g-confirmed-1', 'confirmed', 'Backend developer', {
+        target_level: 'mid',
+        roadmap_id: null,
+      });
+      const invoke = makeInvoke((op) => {
+        if (op === 'generateRoadmap') {
+          return {
+            ok: true,
+            data: {
+              job_id: 'job-cp-r01',
+              kind: 'roadmap_generate',
+              status: 'queued',
+              poll_url: '/api/v1/jobs/job-cp-r01',
+              retry_after_seconds: 1,
+            },
+          };
+        }
+        if (op === 'getJobStatus') {
+          return {
+            ok: true,
+            data: {
+              job_id: 'job-cp-r01',
+              kind: 'roadmap_generate',
+              status: 'succeeded',
+              result_ref: { type: 'roadmap', id: 'roadmap-cp-99' },
+              error: null,
+              retryable: false,
+              created_at: '2026-11-21T00:00:00.000Z',
+              finished_at: '2026-11-21T00:00:01.000Z',
+            },
+          };
+        }
+        return { ok: true, data: {} };
+      });
+
+      render(
+        <CareerProfileView
+          initialGoals={[confirmedGoal]}
+          profile={PROFILE}
+          invoke={invoke}
+        />,
+      );
+
+      const generateBtn = screen.getByRole('button', {
+        name: 'Generate Roadmap Draft',
+      });
+      // Sparkles icon on Generate Roadmap Draft, idle card renders NO status slot below footer row
+      expect(generateBtn.querySelector('[data-icon="sparkles"]')).toBeInTheDocument();
+      expect(screen.queryByTestId('roadmap-handoff-status')).not.toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(generateBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(invoke).toHaveBeenCalledWith(
+        'generateRoadmap',
+        expect.objectContaining({
+          body: {
+            career_goal_id: 'g-confirmed-1',
+            target_level: 'mid',
+            level_confirmed: true,
+          },
+          idempotencyKey: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+          ),
+        }),
+      );
+      expect(screen.getByTestId('roadmap-handoff-status')).toBeInTheDocument();
+      expect(
+        screen.getByText('Generating your roadmap draft'),
+      ).toBeInTheDocument();
+      // Prevent concurrent discontinue while roadmap generation/polling is active
+      expect(
+        screen.getByRole('button', { name: /discontinue goal: backend developer/i }),
+      ).toBeDisabled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(invoke).toHaveBeenCalledWith('getJobStatus', {
+        jobId: 'job-cp-r01',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('unifies confirmed goal footer hierarchy with bordered Discontinue, solid far-right primary CTA, and distinct semantic icons', () => {
+    const withRoadmap = goal('g-has-rm', 'confirmed', 'Backend engineer', {
+      target_level: 'mid',
+      roadmap_id: 'rm-123',
+    });
+    const withoutRoadmap = goal('g-no-rm', 'confirmed', 'Data engineer', {
+      target_level: 'junior',
+      roadmap_id: null,
+    });
+
+    render(
+      <CareerProfileView
+        initialGoals={[withRoadmap, withoutRoadmap]}
+        profile={PROFILE}
+        invoke={makeInvoke(() => ({ ok: true, data: {} }))}
+      />,
+    );
+
+    const cardWithRm = screen.getByText('Backend engineer').closest('li')!;
+    const cardWithoutRm = screen.getByText('Data engineer').closest('li')!;
+
+    // Both cards have clear bordered secondary muted-destructive Discontinue button before primary CTA
+    for (const card of [cardWithRm, cardWithoutRm]) {
+      const discontinueBtn = within(card).getByRole('button', { name: /discontinue goal/i });
+      expect(discontinueBtn).toHaveClass(
+        'h-9',
+        'rounded-xl',
+        'border',
+        'border-slate-200',
+        'bg-white',
+        'text-slate-600',
+        'leading-none',
+        'hover:border-rose-200',
+        'hover:bg-rose-50',
+        'hover:text-rose-700',
+      );
+      expect(discontinueBtn.querySelector('[data-icon="ban"]')).toHaveClass('block', 'shrink-0');
+      expect(within(card).queryByTestId('roadmap-handoff-status')).not.toBeInTheDocument();
+    }
+
+    // With roadmap: primary teal View Roadmap link with trailing ArrowRight (matching h-9 rounded-xl leading-none)
+    const viewLink = within(cardWithRm).getByRole('link', { name: 'View Roadmap' });
+    expect(viewLink).toHaveAttribute('href', '/roadmaps/rm-123');
+    expect(viewLink).toHaveClass(
+      'h-9',
+      'rounded-xl',
+      'leading-none',
+      'bg-action-primary-background',
+      'text-action-primary-foreground',
+    );
+    expect(viewLink.querySelector('[data-icon="arrow-right"]')).toHaveClass('block', 'shrink-0');
+    expect(viewLink.lastElementChild).toHaveAttribute('data-icon', 'arrow-right');
+
+    // Without roadmap: primary teal Generate Roadmap Draft button with Sparkles icon in same right action cluster
+    const generateBtn = within(cardWithoutRm).getByRole('button', {
+      name: 'Generate Roadmap Draft',
+    });
+    expect(generateBtn).toHaveClass(
+      'h-9',
+      'rounded-xl',
+      'leading-none',
+      'bg-action-primary-background',
+      'text-action-primary-foreground',
+    );
+    expect(generateBtn.querySelector('[data-icon="sparkles"]')).toHaveClass('block', 'shrink-0');
+    const discontinueWithoutRm = within(cardWithoutRm).getByRole('button', {
+      name: /discontinue goal/i,
+    });
+    expect(discontinueWithoutRm.parentElement).toBe(generateBtn.parentElement);
+    expect(
+      Boolean(
+        discontinueWithoutRm.compareDocumentPosition(generateBtn) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
   });
 });

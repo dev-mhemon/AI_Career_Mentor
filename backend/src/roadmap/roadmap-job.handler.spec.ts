@@ -694,5 +694,32 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
       expectContractError(err, 409, 'ROADMAP_LIMIT_REACHED');
       return true;
     });
+
+    // Overflowing estimated_effort_hours (> numeric(5,1) max 9999.9) fails 502 AI_VALIDATION_FAILED before SQL insert
+    const overflowOutput = makeSampleRoadmapOutput(2);
+    overflowOutput.phases[0]!.items[0]!.estimated_effort_hours = 10_000;
+    const txOverflow = makeTxMock(async (sql: string) => {
+      if (sql.includes('FROM public.users')) return [{ status: 'active' }];
+      return [];
+    });
+    await expect(
+      handler.persistArtifact(txOverflow, makeGenerateJob(), {
+        resultType: 'roadmap',
+        resultId: GOAL_ID,
+        providerKey: 'synthetic',
+        modelId: MODEL_ID,
+        promptVersionId: PROMPT_ID,
+        outputSchemaId: 'roadmap.v1',
+        fallbackUsed: false,
+        language: 'en',
+        inputUnits: 10,
+        outputUnits: 10,
+        latencyMs: 10,
+        output: overflowOutput,
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 502, 'AI_VALIDATION_FAILED');
+      return true;
+    });
   });
 });

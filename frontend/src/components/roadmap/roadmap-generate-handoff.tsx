@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ApiError,
@@ -15,9 +15,9 @@ import {
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import { AILoadingState } from '@/components/ui/ai-loading-state';
 import { Alert } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, type ButtonSize } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
-import { CompassIcon } from '@/components/ui/icons';
+import { SparklesIcon } from '@/components/ui/icons';
 
 export interface RoadmapGenerateHandoffProps {
   /** Authenticated Bearer token passed from a Server Component or verified client session. */
@@ -34,6 +34,8 @@ export interface RoadmapGenerateHandoffProps {
   disabled?: boolean;
   /** Custom CTA label. */
   buttonLabel?: string;
+  /** CTA button size (`md` default for standalone onboarding; `sm` for compact card footers). */
+  buttonSize?: ButtonSize;
   /** Optional custom `EP-R01` invoker (e.g. via Server Action glue when `accessToken` is kept server-side). */
   onGenerateRoadmap?: (
     body: GenerateRoadmapRequestDTO,
@@ -43,6 +45,12 @@ export interface RoadmapGenerateHandoffProps {
   onNavigateToDraft?: (roadmapId: string) => void;
   /** Optional custom job poller for tests or Server Action glue. */
   pollJobStatus?: (jobId: string, signal: AbortSignal) => Promise<JobStatusDTO>;
+  /** Optional layout compositor for embedding the trigger and conditional status slot in a card footer. */
+  renderLayout?: (parts: {
+    trigger: ReactNode;
+    status: ReactNode | null;
+    isGenerating: boolean;
+  }) => ReactNode;
   className?: string;
 }
 
@@ -61,9 +69,11 @@ export function RoadmapGenerateHandoff({
   featureEnabled = true,
   disabled = false,
   buttonLabel = 'Generate Roadmap Draft',
+  buttonSize = 'md',
   onGenerateRoadmap,
   onNavigateToDraft,
   pollJobStatus,
+  renderLayout,
   className,
 }: RoadmapGenerateHandoffProps) {
   const router = useRouter();
@@ -146,8 +156,9 @@ export function RoadmapGenerateHandoff({
     acceptedJob !== null &&
     (acceptedJob.status === 'queued' || acceptedJob.status === 'preparing');
 
-  return (
-    <div className={cn('flex flex-col gap-4', className)}>
+  const hasStatusContent = !featureEnabled || mappedError !== null || acceptedJob !== null;
+  const statusSlot = hasStatusContent ? (
+    <>
       {!featureEnabled && (
         <Alert variant="info" role="status" title="Roadmap generation paused">
           New roadmap generation is currently disabled. Your existing roadmaps, versions, and learning progress remain accessible.
@@ -182,27 +193,54 @@ export function RoadmapGenerateHandoff({
           onRetryJob={() => void startGeneration(true)}
         />
       ) : null}
+    </>
+  ) : null;
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          variant="primary"
-          size="md"
-          loading={submitting}
-          loadingText="Starting generation..."
-          disabled={
-            !featureEnabled ||
-            disabled ||
-            !careerGoalId.trim() ||
-            submitting ||
-            isJobActive
-          }
-          onClick={() => void startGeneration(false)}
-        >
-          <CompassIcon className="h-4 w-4" aria-hidden="true" />
-          <span>{buttonLabel}</span>
-        </Button>
-      </div>
+  const triggerButton = (
+    <Button
+      type="button"
+      variant="primary"
+      size={buttonSize}
+      loading={submitting}
+      loadingText="Starting generation..."
+      disabled={
+        !featureEnabled ||
+        disabled ||
+        !careerGoalId.trim() ||
+        submitting ||
+        isJobActive
+      }
+      onClick={() => void startGeneration(false)}
+      className={cn(
+        'leading-none whitespace-nowrap',
+        buttonSize === 'sm' && 'h-9 rounded-xl px-3.5 py-2 text-sm',
+      )}
+    >
+      <SparklesIcon
+        className="block h-4 w-4 shrink-0"
+        aria-hidden="true"
+        data-icon="sparkles"
+      />
+      <span>{buttonLabel}</span>
+    </Button>
+  );
+
+  if (renderLayout) {
+    return (
+      <>
+        {renderLayout({
+          trigger: triggerButton,
+          status: statusSlot,
+          isGenerating: submitting || isJobActive,
+        })}
+      </>
+    );
+  }
+
+  return (
+    <div className={cn('flex flex-col gap-4', className)}>
+      {statusSlot}
+      <div className="flex flex-wrap items-center gap-3">{triggerButton}</div>
     </div>
   );
 }

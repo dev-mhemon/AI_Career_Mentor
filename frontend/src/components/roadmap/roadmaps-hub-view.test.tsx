@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import {
   ApiError,
@@ -105,6 +106,11 @@ describe('RoadmapsHubView', () => {
       status: 'archived',
       is_focus: false,
       current_version_no: 1,
+      draft_version_no: 2,
+      has_open_draft: true,
+      has_open_merge: true,
+      stale: true,
+      stale_draft: true,
     });
 
     vi.mocked(listRoadmaps)
@@ -128,16 +134,74 @@ describe('RoadmapsHubView', () => {
     expect(screen.getByText('Focus Roadmap')).toBeInTheDocument();
     expect(screen.getByText('Stale Draft')).toBeInTheDocument();
     expect(screen.getByText('Open Merge')).toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: /Manage Goals & Profile/i }),
-    ).toHaveAttribute('href', '/career-profile');
 
-    expect(
-      screen.getByRole('link', { name: /Review Draft/i }),
-    ).toHaveAttribute('href', '/roadmaps/rm-2/draft');
-    expect(
-      screen.getByRole('link', { name: /View Roadmap/i }),
-    ).toHaveAttribute('href', '/roadmaps/rm-1');
+    // Single-line hidden-scrollbar mobile tablist with live filter tab counts
+    const tablist = screen.getByRole('tablist', { name: 'Filter roadmaps by status' });
+    expect(tablist).toHaveClass(
+      'flex',
+      'flex-nowrap',
+      'overflow-x-auto',
+      'overscroll-x-contain',
+      '[scrollbar-width:none]',
+      '[-ms-overflow-style:none]',
+      '[&::-webkit-scrollbar]:hidden',
+    );
+    expect(tablist).not.toHaveClass('flex-wrap');
+    for (const tab of within(tablist).getAllByRole('tab')) {
+      expect(tab).toHaveClass('shrink-0', 'whitespace-nowrap');
+    }
+    expect(screen.getByTestId('filter-tab-count-all')).toHaveTextContent('2');
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-draft')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-archived')).toHaveTextContent('0');
+
+    const draftCard = screen.getByText('QA Automation Engineer').closest('li')!;
+    const draftStatusBadge = draftCard.querySelector('span')!;
+    expect(draftStatusBadge).toHaveTextContent('Draft');
+    expect(draftStatusBadge).toHaveClass('bg-amber-50', 'text-amber-800', 'border-amber-200');
+    expect(draftStatusBadge.querySelector('[data-icon="file-edit"]')).toBeInTheDocument();
+    expect(draftCard).toHaveClass('border-l-4', 'border-l-amber-400', 'bg-white');
+    expect(draftCard).toHaveTextContent('Pending review — revise with AI or lock when ready.');
+    expect(draftCard).not.toHaveTextContent('Open Draft v1');
+
+    const lockedCard = screen.getByText('Backend Developer').closest('li')!;
+    const lockedStatusBadge = lockedCard.querySelector('span')!;
+    expect(lockedStatusBadge).toHaveTextContent('Locked');
+    expect(lockedStatusBadge).toHaveClass(
+      'inline-flex',
+      'items-center',
+      'justify-center',
+      'leading-none',
+      'bg-feedback-success-background',
+      'text-feedback-success-text',
+    );
+    expect(lockedCard).toHaveClass('border-l-4', 'border-l-teal-600', 'border-teal-500/80', 'bg-white');
+
+    const lockedArchiveBtn = within(lockedCard).getByRole('button', { name: 'Archive' });
+    expect(lockedArchiveBtn).toHaveClass(
+      'rounded-xl',
+      'border',
+      'border-slate-200',
+      'bg-white',
+      'text-slate-600',
+      'leading-none',
+      'hover:border-rose-200',
+      'hover:bg-rose-50',
+      'hover:text-rose-700',
+    );
+    expect(lockedArchiveBtn.querySelector('[data-icon="archive"]')).toHaveClass('block', 'shrink-0');
+
+    const manageLink = screen.getByRole('link', { name: /Manage Goals & Profile/i });
+    expect(manageLink).toHaveAttribute('href', '/career-profile');
+    expect(manageLink.querySelector('[data-icon="sliders-horizontal"]')).toBeInTheDocument();
+
+    const reviewDraftLink = screen.getByRole('link', { name: /Review Draft/i });
+    expect(reviewDraftLink).toHaveAttribute('href', '/roadmaps/rm-2/draft');
+    expect(reviewDraftLink.querySelector('[data-icon="arrow-right"]')).toBeInTheDocument();
+
+    const viewRoadmapLink = screen.getByRole('link', { name: /View Roadmap/i });
+    expect(viewRoadmapLink).toHaveAttribute('href', '/roadmaps/rm-1');
+    expect(viewRoadmapLink.querySelector('[data-icon="arrow-right"]')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Load more roadmaps' }));
     expect(await screen.findByText('Cloud DevOps Engineer')).toBeInTheDocument();
@@ -146,7 +210,34 @@ describe('RoadmapsHubView', () => {
       { cursor: 'cursor-page-2', limit: 20 },
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Draft' }));
+    // Filter tab counts update after loading page 2 with archived roadmap
+    expect(screen.getByTestId('filter-tab-count-all')).toHaveTextContent('3');
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-draft')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-archived')).toHaveTextContent('1');
+
+    // Archived card: muted read-only surface, NO Open Draft / Review Draft / Archive / Set as Focus
+    const archivedCard = screen.getByText('Cloud DevOps Engineer').closest('li')!;
+    expect(archivedCard).toHaveClass('bg-slate-50/75', 'border-l-4', 'border-l-slate-300');
+    expect(within(archivedCard).getByRole('heading', { level: 2 })).toHaveClass('text-slate-600');
+    expect(archivedCard).toHaveTextContent(
+      'Archived · Read-only. Progress and skill evidence are preserved.',
+    );
+    expect(archivedCard).not.toHaveTextContent(/Open Draft/i);
+    expect(within(archivedCard).queryByRole('link', { name: /Review Draft/i })).not.toBeInTheDocument();
+    expect(within(archivedCard).queryByRole('button', { name: /Archive/i })).not.toBeInTheDocument();
+    expect(within(archivedCard).queryByRole('button', { name: /Set as Focus/i })).not.toBeInTheDocument();
+    expect(within(archivedCard).queryByText('Stale Draft')).not.toBeInTheDocument();
+    expect(within(archivedCard).queryByText('Open Merge')).not.toBeInTheDocument();
+    expect(archivedCard.querySelector('[data-icon="eye"]')).toBeInTheDocument();
+    expect(archivedCard).toHaveTextContent('Read-only archive');
+
+    const viewArchiveLink = within(archivedCard).getByRole('link', { name: /View Archive/i });
+    expect(viewArchiveLink).toHaveAttribute('href', '/roadmaps/rm-3');
+    expect(viewArchiveLink).toHaveClass('border-slate-200', 'bg-white', 'text-slate-700');
+    expect(viewArchiveLink).not.toHaveClass('bg-action-primary-background');
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Draft/i }));
     await waitFor(() => {
       expect(vi.mocked(listRoadmaps)).toHaveBeenCalledWith(
         'token-1',
@@ -154,6 +245,11 @@ describe('RoadmapsHubView', () => {
         expect.any(Object),
       );
     });
+    // Switching to Draft tab preserves counts for other tabs
+    expect(screen.getByTestId('filter-tab-count-all')).toHaveTextContent('3');
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-draft')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-archived')).toHaveTextContent('1');
   });
 
   it('handles inline Focus Switch (EP-R14) and Archive confirmation modal (EP-R15)', async () => {
@@ -211,13 +307,68 @@ describe('RoadmapsHubView', () => {
     expect(dialog.textContent).toMatch(/focus will automatically reassign/i);
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive Roadmap' }));
-    expect(
-      await screen.findByText(/focus automatically reassigned/i),
-    ).toBeInTheDocument();
+    const toast = await screen.findByTestId('toast-container');
+    expect(toast).toHaveTextContent('Roadmap archived');
+    expect(toast).toHaveTextContent(/focus automatically reassigned/i);
+    const bar = within(toast).getByTestId('toast-countdown-bar');
+    expect(bar).toHaveClass('agy-toast-bar');
+    expect(bar.style.getPropertyValue('--toast-duration')).toBe('6000ms');
     expect(vi.mocked(archiveRoadmap)).toHaveBeenCalledWith(
       'token-1',
       'rm-locked-2',
     );
+    // Archiving updates live tab counts immediately (Locked 2 -> 1, Archived 0 -> 1)
+    expect(screen.getByTestId('filter-tab-count-all')).toHaveTextContent('2');
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('1');
+    expect(screen.getByTestId('filter-tab-count-archived')).toHaveTextContent('1');
+
+    fireEvent.click(
+      within(toast).getByRole('button', { name: 'Dismiss notification' }),
+    );
+    expect(screen.queryByTestId('toast-container')).not.toBeInTheDocument();
+  });
+
+  it('auto-dismisses the Roadmap archived toast after 6000ms on the Hub', async () => {
+    vi.useFakeTimers();
+    const rmLocked = makeSummary({
+      id: 'rm-locked-2',
+      role_name: 'Frontend Developer',
+      status: 'locked',
+      is_focus: false,
+    });
+    vi.mocked(archiveRoadmap).mockResolvedValueOnce({
+      archived_roadmap_id: 'rm-locked-2',
+      status: 'archived',
+      new_focus_roadmap_id: null,
+    });
+
+    render(
+      <RoadmapsHubView
+        accessToken="token-1"
+        initialPage={{
+          items: [rmLocked],
+          meta: { limit: 20, next_cursor: null },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Archive Roadmap' }));
+      await Promise.resolve();
+    });
+
+    const toast = screen.getByTestId('toast-container');
+    expect(toast).toHaveTextContent('Roadmap archived');
+    expect(within(toast).getByTestId('toast-countdown-bar')).toHaveClass(
+      'agy-toast-bar',
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(screen.queryByTestId('toast-container')).not.toBeInTheDocument();
   });
 
   it('renders clean empty state on 200 empty list and links Manage Goals & Profile to /career-profile', async () => {
@@ -236,6 +387,57 @@ describe('RoadmapsHubView', () => {
     for (const link of manageLinks) {
       expect(link).toHaveAttribute('href', '/career-profile');
     }
+  });
+
+  it('preserves a higher known tab count when a filtered tab returns a paginated partial page (next_cursor non-null)', async () => {
+    const lockedItems = [
+      makeSummary({ id: 'rm-l1', role_name: 'Locked Role 1', status: 'locked', is_focus: true }),
+      makeSummary({ id: 'rm-l2', role_name: 'Locked Role 2', status: 'locked', is_focus: false }),
+      makeSummary({ id: 'rm-l3', role_name: 'Locked Role 3', status: 'locked', is_focus: false }),
+    ];
+
+    vi.mocked(listRoadmaps)
+      // Switching to Locked returns partial page (2 of 3) with next_cursor set
+      .mockResolvedValueOnce({
+        items: lockedItems.slice(0, 2),
+        meta: { limit: 2, next_cursor: 'cursor-locked-2' },
+      })
+      // Switching to Draft returns complete empty page (next_cursor: null)
+      .mockResolvedValueOnce({
+        items: [],
+        meta: { limit: 20, next_cursor: null },
+      });
+
+    render(
+      <RoadmapsHubView
+        accessToken="token-1"
+        initialPage={{
+          items: lockedItems,
+          meta: { limit: 20, next_cursor: null },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('3');
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Locked/i }));
+    await waitFor(() => {
+      expect(vi.mocked(listRoadmaps)).toHaveBeenCalledWith(
+        'token-1',
+        { status: 'locked', limit: 20 },
+        expect.any(Object),
+      );
+    });
+    // Partial page (length 2, next_cursor non-null) MUST NOT overwrite higher known count 3
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('3');
+    expect(screen.getByTestId('filter-tab-count-all')).toHaveTextContent('3');
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Draft/i }));
+    await waitFor(() => {
+      expect(screen.getByText('No draft roadmaps found')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('filter-tab-count-draft')).toHaveTextContent('0');
+    expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('3');
   });
 });
 

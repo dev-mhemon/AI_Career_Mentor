@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import {
   archiveRoadmap,
@@ -19,12 +19,131 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
 import {
   CheckCircleIcon,
-  ChevronRightIcon,
   CompassIcon,
+  LockIcon,
   WarningIcon,
 } from '@/components/ui/icons';
 import { Modal } from '@/components/ui/modal';
-import { Tabs, type TabItem } from '@/components/ui/tabs';
+import { Toast } from '@/components/ui/toast';
+
+function SlidersHorizontalIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="sliders-horizontal"
+      className={cn('block shrink-0', className)}
+    >
+      <line x1="21" x2="14" y1="4" y2="4" />
+      <line x1="10" x2="3" y1="4" y2="4" />
+      <line x1="21" x2="12" y1="12" y2="12" />
+      <line x1="8" x2="3" y1="12" y2="12" />
+      <line x1="21" x2="16" y1="20" y2="20" />
+      <line x1="12" x2="3" y1="20" y2="20" />
+      <line x1="14" x2="14" y1="2" y2="6" />
+      <line x1="8" x2="8" y1="10" y2="14" />
+      <line x1="16" x2="16" y1="18" y2="22" />
+    </svg>
+  );
+}
+
+function ArchiveIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="archive"
+      className={cn('block shrink-0', className)}
+    >
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="arrow-right"
+      className={cn('block shrink-0', className)}
+    >
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </svg>
+  );
+}
+
+function FileEditIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="file-edit"
+      className={cn('block shrink-0', className)}
+    >
+      <path d="M12 22h6a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v10" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10.4 12.6a2 2 0 1 1 3 3L8 21l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="eye"
+      className={cn('block shrink-0', className)}
+    >
+      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
 
 export interface RoadmapsHubViewProps {
   accessToken: string;
@@ -57,6 +176,11 @@ type HubFeedback =
     }
   | null;
 
+type ArchiveToast = {
+  title: string;
+  message: string;
+} | null;
+
 const LEVEL_LABELS: Record<CareerLevel, string> = {
   junior: 'Junior',
   mid: 'Mid-Level',
@@ -71,25 +195,55 @@ const STATUS_LABELS: Record<RoadmapStatus, string> = {
 
 const STATUS_BADGE_CLASSES: Record<RoadmapStatus, string> = {
   draft:
-    'border-feedback-info-border bg-feedback-info-background text-feedback-info-text',
+    'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/80 dark:bg-amber-950/50 dark:text-amber-200',
   locked:
     'border-feedback-success-border bg-feedback-success-background text-feedback-success-text',
   archived:
-    'border-border-default bg-surface-sunken text-text-secondary',
+    'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
-const FILTER_TABS: TabItem[] = [
-  { id: 'all', label: 'All', panel: null },
-  { id: 'locked', label: 'Locked', panel: null },
-  { id: 'draft', label: 'Draft', panel: null },
-  { id: 'archived', label: 'Archived', panel: null },
+type FilterCounts = Record<HubFilter, number>;
+
+type SavedCountsState = {
+  key: string;
+  counts: FilterCounts;
+} | null;
+
+const FILTER_TABS: { id: HubFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'locked', label: 'Locked' },
+  { id: 'draft', label: 'Draft' },
+  { id: 'archived', label: 'Archived' },
 ];
 
+function computeCountsFromAll(items: RoadmapSummaryDTO[]): FilterCounts {
+  let locked = 0;
+  let draft = 0;
+  let archived = 0;
+  for (const item of items) {
+    if (item.status === 'locked') locked += 1;
+    else if (item.status === 'draft') draft += 1;
+    else if (item.status === 'archived') archived += 1;
+  }
+  return {
+    all: items.length,
+    locked,
+    draft,
+    archived,
+  };
+}
+
 const primaryLinkClass =
-  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-action-primary-background px-4 py-2 text-label font-medium text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active motion-reduce:transition-none';
+  'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-action-primary-background px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active motion-reduce:transition-none';
 
 const secondaryLinkClass =
-  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-action-secondary-border bg-action-secondary-background px-3.5 py-2 text-label font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active motion-reduce:transition-none';
+  'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-2xs transition-colors duration-(--duration-fast) ease-standard hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 motion-reduce:transition-none';
+
+const archiveLinkClass =
+  'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-2xs transition-colors duration-(--duration-fast) ease-standard hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 motion-reduce:transition-none';
+
+const manageGoalsLinkClass =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-xs transition-colors duration-(--duration-fast) ease-standard hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 motion-reduce:transition-none';
 
 function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedback> {
   if (
@@ -123,17 +277,15 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedba
 
 function formatArchiveFeedback(
   res: ArchiveRoadmapResponseDTO,
-): NonNullable<HubFeedback> {
+): NonNullable<ArchiveToast> {
   if (res.new_focus_roadmap_id) {
     return {
-      variant: 'success',
       title: 'Roadmap archived',
       message:
         'All learning progress, shared skill evidence, and daily plans are preserved. Focus automatically reassigned to another active locked roadmap.',
     };
   }
   return {
-    variant: 'success',
     title: 'Roadmap archived',
     message:
       'All learning progress, shared skill evidence, and daily plans are preserved.',
@@ -150,12 +302,22 @@ export function RoadmapsHubView({
   featureEnabled = true,
   initialPage,
 }: RoadmapsHubViewProps) {
+  const tabsUid = useId();
+  const tabRefs = useRef<Record<HubFilter, HTMLButtonElement | null>>({
+    all: null,
+    locked: null,
+    draft: null,
+    archived: null,
+  });
+
   const [filter, setFilter] = useState<HubFilter>('all');
   const [reloadTick, setReloadTick] = useState(0);
   const [fetchState, setFetchState] = useState<HubFetchState | null>(null);
+  const [savedCounts, setSavedCounts] = useState<SavedCountsState>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [actionError, setActionError] = useState<MappedError | null>(null);
   const [feedback, setFeedback] = useState<HubFeedback>(null);
+  const [archiveToast, setArchiveToast] = useState<ArchiveToast>(null);
   const [focusingId, setFocusingId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<RoadmapSummaryDTO | null>(
     null,
@@ -163,6 +325,7 @@ export function RoadmapsHubView({
   const [archivingId, setArchivingId] = useState<string | null>(null);
 
   const requestKey = `${accessToken}:${filter}:${reloadTick}`;
+  const countsKey = `${accessToken}:${reloadTick}`;
   const seededInitial =
     initialPage && filter === 'all' && reloadTick === 0 ? initialPage : null;
 
@@ -192,6 +355,46 @@ export function RoadmapsHubView({
           items: res.items,
           nextCursor: res.meta.next_cursor,
         });
+        if (filter === 'all') {
+          const computed = computeCountsFromAll(res.items);
+          setSavedCounts((prev) => {
+            if (res.meta.next_cursor && prev && prev.key === countsKey) {
+              const mergedCounts: FilterCounts = {
+                all: Math.max(prev.counts.all, computed.all),
+                locked: Math.max(prev.counts.locked, computed.locked),
+                draft: Math.max(prev.counts.draft, computed.draft),
+                archived: Math.max(prev.counts.archived, computed.archived),
+              };
+              mergedCounts.all = Math.max(
+                mergedCounts.all,
+                mergedCounts.locked + mergedCounts.draft + mergedCounts.archived,
+              );
+              return { key: countsKey, counts: mergedCounts };
+            }
+            return { key: countsKey, counts: computed };
+          });
+        } else {
+          setSavedCounts((prev) => {
+            const base: FilterCounts =
+              prev && prev.key === countsKey
+                ? prev.counts
+                : initialPage && reloadTick === 0
+                  ? computeCountsFromAll(initialPage.items)
+                  : { all: 0, locked: 0, draft: 0, archived: 0 };
+            const nextFilterCount = res.meta.next_cursor
+              ? Math.max(base[filter], res.items.length)
+              : res.items.length;
+            const updated: FilterCounts = {
+              ...base,
+              [filter]: nextFilterCount,
+            };
+            updated.all = Math.max(
+              base.all,
+              updated.locked + updated.draft + updated.archived,
+            );
+            return { key: countsKey, counts: updated };
+          });
+        }
       })
       .catch((err) => {
         if (!active || controller.signal.aborted) {
@@ -208,7 +411,38 @@ export function RoadmapsHubView({
       active = false;
       controller.abort();
     };
-  }, [accessToken, filter, requestKey, seededInitial]);
+  }, [
+    accessToken,
+    countsKey,
+    filter,
+    initialPage,
+    reloadTick,
+    requestKey,
+    seededInitial,
+  ]);
+
+  const tabCounts: FilterCounts | null =
+    savedCounts && savedCounts.key === countsKey
+      ? savedCounts.counts
+      : initialPage && reloadTick === 0
+        ? computeCountsFromAll(initialPage.items)
+        : null;
+
+  const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const idx = FILTER_TABS.findIndex((t) => t.id === filter);
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (idx + 1) % FILTER_TABS.length;
+    else if (e.key === 'ArrowLeft')
+      next = (idx - 1 + FILTER_TABS.length) % FILTER_TABS.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = FILTER_TABS.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    const nextId = FILTER_TABS[next].id;
+    setFilter(nextId);
+    setActionError(null);
+    tabRefs.current[nextId]?.focus();
+  };
 
   const activeState =
     fetchState && fetchState.key === requestKey
@@ -240,23 +474,55 @@ export function RoadmapsHubView({
         cursor: nextCursor,
         limit: 20,
       });
-      setFetchState((prev) => {
-        const currentItems =
-          prev && prev.key === requestKey && prev.status === 'loaded'
-            ? prev.items
-            : items;
-        const seenIds = new Set(currentItems.map((entry) => entry.id));
-        const merged = [
-          ...currentItems,
-          ...page.items.filter((entry) => !seenIds.has(entry.id)),
-        ];
-        return {
-          key: requestKey,
-          status: 'loaded',
-          items: merged,
-          nextCursor: page.meta.next_cursor,
-        };
+      const seenIds = new Set(items.map((entry) => entry.id));
+      const merged = [
+        ...items,
+        ...page.items.filter((entry) => !seenIds.has(entry.id)),
+      ];
+      setFetchState({
+        key: requestKey,
+        status: 'loaded',
+        items: merged,
+        nextCursor: page.meta.next_cursor,
       });
+      if (filter === 'all') {
+        const computed = computeCountsFromAll(merged);
+        setSavedCounts((prev) => {
+          if (page.meta.next_cursor && prev && prev.key === countsKey) {
+            const mergedCounts: FilterCounts = {
+              all: Math.max(prev.counts.all, computed.all),
+              locked: Math.max(prev.counts.locked, computed.locked),
+              draft: Math.max(prev.counts.draft, computed.draft),
+              archived: Math.max(prev.counts.archived, computed.archived),
+            };
+            mergedCounts.all = Math.max(
+              mergedCounts.all,
+              mergedCounts.locked + mergedCounts.draft + mergedCounts.archived,
+            );
+            return { key: countsKey, counts: mergedCounts };
+          }
+          return { key: countsKey, counts: computed };
+        });
+      } else {
+        setSavedCounts((prev) => {
+          const base: FilterCounts =
+            prev && prev.key === countsKey
+              ? prev.counts
+              : { all: 0, locked: 0, draft: 0, archived: 0 };
+          const nextFilterCount = page.meta.next_cursor
+            ? Math.max(base[filter], merged.length)
+            : merged.length;
+          const updated: FilterCounts = {
+            ...base,
+            [filter]: nextFilterCount,
+          };
+          updated.all = Math.max(
+            base.all,
+            updated.locked + updated.draft + updated.archived,
+          );
+          return { key: countsKey, counts: updated };
+        });
+      }
     } catch (err) {
       setActionError(mapApiError(err));
     } finally {
@@ -302,6 +568,7 @@ export function RoadmapsHubView({
     setArchivingId(target.id);
     setActionError(null);
     setFeedback(null);
+    setArchiveToast(null);
     try {
       const result = await archiveRoadmap(accessToken, target.id);
       const updatedList = items
@@ -333,7 +600,30 @@ export function RoadmapsHubView({
         items: updatedList,
         nextCursor,
       });
-      setFeedback(formatArchiveFeedback(result));
+      setSavedCounts((prev) => {
+        const base: FilterCounts | null =
+          prev && prev.key === countsKey
+            ? prev.counts
+            : initialPage && reloadTick === 0
+              ? computeCountsFromAll(initialPage.items)
+              : null;
+        if (!base) {
+          return prev;
+        }
+        const prevStatus = target.status;
+        if (prevStatus === 'archived') {
+          return { key: countsKey, counts: base };
+        }
+        return {
+          key: countsKey,
+          counts: {
+            ...base,
+            [prevStatus]: Math.max(0, base[prevStatus] - 1),
+            archived: base.archived + 1,
+          },
+        };
+      });
+      setArchiveToast(formatArchiveFeedback(result));
       setArchiveTarget(null);
     } catch (err) {
       setActionError(mapApiError(err));
@@ -358,8 +648,9 @@ export function RoadmapsHubView({
           </p>
         </div>
 
-        <Link href="/career-profile" className={secondaryLinkClass}>
-          Manage Goals &amp; Profile
+        <Link href="/career-profile" className={manageGoalsLinkClass}>
+          <SlidersHorizontalIcon className="block h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" />
+          <span>Manage Goals &amp; Profile</span>
         </Link>
       </header>
 
@@ -401,16 +692,57 @@ export function RoadmapsHubView({
       )}
 
       <section aria-label="Roadmap filter and list" className="flex flex-col gap-5">
-        <Tabs
-          items={FILTER_TABS}
-          value={filter}
-          onValueChange={(nextId) => {
-            setFilter(nextId as HubFilter);
-            setActionError(null);
-          }}
-          hidePanels={true}
-          aria-label="Filter roadmaps by status"
-        />
+        <div className="border-b border-border-default">
+          <div
+            role="tablist"
+            aria-label="Filter roadmaps by status"
+            onKeyDown={handleTabKeyDown}
+            className="-mb-px flex flex-nowrap items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:gap-2"
+          >
+            {FILTER_TABS.map((tab) => {
+              const isSelected = filter === tab.id;
+              const count = tabCounts ? tabCounts[tab.id] : null;
+              return (
+                <button
+                  key={tab.id}
+                  ref={(el) => {
+                    tabRefs.current[tab.id] = el;
+                  }}
+                  role="tab"
+                  type="button"
+                  id={`${tabsUid}-tab-${tab.id}`}
+                  aria-selected={isSelected}
+                  tabIndex={isSelected ? 0 : -1}
+                  onClick={() => {
+                    setFilter(tab.id);
+                    setActionError(null);
+                  }}
+                  className={cn(
+                    'inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-label-lg leading-none transition-colors duration-(--duration-fast) ease-standard sm:px-4',
+                    isSelected
+                      ? 'border-action-primary-background text-text-brand'
+                      : 'border-transparent text-text-secondary hover:text-text-primary',
+                  )}
+                >
+                  <span>{tab.label}</span>
+                  {count !== null && (
+                    <span
+                      data-testid={`filter-tab-count-${tab.id}`}
+                      className={cn(
+                        'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums',
+                        isSelected
+                          ? 'bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300'
+                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+                      )}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {isLoading ? (
           <div
@@ -469,52 +801,73 @@ export function RoadmapsHubView({
               {items.map((roadmap) => {
                 const isDraft = roadmap.status === 'draft';
                 const isLocked = roadmap.status === 'locked';
+                const isArchived = roadmap.status === 'archived';
                 const primaryHref = isDraft
                   ? `/roadmaps/${encodeURIComponent(roadmap.id)}/draft`
                   : `/roadmaps/${encodeURIComponent(roadmap.id)}`;
-                const primaryLabel = isDraft ? 'Review Draft' : 'View Roadmap';
-                const hasStaleWarning = roadmap.stale || roadmap.stale_draft;
-                const versionPointer =
-                  roadmap.current_version_no !== null
-                    ? `v${roadmap.current_version_no}`
-                    : roadmap.draft_version_no !== null
-                      ? `Draft v${roadmap.draft_version_no}`
-                      : 'v1';
+                const primaryLabel = isArchived
+                  ? 'View Archive'
+                  : isDraft
+                    ? 'Review Draft'
+                    : 'View Roadmap';
+                const hasStaleWarning =
+                  !isArchived && (roadmap.stale || roadmap.stale_draft);
+                const versionPointer = `v${
+                  roadmap.current_version_no ?? roadmap.draft_version_no ?? 1
+                }`;
+                const statusDescription = isArchived
+                  ? 'Archived · Read-only. Progress and skill evidence are preserved.'
+                  : isDraft
+                    ? 'Pending review — revise with AI or lock when ready.'
+                    : roadmap.has_open_draft && roadmap.draft_version_no !== null
+                      ? `Current v${roadmap.current_version_no ?? 1} · Open Draft v${roadmap.draft_version_no}`
+                      : roadmap.has_daily_plan
+                        ? 'Daily Plan active'
+                        : 'No Daily Plan created yet';
 
                 return (
                   <li
                     key={roadmap.id}
                     className={cn(
-                      'flex flex-col justify-between gap-4 rounded-xl border bg-surface-raised p-5 shadow-xs',
-                      roadmap.is_focus
-                        ? 'border-border-focus'
-                        : 'border-border-default',
+                      'flex flex-col justify-between overflow-hidden rounded-2xl border border-l-4 transition-all',
+                      isArchived
+                        ? 'border-slate-200 border-l-slate-300 bg-slate-50/75 dark:border-slate-800 dark:border-l-slate-600 dark:bg-slate-900/50'
+                        : isDraft
+                          ? 'border-slate-200 border-l-amber-400 bg-white hover:shadow-sm dark:border-slate-800 dark:border-l-amber-400 dark:bg-slate-900'
+                          : roadmap.is_focus
+                            ? 'border-teal-500/80 border-l-teal-600 bg-white ring-1 ring-teal-500/15 hover:shadow-sm dark:bg-slate-900'
+                            : 'border-slate-200 border-l-teal-600 bg-white hover:shadow-sm dark:border-slate-800 dark:bg-slate-900',
                     )}
                   >
-                    <div className="flex flex-col gap-3">
+                    <div className="flex flex-1 flex-col gap-3 p-5">
                       <div className="flex flex-wrap items-center gap-2">
                         <span
                           className={cn(
-                            'inline-flex items-center rounded-full border px-2.5 py-0.5 text-caption font-medium',
+                            'inline-flex items-center justify-center gap-1.5 rounded-full border px-2.5 py-1 text-caption font-medium leading-none',
                             STATUS_BADGE_CLASSES[roadmap.status],
                           )}
                         >
-                          {STATUS_LABELS[roadmap.status]}
+                          {isLocked && (
+                            <LockIcon className="block h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          )}
+                          {isDraft && <FileEditIcon className="block h-3.5 w-3.5 shrink-0" />}
+                          {isArchived && <ArchiveIcon className="block h-3.5 w-3.5 shrink-0" />}
+                          <span>{STATUS_LABELS[roadmap.status]}</span>
                         </span>
 
-                        <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-caption font-medium text-text-secondary">
+                        <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-medium leading-none text-text-secondary">
                           {LEVEL_LABELS[roadmap.target_level] ??
                             roadmap.target_level}
                         </span>
 
-                        <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-caption font-mono text-text-secondary">
+                        <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-mono leading-none text-text-secondary">
                           {versionPointer}
                         </span>
 
-                        {roadmap.is_focus && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-feedback-success-border bg-feedback-success-background px-2.5 py-0.5 text-caption font-semibold text-feedback-success-text">
+                        {!isArchived && roadmap.is_focus && (
+                          <span className="inline-flex items-center justify-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-2.5 py-1 text-caption font-semibold leading-none text-feedback-success-text">
                             <CheckCircleIcon
-                              className="h-3.5 w-3.5 text-feedback-success-icon"
+                              className="block h-3.5 w-3.5 shrink-0 text-feedback-success-icon"
                               aria-hidden="true"
                             />
                             <span>Focus Roadmap</span>
@@ -522,17 +875,17 @@ export function RoadmapsHubView({
                         )}
 
                         {hasStaleWarning && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2.5 py-0.5 text-caption font-medium text-feedback-warning-text">
+                          <span className="inline-flex items-center justify-center gap-1.5 rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2.5 py-1 text-caption font-medium leading-none text-feedback-warning-text">
                             <WarningIcon
-                              className="h-3.5 w-3.5 text-feedback-warning-icon"
+                              className="block h-3.5 w-3.5 shrink-0 text-feedback-warning-icon"
                               aria-hidden="true"
                             />
                             <span>Stale Draft</span>
                           </span>
                         )}
 
-                        {roadmap.has_open_merge && (
-                          <span className="inline-flex items-center rounded-full border border-feedback-info-border bg-feedback-info-background px-2.5 py-0.5 text-caption font-medium text-feedback-info-text">
+                        {!isArchived && roadmap.has_open_merge && (
+                          <span className="inline-flex items-center justify-center rounded-full border border-feedback-info-border bg-feedback-info-background px-2.5 py-1 text-caption font-medium leading-none text-feedback-info-text">
                             Open Merge
                           </span>
                         )}
@@ -540,73 +893,93 @@ export function RoadmapsHubView({
 
                       <div>
                         <h2
-                          className="text-heading-sm font-semibold text-text-primary"
+                          className={cn(
+                            'text-heading-sm font-semibold',
+                            isArchived
+                              ? 'text-slate-600 dark:text-slate-300'
+                              : 'text-text-primary',
+                          )}
                           dir="auto"
                         >
                           {roadmap.role_name}
                         </h2>
                         <p className="mt-1 text-caption text-text-muted">
-                          {isDraft && roadmap.draft_version_no !== null
-                            ? `Open Draft v${roadmap.draft_version_no}`
-                            : roadmap.has_open_draft &&
-                                roadmap.draft_version_no !== null
-                              ? `Current v${roadmap.current_version_no ?? 1} · Open Draft v${roadmap.draft_version_no}`
-                              : roadmap.has_daily_plan
-                                ? 'Daily Plan active'
-                                : 'No Daily Plan created yet'}
+                          {statusDescription}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-4">
-                      <Link href={primaryHref} className={primaryLinkClass}>
-                        <span>{primaryLabel}</span>
-                        <ChevronRightIcon
-                          className="h-4 w-4"
-                          aria-hidden="true"
-                        />
-                      </Link>
+                    <div
+                      className={cn(
+                        'flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3.5',
+                        isArchived
+                          ? 'border-slate-200/80 bg-slate-100/50 dark:border-slate-800 dark:bg-slate-900/70'
+                          : 'border-slate-100 bg-slate-50/60 dark:border-slate-800/80 dark:bg-slate-900/60',
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isArchived ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium leading-none text-slate-500 dark:text-slate-400">
+                            <EyeIcon className="block h-3.5 w-3.5 shrink-0" />
+                            <span>Read-only archive</span>
+                          </span>
+                        ) : (
+                          <>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              disabled={
+                                Boolean(focusingId) || Boolean(archivingId)
+                              }
+                              onClick={() => setArchiveTarget(roadmap)}
+                              className="inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none text-slate-600 shadow-2xs transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                            >
+                              <ArchiveIcon className="block h-4 w-4 shrink-0" />
+                              <span>Archive</span>
+                            </Button>
 
-                      {!isDraft &&
-                        roadmap.has_open_draft &&
-                        roadmap.draft_version_no !== null && (
-                          <Link
-                            href={`/roadmaps/${encodeURIComponent(roadmap.id)}/draft`}
-                            className={secondaryLinkClass}
-                          >
-                            Review Draft
-                          </Link>
+                            {isLocked && !roadmap.is_focus && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                loading={focusingId === roadmap.id}
+                                loadingText="Updating..."
+                                disabled={
+                                  Boolean(focusingId) || Boolean(archivingId)
+                                }
+                                onClick={() => void handleSetFocus(roadmap)}
+                                className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-2xs hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                              >
+                                <span>Set as Focus</span>
+                              </Button>
+                            )}
+
+                            {isLocked &&
+                              roadmap.has_open_draft &&
+                              roadmap.draft_version_no !== null && (
+                                <Link
+                                  href={`/roadmaps/${encodeURIComponent(roadmap.id)}/draft`}
+                                  className={secondaryLinkClass}
+                                >
+                                  <span>Review Draft</span>
+                                </Link>
+                              )}
+                          </>
                         )}
+                      </div>
 
-                      {isLocked && !roadmap.is_focus && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          loading={focusingId === roadmap.id}
-                          loadingText="Updating..."
-                          disabled={
-                            Boolean(focusingId) || Boolean(archivingId)
-                          }
-                          onClick={() => void handleSetFocus(roadmap)}
-                        >
-                          Set as Focus
-                        </Button>
-                      )}
-
-                      {roadmap.status !== 'archived' && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          disabled={
-                            Boolean(focusingId) || Boolean(archivingId)
-                          }
-                          onClick={() => setArchiveTarget(roadmap)}
-                        >
-                          Archive
-                        </Button>
-                      )}
+                      <Link
+                        href={primaryHref}
+                        className={cn(
+                          isArchived ? archiveLinkClass : primaryLinkClass,
+                          'ml-auto',
+                        )}
+                      >
+                        <span>{primaryLabel}</span>
+                        <ArrowRightIcon className="block h-4 w-4 shrink-0" />
+                      </Link>
                     </div>
                   </li>
                 );
@@ -630,6 +1003,18 @@ export function RoadmapsHubView({
           </>
         )}
       </section>
+
+      {archiveToast && (
+        <Toast
+          variant="success"
+          role="status"
+          title={archiveToast.title}
+          autoDismissMs={6000}
+          onDismiss={() => setArchiveToast(null)}
+        >
+          {archiveToast.message}
+        </Toast>
+      )}
 
       <Modal
         open={Boolean(archiveTarget)}

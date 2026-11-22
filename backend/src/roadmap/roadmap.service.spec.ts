@@ -1028,6 +1028,116 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       expect(lockedSecond.is_focus).toBe(false);
       expect(lockedSecond.preferred_daily_hours).toBeNull();
     });
+
+    it('unwraps TypeORM PostgreSQL [rows, rowCount] tuples on UPDATE ... RETURNING and fails 409 on [[], 0]', async () => {
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('effective_feature_access'))
+          return [{ enabled: true }];
+        if (
+          sql.includes('FROM public.roadmaps') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [{ id: ROADMAP_ID, status: 'draft', is_focus: false }];
+        }
+        if (
+          sql.includes('FROM public.roadmap_versions') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            { id: VERSION_1_ID, version_no: 3, stale: false, state: 'draft' },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_items')) {
+          return [{ active_topic_count: 12 }];
+        }
+        if (sql.includes('system_configurations'))
+          return [{ config_value: 45 }];
+        if (sql.includes('UPDATE public.roadmap_versions')) {
+          return [
+            [
+              {
+                id: VERSION_1_ID,
+                version_no: 3,
+                locked_at: new Date('2026-10-10T10:00:00.000Z'),
+              },
+            ],
+            1,
+          ];
+        }
+        if (
+          sql.includes('FROM public.roadmaps') &&
+          sql.includes('is_focus = true')
+        ) {
+          return [];
+        }
+        if (sql.includes('UPDATE public.roadmaps')) {
+          return [
+            [
+              {
+                id: ROADMAP_ID,
+                is_focus: true,
+                current_version_id: VERSION_1_ID,
+                locked_at: new Date('2026-10-10T10:00:00.000Z'),
+              },
+            ],
+            1,
+          ];
+        }
+        if (sql.includes('FROM public.user_profiles')) {
+          return [{ preferred_daily_hours: '1.5' }];
+        }
+        return [];
+      });
+
+      const locked = await service.lockRoadmap(USER_ID, ROADMAP_ID, {
+        expected_version_no: 3,
+      });
+      expect(locked).toMatchObject({
+        roadmap_id: ROADMAP_ID,
+        status: 'locked',
+        version_no: 3,
+        current_version_id: VERSION_1_ID,
+        is_focus: true,
+        locked_at: '2026-10-10T10:00:00.000Z',
+        preferred_daily_hours: 1.5,
+      });
+
+      // Empty TypeORM tuple [[], 0] MUST trigger 409 INVALID_STATE_TRANSITION (never treat [] as truthy row)
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('effective_feature_access'))
+          return [{ enabled: true }];
+        if (
+          sql.includes('FROM public.roadmaps') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [{ id: ROADMAP_ID, status: 'draft', is_focus: false }];
+        }
+        if (
+          sql.includes('FROM public.roadmap_versions') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            { id: VERSION_1_ID, version_no: 3, stale: false, state: 'draft' },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_items')) {
+          return [{ active_topic_count: 12 }];
+        }
+        if (sql.includes('system_configurations'))
+          return [{ config_value: 45 }];
+        if (sql.includes('UPDATE public.roadmap_versions')) {
+          return [[], 0];
+        }
+        return [];
+      });
+
+      await expect(
+        service.lockRoadmap(USER_ID, ROADMAP_ID, { expected_version_no: 3 }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
+        return true;
+      });
+    });
   });
 
   describe('EP-R14 setFocus & EP-R15 archiveRoadmap', () => {

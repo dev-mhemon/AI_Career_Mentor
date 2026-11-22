@@ -34,11 +34,13 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
 import {
   CheckCircleIcon,
+  ChevronRightIcon,
   ClockIcon,
   CloseIcon,
   LockIcon,
 } from '@/components/ui/icons';
 import { Modal, useBackdropDismiss } from '@/components/ui/modal';
+import { Toast } from '@/components/ui/toast';
 
 export interface RoadmapDetailViewProps {
   accessToken: string;
@@ -70,6 +72,11 @@ type DetailFeedback =
     }
   | null;
 
+type ArchiveToast = {
+  title: string;
+  message: string;
+} | null;
+
 const LEVEL_LABELS: Record<CareerLevel, string> = {
   junior: 'Junior',
   mid: 'Mid-Level',
@@ -80,6 +87,15 @@ const STATUS_LABELS: Record<RoadmapStatus, string> = {
   draft: 'Draft',
   locked: 'Locked',
   archived: 'Archived',
+};
+
+const STATUS_BADGE_CLASSES: Record<RoadmapStatus, string> = {
+  draft:
+    'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/80 dark:bg-amber-950/50 dark:text-amber-200',
+  locked:
+    'border-feedback-success-border bg-feedback-success-background text-feedback-success-text',
+  archived:
+    'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
 const ORIGIN_LABELS: Record<RoadmapVersionOrigin, string> = {
@@ -127,8 +143,78 @@ const GAP_LABELS: Record<SkillGapType, string> = {
 const FOCUSABLE =
   'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
+const primaryLinkClass =
+  'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-action-primary-background px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active motion-reduce:transition-none';
+
 const secondaryLinkClass =
-  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-action-secondary-border bg-action-secondary-background px-3.5 py-2 text-label font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active motion-reduce:transition-none';
+  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-action-secondary-border bg-action-secondary-background px-3.5 py-2 text-label font-medium leading-none text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active motion-reduce:transition-none';
+
+function ArrowLeftIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="arrow-left"
+      className={cn('block shrink-0', className)}
+    >
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="arrow-right"
+      className={cn('block shrink-0', className)}
+    >
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </svg>
+  );
+}
+
+function ArchiveIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="archive"
+      className={cn('block shrink-0', className)}
+    >
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
+    </svg>
+  );
+}
 
 function safeExternalUrl(raw: string): string | null {
   try {
@@ -223,17 +309,15 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<DetailFee
 
 function formatArchiveFeedback(
   res: ArchiveRoadmapResponseDTO,
-): NonNullable<DetailFeedback> {
+): NonNullable<ArchiveToast> {
   if (res.new_focus_roadmap_id) {
     return {
-      variant: 'success',
       title: 'Roadmap archived',
       message:
         'All learning progress, shared skill evidence, and daily plans are preserved. Focus automatically reassigned to another active locked roadmap.',
     };
   }
   return {
-    variant: 'success',
     title: 'Roadmap archived',
     message:
       'All learning progress, shared skill evidence, and daily plans are preserved.',
@@ -275,6 +359,7 @@ export function RoadmapDetailView({
   const [archiving, setArchiving] = useState(false);
   const [actionError, setActionError] = useState<MappedError | null>(null);
   const [feedback, setFeedback] = useState<DetailFeedback>(null);
+  const [archiveToast, setArchiveToast] = useState<ArchiveToast>(null);
 
   const requestKey = `${accessToken}:${roadmapId}:${reloadTick}`;
   const seededRoadmap =
@@ -373,13 +458,33 @@ export function RoadmapDetailView({
     const first =
       drawerPanelRef.current?.querySelector<HTMLElement>(FOCUSABLE) ??
       drawerPanelRef.current;
-    first?.focus();
+    first?.focus({ preventScroll: true });
+
     const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+    if (scrollbarWidth > 0) {
+      const computedPadding = Number.parseFloat(
+        window.getComputedStyle(document.body).paddingRight || '0',
+      );
+      document.body.style.paddingRight = `${(Number.isNaN(computedPadding) ? 0 : computedPadding) + scrollbarWidth}px`;
+    }
     document.body.style.overflow = 'hidden';
 
+    const onDocKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        e.stopPropagation();
+        setDrawerOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onDocKeyDown);
+
     return () => {
+      document.removeEventListener('keydown', onDocKeyDown);
       document.body.style.overflow = prevOverflow;
-      (triggerEl ?? prevActive)?.focus();
+      document.body.style.paddingRight = prevPaddingRight;
+      (triggerEl ?? prevActive)?.focus({ preventScroll: true });
     };
   }, [drawerOpen]);
 
@@ -428,6 +533,7 @@ export function RoadmapDetailView({
 
   const handleDrawerKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
+      e.preventDefault();
       e.stopPropagation();
       setDrawerOpen(false);
       return;
@@ -546,6 +652,7 @@ export function RoadmapDetailView({
     setArchiving(true);
     setActionError(null);
     setFeedback(null);
+    setArchiveToast(null);
     try {
       const res = await archiveRoadmap(accessToken, roadmapId);
       setHistoricalSnapshot(null);
@@ -558,7 +665,7 @@ export function RoadmapDetailView({
           is_focus: false,
         },
       });
-      setFeedback(formatArchiveFeedback(res));
+      setArchiveToast(formatArchiveFeedback(res));
       setArchiveModalOpen(false);
     } catch (err) {
       setActionError(mapApiError(err));
@@ -617,97 +724,147 @@ export function RoadmapDetailView({
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <header className="flex flex-col gap-4 border-b border-border-default pb-5 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <nav aria-label="Breadcrumb" className="text-caption text-text-muted">
-            <Link href="/roadmaps" className="hover:underline">
-              Roadmaps
-            </Link>{' '}
-            / <span>{displayedRoadmap.role_name}</span>
-          </nav>
+      <header className="border-b border-border-default pb-5">
+        <nav aria-label="Breadcrumb" className="mb-2">
+          <ol className="flex flex-wrap items-center gap-1.5 text-sm leading-none">
+            <li className="inline-flex items-center gap-1.5 leading-none">
+              <Link
+                href="/roadmaps"
+                className="inline-flex items-center gap-1.5 leading-none font-medium text-teal-700 transition-colors hover:text-teal-800 hover:underline dark:text-teal-400 dark:hover:text-teal-300"
+              >
+                <ArrowLeftIcon className="h-3.5 w-3.5 shrink-0" />
+                <span>Roadmaps</span>
+              </Link>
+            </li>
+            <li
+              aria-hidden="true"
+              className="inline-flex items-center leading-none text-slate-400"
+            >
+              <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            </li>
+            <li
+              aria-current="page"
+              className="inline-flex items-center leading-none font-medium text-slate-500 dark:text-slate-400"
+              dir="auto"
+            >
+              {displayedRoadmap.role_name}
+            </li>
+          </ol>
+        </nav>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <h1 className="text-heading-xl font-semibold text-text-primary" dir="auto">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <h1
+              className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:text-slate-100"
+              dir="auto"
+            >
               {displayedRoadmap.role_name}
             </h1>
 
-            <span className="inline-flex items-center gap-1 rounded-full border border-feedback-success-border bg-feedback-success-background px-2.5 py-0.5 text-caption font-medium text-feedback-success-text">
-              {currentRoadmap.status === 'locked' && (
-                <LockIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-              <span>{STATUS_LABELS[currentRoadmap.status]}</span>
-            </span>
-
-            {currentRoadmap.is_focus && !isViewingHistorical && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-feedback-success-border bg-feedback-success-background px-2.5 py-0.5 text-caption font-semibold text-feedback-success-text">
-                <CheckCircleIcon
-                  className="h-3.5 w-3.5 text-feedback-success-icon"
-                  aria-hidden="true"
-                />
-                <span>Focus Roadmap</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={cn(
+                  'inline-flex items-center justify-center gap-1.5 rounded-full border px-2.5 py-1 text-caption font-medium leading-none',
+                  STATUS_BADGE_CLASSES[currentRoadmap.status],
+                )}
+              >
+                {currentRoadmap.status === 'locked' && (
+                  <LockIcon className="block h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                )}
+                {currentRoadmap.status === 'archived' && (
+                  <ArchiveIcon className="block h-3.5 w-3.5 shrink-0" />
+                )}
+                <span>{STATUS_LABELS[currentRoadmap.status]}</span>
               </span>
+
+              {currentRoadmap.is_focus && !isViewingHistorical && (
+                <span className="inline-flex items-center justify-center gap-1.5 rounded-full border border-feedback-success-border bg-feedback-success-background px-2.5 py-1 text-caption font-semibold leading-none text-feedback-success-text">
+                  <CheckCircleIcon
+                    className="block h-3.5 w-3.5 shrink-0 text-feedback-success-icon"
+                    aria-hidden="true"
+                  />
+                  <span>Focus Roadmap</span>
+                </span>
+              )}
+
+              <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-medium leading-none text-text-secondary">
+                {LEVEL_LABELS[displayedRoadmap.target_level] ??
+                  displayedRoadmap.target_level}
+              </span>
+
+              <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-mono leading-none text-text-secondary">
+                v{displayedRoadmap.version_no}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {(currentRoadmap.status === 'draft' ||
+              currentRoadmap.status === 'locked') && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={switchingFocus || archiving}
+                onClick={() => setArchiveModalOpen(true)}
+                className="h-9 rounded-lg border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+              >
+                <ArchiveIcon className="block h-4 w-4 shrink-0" />
+                <span>Archive Roadmap</span>
+              </Button>
             )}
 
-            <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-caption font-medium text-text-secondary">
-              {LEVEL_LABELS[displayedRoadmap.target_level] ??
-                displayedRoadmap.target_level}
-            </span>
+            <Button
+              ref={historyTriggerRef}
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setDrawerOpen(true)}
+              className="h-9 rounded-lg border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <ClockIcon className="block h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Version History</span>
+            </Button>
 
-            <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-caption font-mono text-text-secondary">
-              v{displayedRoadmap.version_no}
-            </span>
+            {currentRoadmap.status === 'locked' && !currentRoadmap.is_focus && (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                loading={switchingFocus}
+                loadingText="Switching focus..."
+                disabled={switchingFocus || archiving}
+                onClick={() => void handleFocusSwitch()}
+                className="h-9 rounded-lg px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap"
+              >
+                <span>Set as Focus Roadmap</span>
+              </Button>
+            )}
+
+            {currentRoadmap.status === 'draft' && (
+              <Link
+                href={`/roadmaps/${encodeURIComponent(roadmapId)}/draft`}
+                className={primaryLinkClass}
+              >
+                <span>Open Draft Review</span>
+                <ArrowRightIcon className="block h-4 w-4 shrink-0" />
+              </Link>
+            )}
           </div>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            ref={historyTriggerRef}
-            type="button"
-            variant="secondary"
-            size="md"
-            onClick={() => setDrawerOpen(true)}
-          >
-            <ClockIcon className="h-4 w-4" aria-hidden="true" />
-            <span>Version History</span>
-          </Button>
-
-          {currentRoadmap.status === 'locked' && !currentRoadmap.is_focus && (
-            <Button
-              type="button"
-              variant="primary"
-              size="md"
-              loading={switchingFocus}
-              loadingText="Switching focus..."
-              disabled={switchingFocus || archiving}
-              onClick={() => void handleFocusSwitch()}
-            >
-              Set as Focus Roadmap
-            </Button>
-          )}
-
-          {currentRoadmap.status === 'draft' && (
-            <Link
-              href={`/roadmaps/${encodeURIComponent(roadmapId)}/draft`}
-              className={secondaryLinkClass}
-            >
-              Open Draft Review
-            </Link>
-          )}
-
-          {(currentRoadmap.status === 'draft' ||
-            currentRoadmap.status === 'locked') && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="md"
-              disabled={switchingFocus || archiving}
-              onClick={() => setArchiveModalOpen(true)}
-            >
-              Archive Roadmap
-            </Button>
-          )}
-        </div>
       </header>
+
+      {currentRoadmap.status === 'archived' && (
+        <div
+          role="status"
+          className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300"
+        >
+          <ArchiveIcon className="block h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" />
+          <span>
+            This roadmap is archived and read-only. Your learning progress and skill evidence remain preserved.
+          </span>
+        </div>
+      )}
 
       {isViewingHistorical && historicalSnapshot && (
         <Alert
@@ -920,7 +1077,7 @@ export function RoadmapDetailView({
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span
                           className={cn(
-                            'inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium',
+                            'inline-flex items-center justify-center rounded-full border px-2 py-1 text-2xs font-medium leading-none',
                             PRIORITY_BADGE_CLASSES[item.priority],
                           )}
                         >
@@ -928,14 +1085,14 @@ export function RoadmapDetailView({
                         </span>
                         <span
                           className={cn(
-                            'inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium',
+                            'inline-flex items-center justify-center rounded-full border px-2 py-1 text-2xs font-medium leading-none',
                             GAP_BADGE_CLASSES[item.gap_type],
                           )}
                         >
                           {GAP_LABELS[item.gap_type]}
                         </span>
                         {item.estimated_effort_hours !== null && (
-                          <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2 py-0.5 text-2xs text-text-secondary">
+                          <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2 py-1 text-2xs leading-none text-text-secondary">
                             {item.estimated_effort_hours} hrs
                           </span>
                         )}
@@ -987,36 +1144,54 @@ export function RoadmapDetailView({
         ))}
       </section>
 
-      {drawerOpen && (
+      <div
+        aria-hidden={!drawerOpen}
+        inert={!drawerOpen ? true : undefined}
+        className={cn(
+          'fixed inset-0 z-50 flex justify-end overflow-hidden transition-[visibility] duration-300 motion-reduce:transition-none',
+          drawerOpen
+            ? 'visible pointer-events-auto'
+            : 'invisible pointer-events-none',
+        )}
+      >
         <div
           {...backdropDismiss}
-          className="fixed inset-0 z-(--z-drawer) flex justify-end bg-surface-overlay"
+          data-testid="version-history-backdrop"
+          aria-hidden="true"
+          className={cn(
+            'absolute inset-0 bg-slate-900/35 backdrop-blur-[1px] transition-opacity duration-300 ease-out motion-reduce:transition-none',
+            drawerOpen ? 'opacity-100' : 'opacity-0',
+          )}
+        />
+        <div
+          ref={drawerPanelRef}
+          role={drawerOpen ? 'dialog' : undefined}
+          tabIndex={drawerOpen ? -1 : undefined}
+          aria-modal={drawerOpen ? 'true' : undefined}
+          aria-labelledby={drawerOpen ? drawerTitleId : undefined}
+          onKeyDown={handleDrawerKeyDown}
+          className={cn(
+            'relative z-10 flex h-full w-full max-w-md flex-col border-l border-border-default bg-surface-raised text-text-primary shadow-xl outline-none transform-gpu will-change-transform transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            drawerOpen ? 'translate-x-0' : 'translate-x-full',
+          )}
         >
-          <div
-            ref={drawerPanelRef}
-            role="dialog"
-            tabIndex={-1}
-            aria-modal="true"
-            aria-labelledby={drawerTitleId}
-            onKeyDown={handleDrawerKeyDown}
-            className="flex h-full w-full max-w-md flex-col border-l border-border-default bg-surface-raised text-text-primary shadow-xl outline-none transition-transform duration-(--duration-normal) motion-reduce:transition-none"
-          >
-            <div className="flex items-center justify-between border-b border-border-default px-5 py-4">
-              <h2 id={drawerTitleId} className="text-heading-sm font-semibold">
-                Version History
-              </h2>
-              <button
-                type="button"
-                aria-label="Close version history"
-                onClick={() => setDrawerOpen(false)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-              >
-                <CloseIcon className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
+          <div className="flex items-center justify-between border-b border-border-default px-5 py-4">
+            <h2 id={drawerTitleId} className="text-heading-sm font-semibold">
+              Version History
+            </h2>
+            <button
+              type="button"
+              aria-label="Close version history"
+              onClick={() => setDrawerOpen(false)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary"
+            >
+              <CloseIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
 
-            <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-5">
-              {activeVersions === null ? (
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-5">
+            {activeVersions === null ? (
+              drawerOpen ? (
                 <div
                   role="status"
                   aria-busy="true"
@@ -1032,92 +1207,104 @@ export function RoadmapDetailView({
                     />
                   ))}
                 </div>
-              ) : activeVersions.status === 'error' ? (
-                <Alert
-                  variant="error_retryable"
-                  role="alert"
-                  onRetry={() => setVersionsReloadTick((prev) => prev + 1)}
-                >
-                  {activeVersions.error.message}
-                </Alert>
-              ) : activeVersions.items.length === 0 ? (
-                <p className="text-body-sm text-text-secondary">
-                  No versions found for this roadmap.
-                </p>
-              ) : (
-                <>
-                  <ul className="flex flex-col gap-2.5">
-                    {activeVersions.items.map((version) => {
-                      const isCurrentVersion =
-                        version.version_no === currentRoadmap.version_no;
-                      const isSelectedSnapshot =
-                        displayedRoadmap.version_no === version.version_no;
+              ) : null
+            ) : activeVersions.status === 'error' ? (
+              <Alert
+                variant="error_retryable"
+                role="alert"
+                onRetry={() => setVersionsReloadTick((prev) => prev + 1)}
+              >
+                {activeVersions.error.message}
+              </Alert>
+            ) : activeVersions.items.length === 0 ? (
+              <p className="text-body-sm text-text-secondary">
+                No versions found for this roadmap.
+              </p>
+            ) : (
+              <>
+                <ul className="flex flex-col gap-2.5">
+                  {activeVersions.items.map((version) => {
+                    const isCurrentVersion =
+                      version.version_no === currentRoadmap.version_no;
+                    const isSelectedSnapshot =
+                      displayedRoadmap.version_no === version.version_no;
 
-                      return (
-                        <li key={version.id}>
-                          <button
-                            type="button"
-                            disabled={loadingSnapshotVersion !== null}
-                            aria-current={isSelectedSnapshot ? 'true' : undefined}
-                            onClick={() => void handleSelectVersion(version)}
-                            className={cn(
-                              'flex w-full flex-col gap-1 rounded-lg border p-3.5 text-left transition-colors duration-(--duration-fast) motion-reduce:transition-none',
-                              isSelectedSnapshot
-                                ? 'border-border-focus bg-surface-accent'
-                                : 'border-border-default bg-surface-default hover:bg-surface-subtle',
-                            )}
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-label font-semibold text-text-primary">
-                                Version v{version.version_no}
+                    return (
+                      <li key={version.id}>
+                        <button
+                          type="button"
+                          disabled={loadingSnapshotVersion !== null}
+                          aria-current={isSelectedSnapshot ? 'true' : undefined}
+                          onClick={() => void handleSelectVersion(version)}
+                          className={cn(
+                            'flex w-full flex-col gap-1 rounded-lg border p-3.5 text-left transition-colors duration-(--duration-fast) motion-reduce:transition-none',
+                            isSelectedSnapshot
+                              ? 'border-border-focus bg-surface-accent'
+                              : 'border-border-default bg-surface-default hover:bg-surface-subtle',
+                          )}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-label font-semibold text-text-primary">
+                              Version v{version.version_no}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2 py-1 text-2xs font-medium leading-none text-text-secondary">
+                                {version.state}
                               </span>
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="rounded-full border border-border-default bg-surface-subtle px-2 py-0.5 text-2xs font-medium text-text-secondary">
-                                  {version.state}
+                              {isCurrentVersion && (
+                                <span className="inline-flex items-center justify-center rounded-full border border-feedback-success-border bg-feedback-success-background px-2 py-1 text-2xs font-semibold leading-none text-feedback-success-text">
+                                  Current
                                 </span>
-                                {isCurrentVersion && (
-                                  <span className="rounded-full border border-feedback-success-border bg-feedback-success-background px-2 py-0.5 text-2xs font-semibold text-feedback-success-text">
-                                    Current
-                                  </span>
-                                )}
-                                {version.stale && (
-                                  <span className="rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2 py-0.5 text-2xs font-medium text-feedback-warning-text">
-                                    Stale
-                                  </span>
-                                )}
-                              </div>
+                              )}
+                              {version.stale && (
+                                <span className="inline-flex items-center justify-center rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2 py-1 text-2xs font-medium leading-none text-feedback-warning-text">
+                                  Stale
+                                </span>
+                              )}
                             </div>
-                            <p className="text-caption text-text-muted">
-                              {ORIGIN_LABELS[version.created_by] ?? version.created_by} ·{' '}
-                              {LEVEL_LABELS[version.target_level] ?? version.target_level}
-                            </p>
-                            {loadingSnapshotVersion === version.version_no && (
-                              <span className="text-caption text-text-brand">
-                                Loading snapshot...
-                              </span>
-                            )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                          </div>
+                          <p className="text-caption text-text-muted">
+                            {ORIGIN_LABELS[version.created_by] ?? version.created_by} ·{' '}
+                            {LEVEL_LABELS[version.target_level] ?? version.target_level}
+                          </p>
+                          {loadingSnapshotVersion === version.version_no && (
+                            <span className="text-caption text-text-brand">
+                              Loading snapshot...
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
 
-                  {activeVersions.nextCursor && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      loading={loadingMoreVersions}
-                      onClick={() => void handleLoadMoreVersions()}
-                    >
-                      Load older versions
-                    </Button>
-                  )}
-                </>
-              )}
-            </div>
+                {activeVersions.nextCursor && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    loading={loadingMoreVersions}
+                    onClick={() => void handleLoadMoreVersions()}
+                  >
+                    Load older versions
+                  </Button>
+                )}
+              </>
+            )}
           </div>
         </div>
+      </div>
+
+      {archiveToast && (
+        <Toast
+          variant="success"
+          role="status"
+          title={archiveToast.title}
+          autoDismissMs={6000}
+          onDismiss={() => setArchiveToast(null)}
+        >
+          {archiveToast.message}
+        </Toast>
       )}
 
       <Modal

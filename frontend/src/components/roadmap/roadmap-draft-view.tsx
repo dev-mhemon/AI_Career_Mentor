@@ -26,7 +26,34 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/components/ui/cn';
-import { LockIcon, WarningIcon } from '@/components/ui/icons';
+import {
+  ChevronRightIcon,
+  LockIcon,
+  SparklesIcon,
+  WarningIcon,
+} from '@/components/ui/icons';
+
+function ArrowLeftIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="arrow-left"
+      className={cn('block shrink-0', className)}
+    >
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
+  );
+}
 
 export interface RoadmapDraftViewProps {
   accessToken: string;
@@ -91,7 +118,7 @@ const GAP_LABELS: Record<SkillGapType, string> = {
 };
 
 const secondaryLinkClass =
-  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-action-secondary-border bg-action-secondary-background px-3.5 py-2 text-label font-medium text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active motion-reduce:transition-none';
+  'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-action-secondary-border bg-action-secondary-background px-3.5 py-2 text-label font-medium leading-none text-action-secondary-foreground transition-colors duration-(--duration-fast) ease-standard hover:border-action-secondary-border-hover hover:bg-action-secondary-background-hover active:bg-action-secondary-background-active motion-reduce:transition-none';
 
 function hasNulOrUnpairedSurrogate(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
@@ -200,7 +227,8 @@ export function RoadmapDraftView({
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveDraftJob>(null);
   const [submittingRevision, setSubmittingRevision] = useState(false);
-  const [locking, setLocking] = useState(false);
+  const [lockState, setLockState] = useState<'idle' | 'locking' | 'navigating'>('idle');
+  const locking = lockState !== 'idle';
   const [confirmLarge, setConfirmLarge] = useState(false);
   const [forceLargeConfirm, setForceLargeConfirm] = useState(false);
   const [actionError, setActionError] = useState<MappedError | null>(null);
@@ -429,7 +457,7 @@ export function RoadmapDraftView({
         : createIdempotencyKey();
 
     pendingLockKeyRef.current = { signature, key: idempotencyKey };
-    setLocking(true);
+    setLockState('locking');
     setActionError(null);
 
     try {
@@ -440,11 +468,12 @@ export function RoadmapDraftView({
         idempotencyKey,
       );
       pendingLockKeyRef.current = null;
+      setLockState('navigating');
       if (onLockedNavigate) {
         onLockedNavigate(locked.roadmap_id);
         return;
       }
-      router.push(`/roadmaps/${encodeURIComponent(locked.roadmap_id)}`);
+      router.replace(`/roadmaps/${encodeURIComponent(locked.roadmap_id)}`);
     } catch (err) {
       if (err instanceof ApiError) {
         if (DETERMINISTIC_HTTP_STATUSES.has(err.statusCode)) {
@@ -456,8 +485,7 @@ export function RoadmapDraftView({
       }
       setActionError(mapApiError(err));
       setActionErrorResetKey((prev) => prev + 1);
-    } finally {
-      setLocking(false);
+      setLockState('idle');
     }
   };
 
@@ -523,7 +551,9 @@ export function RoadmapDraftView({
     !submittingRevision &&
     !activeJob &&
     !locking &&
-    rawCodePointCount <= MAX_REVISION_CODEPOINTS;
+    trimmedCodePointCount >= 1 &&
+    rawCodePointCount <= MAX_REVISION_CODEPOINTS &&
+    trimmedCodePointCount <= MAX_REVISION_CODEPOINTS;
   const uniqueWarnings = Array.from(new Set(draft.warnings.filter(Boolean)));
   const isStaleVersionOrDraft =
     actionError?.code === 'STALE_VERSION' || actionError?.code === 'DRAFT_STALE';
@@ -532,25 +562,59 @@ export function RoadmapDraftView({
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="flex flex-col gap-4 border-b border-border-default pb-5 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <nav aria-label="Breadcrumb" className="text-caption text-text-muted">
-            <Link href="/roadmaps" className="hover:underline">
-              Roadmaps
-            </Link>{' '}
-            / <span>Draft Review</span>
+          <nav aria-label="Breadcrumb" className="mb-2">
+            <ol className="flex flex-wrap items-center gap-1.5 text-sm leading-none">
+              <li className="inline-flex items-center gap-1.5 leading-none">
+                <Link
+                  href="/roadmaps"
+                  className="inline-flex items-center gap-1.5 leading-none font-medium text-teal-700 transition-colors hover:text-teal-800 hover:underline dark:text-teal-400 dark:hover:text-teal-300"
+                >
+                  <ArrowLeftIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span>Roadmaps</span>
+                </Link>
+              </li>
+              <li
+                aria-hidden="true"
+                className="inline-flex items-center leading-none text-slate-400"
+              >
+                <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              </li>
+              <li className="inline-flex items-center gap-1.5 leading-none">
+                <Link
+                  href={`/roadmaps/${encodeURIComponent(draft.id)}`}
+                  className="inline-flex items-center leading-none font-medium text-teal-700 transition-colors hover:text-teal-800 hover:underline dark:text-teal-400 dark:hover:text-teal-300"
+                  dir="auto"
+                >
+                  {draft.role_name}
+                </Link>
+              </li>
+              <li
+                aria-hidden="true"
+                className="inline-flex items-center leading-none text-slate-400"
+              >
+                <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              </li>
+              <li
+                aria-current="page"
+                className="inline-flex items-center leading-none font-medium text-slate-500 dark:text-slate-400"
+              >
+                Draft Review
+              </li>
+            </ol>
           </nav>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <h1 className="text-heading-xl font-semibold text-text-primary" dir="auto">
               {draft.role_name}
             </h1>
-            <span className="inline-flex items-center rounded-full border border-feedback-info-border bg-feedback-info-background px-2.5 py-0.5 text-caption font-medium text-feedback-info-text">
+            <span className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-caption font-medium leading-none text-amber-800 dark:border-amber-800/80 dark:bg-amber-950/50 dark:text-amber-200">
               Draft v{draft.version_no}
             </span>
-            <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-0.5 text-caption font-medium text-text-secondary">
+            <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-medium leading-none text-text-secondary">
               {LEVEL_LABELS[draft.target_level] ?? draft.target_level}
             </span>
             <span
               className={cn(
-                'inline-flex items-center rounded-full border px-2.5 py-0.5 text-caption font-medium',
+                'inline-flex items-center justify-center rounded-full border px-2.5 py-1 text-caption font-medium leading-none',
                 draft.size_guardrail.materially_large
                   ? 'border-feedback-warning-border bg-feedback-warning-background text-feedback-warning-text'
                   : 'border-border-default bg-surface-subtle text-text-secondary',
@@ -616,49 +680,232 @@ export function RoadmapDraftView({
         </Alert>
       )}
 
-      {actionError && (
-        <Alert
-          variant={
-            actionError.tone === 'info'
-              ? 'info'
-              : actionError.tone === 'warning'
-                ? 'warning'
-                : 'error_retryable'
-          }
-          role="alert"
-          retryAfterSeconds={actionError.retryAfterSeconds}
-          resetKey={actionErrorResetKey}
-          action={
-            isStaleVersionOrDraft
-              ? {
-                  label: 'Reload Draft',
-                  onClick: () => {
-                    setActionError(null);
-                    setReloadTick((prev) => prev + 1);
-                  },
-                }
-              : undefined
-          }
-        >
-          {actionError.message}
-        </Alert>
-      )}
+      <section
+        aria-labelledby="draft-review-actions-heading"
+        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900"
+      >
+        <div className="flex flex-col gap-3.5 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <div className="min-w-0 flex-1">
+            <h2
+              id="draft-review-actions-heading"
+              className="text-heading-md font-semibold text-text-primary"
+            >
+              Review &amp; Finalize Draft
+            </h2>
+            <p className="mt-1 text-body-sm text-text-secondary">
+              Lock Draft v{draft.version_no} into a tracked roadmap (Daily Plan is configured separately), or request an AI revision below.
+            </p>
+          </div>
 
-      {activeJob && (
-        <AILoadingState
-          job={activeJob.job}
-          title={
-            activeJob.kind === 'refresh'
-              ? 'Refreshing stale roadmap draft'
-              : 'Revising your roadmap draft'
-          }
-          variant="inline_banner"
-          accessToken={accessToken}
-          pollJobStatus={pollJobStatus}
-          onJobSucceeded={handleJobSucceeded}
-          onRetryJob={handleRetryActiveJob}
-        />
-      )}
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center sm:gap-2.5">
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              loading={locking}
+              loadingText={
+                lockState === 'navigating'
+                  ? 'Opening roadmap...'
+                  : 'Locking roadmap...'
+              }
+              disabled={lockDisabled}
+              onClick={() => void handleLockRoadmap()}
+              className="w-full justify-center whitespace-nowrap sm:w-auto"
+            >
+              <LockIcon className="block h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Lock Roadmap</span>
+            </Button>
+          </div>
+        </div>
+
+        {(draft.stale || requiresLargeConfirmation || actionError || activeJob) && (
+          <div className="flex flex-col gap-3 border-b border-slate-100 py-4 dark:border-slate-800">
+            {draft.stale && (
+              <div className="flex items-start gap-2 rounded-md border border-feedback-warning-border bg-feedback-warning-background p-3 text-body-sm text-feedback-warning-text">
+                <WarningIcon
+                  className="mt-0.5 h-4 w-4 shrink-0 text-feedback-warning-icon"
+                  aria-hidden="true"
+                />
+                <span>
+                  Locking is disabled because this draft is stale. Refresh the stale draft below before locking.
+                </span>
+              </div>
+            )}
+
+            {requiresLargeConfirmation && (
+              <Checkbox
+                variant="warning_callout"
+                required
+                checked={confirmLarge}
+                onChange={setConfirmLarge}
+                disabled={draft.stale || !featureEnabled || Boolean(activeJob) || locking}
+                label={`I confirm that I want to lock this large roadmap (${draft.size_guardrail.active_topic_count} active topics, above the ${draft.size_guardrail.soft_max_topics}-topic guideline).`}
+              />
+            )}
+
+            {actionError && (
+              <Alert
+                variant={
+                  actionError.tone === 'info'
+                    ? 'info'
+                    : actionError.tone === 'warning'
+                      ? 'warning'
+                      : 'error_retryable'
+                }
+                role="alert"
+                retryAfterSeconds={actionError.retryAfterSeconds}
+                resetKey={actionErrorResetKey}
+                action={
+                  isStaleVersionOrDraft
+                    ? {
+                        label: 'Reload Draft',
+                        onClick: () => {
+                          setActionError(null);
+                          setReloadTick((prev) => prev + 1);
+                        },
+                      }
+                    : undefined
+                }
+              >
+                {actionError.message}
+              </Alert>
+            )}
+
+            {activeJob && (
+              <AILoadingState
+                job={activeJob.job}
+                title={
+                  activeJob.kind === 'refresh'
+                    ? 'Refreshing stale roadmap draft'
+                    : 'Revising your roadmap draft'
+                }
+                variant="inline_banner"
+                accessToken={accessToken}
+                pollJobStatus={pollJobStatus}
+                onJobSucceeded={handleJobSucceeded}
+                onRetryJob={handleRetryActiveJob}
+              />
+            )}
+          </div>
+        )}
+
+        <form onSubmit={handleRevisionSubmit} className="flex flex-col gap-3 pt-4">
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor={instructionId}
+              className="text-label font-medium text-text-primary"
+            >
+              Revision instruction{' '}
+              <span className="text-rose-600 dark:text-rose-400" aria-hidden="true">
+                *
+              </span>
+            </label>
+            <textarea
+              id={instructionId}
+              rows={2}
+              required
+              aria-required="true"
+              value={instruction}
+              onChange={(e) => {
+                setInstruction(e.target.value);
+                if (instructionError) {
+                  setInstructionError(null);
+                }
+              }}
+              aria-invalid={instructionError ? 'true' : undefined}
+              aria-describedby={
+                instructionError
+                  ? `${instructionHelpId} ${instructionErrorId}`
+                  : instructionHelpId
+              }
+              disabled={!featureEnabled || Boolean(activeJob) || locking}
+              placeholder="Example: Expand SQL indexing exercises in Phase 2 and keep Phase 1 concise."
+              className="w-full rounded-md border border-border-strong bg-surface-default px-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:border-border-focus disabled:bg-surface-disabled disabled:text-text-disabled"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-caption">
+              <span id={instructionHelpId} className="text-text-muted">
+                1 to {MAX_REVISION_CODEPOINTS} characters (Unicode code points).
+              </span>
+              <span
+                className={cn(
+                  'font-mono tabular-nums',
+                  rawCodePointCount > MAX_REVISION_CODEPOINTS
+                    ? 'font-semibold text-text-danger'
+                    : 'text-text-muted',
+                )}
+              >
+                {rawCodePointCount} / {MAX_REVISION_CODEPOINTS}
+              </span>
+            </div>
+            {instructionError && (
+              <p
+                id={instructionErrorId}
+                role="alert"
+                className="text-caption text-text-danger"
+              >
+                {instructionError}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+            <Button
+              type="submit"
+              variant="secondary"
+              size="md"
+              loading={submittingRevision}
+              loadingText="Submitting revision..."
+              disabled={!canSubmitRevision}
+              className={cn(
+                'w-full justify-center whitespace-nowrap transition-colors sm:w-auto',
+                canSubmitRevision
+                  ? 'border-teal-600 bg-teal-50 font-semibold text-teal-800 shadow-xs hover:border-teal-700 hover:bg-teal-100 dark:border-teal-500 dark:bg-teal-950/60 dark:text-teal-200 dark:hover:bg-teal-900/70'
+                  : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 shadow-none hover:border-slate-200 hover:bg-slate-100 hover:text-slate-400 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-500',
+              )}
+            >
+              <SparklesIcon
+                className="block h-4 w-4 shrink-0"
+                aria-hidden="true"
+                data-icon="sparkles"
+              />
+              <span>Submit Revision</span>
+            </Button>
+
+            {draft.stale && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                loading={submittingRevision}
+                loadingText="Refreshing..."
+                disabled={!featureEnabled || submittingRevision || Boolean(activeJob) || locking}
+                onClick={handleRefreshStaleDraft}
+                className="w-full justify-center whitespace-nowrap sm:w-auto"
+              >
+                <svg
+                  width={16}
+                  height={16}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  focusable={false}
+                  className="block h-4 w-4 shrink-0"
+                >
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                  <path d="M16 16h5v5" />
+                </svg>
+                <span>Refresh Stale Draft</span>
+              </Button>
+            )}
+          </div>
+        </form>
+      </section>
 
       <section
         aria-labelledby="draft-summary-heading"
@@ -819,7 +1066,7 @@ export function RoadmapDraftView({
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span
                           className={cn(
-                            'inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium',
+                            'inline-flex items-center justify-center rounded-full border px-2 py-1 text-2xs font-medium leading-none',
                             PRIORITY_BADGE_CLASSES[item.priority],
                           )}
                         >
@@ -827,14 +1074,14 @@ export function RoadmapDraftView({
                         </span>
                         <span
                           className={cn(
-                            'inline-flex items-center rounded-full border px-2 py-0.5 text-2xs font-medium',
+                            'inline-flex items-center justify-center rounded-full border px-2 py-1 text-2xs font-medium leading-none',
                             GAP_BADGE_CLASSES[item.gap_type],
                           )}
                         >
                           {GAP_LABELS[item.gap_type]}
                         </span>
                         {item.estimated_effort_hours !== null && (
-                          <span className="inline-flex items-center rounded-full border border-border-default bg-surface-subtle px-2 py-0.5 text-2xs text-text-secondary">
+                          <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2 py-1 text-2xs leading-none text-text-secondary">
                             {item.estimated_effort_hours} hrs
                           </span>
                         )}
@@ -884,176 +1131,6 @@ export function RoadmapDraftView({
             </ol>
           </article>
         ))}
-      </section>
-
-      <section
-        aria-labelledby="draft-revision-heading"
-        className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
-      >
-        <h2
-          id="draft-revision-heading"
-          className="text-heading-md font-semibold text-text-primary"
-        >
-          Request Draft Revision
-        </h2>
-        <p className="mt-1 text-body-sm text-text-secondary">
-          Ask the AI mentor to adjust depth, add focus areas, or reorder optional topics before locking.
-        </p>
-
-        <form onSubmit={handleRevisionSubmit} className="mt-4 flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor={instructionId}
-              className="text-label font-medium text-text-primary"
-            >
-              Revision instruction
-            </label>
-            <textarea
-              id={instructionId}
-              rows={3}
-              value={instruction}
-              onChange={(e) => {
-                setInstruction(e.target.value);
-                if (instructionError) {
-                  setInstructionError(null);
-                }
-              }}
-              aria-invalid={instructionError ? 'true' : undefined}
-              aria-describedby={
-                instructionError
-                  ? `${instructionHelpId} ${instructionErrorId}`
-                  : instructionHelpId
-              }
-              disabled={!featureEnabled || Boolean(activeJob) || locking}
-              placeholder="Example: Expand SQL indexing exercises in Phase 2 and keep Phase 1 concise."
-              className="w-full rounded-md border border-border-strong bg-surface-default px-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:border-border-focus disabled:bg-surface-disabled disabled:text-text-disabled"
-            />
-            <div className="flex flex-wrap items-center justify-between gap-2 text-caption">
-              <span id={instructionHelpId} className="text-text-muted">
-                1 to {MAX_REVISION_CODEPOINTS} characters (Unicode code points).
-              </span>
-              <span
-                className={cn(
-                  'font-mono tabular-nums',
-                  rawCodePointCount > MAX_REVISION_CODEPOINTS
-                    ? 'font-semibold text-text-danger'
-                    : 'text-text-muted',
-                )}
-              >
-                {rawCodePointCount} / {MAX_REVISION_CODEPOINTS}
-              </span>
-            </div>
-            {instructionError && (
-              <p
-                id={instructionErrorId}
-                role="alert"
-                className="text-caption text-text-danger"
-              >
-                {instructionError}
-              </p>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="submit"
-              variant="secondary"
-              size="md"
-              loading={submittingRevision}
-              loadingText="Submitting revision..."
-              disabled={!canSubmitRevision}
-            >
-              Submit Revision Request
-            </Button>
-
-            {draft.stale && (
-              <Button
-                type="button"
-                variant="secondary"
-                size="md"
-                loading={submittingRevision}
-                loadingText="Refreshing..."
-                disabled={!featureEnabled || submittingRevision || Boolean(activeJob) || locking}
-                onClick={handleRefreshStaleDraft}
-              >
-                <svg
-                  width={16}
-                  height={16}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  focusable={false}
-                  className="h-4 w-4"
-                >
-                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                  <path d="M16 16h5v5" />
-                </svg>
-                <span>Refresh Stale Draft</span>
-              </Button>
-            )}
-          </div>
-        </form>
-      </section>
-
-      <section
-        aria-labelledby="draft-lock-heading"
-        className="flex flex-col gap-4 rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
-      >
-        <div>
-          <h2
-            id="draft-lock-heading"
-            className="text-heading-md font-semibold text-text-primary"
-          >
-            Lock Roadmap
-          </h2>
-          <p className="mt-1 text-body-sm text-text-secondary">
-            Locking finalizes Draft v{draft.version_no} into a tracked roadmap. Creating a Daily Plan is a separate step configured after locking.
-          </p>
-        </div>
-
-        {draft.stale && (
-          <div className="flex items-start gap-2 rounded-md border border-feedback-warning-border bg-feedback-warning-background p-3 text-body-sm text-feedback-warning-text">
-            <WarningIcon
-              className="mt-0.5 h-4 w-4 shrink-0 text-feedback-warning-icon"
-              aria-hidden="true"
-            />
-            <span>
-              Locking is disabled because this draft is stale. Refresh the stale draft above before locking.
-            </span>
-          </div>
-        )}
-
-        {requiresLargeConfirmation && (
-          <Checkbox
-            variant="warning_callout"
-            required
-            checked={confirmLarge}
-            onChange={setConfirmLarge}
-            disabled={draft.stale || !featureEnabled || Boolean(activeJob) || locking}
-            label={`I confirm that I want to lock this large roadmap (${draft.size_guardrail.active_topic_count} active topics, above the ${draft.size_guardrail.soft_max_topics}-topic guideline).`}
-          />
-        )}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="primary"
-            size="lg"
-            loading={locking}
-            loadingText="Locking roadmap..."
-            disabled={lockDisabled}
-            onClick={() => void handleLockRoadmap()}
-          >
-            <LockIcon className="h-4 w-4" aria-hidden="true" />
-            <span>Lock Roadmap</span>
-          </Button>
-        </div>
       </section>
     </main>
   );

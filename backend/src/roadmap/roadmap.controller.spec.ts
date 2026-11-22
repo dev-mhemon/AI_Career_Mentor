@@ -1,6 +1,7 @@
 import {
   Global,
   HttpException,
+  Logger,
   type INestApplication,
   Module,
 } from '@nestjs/common';
@@ -98,9 +99,11 @@ function expectContractError(
   expect(body.code).toBe(expectedCode);
 }
 
-function createInMemoryIdempotencyService(epoch = 'epoch-v1') {
+function createInMemoryIdempotencyService(epoch: string | null = 'epoch-v1') {
   const store = new Map<string, string>();
-  store.set(IDEMPOTENCY_EPOCH_KEY, epoch);
+  if (epoch !== null) {
+    store.set(IDEMPOTENCY_EPOCH_KEY, epoch);
+  }
 
   const client: IdempotencyRedisClient = {
     isReady: true,
@@ -156,7 +159,7 @@ function createInMemoryIdempotencyService(epoch = 'epoch-v1') {
     undefined,
     {
       url: 'redis://127.0.0.1:6379',
-      expectedEpoch: epoch,
+      expectedEpoch: epoch ?? 'epoch-v1',
       ttlSeconds: 86_400,
       ttlMs: 86_400_000,
       timeoutMs: 1_000,
@@ -475,6 +478,110 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     expect(serviceMock.lockRoadmap).toHaveBeenCalledTimes(1);
   });
 
+  it('logs safe non-prod metadata (no secrets/PII) when EP-R01 fails closed with 503 SERVICE_UNAVAILABLE (missing Redis idempotency:epoch) and suppresses log in production', async () => {
+    const unseededIdempotency = createInMemoryIdempotencyService(null);
+    const controllerWithUnseededEpoch = new RoadmapController(
+      serviceMock as unknown as RoadmapService,
+      unseededIdempotency,
+    );
+    const warnSpy = vi
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+
+    const prevNodeEnv = process.env.NODE_ENV;
+    const req = {
+      user: { sub: USER_ID },
+      headers: {
+        'idempotency-key': IDEM_KEY_1,
+        authorization: 'Bearer secret-jwt-must-never-be-logged',
+      },
+    };
+    const mockRes = {
+      getHeader: (name: string) =>
+        name === 'X-Request-Id' ? 'req-trace-503-test' : undefined,
+      setHeader: vi.fn(),
+      status: vi.fn(),
+    };
+
+    try {
+      process.env.NODE_ENV = 'development';
+      await expect(
+        controllerWithUnseededEpoch.generateRoadmap(
+          req,
+          { career_goal_id: GOAL_ID },
+          mockRes as never,
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE');
+        const body = (err as HttpException).getResponse() as {
+          retryAfterSeconds?: number;
+          retryable?: boolean;
+        };
+        expect(body.retryAfterSeconds).toBe(5);
+        expect(body.retryable).toBe(true);
+        return true;
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const logged = String(warnSpy.mock.calls[0]?.[0] ?? '');
+      expect(JSON.parse(logged)).toEqual({
+        operation: 'ep_r01.idempotency_execute',
+        errorName: 'ContractException',
+        status: 503,
+        code: 'SERVICE_UNAVAILABLE',
+        requestId: 'req-trace-503-test',
+      });
+      expect(logged).not.toContain('loss-epoch');
+      expect(logged).not.toContain('secret-jwt-must-never-be-logged');
+      expect(logged).not.toContain(GOAL_ID);
+
+      // Raw Error.message containing credentials or private goal text must never be logged
+      warnSpy.mockClear();
+      serviceMock.generateRoadmap.mockRejectedValueOnce(
+        new Error('postgres://user:super-secret-pass@db/app private-goal-text'),
+      );
+      await expect(
+        controller.generateRoadmap(
+          req,
+          { career_goal_id: GOAL_ID },
+          mockRes as never,
+        ),
+      ).rejects.toThrow('super-secret-pass');
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const rawErrLogged = String(warnSpy.mock.calls[0]?.[0] ?? '');
+      expect(JSON.parse(rawErrLogged)).toEqual({
+        operation: 'ep_r01.roadmap_service_generate',
+        errorName: 'Error',
+        status: 500,
+        code: 'INTERNAL_ERROR',
+        requestId: 'req-trace-503-test',
+      });
+      expect(rawErrLogged).not.toContain('super-secret-pass');
+      expect(rawErrLogged).not.toContain('private-goal-text');
+
+      warnSpy.mockClear();
+      process.env.NODE_ENV = 'production';
+      await expect(
+        controllerWithUnseededEpoch.generateRoadmap(
+          req,
+          { career_goal_id: GOAL_ID },
+          mockRes as never,
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 503, 'SERVICE_UNAVAILABLE');
+        return true;
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+    }
+  });
+
   it('rejects missing auth (401) and malformed UUID or version_no params (400 INVALID_FORMAT)', async () => {
     await expect(
       controller.listRoadmaps({ headers: {} }, {}),
@@ -528,6 +635,32 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       {} as PostgresJobQueueConsumer,
     );
     expect(() => moduleWithoutRegistrar.onModuleInit()).not.toThrow();
+
+    // Starts PostgresJobQueueConsumer.start(handler) in non-test runtime when registerHandler is absent
+    const startMock = vi.fn();
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevVitest = process.env.VITEST;
+    try {
+      process.env.NODE_ENV = 'development';
+      delete process.env.VITEST;
+      const moduleWithConsumer = new RoadmapModule(handlerMock, {
+        start: startMock,
+      } as unknown as PostgresJobQueueConsumer);
+      moduleWithConsumer.onModuleInit();
+      expect(startMock).toHaveBeenCalledTimes(1);
+      expect(startMock).toHaveBeenCalledWith(handlerMock);
+    } finally {
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+      if (prevVitest === undefined) {
+        delete process.env.VITEST;
+      } else {
+        process.env.VITEST = prevVitest;
+      }
+    }
   });
 
   it('compiles AppModule DI graph sharing AuthModule, AiModule, and JobsModule singletons', async () => {

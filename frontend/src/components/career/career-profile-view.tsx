@@ -4,9 +4,13 @@ import { useEffect, useRef, useState, type FormEvent, type SVGProps } from 'reac
 import type {
   CareerGoalResponse,
   CareerLevel,
+  GenerateRoadmapRequestDTO,
   GoalStatus,
+  JobAcceptedDTO,
+  JobStatusDTO,
   ProfileResponse,
 } from '@/lib/api/client';
+import { ApiError } from '@/lib/api/client';
 import {
   mapApiError,
   type M05Invoke,
@@ -544,6 +548,41 @@ export function CareerProfileView({
     setNextCursor(result.data.meta.next_cursor);
   }
 
+  async function invokeGenerateRoadmap(
+    body: GenerateRoadmapRequestDTO,
+    idempotencyKey: string,
+  ): Promise<JobAcceptedDTO> {
+    const res = await invoke('generateRoadmap', { body, idempotencyKey });
+    if (!res.ok) {
+      throw new ApiError(
+        res.error.status ?? 500,
+        res.error.message,
+        res.error.code,
+        res.error.requestId,
+        [],
+        res.error.retryable,
+        res.error.retryAfterSeconds,
+      );
+    }
+    return res.data;
+  }
+
+  async function invokePollJobStatus(jobId: string): Promise<JobStatusDTO> {
+    const res = await invoke('getJobStatus', { jobId });
+    if (!res.ok) {
+      throw new ApiError(
+        res.error.status ?? 500,
+        res.error.message,
+        res.error.code,
+        res.error.requestId,
+        [],
+        res.error.retryable,
+        res.error.retryAfterSeconds,
+      );
+    }
+    return res.data;
+  }
+
   const grouped = STATUS_ORDER.map((status) => ({
     status,
     items: goals.filter((g) => g.status === status),
@@ -868,6 +907,20 @@ export function CareerProfileView({
                           );
                         }}
                         onDiscontinue={() => setDiscontinueTarget(goal)}
+                        generateHandoffProps={
+                          goal.status === 'confirmed' && !goal.roadmap_id
+                            ? {
+                                careerGoalId: goal.id,
+                                targetLevel:
+                                  goal.target_level ??
+                                  goal.suggested_level ??
+                                  'junior',
+                                levelConfirmed: true,
+                                onGenerateRoadmap: invokeGenerateRoadmap,
+                                pollJobStatus: invokePollJobStatus,
+                              }
+                            : undefined
+                        }
                       />
                     );
                   })}
@@ -963,19 +1016,29 @@ export function CareerProfileView({
         </Modal.Header>
         {discontinueTarget && (
           <Modal.Body>
-            <div className="rounded-lg border border-border-default bg-surface-subtle px-3.5 py-2.5 text-[13px]">
-              <span dir="auto" className="font-semibold text-text-primary">
-                {discontinueTarget.goal_text}
-              </span>
+            <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Career goal
+                </p>
+                <p
+                  dir="auto"
+                  className="mt-0.5 text-sm font-semibold text-slate-900 [overflow-wrap:anywhere] dark:text-slate-100"
+                >
+                  {discontinueTarget.goal_text}
+                </p>
+              </div>
               {discontinueTarget.proposed_role && (
-                <>
-                  <span className="mx-2 text-border-strong" aria-hidden="true">
-                    ·
+                <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/80 pt-2.5 dark:border-slate-800">
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-teal-200/80 bg-teal-50/70 px-2.5 py-1 text-[12px] leading-none font-semibold text-teal-800 dark:border-teal-800 dark:bg-teal-950/60 dark:text-teal-200">
+                    <CompassIcon
+                      className="h-3.5 w-3.5 text-teal-600 dark:text-teal-300"
+                      aria-hidden="true"
+                    />
+                    <span className="font-normal opacity-80">Roadmap:</span>
+                    <span>{discontinueTarget.proposed_role.name}</span>
                   </span>
-                  <span className="text-text-secondary">
-                    {discontinueTarget.proposed_role.name}
-                  </span>
-                </>
+                </div>
               )}
             </div>
           </Modal.Body>

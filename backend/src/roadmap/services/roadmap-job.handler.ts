@@ -479,11 +479,14 @@ function normalizeAndValidateOutput(rawOutput: unknown): {
         effortRaw === null || effortRaw === undefined
           ? null
           : Number(effortRaw);
-      if (effort !== null && (!Number.isFinite(effort) || effort < 0)) {
+      if (
+        effort !== null &&
+        (!Number.isFinite(effort) || effort < 0 || effort > 9999.9)
+      ) {
         fail(
           502,
           'AI_VALIDATION_FAILED',
-          'Roadmap item estimated_effort_hours must be non-negative',
+          'Roadmap item estimated_effort_hours must be between 0 and 9999.9',
           undefined,
           true,
         );

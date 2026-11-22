@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -164,6 +165,13 @@ describe('RoadmapDetailView (Screen 15)', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('v2')).toBeInTheDocument();
 
+    // Closed drawer shell must NOT expose dialog role to assistive tech or Testing Library
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const backdrop = screen.getByTestId('version-history-backdrop');
+    expect(backdrop).toHaveClass('opacity-0', 'transition-opacity', 'duration-300');
+    expect(backdrop.parentElement).toHaveClass('invisible', 'pointer-events-none');
+    expect(backdrop.parentElement).toHaveAttribute('aria-hidden', 'true');
+
     const historyBtn = screen.getByRole('button', { name: 'Version History' });
     fireEvent.click(historyBtn);
 
@@ -171,6 +179,16 @@ describe('RoadmapDetailView (Screen 15)', () => {
       name: 'Version History',
     });
     expect(drawer).toHaveAttribute('aria-modal', 'true');
+    expect(drawer).toHaveClass(
+      'transform-gpu',
+      'will-change-transform',
+      'transition-transform',
+      'duration-300',
+      'translate-x-0',
+    );
+    expect(backdrop).toHaveClass('opacity-100');
+    expect(backdrop.parentElement).toHaveClass('visible', 'pointer-events-auto');
+    expect(backdrop.parentElement).toHaveAttribute('aria-hidden', 'false');
     expect(await screen.findByText('Version v1')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Version v1/i }));
@@ -195,7 +213,7 @@ describe('RoadmapDetailView (Screen 15)', () => {
       screen.getByText('Experienced Node developer targeting distributed backend.'),
     ).toBeInTheDocument();
 
-    // Verify Escape closes drawer cleanly and restores focus
+    // Verify Escape closes drawer cleanly, hides dialog role, slides out, and restores focus
     fireEvent.click(historyBtn);
     const reopenedDrawer = await screen.findByRole('dialog', {
       name: 'Version History',
@@ -204,6 +222,30 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(
       screen.queryByRole('dialog', { name: 'Version History' }),
     ).not.toBeInTheDocument();
+    expect(reopenedDrawer).toHaveClass('translate-x-full');
+    expect(backdrop).toHaveClass('opacity-0');
+    expect(backdrop.parentElement).toHaveClass('invisible', 'pointer-events-none');
+    expect(document.activeElement).toBe(historyBtn);
+
+    // Verify backdrop click closes drawer cleanly and restores focus
+    fireEvent.click(historyBtn);
+    await screen.findByRole('dialog', { name: 'Version History' });
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(backdrop).toHaveClass('opacity-0');
+    expect(document.activeElement).toBe(historyBtn);
+
+    // Verify Close button closes drawer cleanly
+    fireEvent.click(historyBtn);
+    const closeDialog = await screen.findByRole('dialog', {
+      name: 'Version History',
+    });
+    fireEvent.click(
+      within(closeDialog).getByRole('button', { name: 'Close version history' }),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(historyBtn);
   });
 
@@ -276,6 +318,64 @@ describe('RoadmapDetailView (Screen 15)', () => {
       );
       expect(screen.getByText('Archived')).toBeInTheDocument();
     });
+
+    const toast = screen.getByTestId('toast-container');
+    expect(toast).toHaveTextContent('Roadmap archived');
+    expect(toast).toHaveTextContent(
+      /All learning progress, shared skill evidence, and daily plans are preserved\. Focus automatically reassigned/i,
+    );
+    const bar = within(toast).getByTestId('toast-countdown-bar');
+    expect(bar).toHaveClass('agy-toast-bar');
+    expect(bar.style.getPropertyValue('--toast-duration')).toBe('6000ms');
+
+    fireEvent.click(
+      within(toast).getByRole('button', { name: 'Dismiss notification' }),
+    );
+    expect(screen.queryByTestId('toast-container')).not.toBeInTheDocument();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Archive Roadmap' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('auto-dismisses the Roadmap archived toast after 6000ms without altering Archived state', async () => {
+    vi.useFakeTimers();
+    const initial = makeDetail({ id: 'rm-locked-1', is_focus: true });
+    vi.mocked(archiveRoadmap).mockResolvedValueOnce({
+      archived_roadmap_id: 'rm-locked-1',
+      status: 'archived',
+      new_focus_roadmap_id: null,
+    });
+
+    render(
+      <RoadmapDetailView
+        accessToken="token-1"
+        roadmapId="rm-locked-1"
+        initialRoadmap={initial}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive Roadmap' }));
+    const dialog = screen.getByRole('dialog');
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'Archive Roadmap' }),
+      );
+      await Promise.resolve();
+    });
+
+    const toast = screen.getByTestId('toast-container');
+    expect(toast).toHaveTextContent('Roadmap archived');
+    expect(
+      within(toast).getByTestId('toast-countdown-bar'),
+    ).toHaveClass('agy-toast-bar');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(screen.queryByTestId('toast-container')).not.toBeInTheDocument();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
   });
 
   it('handles EP-R14 missing daily plan without learning hours warning when requires_learning_hours is false', async () => {
@@ -303,5 +403,98 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(
       screen.queryByRole('link', { name: 'Configure Daily Hours' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('renders amber Draft badge and clear 3-button header hierarchy (ghost Archive -> secondary Version History -> primary Open Draft Review)', async () => {
+    vi.mocked(getRoadmap).mockResolvedValueOnce(
+      makeDetail({
+        id: 'rm-draft-9',
+        status: 'draft',
+        is_focus: false,
+        version_no: 1,
+        version_state: 'draft',
+        locked_at: null,
+      }),
+    );
+
+    render(<RoadmapDetailView accessToken="token-1" roadmapId="rm-draft-9" />);
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Backend Engineer' }),
+    ).toBeInTheDocument();
+
+    // Semantic breadcrumb: aligned inline-flex leading-none segments
+    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    const list = breadcrumb.querySelector('ol')!;
+    expect(list).toHaveClass('flex', 'items-center', 'text-sm', 'leading-none');
+    const hubCrumb = within(breadcrumb).getByRole('link', { name: 'Roadmaps' });
+    expect(hubCrumb).toHaveAttribute('href', '/roadmaps');
+    expect(hubCrumb).toHaveClass('text-teal-700', 'leading-none');
+    const currentCrumb = within(breadcrumb).getByText('Backend Engineer');
+    expect(currentCrumb).toHaveAttribute('aria-current', 'page');
+    expect(currentCrumb).toHaveClass('inline-flex', 'items-center', 'leading-none');
+
+    const draftBadge = screen.getByText('Draft').parentElement!;
+    expect(draftBadge).toHaveClass('bg-amber-50', 'text-amber-800', 'border-amber-200');
+    expect(draftBadge).not.toHaveClass('bg-feedback-success-background');
+
+    const archiveBtn = screen.getByRole('button', { name: 'Archive Roadmap' });
+    const historyBtn = screen.getByRole('button', { name: 'Version History' });
+    const openDraftLink = screen.getByRole('link', { name: 'Open Draft Review' });
+
+    expect(archiveBtn).toHaveClass(
+      'whitespace-nowrap',
+      'border-slate-200',
+      'bg-white',
+      'text-slate-600',
+      'hover:border-rose-200',
+      'hover:bg-rose-50',
+      'hover:text-rose-700',
+    );
+    expect(archiveBtn.querySelector('[data-icon="archive"]')).toBeInTheDocument();
+    expect(historyBtn).toHaveClass('whitespace-nowrap', 'border-slate-200', 'bg-white', 'text-slate-700');
+    expect(openDraftLink).toHaveAttribute('href', '/roadmaps/rm-draft-9/draft');
+    expect(openDraftLink).toHaveClass(
+      'whitespace-nowrap',
+      'bg-action-primary-background',
+      'text-action-primary-foreground',
+    );
+    expect(openDraftLink.querySelector('[data-icon="arrow-right"]')).toBeInTheDocument();
+
+    // Order left-to-right: Archive Roadmap -> Version History -> Open Draft Review
+    expect(
+      Boolean(archiveBtn.compareDocumentPosition(historyBtn) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+    expect(
+      Boolean(historyBtn.compareDocumentPosition(openDraftLink) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+  });
+
+  it('enforces strict read-only header and archived notice when roadmap status is archived', async () => {
+    vi.mocked(getRoadmap).mockResolvedValueOnce(
+      makeDetail({
+        id: 'rm-archived-4',
+        status: 'archived',
+        is_focus: false,
+        version_no: 2,
+        version_state: 'locked',
+      }),
+    );
+
+    render(<RoadmapDetailView accessToken="token-1" roadmapId="rm-archived-4" />);
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Backend Engineer' }),
+    ).toBeInTheDocument();
+
+    expect(
+      screen.getByText(
+        'This roadmap is archived and read-only. Your learning progress and skill evidence remain preserved.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Version History' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive Roadmap' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Set as Focus Roadmap' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Draft Review/i })).not.toBeInTheDocument();
   });
 });

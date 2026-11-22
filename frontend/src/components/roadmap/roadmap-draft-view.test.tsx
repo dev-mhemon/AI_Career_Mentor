@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import {
   ApiError,
@@ -18,10 +19,14 @@ import {
 import { RoadmapDraftView } from '@/components/roadmap/roadmap-draft-view';
 
 const mockPush = vi.fn();
+const mockReplace = vi.fn();
+const mockRefresh = vi.fn();
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
     push: mockPush,
+    replace: mockReplace,
+    refresh: mockRefresh,
   }),
 }));
 
@@ -179,6 +184,18 @@ describe('RoadmapDraftView (Screen 12)', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Full-Stack Engineer' }),
     ).toBeInTheDocument();
+
+    // Semantic breadcrumb: Roadmaps -> Full-Stack Engineer -> Draft Review (current)
+    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    const hubCrumb = within(breadcrumb).getByRole('link', { name: 'Roadmaps' });
+    expect(hubCrumb).toHaveAttribute('href', '/roadmaps');
+    expect(hubCrumb).toHaveClass('text-teal-700');
+    expect(
+      within(breadcrumb).getByRole('link', { name: 'Full-Stack Engineer' }),
+    ).toHaveAttribute('href', '/roadmaps/rm-draft-1');
+    const currentCrumb = within(breadcrumb).getByText('Draft Review');
+    expect(currentCrumb).toHaveAttribute('aria-current', 'page');
+
     expect(screen.getByText('Draft v1')).toBeInTheDocument();
     expect(screen.getByText(/Prerequisites: PostgreSQL Fundamentals/)).toBeInTheDocument();
     expect(screen.getByText(/Profile skills updated after draft generation/)).toBeInTheDocument();
@@ -242,29 +259,87 @@ describe('RoadmapDraftView (Screen 12)', () => {
     );
 
     render(<RoadmapDraftView accessToken="token-1" roadmapId="rm-draft-1" pollJobStatus={pollMock} />);
-    expect(await screen.findByText('Draft v1')).toBeInTheDocument();
+    const draftBadge = await screen.findByText('Draft v1');
+    expect(draftBadge).toBeInTheDocument();
+    expect(draftBadge).toHaveClass('bg-amber-50', 'text-amber-800', 'border-amber-200');
 
-    const textarea = screen.getByLabelText('Revision instruction');
+    const textarea = screen.getByLabelText(/Revision instruction/i);
+    expect(textarea).toBeRequired();
+    expect(textarea).toHaveAttribute('aria-required', 'true');
+    const submitBtns = screen.getAllByRole('button', { name: 'Submit Revision' });
+    expect(submitBtns).toHaveLength(1);
+    const submitBtn = submitBtns[0];
+    expect(submitBtn).toBeDisabled();
+    expect(submitBtn).toHaveClass(
+      'border-slate-200',
+      'bg-slate-100',
+      'text-slate-400',
+      'cursor-not-allowed',
+      'shadow-none',
+    );
+    expect(submitBtn.querySelector('[data-icon="sparkles"]')).toBeInTheDocument();
+
+    // Unified top Review & Finalize Draft panel renders BOTH Lock Roadmap and Submit Revision ABOVE Phases & Topics
+    // and stacks cleanly on mobile (`flex-col sm:flex-row`) with full-width mobile buttons (`w-full sm:w-auto`)
+    const lockBtns = screen.getAllByRole('button', { name: 'Lock Roadmap' });
+    expect(lockBtns).toHaveLength(1);
+    expect(lockBtns[0]).toHaveClass('w-full', 'sm:w-auto', 'justify-center', 'whitespace-nowrap');
+    expect(submitBtn).toHaveClass('w-full', 'sm:w-auto', 'justify-center');
+    const reviewHeading = screen.getByRole('heading', {
+      level: 2,
+      name: /Review & Finalize Draft/i,
+    });
+    expect(reviewHeading.parentElement?.parentElement).toHaveClass(
+      'flex-col',
+      'sm:flex-row',
+    );
+    const phasesHeading = screen.getByRole('heading', {
+      level: 2,
+      name: /Phases & Topics/i,
+    });
+    expect(
+      Boolean(
+        lockBtns[0].compareDocumentPosition(phasesHeading) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    expect(
+      Boolean(
+        submitBtn.compareDocumentPosition(phasesHeading) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+
+    // Whitespace-only input keeps Submit Revision disabled
+    fireEvent.change(textarea, { target: { value: '   ' } });
+    expect(submitBtn).toBeDisabled();
+    expect(submitBtn).toHaveClass('bg-slate-100', 'text-slate-400');
+
     // Surrogate-pair emoji counts as 1 Unicode code point, not 2 UTF-16 code units.
     fireEvent.change(textarea, { target: { value: '🚀' } });
     expect(screen.getByText('1 / 2000')).toBeInTheDocument();
+    expect(submitBtn).toBeEnabled();
+    expect(submitBtn).toHaveClass(
+      'border-teal-600',
+      'bg-teal-50',
+      'text-teal-800',
+      'font-semibold',
+    );
 
     const oversized = '🚀'.repeat(2001);
     fireEvent.change(textarea, { target: { value: oversized } });
     expect(screen.getByText('2001 / 2000')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Submit Revision Request' }),
-    ).toBeDisabled();
+    expect(submitBtn).toBeDisabled();
+    expect(submitBtn).toHaveClass('bg-slate-100', 'text-slate-400');
 
     fireEvent.change(textarea, {
       target: { value: 'Add Vitest contract exercises in Phase 1.' },
     });
+    expect(submitBtn).toBeEnabled();
 
     vi.useFakeTimers();
     await act(async () => {
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Submit Revision Request' }),
-      );
+      fireEvent.click(submitBtn);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -333,8 +408,12 @@ describe('RoadmapDraftView (Screen 12)', () => {
         { expected_version_no: 3, confirm_large_roadmap: true },
         expect.stringMatching(/^[0-9a-f-]{36}$/i),
       );
-      expect(mockPush).toHaveBeenCalledWith('/roadmaps/rm-draft-1');
+      expect(mockReplace).toHaveBeenCalledWith('/roadmaps/rm-draft-1');
     });
+    // Zero flicker: Lock button stays stably disabled in "Opening roadmap..." until unmount, with no competing router.refresh()
+    expect(mockRefresh).not.toHaveBeenCalled();
+    expect(lockButton).toBeDisabled();
+    expect(lockButton).toHaveTextContent('Opening roadmap...');
   });
 
   it('surfaces STALE_VERSION 409 error with Reload Draft recovery', async () => {

@@ -213,6 +213,23 @@ function extractExactTimestamp(row: {
   return toIsoTimestamp(row.updated_at);
 }
 
+/**
+ * Unwraps TypeORM PostgreSQL `UPDATE ... RETURNING` tuple `[rows, rowCount]` into a plain row array.
+ */
+function extractReturningRows<T>(raw: unknown): T[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  if (
+    raw.length === 2 &&
+    Array.isArray(raw[0]) &&
+    (typeof raw[1] === 'number' || raw[1] === null || raw[1] === undefined)
+  ) {
+    return raw[0] as T[];
+  }
+  return raw as T[];
+}
+
 export function resolvePreferredLanguage(acceptLanguage?: string): JobLanguage {
   if (typeof acceptLanguage !== 'string' || !acceptLanguage.trim()) {
     return 'en';
@@ -1572,13 +1589,7 @@ export class RoadmapService {
           );
         }
 
-        const lockedVersionRows = await db.query<
-          Array<{
-            id: string;
-            version_no: number | string;
-            locked_at: Date | string;
-          }>
-        >(
+        const lockedVersionRaw = await db.query<unknown>(
           `UPDATE public.roadmap_versions
               SET state = 'locked'::public.roadmap_version_state,
                   locked_at = clock_timestamp()
@@ -1588,9 +1599,11 @@ export class RoadmapService {
            RETURNING id, version_no, locked_at`,
           [normalizedUserId, draft.id],
         );
-        const lockedVersion = Array.isArray(lockedVersionRows)
-          ? lockedVersionRows[0]
-          : undefined;
+        const lockedVersion = extractReturningRows<{
+          id: string;
+          version_no: number | string;
+          locked_at: Date | string;
+        }>(lockedVersionRaw)[0];
         if (!lockedVersion) {
           fail(
             409,
@@ -1611,14 +1624,7 @@ export class RoadmapService {
           Array.isArray(existingFocusRows) && existingFocusRows.length > 0;
         const shouldAutoFocus = !hasExistingFocus;
 
-        const lockedRoadmapRows = await db.query<
-          Array<{
-            id: string;
-            is_focus: boolean;
-            current_version_id: string;
-            locked_at: Date | string;
-          }>
-        >(
+        const lockedRoadmapRaw = await db.query<unknown>(
           `UPDATE public.roadmaps
               SET status = 'locked'::public.roadmap_status,
                   current_version_id = $3,
@@ -1630,9 +1636,12 @@ export class RoadmapService {
            RETURNING id, is_focus, current_version_id, locked_at`,
           [normalizedUserId, normalizedRoadmapId, draft.id, shouldAutoFocus],
         );
-        const lockedRoadmap = Array.isArray(lockedRoadmapRows)
-          ? lockedRoadmapRows[0]
-          : undefined;
+        const lockedRoadmap = extractReturningRows<{
+          id: string;
+          is_focus: boolean;
+          current_version_id: string;
+          locked_at: Date | string;
+        }>(lockedRoadmapRaw)[0];
         if (!lockedRoadmap) {
           fail(409, 'INVALID_STATE_TRANSITION', 'Unable to lock roadmap');
         }

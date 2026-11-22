@@ -1,6 +1,7 @@
 'use client';
 
-import type { FormEvent, SVGProps } from 'react';
+import type { FormEvent, ReactNode, SVGProps } from 'react';
+import Link from 'next/link';
 import type { CareerGoalResponse } from '@/lib/api/client';
 import { Button } from '@/components/ui/button';
 import { GoalStatusBadge } from '@/components/ui/career-card';
@@ -11,6 +12,59 @@ import {
   GOAL_TEXT_MAX,
   codePointLength,
 } from '@/components/onboarding/goal-setup-form';
+import {
+  RoadmapGenerateHandoff,
+  type RoadmapGenerateHandoffProps,
+} from '@/components/roadmap/roadmap-generate-handoff';
+
+function ArrowRightIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="arrow-right"
+      className={cn('block shrink-0', className)}
+      {...props}
+    >
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </svg>
+  );
+}
+
+function BanIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      data-icon="ban"
+      className={cn('block shrink-0', className)}
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="m4.9 4.9 14.2 14.2" />
+    </svg>
+  );
+}
+
+const discontinueButtonClass =
+  'inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-600 shadow-2xs transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400';
 
 function ShieldCheckIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   return (
@@ -87,6 +141,11 @@ export interface CareerGoalItemProps {
   onSaveEdit: (event: FormEvent<HTMLFormElement>) => void;
   onReviewOrClarify: () => void;
   onDiscontinue: () => void;
+  generateHandoffProps?: Omit<
+    RoadmapGenerateHandoffProps,
+    'renderLayout' | 'buttonSize'
+  >;
+  generateHandoff?: ReactNode;
 }
 
 /**
@@ -111,6 +170,8 @@ export function CareerGoalItem({
   onSaveEdit,
   onReviewOrClarify,
   onDiscontinue,
+  generateHandoffProps,
+  generateHandoff,
 }: CareerGoalItemProps) {
   const isDiscontinued = goal.status === 'discontinued';
   const isConfirmed = goal.status === 'confirmed';
@@ -157,9 +218,9 @@ export function CareerGoalItem({
               {goal.proposed_role && (
                 <span
                   aria-hidden="true"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-200/90 bg-white/80 px-2.5 py-1 text-[12px] leading-none font-medium text-text-secondary dark:border-slate-700 dark:bg-slate-800/70"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-200/90 bg-white/80 px-2.5 py-1 text-[12px] leading-none font-medium text-text-secondary dark:border-slate-700 dark:bg-slate-800/70"
                 >
-                  <CompassIcon className="h-3.5 w-3.5 text-text-muted" />
+                  <CompassIcon className="block h-3.5 w-3.5 shrink-0 text-text-muted" />
                   <span className="font-normal text-text-muted">
                     {roadmapLabel}:
                   </span>
@@ -169,9 +230,9 @@ export function CareerGoalItem({
               {capitalizedLevel && (
                 <span
                   aria-hidden="true"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-200/90 bg-white/80 px-2.5 py-1 text-[12px] leading-none font-medium text-text-secondary dark:border-slate-700 dark:bg-slate-800/70"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-200/90 bg-white/80 px-2.5 py-1 text-[12px] leading-none font-medium text-text-secondary dark:border-slate-700 dark:bg-slate-800/70"
                 >
-                  <SignalBarsIcon className="h-3.5 w-3.5 text-text-muted" />
+                  <SignalBarsIcon className="block h-3.5 w-3.5 shrink-0 text-text-muted" />
                   <span className="font-normal text-text-muted">Level:</span>
                   <span>{capitalizedLevel}</span>
                 </span>
@@ -181,8 +242,8 @@ export function CareerGoalItem({
         </div>
 
         <div className="border-t border-slate-200/70 bg-slate-100/50 px-4 py-2.5 sm:px-5 dark:border-slate-800/80 dark:bg-slate-900/80">
-          <p className="inline-flex items-center gap-2 text-[12px] leading-snug text-text-secondary">
-            <ShieldCheckIcon className="h-3.5 w-3.5 text-teal-600/80 dark:text-teal-400/80" />
+          <p className="inline-flex items-center gap-2 text-[12px] leading-none text-text-secondary">
+            <ShieldCheckIcon className="block h-3.5 w-3.5 shrink-0 text-teal-600/80 dark:text-teal-400/80" />
             <span>Progress &amp; shared skill evidence preserved</span>
           </p>
         </div>
@@ -227,15 +288,15 @@ export function CareerGoalItem({
                     aria-hidden="true"
                     className={
                       isConfirmed
-                        ? 'inline-flex items-center gap-1.5 rounded-md border border-teal-200/80 bg-teal-50/70 px-2.5 py-1 text-[12.5px] leading-none font-semibold text-teal-800 dark:border-teal-800 dark:bg-teal-950/60 dark:text-teal-200'
-                        : 'inline-flex items-center gap-1.5 rounded-md border border-amber-200/90 bg-amber-50/80 px-2.5 py-1 text-[12.5px] leading-none font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200'
+                        ? 'inline-flex items-center justify-center gap-1.5 rounded-md border border-teal-200/80 bg-teal-50/70 px-2.5 py-1 text-[12.5px] leading-none font-semibold text-teal-800 dark:border-teal-800 dark:bg-teal-950/60 dark:text-teal-200'
+                        : 'inline-flex items-center justify-center gap-1.5 rounded-md border border-amber-200/90 bg-amber-50/80 px-2.5 py-1 text-[12.5px] leading-none font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200'
                     }
                   >
                     <CompassIcon
                       className={
                         isConfirmed
-                          ? 'h-3.5 w-3.5 text-teal-600 dark:text-teal-300'
-                          : 'h-3.5 w-3.5 text-amber-600 dark:text-amber-300'
+                          ? 'block h-3.5 w-3.5 shrink-0 text-teal-600 dark:text-teal-300'
+                          : 'block h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300'
                       }
                     />
                     <span className="font-normal opacity-80">
@@ -247,9 +308,9 @@ export function CareerGoalItem({
                 {capitalizedLevel && (
                   <span
                     aria-hidden="true"
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border-default bg-surface-subtle px-2.5 py-1 text-[12.5px] leading-none font-semibold text-text-primary"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border-default bg-surface-subtle px-2.5 py-1 text-[12.5px] leading-none font-semibold text-text-primary"
                   >
-                    <SignalBarsIcon className="h-3.5 w-3.5 text-text-muted" />
+                    <SignalBarsIcon className="block h-3.5 w-3.5 shrink-0 text-text-muted" />
                     <span className="font-normal text-text-secondary">
                       Level:
                     </span>
@@ -260,8 +321,8 @@ export function CareerGoalItem({
             )}
 
             {isActionNeeded && !editing && (
-              <p className="mt-2.5 inline-flex items-center gap-1.5 text-[12.5px] leading-snug font-medium text-amber-800 dark:text-amber-300">
-                <AlertCircleIcon className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+              <p className="mt-2.5 inline-flex items-center gap-1.5 text-[12.5px] leading-none font-medium text-amber-800 dark:text-amber-300">
+                <AlertCircleIcon className="block h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
                 <span>
                   {goal.status === 'clarifying'
                     ? 'Action needed — answer one quick question to match your roadmap.'
@@ -320,7 +381,73 @@ export function CareerGoalItem({
       </div>
 
       {/* Card Footer Band: Immutability Notice / Status Guidance + Actions */}
-      {!editing && (
+      {!editing && isConfirmed && (() => {
+        const renderConfirmedFooter = (
+          primaryCta: ReactNode,
+          statusSlot: ReactNode | null = null,
+          disableDiscontinue = false,
+        ) => (
+          <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-3.5 sm:px-6 dark:border-slate-800/80 dark:bg-slate-900/60">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex items-center gap-1.5 text-xs leading-none text-slate-500 dark:text-slate-400">
+                <LockIcon className="block h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+                <p className="leading-none">Confirmed goal text cannot be edited.</p>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-2.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={pending || disableDiscontinue}
+                  onClick={onDiscontinue}
+                  aria-label={`Discontinue goal: ${goal.goal_text}`}
+                  className={discontinueButtonClass}
+                >
+                  <BanIcon className="block h-4 w-4 shrink-0" />
+                  <span>Discontinue</span>
+                </Button>
+                {primaryCta}
+              </div>
+            </div>
+            {statusSlot ? (
+              <div
+                data-testid="roadmap-handoff-status"
+                className="mt-3 flex flex-col gap-3"
+              >
+                {statusSlot}
+              </div>
+            ) : null}
+          </div>
+        );
+
+        if (goal.roadmap_id) {
+          return renderConfirmedFooter(
+            <Link
+              href={`/roadmaps/${encodeURIComponent(goal.roadmap_id)}`}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-action-primary-background px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active"
+            >
+              <span>View Roadmap</span>
+              <ArrowRightIcon className="block h-4 w-4 shrink-0" aria-hidden="true" />
+            </Link>,
+          );
+        }
+
+        if (generateHandoffProps) {
+          return (
+            <RoadmapGenerateHandoff
+              {...generateHandoffProps}
+              buttonSize="sm"
+              renderLayout={({ trigger, status, isGenerating }) =>
+                renderConfirmedFooter(trigger, status, isGenerating)
+              }
+            />
+          );
+        }
+
+        return renderConfirmedFooter(null, generateHandoff ?? null);
+      })()}
+
+      {!editing && !isConfirmed && (
         <div
           className={
             isActionNeeded
@@ -353,24 +480,19 @@ export function CareerGoalItem({
                 Edit goal text
               </Button>
             )}
-            {isConfirmed && (
-              <div className="inline-flex items-center gap-2 text-[12.5px] leading-snug text-text-secondary">
-                <LockIcon className="h-3.5 w-3.5 text-text-muted" />
-                <p>Confirmed goal text cannot be edited.</p>
-              </div>
-            )}
           </div>
 
           <Button
             type="button"
             size="sm"
-            variant={isActionNeeded ? 'ghost' : 'secondary'}
+            variant="secondary"
             disabled={pending}
             onClick={onDiscontinue}
             aria-label={`Discontinue goal: ${goal.goal_text}`}
-            className="self-start text-text-secondary hover:border-border-danger hover:bg-feedback-danger-background hover:text-feedback-danger-text sm:self-auto"
+            className={cn(discontinueButtonClass, 'self-start sm:self-auto')}
           >
-            Discontinue
+            <BanIcon className="block h-4 w-4 shrink-0" />
+            <span>Discontinue</span>
           </Button>
         </div>
       )}

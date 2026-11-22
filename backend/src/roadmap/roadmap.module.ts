@@ -46,6 +46,14 @@ export class RoadmapModule implements OnModuleInit {
       for (const kind of SUPPORTED_ROADMAP_JOB_KINDS) {
         registrar.registerHandler(kind, this.roadmapJobHandler);
       }
+      return;
+    }
+    if (
+      typeof this.jobQueueConsumer?.start === 'function' &&
+      process.env.NODE_ENV !== 'test' &&
+      !process.env.VITEST
+    ) {
+      this.jobQueueConsumer.start(this.roadmapJobHandler);
     }
   }
 }

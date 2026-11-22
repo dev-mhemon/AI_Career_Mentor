@@ -3,7 +3,9 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
   Inject,
+  Logger,
   Param,
   Post,
   Query,
@@ -199,11 +201,58 @@ function attachPaginationMeta<T>(
 @UseGuards(SupabaseAuthGuard, AccessGuard)
 @Policy({})
 export class RoadmapController {
+  private readonly logger = new Logger(RoadmapController.name);
+
   constructor(
     @Inject(RoadmapService) private readonly roadmapService: RoadmapService,
     @Inject(IdempotencyService)
     private readonly idempotencyService: IdempotencyService,
   ) {}
+
+  private logNonProdServerFailure(
+    step: string,
+    req: AuthenticatedRoadmapRequest,
+    res: Response | undefined,
+    error: unknown,
+  ): void {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+    const status = error instanceof HttpException ? error.getStatus() : 500;
+    if (status < 500) {
+      return;
+    }
+    const headerReqId =
+      typeof res?.getHeader === 'function'
+        ? res.getHeader('X-Request-Id')
+        : undefined;
+    const requestId =
+      typeof headerReqId === 'string' && headerReqId.trim().length > 0
+        ? headerReqId.trim()
+        : (extractOptionalUuidHeader(req, 'x-request-id') ?? 'unknown');
+    const body =
+      error instanceof HttpException ? error.getResponse() : undefined;
+    const bodyObj =
+      body && typeof body === 'object'
+        ? (body as { code?: unknown })
+        : undefined;
+    const errorName = error instanceof Error ? error.name : 'UnknownError';
+    const code =
+      typeof bodyObj?.code === 'string'
+        ? bodyObj.code
+        : status === 503
+          ? 'SERVICE_UNAVAILABLE'
+          : 'INTERNAL_ERROR';
+    this.logger.warn(
+      JSON.stringify({
+        operation: step,
+        errorName,
+        status,
+        code,
+        requestId,
+      }),
+    );
+  }
 
   /**
    * `EP-R01` (`POST /api/v1/roadmaps/generate`, `202 Accepted`, `H-IDEM`, `Gate: write (roadmap_generator)`).
@@ -221,8 +270,10 @@ export class RoadmapController {
     const httpRequestId = extractOptionalUuidHeader(req, 'x-request-id');
     const acceptLanguage = readOptionalHeader(req, 'accept-language');
 
-    const executed =
-      await this.idempotencyService.execute<EnqueuedJobAcceptedDto>(
+    let step = 'ep_r01.idempotency_execute';
+    let executed;
+    try {
+      executed = await this.idempotencyService.execute<EnqueuedJobAcceptedDto>(
         {
           userId,
           idempotencyKey: idempotencyKeyHeader,
@@ -232,6 +283,7 @@ export class RoadmapController {
         },
         async (execCtx) => {
           if (execCtx.signal.aborted) {
+            step = 'ep_r01.idempotency_reservation_expired';
             fail(
               503,
               'SERVICE_UNAVAILABLE',
@@ -240,17 +292,23 @@ export class RoadmapController {
               true,
             );
           }
+          step = 'ep_r01.roadmap_service_generate';
           const job = await this.roadmapService.generateRoadmap(userId, dto, {
             idempotencyKey: execCtx.idempotencyKey,
             httpRequestId,
             acceptLanguage,
           });
+          step = 'ep_r01.idempotency_complete';
           return {
             statusCode: 202,
             responseBody: job,
           };
         },
       );
+    } catch (error) {
+      this.logNonProdServerFailure(step, req, res, error);
+      throw error;
+    }
 
     if (res) {
       if (
@@ -360,8 +418,10 @@ export class RoadmapController {
     const acceptLanguage = readOptionalHeader(req, 'accept-language');
     const ifMatch = parseOptionalIfMatchHeader(req);
 
-    const executed =
-      await this.idempotencyService.execute<EnqueuedJobAcceptedDto>(
+    let step = 'ep_r04.idempotency_execute';
+    let executed;
+    try {
+      executed = await this.idempotencyService.execute<EnqueuedJobAcceptedDto>(
         {
           userId,
           idempotencyKey: idempotencyKeyHeader,
@@ -371,6 +431,7 @@ export class RoadmapController {
         },
         async (execCtx) => {
           if (execCtx.signal.aborted) {
+            step = 'ep_r04.idempotency_reservation_expired';
             fail(
               503,
               'SERVICE_UNAVAILABLE',
@@ -379,6 +440,7 @@ export class RoadmapController {
               true,
             );
           }
+          step = 'ep_r04.roadmap_service_revision';
           const job = await this.roadmapService.requestRevision(
             userId,
             roadmapId,
@@ -390,12 +452,17 @@ export class RoadmapController {
               ifMatch,
             },
           );
+          step = 'ep_r04.idempotency_complete';
           return {
             statusCode: 202,
             responseBody: job,
           };
         },
       );
+    } catch (error) {
+      this.logNonProdServerFailure(step, req, res, error);
+      throw error;
+    }
 
     if (res) {
       if (
@@ -429,8 +496,10 @@ export class RoadmapController {
     const acceptLanguage = readOptionalHeader(req, 'accept-language');
     const ifMatch = parseOptionalIfMatchHeader(req);
 
-    const executed =
-      await this.idempotencyService.execute<LockRoadmapResponseDTO>(
+    let step = 'ep_r05.idempotency_execute';
+    let executed;
+    try {
+      executed = await this.idempotencyService.execute<LockRoadmapResponseDTO>(
         {
           userId,
           idempotencyKey: idempotencyKeyHeader,
@@ -440,6 +509,7 @@ export class RoadmapController {
         },
         async (execCtx) => {
           if (execCtx.signal.aborted) {
+            step = 'ep_r05.idempotency_reservation_expired';
             fail(
               503,
               'SERVICE_UNAVAILABLE',
@@ -448,6 +518,7 @@ export class RoadmapController {
               true,
             );
           }
+          step = 'ep_r05.roadmap_service_lock';
           const result = await this.roadmapService.lockRoadmap(
             userId,
             roadmapId,
@@ -459,12 +530,17 @@ export class RoadmapController {
               ifMatch,
             },
           );
+          step = 'ep_r05.idempotency_complete';
           return {
             statusCode: 200,
             responseBody: result,
           };
         },
       );
+    } catch (error) {
+      this.logNonProdServerFailure(step, req, undefined, error);
+      throw error;
+    }
 
     return executed.responseBody;
   }

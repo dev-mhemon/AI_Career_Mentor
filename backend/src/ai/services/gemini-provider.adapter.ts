@@ -82,6 +82,7 @@ const TASK_JSON_CONTRACTS: Readonly<Record<AiTask, string>> = {
     '  "size_guardrail": { "active_topic_count": number, "materially_large": boolean, "warning": string | null }',
     '}',
     'Dependencies must form an acyclic DAG using valid UUID lineage_id strings.',
+    'Use ONLY valid UUID id values from approved_skills in the user context envelope for skill_id. Never invent skill IDs.',
   ].join('\n'),
   roadmap_revision: [
     'Return ONLY a valid JSON object matching the roadmap schema:',
@@ -93,6 +94,8 @@ const TASK_JSON_CONTRACTS: Readonly<Record<AiTask, string>> = {
     '  "warnings": string[],',
     '  "size_guardrail": { "active_topic_count": number, "materially_large": boolean, "warning": string | null }',
     '}',
+    'Dependencies must form an acyclic DAG using valid UUID lineage_id strings.',
+    'Use ONLY valid UUID id values from approved_skills in the user context envelope for skill_id. Never invent skill IDs.',
   ].join('\n'),
   merge_proposal: [
     'Return ONLY a valid JSON object matching this exact schema:',

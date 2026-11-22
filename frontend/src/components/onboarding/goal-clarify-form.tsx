@@ -331,11 +331,11 @@ export function GoalClarifyForm({
     clearPendingGoalTargetLevel(goal.id, userId);
     setGoal(result.data);
     setPending(false);
-    onGoalUpdated?.(result.data);
     if (onSuccess) {
       onSuccess(result.data);
       return;
     }
+    onGoalUpdated?.(result.data);
     if (showGenerateHandoff) {
       return;
     }
