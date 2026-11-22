@@ -277,8 +277,9 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedba
 
 function formatArchiveFeedback(
   res: ArchiveRoadmapResponseDTO,
+  wasFocused: boolean,
 ): NonNullable<ArchiveToast> {
-  if (res.new_focus_roadmap_id) {
+  if (wasFocused && res.new_focus_roadmap_id) {
     return {
       title: 'Roadmap archived',
       message:
@@ -488,7 +489,12 @@ export function RoadmapsHubView({
   const loadError = activeState?.status === 'error' ? activeState.error : null;
 
   const handleLoadMore = async () => {
-    if (!nextCursor || loadingMore) {
+    if (
+      !nextCursor ||
+      loadingMore ||
+      Boolean(focusingId) ||
+      Boolean(archivingId)
+    ) {
       return;
     }
     const loadGen = requestGenRef.current;
@@ -580,7 +586,7 @@ export function RoadmapsHubView({
   };
 
   const handleSetFocus = async (roadmap: RoadmapSummaryDTO) => {
-    if (focusingId || archivingId) {
+    if (focusingId || archivingId || loadingMore) {
       return;
     }
     setFocusingId(roadmap.id);
@@ -610,7 +616,7 @@ export function RoadmapsHubView({
   };
 
   const handleConfirmArchive = async () => {
-    if (!archiveTarget || archivingId) {
+    if (!archiveTarget || archivingId || focusingId || loadingMore) {
       return;
     }
     const target = archiveTarget;
@@ -672,7 +678,7 @@ export function RoadmapsHubView({
           },
         };
       });
-      setArchiveToast(formatArchiveFeedback(result));
+      setArchiveToast(formatArchiveFeedback(result, Boolean(target.is_focus)));
       setArchiveTarget(null);
     } catch (err) {
       setActionError(mapApiError(err));
@@ -760,6 +766,7 @@ export function RoadmapsHubView({
                   role="tab"
                   type="button"
                   id={`${tabsUid}-tab-${tab.id}`}
+                  aria-controls={`${tabsUid}-panel`}
                   aria-selected={isSelected}
                   tabIndex={isSelected ? 0 : -1}
                   onClick={() => selectFilter(tab.id)}
@@ -790,6 +797,12 @@ export function RoadmapsHubView({
           </div>
         </div>
 
+        <div
+          id={`${tabsUid}-panel`}
+          role="tabpanel"
+          aria-labelledby={`${tabsUid}-tab-${filter}`}
+          className="flex flex-col gap-5"
+        >
         {isLoading ? (
           <div
             aria-busy="true"
@@ -976,7 +989,9 @@ export function RoadmapsHubView({
                               variant="secondary"
                               size="sm"
                               disabled={
-                                Boolean(focusingId) || Boolean(archivingId)
+                                loadingMore ||
+                                Boolean(focusingId) ||
+                                Boolean(archivingId)
                               }
                               onClick={() => setArchiveTarget(roadmap)}
                               className="inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none text-slate-600 shadow-2xs transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
@@ -993,7 +1008,9 @@ export function RoadmapsHubView({
                                 loading={focusingId === roadmap.id}
                                 loadingText="Updating..."
                                 disabled={
-                                  Boolean(focusingId) || Boolean(archivingId)
+                                  loadingMore ||
+                                  Boolean(focusingId) ||
+                                  Boolean(archivingId)
                                 }
                                 onClick={() => void handleSetFocus(roadmap)}
                                 className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-2xs hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
@@ -1040,6 +1057,9 @@ export function RoadmapsHubView({
                   size="md"
                   loading={loadingMore}
                   loadingText="Loading more..."
+                  disabled={
+                    loadingMore || Boolean(focusingId) || Boolean(archivingId)
+                  }
                   onClick={() => void handleLoadMore()}
                 >
                   Load more roadmaps
@@ -1048,6 +1068,7 @@ export function RoadmapsHubView({
             )}
           </>
         )}
+        </div>
       </section>
 
       {archiveToast && (

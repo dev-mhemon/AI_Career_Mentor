@@ -1243,6 +1243,8 @@ export class RoadmapJobHandler implements JobHandler {
 
     const usedSlugKeys = new Set<string>();
 
+    // Pass 1: reserve all valid explicit topic_id references before slug matching
+    // so a slug match for another item cannot claim a topic explicitly referenced later.
     for (const item of items) {
       const existingDirect = UUID_PATTERN.test(item.raw_topic_id)
         ? existingById.get(item.raw_topic_id)
@@ -1264,6 +1266,12 @@ export class RoadmapJobHandler implements JobHandler {
         }
         usedTopicIds.add(existingDirect.id);
         resolvedByLineage.set(item.lineage_id, existingDirect.id);
+      }
+    }
+
+    // Pass 2: resolve remaining items by slug or provision new draft topics.
+    for (const item of items) {
+      if (resolvedByLineage.has(item.lineage_id)) {
         continue;
       }
 
@@ -1318,6 +1326,7 @@ export class RoadmapJobHandler implements JobHandler {
                 AND slug = $2
                 AND career_level = $3::public.career_level
                 AND content_version = 1
+                AND deleted_at IS NULL
               LIMIT 1`,
             [item.skill_id, slug, targetLevel],
           );
@@ -1468,7 +1477,9 @@ export class RoadmapJobHandler implements JobHandler {
          FROM public.skills
         WHERE id = ANY($1::uuid[])
           AND status = 'approved'::public.content_status
-          AND deleted_at IS NULL`,
+          AND deleted_at IS NULL
+        ORDER BY id ASC
+        FOR SHARE`,
       [distinctSkillIds],
     );
     const approvedSkillSet = new Set(

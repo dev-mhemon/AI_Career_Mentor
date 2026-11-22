@@ -65,6 +65,7 @@ const R26_MIN_OPERATIONAL_LIMIT = 1;
 const R26_MAX_OPERATIONAL_LIMIT = 10_000;
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 100;
+const PG_INT4_MAX = 2_147_483_647;
 
 interface CareerGoalForGenerationRow {
   id: string;
@@ -108,8 +109,8 @@ interface RoadmapSummaryRow {
   locked_at: Date | string | null;
   archived_at: Date | string | null;
   created_at: Date | string;
-  created_at_cursor?: string | null;
   updated_at: Date | string;
+  updated_at_cursor?: string | null;
 }
 
 interface RoadmapHeaderRow {
@@ -263,10 +264,10 @@ export function computeSizeGuardrail(
   };
 }
 
-function encodeRoadmapCursor(createdAt: Date | string, id: string): string {
+function encodeRoadmapCursor(updatedAt: Date | string, id: string): string {
   return Buffer.from(
     JSON.stringify({
-      created_at: toIsoTimestamp(createdAt),
+      updated_at: toIsoTimestamp(updatedAt),
       id: id.toLowerCase(),
     }),
     'utf8',
@@ -274,23 +275,23 @@ function encodeRoadmapCursor(createdAt: Date | string, id: string): string {
 }
 
 function decodeRoadmapCursor(rawCursor: string): {
-  createdAt: string;
+  updatedAt: string;
   id: string;
 } {
   try {
     const json = Buffer.from(rawCursor.trim(), 'base64url').toString('utf8');
-    const parsed = JSON.parse(json) as { created_at?: unknown; id?: unknown };
+    const parsed = JSON.parse(json) as { updated_at?: unknown; id?: unknown };
     if (
-      typeof parsed?.created_at !== 'string' ||
-      !PG_CURSOR_TIMESTAMPTZ_PATTERN.test(parsed.created_at.trim()) ||
-      Number.isNaN(Date.parse(parsed.created_at.trim())) ||
+      typeof parsed?.updated_at !== 'string' ||
+      !PG_CURSOR_TIMESTAMPTZ_PATTERN.test(parsed.updated_at.trim()) ||
+      Number.isNaN(Date.parse(parsed.updated_at.trim())) ||
       typeof parsed?.id !== 'string' ||
       !UUID_PATTERN.test(parsed.id.trim())
     ) {
       throw new Error('Malformed roadmap cursor');
     }
     return {
-      createdAt: parsed.created_at.trim(),
+      updatedAt: parsed.updated_at.trim(),
       id: parsed.id.trim().toLowerCase(),
     };
   } catch {
@@ -318,7 +319,8 @@ function decodeVersionCursor(rawCursor: string): number {
     if (
       typeof parsed?.version_no !== 'number' ||
       !Number.isSafeInteger(parsed.version_no) ||
-      parsed.version_no < 1
+      parsed.version_no < 1 ||
+      parsed.version_no > PG_INT4_MAX
     ) {
       throw new Error('Malformed version cursor');
     }
@@ -822,7 +824,10 @@ export class RoadmapService {
       warnings: normalizeWarnings(version.warnings),
       stale: Boolean(version.stale),
       stale_reason: version.stale_reason ?? null,
-      locked_at: toNullableIsoTimestamp(version.locked_at ?? roadmap.locked_at),
+      locked_at:
+        selector.mode === 'version_no'
+          ? toNullableIsoTimestamp(version.locked_at)
+          : toNullableIsoTimestamp(version.locked_at ?? roadmap.locked_at),
       created_at: toIsoTimestamp(version.created_at ?? roadmap.created_at),
     };
   }
@@ -1086,12 +1091,12 @@ export class RoadmapService {
         }
 
         if (decodedCursor) {
-          params.push(decodedCursor.createdAt);
-          const createdAtParam = `$${params.length}::timestamptz`;
+          params.push(decodedCursor.updatedAt);
+          const updatedAtParam = `$${params.length}::timestamptz`;
           params.push(decodedCursor.id);
           const idParam = `$${params.length}::uuid`;
           whereClauses.push(
-            `(r.created_at < ${createdAtParam} OR (r.created_at = ${createdAtParam} AND r.id < ${idParam}))`,
+            `(r.updated_at < ${updatedAtParam} OR (r.updated_at = ${updatedAtParam} AND r.id < ${idParam}))`,
           );
         }
 
@@ -1128,8 +1133,8 @@ export class RoadmapService {
                   r.locked_at,
                   r.archived_at,
                   r.created_at,
-                  to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_cursor,
-                  r.updated_at
+                  r.updated_at,
+                  to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_cursor
              FROM public.roadmaps r
              JOIN public.career_roles cr ON cr.id = r.canonical_role_id
              LEFT JOIN public.roadmap_versions cv
@@ -1140,7 +1145,7 @@ export class RoadmapService {
               AND dv.user_id = $1
               AND dv.state = 'draft'
             WHERE ${whereClauses.join(' AND ')}
-            ORDER BY r.created_at DESC, r.id DESC
+            ORDER BY r.updated_at DESC, r.id DESC
             LIMIT ${limitParam}`,
           params,
         );
@@ -1184,7 +1189,7 @@ export class RoadmapService {
         const nextCursor =
           hasMore && lastRow
             ? encodeRoadmapCursor(
-                lastRow.created_at_cursor ?? lastRow.created_at,
+                lastRow.updated_at_cursor ?? lastRow.updated_at,
                 String(lastRow.id),
               )
             : null;
@@ -1224,7 +1229,7 @@ export class RoadmapService {
       selector = { mode: rawVersion };
     } else if (POSITIVE_INT_PATTERN.test(rawVersion)) {
       const parsed = Number(rawVersion);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
+      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > PG_INT4_MAX) {
         fail(400, 'INVALID_FORMAT', 'Invalid roadmap version query parameter', [
           {
             field: 'version',
@@ -1812,7 +1817,8 @@ export class RoadmapService {
     if (
       typeof versionNo !== 'number' ||
       !Number.isSafeInteger(versionNo) ||
-      versionNo < 1
+      versionNo < 1 ||
+      versionNo > PG_INT4_MAX
     ) {
       fail(400, 'INVALID_FORMAT', 'version_no must be a positive integer', [
         {
@@ -1984,7 +1990,7 @@ export class RoadmapService {
         ]);
       }
       const trimmed = dto.reason.trim();
-      if (trimmed.length > 500) {
+      if ([...trimmed].length > 500) {
         fail(
           422,
           'VALIDATION_FAILED',

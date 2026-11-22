@@ -147,9 +147,15 @@ describe('RoadmapsHubView', () => {
       '[&::-webkit-scrollbar]:hidden',
     );
     expect(tablist).not.toHaveClass('flex-wrap');
+    const tabpanel = screen.getByRole('tabpanel');
     for (const tab of within(tablist).getAllByRole('tab')) {
       expect(tab).toHaveClass('shrink-0', 'whitespace-nowrap');
+      expect(tab).toHaveAttribute('aria-controls', tabpanel.id);
     }
+    expect(tabpanel).toHaveAttribute(
+      'aria-labelledby',
+      screen.getByRole('tab', { name: /^All/i }).id,
+    );
     expect(screen.getByTestId('filter-tab-count-all')).toHaveTextContent('2');
     expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('1');
     expect(screen.getByTestId('filter-tab-count-draft')).toHaveTextContent('1');
@@ -506,6 +512,67 @@ describe('RoadmapsHubView', () => {
     expect(screen.getByText('Archived Frontend')).toBeInTheDocument();
     expect(screen.queryByText('Stale All Page 2 Item')).not.toBeInTheDocument();
   });
+
+  it('prevents overlapping Load more & card mutations and omits focus reassignment copy when archiving a non-focus roadmap', async () => {
+    const rmFocused = makeSummary({
+      id: 'rm-f1',
+      role_name: 'Focused Backend',
+      status: 'locked',
+      is_focus: true,
+    });
+    const rmNonFocus = makeSummary({
+      id: 'rm-f2',
+      role_name: 'Secondary Data',
+      status: 'locked',
+      is_focus: false,
+    });
+
+    let resolveLoadMore!: (val: {
+      items: RoadmapSummaryDTO[];
+      meta: { limit: number; next_cursor: string | null };
+    }) => void;
+    vi.mocked(listRoadmaps).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveLoadMore = resolve;
+        }),
+    );
+    vi.mocked(archiveRoadmap).mockResolvedValueOnce({
+      archived_roadmap_id: 'rm-f2',
+      status: 'archived',
+      new_focus_roadmap_id: 'rm-f1',
+    });
+
+    render(
+      <RoadmapsHubView
+        accessToken="token-1"
+        initialPage={{
+          items: [rmFocused, rmNonFocus],
+          meta: { limit: 20, next_cursor: 'cursor-2' },
+        }}
+      />,
+    );
+
+    // While Load more is in flight, card Archive and Set as Focus buttons MUST be disabled
+    fireEvent.click(screen.getByRole('button', { name: 'Load more roadmaps' }));
+    for (const btn of screen.getAllByRole('button', { name: 'Archive' })) {
+      expect(btn).toBeDisabled();
+    }
+    expect(screen.getByRole('button', { name: 'Set as Focus' })).toBeDisabled();
+
+    await act(async () => {
+      resolveLoadMore({ items: [], meta: { limit: 20, next_cursor: null } });
+      await Promise.resolve();
+    });
+
+    // Archive non-focus roadmap when backend still echoes existing focus ID -> toast MUST NOT claim focus reassigned
+    fireEvent.click(screen.getAllByRole('button', { name: 'Archive' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Archive Roadmap' }));
+
+    const toast = await screen.findByTestId('toast-container');
+    expect(toast).toHaveTextContent('Roadmap archived');
+    expect(toast).not.toHaveTextContent(/focus automatically reassigned/i);
+  });
 });
 
 describe('RoadmapGenerateHandoff', () => {
@@ -610,5 +677,71 @@ describe('RoadmapGenerateHandoff', () => {
     const firstKey = vi.mocked(generateRoadmap).mock.calls[0][2];
     const secondKey = vi.mocked(generateRoadmap).mock.calls[1][2];
     expect(secondKey).toBe(firstKey);
+  });
+
+  it('clears isGenerating when the polled generation job transitions to failed so sibling actions unlock', async () => {
+    vi.useFakeTimers();
+    vi.mocked(generateRoadmap).mockResolvedValueOnce({
+      job_id: 'job-r01-fail',
+      kind: 'roadmap_generate',
+      status: 'queued',
+      poll_url: '/api/v1/jobs/job-r01-fail',
+      retry_after_seconds: 1,
+    });
+
+    const pollMock = vi.fn(
+      async (): Promise<JobStatusDTO> => ({
+        job_id: 'job-r01-fail',
+        kind: 'roadmap_generate',
+        status: 'failed',
+        result_ref: null,
+        error: {
+          code: 'AI_GENERATION_FAILED',
+          message: 'Model timeout',
+          retryable: true,
+        },
+        retryable: true,
+        created_at: '2026-11-19T00:00:00.000Z',
+        finished_at: '2026-11-19T00:00:02.000Z',
+      }),
+    );
+
+    render(
+      <RoadmapGenerateHandoff
+        accessToken="token-1"
+        careerGoalId="goal-uuid-1"
+        targetLevel="mid"
+        levelConfirmed={true}
+        pollJobStatus={pollMock}
+        renderLayout={({ trigger, status, isGenerating }) => (
+          <div>
+            {trigger}
+            <button type="button" disabled={isGenerating}>
+              Discontinue
+            </button>
+            {status}
+          </div>
+        )}
+      />,
+    );
+
+    const discontinueBtn = screen.getByRole('button', { name: 'Discontinue' });
+    expect(discontinueBtn).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Generate Roadmap Draft' }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(discontinueBtn).toBeDisabled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(discontinueBtn).toBeEnabled();
   });
 });

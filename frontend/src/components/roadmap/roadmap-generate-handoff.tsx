@@ -6,6 +6,7 @@ import {
   ApiError,
   createIdempotencyKey,
   generateRoadmap,
+  getJobStatus,
   type CareerLevel,
   type GenerateRoadmapRequestDTO,
   type JobAcceptedDTO,
@@ -79,6 +80,7 @@ export function RoadmapGenerateHandoff({
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [acceptedJob, setAcceptedJob] = useState<JobAcceptedDTO | null>(null);
+  const [jobTerminated, setJobTerminated] = useState(false);
   const [mappedError, setMappedError] = useState<MappedError | null>(null);
   const [errorResetKey, setErrorResetKey] = useState(0);
 
@@ -127,6 +129,7 @@ export function RoadmapGenerateHandoff({
         ? await onGenerateRoadmap(payload, idempotencyKey)
         : await generateRoadmap(accessToken, payload, idempotencyKey);
       pendingKeyRef.current = null;
+      setJobTerminated(false);
       setAcceptedJob(job);
     } catch (err) {
       if (
@@ -159,8 +162,22 @@ export function RoadmapGenerateHandoff({
     navigateToDraft(roadmapId);
   };
 
+  const wrappedPollJobStatus = async (
+    jobId: string,
+    signal: AbortSignal,
+  ): Promise<JobStatusDTO> => {
+    const status = pollJobStatus
+      ? await pollJobStatus(jobId, signal)
+      : await getJobStatus(accessToken, jobId, { signal });
+    if (status.status === 'failed' || status.status === 'succeeded') {
+      setJobTerminated(true);
+    }
+    return status;
+  };
+
   const isJobActive =
     acceptedJob !== null &&
+    !jobTerminated &&
     (acceptedJob.status === 'queued' || acceptedJob.status === 'preparing');
 
   const hasStatusContent = !featureEnabled || mappedError !== null || acceptedJob !== null;
@@ -195,7 +212,7 @@ export function RoadmapGenerateHandoff({
           title="Generating your roadmap draft"
           variant="full_section_skeleton"
           accessToken={accessToken}
-          pollJobStatus={pollJobStatus}
+          pollJobStatus={wrappedPollJobStatus}
           onJobSucceeded={handleJobSucceeded}
           onRetryJob={() => void startGeneration(true)}
         />

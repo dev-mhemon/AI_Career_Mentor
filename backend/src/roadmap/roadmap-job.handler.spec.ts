@@ -411,6 +411,7 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
         return [{ status: 'active' }];
       }
       if (sql.includes('FROM public.skills')) {
+        expect(sql).toContain('FOR SHARE');
         return [{ id: SKILL_1_ID }, { id: SKILL_2_ID }];
       }
       if (sql.includes('system_configurations')) {
@@ -515,6 +516,7 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
         return [{ status: 'active' }];
       }
       if (sql.includes('FROM public.skills')) {
+        expect(sql).toContain('FOR SHARE');
         return [{ id: SKILL_1_ID }, { id: SKILL_2_ID }];
       }
       if (sql.includes('system_configurations')) return [{ config_value: 45 }];
@@ -642,6 +644,7 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
     const txCapHit = makeTxMock(async (sql: string) => {
       if (sql.includes('FROM public.users')) return [{ status: 'active' }];
       if (sql.includes('FROM public.skills')) {
+        expect(sql).toContain('FOR SHARE');
         return [{ id: SKILL_1_ID }, { id: SKILL_2_ID }];
       }
       if (sql.includes('system_configurations')) return [{ config_value: 45 }];
@@ -866,6 +869,7 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
     const txDrifted = makeTxMock(async (sql: string) => {
       if (sql.includes('FROM public.users')) return [{ status: 'active' }];
       if (sql.includes('FROM public.skills')) {
+        expect(sql).toContain('FOR SHARE');
         return [{ id: SKILL_1_ID }, { id: SKILL_2_ID }];
       }
       if (sql.includes('system_configurations')) return [{ config_value: 45 }];
@@ -914,5 +918,92 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
       expectContractError(err, 502, 'AI_VALIDATION_FAILED');
       return true;
     });
+  });
+
+  it('reserves explicit topic_id references before slug resolution and excludes soft-deleted topics in conflict fallback', async () => {
+    const out = makeSampleRoadmapOutput(2);
+    // Item 1 has NO explicit topic_id, same skill + title as Item 2's explicit EXISTING_TOPIC_ID
+    delete (out.phases[0]!.items[0] as { topic_id?: string }).topic_id;
+    out.phases[0]!.items[0]!.skill_id = SKILL_1_ID;
+    out.phases[0]!.items[0]!.title = 'SQL Indexing Fundamentals';
+    out.phases[0]!.items[1]!.topic_id = EXISTING_TOPIC_ID;
+    out.phases[0]!.items[1]!.skill_id = SKILL_1_ID;
+    out.phases[0]!.items[1]!.title = 'SQL Indexing Fundamentals Advanced';
+
+    let fallbackSelectSawDeletedAtFilter = false;
+    const insertedTopicIds: string[] = [];
+
+    const tx = makeTxMock(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM public.users')) return [{ status: 'active' }];
+      if (sql.includes('FROM public.skills')) {
+        expect(sql).toContain('FOR SHARE');
+        return [{ id: SKILL_1_ID }];
+      }
+      if (sql.includes('system_configurations')) return [{ config_value: 45 }];
+      if (sql.includes('FROM public.career_goals')) {
+        return [
+          {
+            id: GOAL_ID,
+            status: 'confirmed',
+            confirmed_role_id: ROLE_ID,
+            target_level: 'mid',
+            updated_at: new Date('2026-10-10T07:58:00.000Z'),
+          },
+        ];
+      }
+      if (sql.includes('FROM public.topics') && sql.includes('id = ANY')) {
+        return [
+          { id: EXISTING_TOPIC_ID, skill_id: SKILL_1_ID, career_level: 'mid' },
+        ];
+      }
+      if (
+        sql.includes('FROM public.topics') &&
+        sql.includes('content_version = 1') &&
+        sql.includes('deleted_at IS NULL')
+      ) {
+        fallbackSelectSawDeletedAtFilter = true;
+        return [{ id: NEW_TOPIC_ID }];
+      }
+      if (sql.includes('FROM public.topics') && sql.includes('slug = $2')) {
+        // Slug lookup returns EXISTING_TOPIC_ID (already reserved in Pass 1 for item 2), forcing a fresh suffix slug
+        if (String(params?.[1]) === 'sql-indexing-fundamentals') {
+          return [{ id: EXISTING_TOPIC_ID }];
+        }
+        return [];
+      }
+      if (sql.includes('INSERT INTO public.topics')) {
+        // Simulate ON CONFLICT DO NOTHING -> empty RETURNING triggers fallback SELECT
+        return [];
+      }
+      if (sql.includes('INSERT INTO public.roadmaps')) {
+        return [[{ id: ROADMAP_ID }], 1];
+      }
+      if (sql.includes('INSERT INTO public.roadmap_versions')) {
+        return [[{ id: VERSION_1_ID }], 1];
+      }
+      if (sql.includes('INSERT INTO public.roadmap_items')) {
+        insertedTopicIds.push(String(params?.[3]));
+        return [];
+      }
+      return [];
+    });
+
+    await handler.persistArtifact(tx, makeGenerateJob(), {
+      resultType: 'roadmap',
+      resultId: GOAL_ID,
+      providerKey: 'synthetic',
+      modelId: MODEL_ID,
+      promptVersionId: PROMPT_ID,
+      outputSchemaId: 'roadmap.v1',
+      fallbackUsed: false,
+      language: 'en',
+      inputUnits: 50,
+      outputUnits: 100,
+      latencyMs: 20,
+      output: out,
+    });
+
+    expect(fallbackSelectSawDeletedAtFilter).toBe(true);
+    expect(insertedTopicIds).toEqual([NEW_TOPIC_ID, EXISTING_TOPIC_ID]);
   });
 });

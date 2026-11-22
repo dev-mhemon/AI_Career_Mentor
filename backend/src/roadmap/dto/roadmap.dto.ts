@@ -167,9 +167,9 @@ export class RevisionRequestDTO {
   refresh_stale?: boolean;
 
   @ValidateIf((_object, value) => value !== undefined && value !== null)
-  @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(2_147_483_647)
   expected_version_no?: number;
 }
 
@@ -178,15 +178,15 @@ export class RevisionRequestDTO {
  */
 export class LockRoadmapDTO {
   @ValidateIf((_object, value) => value !== undefined && value !== null)
-  @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(2_147_483_647)
   expected_version_no?: number;
 
   @ValidateIf((_object, value) => value !== undefined && value !== null)
-  @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(2_147_483_647)
   version_no?: number;
 
   @ValidateIf((_object, value) => value !== undefined && value !== null)
@@ -224,12 +224,13 @@ export class ArchiveRoadmapDTO {
   @ValidateIf((_object, value) => value !== undefined && value !== null)
   @IsString()
   @Transform(trim)
-  @MaxLength(500)
   @ValidateBy({
     name: 'wellFormedArchiveReason',
     validator: {
       validate: (value: unknown) =>
-        typeof value === 'string' && !hasNulOrUnpairedSurrogate(value),
+        typeof value === 'string' &&
+        !hasNulOrUnpairedSurrogate(value) &&
+        Array.from(value).length <= 500,
     },
   })
   reason?: string;

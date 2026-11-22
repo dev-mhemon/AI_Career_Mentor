@@ -581,4 +581,90 @@ describe('RoadmapDraftView (Screen 12)', () => {
     expect(screen.getByRole('checkbox')).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeDisabled();
   });
+
+  it('disables Lock Roadmap and revision textarea while revision POST is in flight (submittingRevision)', async () => {
+    let resolveRevise!: (val: {
+      job_id: string;
+      kind: string;
+      status: 'queued';
+      poll_url: string;
+      retry_after_seconds: number;
+    }) => void;
+    vi.mocked(reviseRoadmap).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRevise = resolve;
+        }),
+    );
+
+    render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        initialDraft={makeDraft({ version_no: 1 })}
+      />,
+    );
+
+    const textarea = screen.getByLabelText(/Revision instruction/i);
+    fireEvent.change(textarea, {
+      target: { value: 'Add distributed tracing exercises.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Revision' }));
+
+    expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeDisabled();
+    expect(textarea).toBeDisabled();
+
+    await act(async () => {
+      resolveRevise({
+        job_id: 'job-in-flight-1',
+        kind: 'roadmap_revision',
+        status: 'queued',
+        poll_url: '/api/v1/jobs/job-in-flight-1',
+        retry_after_seconds: 5,
+      });
+      await Promise.resolve();
+    });
+  });
+
+  it('renders archived roadmaps on /draft as read-only and hides Refresh Stale Draft when generation feature is disabled', () => {
+    const { rerender } = render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        initialDraft={makeDraft({ status: 'archived', version_no: 2 })}
+      />,
+    );
+
+    expect(screen.getByText('Archived roadmap — read-only')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'View Archived Roadmap' }),
+    ).toHaveAttribute('href', '/roadmaps/rm-draft-1');
+    expect(
+      screen.queryByRole('button', { name: 'Lock Roadmap' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Submit Revision' }),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        featureEnabled={false}
+        initialDraft={makeDraft({
+          status: 'draft',
+          stale: true,
+          stale_reason: 'Profile skills changed.',
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByText('Stale draft — refresh required before locking'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Refresh Stale Draft/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeDisabled();
+  });
 });

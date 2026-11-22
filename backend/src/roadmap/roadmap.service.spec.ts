@@ -438,6 +438,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
         if (sql.includes('FROM public.roadmaps r')) {
           expect(sql).toContain('r.user_id = $1');
+          expect(sql).toContain('ORDER BY r.updated_at DESC, r.id DESC');
           expect(params?.[0]).toBe(USER_ID);
           expect(params?.[1]).toBe('locked');
           expect(params?.[2]).toBe(2); // limit + 1
@@ -461,8 +462,8 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
               locked_at: '2026-10-10T08:30:00.000Z',
               archived_at: null,
               created_at: '2026-10-10T08:00:00.123456Z',
-              created_at_cursor: '2026-10-10T08:00:00.123456Z',
-              updated_at: '2026-10-10T08:30:00.000Z',
+              updated_at: '2026-10-10T08:30:00.123456Z',
+              updated_at_cursor: '2026-10-10T08:30:00.123456Z',
             },
             {
               id: ROADMAP_2_ID,
@@ -483,8 +484,8 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
               locked_at: '2026-10-09T08:30:00.000Z',
               archived_at: null,
               created_at: '2026-10-09T08:00:00.000000Z',
-              created_at_cursor: '2026-10-09T08:00:00.000000Z',
-              updated_at: '2026-10-09T08:30:00.000Z',
+              updated_at: '2026-10-09T08:30:00.000000Z',
+              updated_at_cursor: '2026-10-09T08:30:00.000000Z',
             },
           ];
         }
@@ -502,12 +503,13 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       expect(page1.items[0]?.has_open_merge).toBe(true);
       expect(page1.meta.next_cursor).toEqual(expect.any(String));
 
-      // Verify decoded microsecond cursor feeds back into SQL
+      // Verify decoded microsecond updated_at cursor feeds back into SQL
       queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
         if (sql.includes('FROM public.roadmaps r')) {
+          expect(sql).toContain('r.updated_at < $2::timestamptz');
           expect(params).toEqual([
             USER_ID,
-            '2026-10-10T08:00:00.123456Z',
+            '2026-10-10T08:30:00.123456Z',
             ROADMAP_ID,
             2,
           ]);
@@ -731,6 +733,86 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         expectContractError(err, 404, 'VERSION_NOT_FOUND');
         return true;
       });
+
+      // Postgres int4 overflow (> 2147483647) rejected with 400 INVALID_FORMAT
+      await expect(
+        service.getRoadmap(USER_ID, ROADMAP_ID, { version: '2147483648' }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 400, 'INVALID_FORMAT');
+        return true;
+      });
+      await expect(
+        service.getVersion(USER_ID, ROADMAP_ID, 2_147_483_648),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 400, 'INVALID_FORMAT');
+        return true;
+      });
+      const overflowCursor = Buffer.from(
+        JSON.stringify({ v: 1, version_no: 2_147_483_648 }),
+        'utf8',
+      ).toString('base64url');
+      await expect(
+        service.listVersions(USER_ID, ROADMAP_ID, { cursor: overflowCursor }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 400, 'INVALID_FORMAT');
+        return true;
+      });
+
+      // Historical version snapshot MUST NOT inherit roadmap.locked_at when version.locked_at is null
+      queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.roadmaps r')) {
+          return [
+            {
+              id: ROADMAP_ID,
+              career_goal_id: GOAL_ID,
+              canonical_role_id: ROLE_ID,
+              role_name: 'Backend Development',
+              target_level: 'mid',
+              status: 'locked',
+              is_focus: true,
+              current_version_id: VERSION_2_ID,
+              locked_at: '2026-10-10T09:00:00.000Z',
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_versions')) {
+          return [
+            {
+              id: VERSION_1_ID,
+              roadmap_id: ROADMAP_ID,
+              version_no: 1,
+              state: 'superseded',
+              created_by: 'ai',
+              target_level: 'mid',
+              base_version_id: null,
+              merge_id: null,
+              summary: {
+                current_situation: 'Base',
+                target_interpretation: 'Mid',
+                expected_career_impact: 'Growth',
+                next_steps: [],
+              },
+              phases: [],
+              level_outline: [],
+              warnings: [],
+              stale: false,
+              stale_reason: null,
+              locked_at: null,
+              superseded_at: '2026-10-10T08:30:00.000Z',
+              created_at: '2026-10-10T08:00:00.000Z',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_items')) return [];
+        if (sql.includes('FROM public.system_configurations')) {
+          return [{ config_value: 45 }];
+        }
+        return [];
+      });
+      const historicalV1 = await service.getVersion(USER_ID, ROADMAP_ID, 1);
+      expect(historicalV1.version_no).toBe(1);
+      expect(historicalV1.locked_at).toBeNull();
     });
   });
 
@@ -1412,6 +1494,47 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         status: 'archived',
         new_focus_roadmap_id: ROADMAP_3_ID,
       });
+
+      // Archive reason counts Unicode code points (500 emoji valid; 501 rejected with 422)
+      await expect(
+        service.archiveRoadmap(USER_ID, ROADMAP_ID, {
+          reason: '🚀'.repeat(501),
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'VALIDATION_FAILED');
+        return true;
+      });
+      const emoji500 = '🚀'.repeat(500);
+      queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (
+          sql.includes('FROM public.roadmaps') &&
+          sql.includes('id = $2') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            {
+              id: ROADMAP_ID,
+              career_goal_id: GOAL_ID,
+              status: 'draft',
+              is_focus: false,
+            },
+          ];
+        }
+        if (
+          sql.includes('UPDATE public.roadmaps') &&
+          sql.includes("status = 'archived'")
+        ) {
+          expect(params).toEqual([USER_ID, ROADMAP_ID, emoji500]);
+          return [];
+        }
+        if (sql.includes('UPDATE public.career_goals')) return [];
+        if (sql.includes('is_focus = true')) return [];
+        return [];
+      });
+      const archivedEmoji = await service.archiveRoadmap(USER_ID, ROADMAP_ID, {
+        reason: emoji500,
+      });
+      expect(archivedEmoji.status).toBe('archived');
     });
   });
 });

@@ -16,8 +16,6 @@ import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiGatewayService } from '../ai/services/ai-gateway.service.js';
 import { AuthModule } from '../auth/auth.module.js';
-import { AccessGuard } from '../auth/guards/access.guard.js';
-import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard.js';
 import type { AccessPolicy } from '../auth/policy.js';
 import { DatabaseService } from '../auth/services/database.service.js';
 import { configureHttp } from '../common/http.js';
@@ -32,7 +30,10 @@ import { RoadmapController } from './controllers/roadmap.controller.js';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import {
+  ArchiveRoadmapDTO,
   GenerateRoadmapRequestDTO,
+  LockRoadmapDTO,
+  RevisionRequestDTO,
   type ArchiveRoadmapResponseDTO,
   type FocusSwitchResponseDTO,
   type LockRoadmapResponseDTO,
@@ -334,11 +335,10 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     vi.useRealTimers();
   });
 
-  it('enforces @UseGuards(SupabaseAuthGuard, AccessGuard) order and @Policy gates per EP-R01–EP-R07, EP-R14, EP-R15', () => {
-    expect(Reflect.getMetadata('__guards__', RoadmapController)).toEqual([
-      SupabaseAuthGuard,
-      AccessGuard,
-    ]);
+  it('relies on global APP_GUARD (no duplicate controller @UseGuards) and enforces @Policy gates per EP-R01–EP-R07, EP-R14, EP-R15', () => {
+    expect(
+      Reflect.getMetadata('__guards__', RoadmapController),
+    ).toBeUndefined();
 
     const writeRoutes = [
       RoadmapController.prototype.generateRoadmap,
@@ -564,6 +564,62 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     expect(unconfirmedErrors.map((e) => e.property)).toEqual([
       'level_confirmed',
     ]);
+
+    // DTOs block boolean-to-number coercion and int4 overflow on version fields, and count archive reason by Unicode code points
+    const boolRevDto = plainToInstance(RevisionRequestDTO, {
+      refresh_stale: true,
+      expected_version_no: true,
+    });
+    expect((await validate(boolRevDto)).map((e) => e.property)).toEqual([
+      'expected_version_no',
+    ]);
+
+    const boolLockDto = plainToInstance(LockRoadmapDTO, {
+      expected_version_no: true,
+      version_no: 2_147_483_648,
+    });
+    expect((await validate(boolLockDto)).map((e) => e.property).sort()).toEqual(
+      ['expected_version_no', 'version_no'],
+    );
+
+    const emoji500Dto = plainToInstance(ArchiveRoadmapDTO, {
+      reason: '🚀'.repeat(500),
+    });
+    expect(await validate(emoji500Dto)).toEqual([]);
+    const emoji501Dto = plainToInstance(ArchiveRoadmapDTO, {
+      reason: '🚀'.repeat(501),
+    });
+    expect((await validate(emoji501Dto)).map((e) => e.property)).toEqual([
+      'reason',
+    ]);
+
+    // int4 overflow in path param / If-Match rejected with 400 INVALID_FORMAT
+    await expect(
+      controller.getVersion(
+        { user: { sub: USER_ID }, headers: {} },
+        ROADMAP_ID,
+        '2147483648',
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 400, 'INVALID_FORMAT');
+      return true;
+    });
+    await expect(
+      controller.lockRoadmap(
+        {
+          user: { sub: USER_ID },
+          headers: {
+            'idempotency-key': '99999999-9999-4999-8999-999999999992',
+            'if-match': '"2147483648"',
+          },
+        },
+        ROADMAP_ID,
+        {},
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 400, 'INVALID_FORMAT');
+      return true;
+    });
   });
 
   it('logs safe non-prod metadata (no secrets/PII) when EP-R01 fails closed with 503 SERVICE_UNAVAILABLE (missing Redis idempotency:epoch) and suppresses log in production', async () => {

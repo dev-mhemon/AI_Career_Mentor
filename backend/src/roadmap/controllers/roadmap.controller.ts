@@ -11,11 +11,8 @@ import {
   Query,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { AccessGuard } from '../../auth/guards/access.guard.js';
-import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard.js';
 import { Policy } from '../../auth/policy.js';
 import { fail } from '../../common/http.js';
 import type { EnqueuedJobAcceptedDto } from '../../jobs/services/job-producer.service.js';
@@ -42,6 +39,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const POSITIVE_INT_PATTERN = /^[1-9][0-9]*$/;
 const IF_MATCH_VERSION_PATTERN = /^(?:W\/)?"?([1-9][0-9]*)"?$/;
+const PG_INT4_MAX = 2_147_483_647;
 
 export interface AuthenticatedRoadmapRequest {
   user?: {
@@ -89,7 +87,7 @@ function assertPositiveIntParam(raw: string, field: string): number {
     ]);
   }
   const parsed = Number(trimmed);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > PG_INT4_MAX) {
     fail(400, 'INVALID_FORMAT', `${field} must be a positive integer`, [
       {
         field,
@@ -147,7 +145,7 @@ function parseOptionalIfMatchHeader(
     ]);
   }
   const parsed = Number(match[1]);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > PG_INT4_MAX) {
     fail(400, 'INVALID_FORMAT', 'If-Match header must be a positive integer', [
       {
         field: 'If-Match',
@@ -190,15 +188,14 @@ function attachPaginationMeta<T>(
 /**
  * Controller exposing `C05` §14.5 Roadmap API (`EP-R01`–`EP-R07`, `EP-R14`, `EP-R15`).
  *
- * Explicitly binds `@UseGuards(SupabaseAuthGuard, AccessGuard)` (`SupabaseAuthGuard` first,
- * `AccessGuard` second):
+ * Protected by the global `APP_GUARD` pipeline (`SupabaseAuthGuard` then `AccessGuard`) registered
+ * by `AuthModule` (no duplicate controller-level `@UseGuards` so `AccessGuard` runs once per request):
  * - Generation/revision/lock routes (`EP-R01`, `EP-R04`, `EP-R05`) require
  *   `@Policy({ feature: 'roadmap_generator' })` and `H-IDEM` via `IdempotencyService.execute(...)`.
  * - Read, focus switch, and archive routes (`EP-R02`, `EP-R03`, `EP-R06`, `EP-R07`, `EP-R14`, `EP-R15`)
  *   declare `@Policy({})` (`Gate: none`) so existing data remains usable when generation flags are OFF.
  */
 @Controller('roadmaps')
-@UseGuards(SupabaseAuthGuard, AccessGuard)
 @Policy({})
 export class RoadmapController {
   private readonly logger = new Logger(RoadmapController.name);

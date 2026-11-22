@@ -203,6 +203,7 @@ describe('RoadmapDetailView (Screen 15)', () => {
       'token-1',
       'rm-locked-1',
       1,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Return to Current' }));
@@ -497,5 +498,117 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(screen.queryByRole('button', { name: 'Archive Roadmap' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Set as Focus Roadmap' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open Draft Review/i })).not.toBeInTheDocument();
+  });
+
+  it('cancels/ignores late version snapshot after drawer closes, shows drawer errors inside the drawer, and omits focus reassignment copy when archiving non-focus roadmap', async () => {
+    const currentV2 = makeDetail({
+      id: 'rm-locked-1',
+      version_no: 2,
+      is_focus: false,
+    });
+    const snapshotV1 = makeDetail({
+      id: 'rm-locked-1',
+      version_id: 'ver-1',
+      version_no: 1,
+      version_state: 'superseded',
+      summary: {
+        ...currentV2.summary,
+        current_situation: 'Late v1 snapshot must be ignored.',
+      },
+    });
+
+    let resolveVersionFetch!: (val: RoadmapDetailDTO) => void;
+    vi.mocked(getRoadmapVersion)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveVersionFetch = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error('Version snapshot failed'));
+    vi.mocked(archiveRoadmap).mockResolvedValueOnce({
+      archived_roadmap_id: 'rm-locked-1',
+      status: 'archived',
+      new_focus_roadmap_id: 'rm-other-focus',
+    });
+
+    render(
+      <RoadmapDetailView
+        accessToken="token-1"
+        roadmapId="rm-locked-1"
+        initialRoadmap={currentV2}
+        initialVersions={{
+          items: [
+            {
+              id: 'ver-2',
+              version_no: 2,
+              state: 'locked',
+              created_by: 'user_request',
+              target_level: 'senior',
+              base_version_id: 'ver-1',
+              merge_id: null,
+              stale: false,
+              locked_at: '2026-11-19T10:00:00.000Z',
+              superseded_at: null,
+              created_at: '2026-11-19T09:30:00.000Z',
+            },
+            {
+              id: 'ver-1',
+              version_no: 1,
+              state: 'superseded',
+              created_by: 'ai',
+              target_level: 'senior',
+              base_version_id: null,
+              merge_id: null,
+              stale: false,
+              locked_at: null,
+              superseded_at: '2026-11-19T10:00:00.000Z',
+              created_at: '2026-11-19T08:00:00.000Z',
+            },
+          ],
+          meta: { limit: 50, next_cursor: null },
+        }}
+      />,
+    );
+
+    // 1. Open drawer, start snapshot fetch, then close via Close button before it resolves
+    fireEvent.click(screen.getByRole('button', { name: 'Version History' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Version History' });
+    fireEvent.click(within(drawer).getByRole('button', { name: /Version v1/i }));
+    fireEvent.click(
+      within(drawer).getByRole('button', { name: 'Close version history' }),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveVersionFetch(snapshotV1);
+      await Promise.resolve();
+    });
+    expect(
+      screen.queryByText('Late v1 snapshot must be ignored.'),
+    ).not.toBeInTheDocument();
+
+    // 2. Reopen drawer and trigger a failed snapshot fetch -> error renders INSIDE the open drawer
+    fireEvent.click(screen.getByRole('button', { name: 'Version History' }));
+    const drawerAgain = await screen.findByRole('dialog', {
+      name: 'Version History',
+    });
+    fireEvent.click(
+      within(drawerAgain).getByRole('button', { name: /Version v1/i }),
+    );
+    expect(await within(drawerAgain).findByRole('alert')).toBeInTheDocument();
+    fireEvent.click(
+      within(drawerAgain).getByRole('button', { name: 'Close version history' }),
+    );
+
+    // 3. Archive non-focus roadmap when backend echoes existing focus ID -> toast omits reassignment text
+    fireEvent.click(screen.getByRole('button', { name: 'Archive Roadmap' }));
+    const modal = screen.getByRole('dialog');
+    fireEvent.click(
+      within(modal).getByRole('button', { name: 'Archive Roadmap' }),
+    );
+    const toast = await screen.findByTestId('toast-container');
+    expect(toast).toHaveTextContent('Roadmap archived');
+    expect(toast).not.toHaveTextContent(/focus automatically reassigned/i);
   });
 });

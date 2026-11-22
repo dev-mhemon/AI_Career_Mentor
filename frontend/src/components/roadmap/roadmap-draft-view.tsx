@@ -326,6 +326,8 @@ export function RoadmapDraftView({
     replaceActiveJob = false,
   ) => {
     if (
+      !draft ||
+      draft.status !== 'draft' ||
       !featureEnabled ||
       submittingRevision ||
       (!replaceActiveJob && activeJob) ||
@@ -370,7 +372,7 @@ export function RoadmapDraftView({
 
   const handleRevisionSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!draft) {
+    if (!draft || draft.status !== 'draft') {
       return;
     }
     if (trimmedCodePointCount < 1) {
@@ -403,7 +405,7 @@ export function RoadmapDraftView({
   };
 
   const handleRefreshStaleDraft = () => {
-    if (!draft) {
+    if (!draft || draft.status !== 'draft') {
       return;
     }
     void dispatchRevision(
@@ -486,7 +488,15 @@ export function RoadmapDraftView({
   };
 
   const handleLockRoadmap = async () => {
-    if (!draft || !featureEnabled || draft.stale || locking || activeJob) {
+    if (
+      !draft ||
+      draft.status !== 'draft' ||
+      !featureEnabled ||
+      draft.stale ||
+      submittingRevision ||
+      locking ||
+      activeJob
+    ) {
       return;
     }
 
@@ -588,15 +598,20 @@ export function RoadmapDraftView({
     );
   }
 
+  const isDraftEditable = draft.status === 'draft';
+  const isArchived = draft.status === 'archived';
   const requiresLargeConfirmation =
     draft.size_guardrail.materially_large || forceLargeConfirm;
   const lockDisabled =
+    !isDraftEditable ||
     draft.stale ||
     !featureEnabled ||
+    submittingRevision ||
     Boolean(activeJob) ||
     locking ||
     (requiresLargeConfirmation && !confirmLarge);
   const canSubmitRevision =
+    isDraftEditable &&
     featureEnabled &&
     !submittingRevision &&
     !activeJob &&
@@ -656,8 +671,15 @@ export function RoadmapDraftView({
             <h1 className="text-heading-xl font-semibold text-text-primary" dir="auto">
               {draft.role_name}
             </h1>
-            <span className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-caption font-medium leading-none text-amber-800 dark:border-amber-800/80 dark:bg-amber-950/50 dark:text-amber-200">
-              Draft v{draft.version_no}
+            <span
+              className={cn(
+                'inline-flex items-center justify-center rounded-full border px-2.5 py-1 text-caption font-medium leading-none',
+                isArchived
+                  ? 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                  : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/80 dark:bg-amber-950/50 dark:text-amber-200',
+              )}
+            >
+              {isArchived ? `Archived v${draft.version_no}` : `Draft v${draft.version_no}`}
             </span>
             <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-medium leading-none text-text-secondary">
               {LEVEL_LABELS[draft.target_level] ?? draft.target_level}
@@ -684,27 +706,47 @@ export function RoadmapDraftView({
         </Link>
       </header>
 
-      {!featureEnabled && (
-        <Alert variant="info" role="status" title="Roadmap generation is temporarily disabled">
-          You can read this existing draft in full, while AI revisions and locking are paused until generation is re-enabled.
-        </Alert>
-      )}
-
-      {draft.stale && (
+      {isArchived ? (
         <Alert
-          variant="warning"
-          role="alert"
-          title="Stale draft — refresh required before locking"
+          variant="info"
+          role="status"
+          title="Archived roadmap — read-only"
           action={{
-            label: submittingRevision ? 'Refreshing...' : 'Refresh Stale Draft',
-            onClick: handleRefreshStaleDraft,
+            label: 'View Archived Roadmap',
+            href: `/roadmaps/${encodeURIComponent(roadmapId)}`,
           }}
         >
-          <p>
-            {draft.stale_reason ||
-              'Your saved profile skills or career goal changed since this draft was generated. Refresh the draft to align with your latest profile before locking.'}
-          </p>
+          This roadmap is archived and read-only. Draft revisions and locking are disabled while your progress and skill evidence remain preserved.
         </Alert>
+      ) : (
+        <>
+          {!featureEnabled && (
+            <Alert variant="info" role="status" title="Roadmap generation is temporarily disabled">
+              You can read this existing draft in full, while AI revisions and locking are paused until generation is re-enabled.
+            </Alert>
+          )}
+
+          {draft.stale && (
+            <Alert
+              variant="warning"
+              role="alert"
+              title="Stale draft — refresh required before locking"
+              action={
+                featureEnabled && isDraftEditable
+                  ? {
+                      label: submittingRevision ? 'Refreshing...' : 'Refresh Stale Draft',
+                      onClick: handleRefreshStaleDraft,
+                    }
+                  : undefined
+              }
+            >
+              <p>
+                {draft.stale_reason ||
+                  'Your saved profile skills or career goal changed since this draft was generated. Refresh the draft to align with your latest profile before locking.'}
+              </p>
+            </Alert>
+          )}
+        </>
       )}
 
       {draft.size_guardrail.materially_large && (
@@ -730,10 +772,11 @@ export function RoadmapDraftView({
         </Alert>
       )}
 
-      <section
-        aria-labelledby="draft-review-actions-heading"
-        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900"
-      >
+      {!isArchived && (
+        <section
+          aria-labelledby="draft-review-actions-heading"
+          className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900"
+        >
         <div className="flex flex-col gap-3.5 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
           <div className="min-w-0 flex-1">
             <h2
@@ -794,7 +837,14 @@ export function RoadmapDraftView({
                 onChange={(checked) =>
                   setConfirmedLargeVersion(checked ? draft.version_no : null)
                 }
-                disabled={draft.stale || !featureEnabled || Boolean(activeJob) || locking}
+                disabled={
+                  !isDraftEditable ||
+                  draft.stale ||
+                  !featureEnabled ||
+                  submittingRevision ||
+                  Boolean(activeJob) ||
+                  locking
+                }
                 label={`I confirm that I want to lock this large roadmap (${draft.size_guardrail.active_topic_count} active topics, above the ${draft.size_guardrail.soft_max_topics}-topic guideline).`}
               />
             )}
@@ -917,7 +967,13 @@ export function RoadmapDraftView({
                   ? `${instructionHelpId} ${instructionErrorId}`
                   : instructionHelpId
               }
-              disabled={!featureEnabled || Boolean(activeJob) || locking}
+              disabled={
+                !isDraftEditable ||
+                !featureEnabled ||
+                submittingRevision ||
+                Boolean(activeJob) ||
+                locking
+              }
               placeholder="Example: Expand SQL indexing exercises in Phase 2 and keep Phase 1 concise."
               className="w-full rounded-md border border-border-strong bg-surface-default px-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:border-border-focus disabled:bg-surface-disabled disabled:text-text-disabled"
             />
@@ -970,7 +1026,7 @@ export function RoadmapDraftView({
               <span>Submit Revision</span>
             </Button>
 
-            {draft.stale && (
+            {draft.stale && featureEnabled && isDraftEditable && (
               <Button
                 type="button"
                 variant="secondary"
@@ -1005,6 +1061,7 @@ export function RoadmapDraftView({
           </div>
         </form>
       </section>
+      )}
 
       <section
         aria-labelledby="draft-summary-heading"

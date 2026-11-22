@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -309,8 +310,9 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<DetailFee
 
 function formatArchiveFeedback(
   res: ArchiveRoadmapResponseDTO,
+  wasFocused: boolean,
 ): NonNullable<ArchiveToast> {
-  if (res.new_focus_roadmap_id) {
+  if (wasFocused && res.new_focus_roadmap_id) {
     return {
       title: 'Roadmap archived',
       message:
@@ -338,6 +340,9 @@ export function RoadmapDetailView({
   const drawerTitleId = useId();
   const drawerPanelRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLButtonElement>(null);
+  const drawerSessionRef = useRef(0);
+  const snapshotAbortRef = useRef<AbortController | null>(null);
+  const loadMoreVersionsAbortRef = useRef<AbortController | null>(null);
 
   const [reloadTick, setReloadTick] = useState(0);
   const [fetchState, setFetchState] = useState<DetailFetchState | null>(null);
@@ -345,6 +350,7 @@ export function RoadmapDetailView({
     useState<RoadmapDetailDTO | null>(null);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerError, setDrawerError] = useState<MappedError | null>(null);
   const [versionsReloadTick, setVersionsReloadTick] = useState(0);
   const [versionsState, setVersionsState] = useState<VersionsFetchState | null>(
     null,
@@ -449,6 +455,36 @@ export function RoadmapDetailView({
     };
   }, [accessToken, drawerOpen, roadmapId, seededVersions, versionsKey]);
 
+  const openDrawer = useCallback(() => {
+    drawerSessionRef.current += 1;
+    snapshotAbortRef.current?.abort();
+    snapshotAbortRef.current = null;
+    loadMoreVersionsAbortRef.current?.abort();
+    loadMoreVersionsAbortRef.current = null;
+    setLoadingSnapshotVersion(null);
+    setLoadingMoreVersions(false);
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }, []);
+
+  const closeDrawer = useCallback(() => {
+    drawerSessionRef.current += 1;
+    snapshotAbortRef.current?.abort();
+    snapshotAbortRef.current = null;
+    loadMoreVersionsAbortRef.current?.abort();
+    loadMoreVersionsAbortRef.current = null;
+    setLoadingSnapshotVersion(null);
+    setLoadingMoreVersions(false);
+    setDrawerOpen(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      snapshotAbortRef.current?.abort();
+      loadMoreVersionsAbortRef.current?.abort();
+    };
+  }, []);
+
   useEffect(() => {
     if (!drawerOpen) {
       return;
@@ -475,7 +511,7 @@ export function RoadmapDetailView({
     const onDocKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) {
         e.stopPropagation();
-        setDrawerOpen(false);
+        closeDrawer();
       }
     };
     document.addEventListener('keydown', onDocKeyDown);
@@ -486,7 +522,7 @@ export function RoadmapDetailView({
       document.body.style.paddingRight = prevPaddingRight;
       (triggerEl ?? prevActive)?.focus({ preventScroll: true });
     };
-  }, [drawerOpen]);
+  }, [closeDrawer, drawerOpen]);
 
   const activeState =
     fetchState && fetchState.key === requestKey
@@ -527,7 +563,7 @@ export function RoadmapDetailView({
   );
 
   const backdropDismiss = useBackdropDismiss(
-    () => setDrawerOpen(false),
+    closeDrawer,
     loadingSnapshotVersion !== null,
   );
 
@@ -535,7 +571,7 @@ export function RoadmapDetailView({
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      setDrawerOpen(false);
+      closeDrawer();
       return;
     }
     if (e.key !== 'Tab' || !drawerPanelRef.current) {
@@ -565,23 +601,39 @@ export function RoadmapDetailView({
     }
     if (version.version_no === currentRoadmap.version_no) {
       setHistoricalSnapshot(null);
-      setDrawerOpen(false);
+      closeDrawer();
       return;
     }
+    const sessionId = drawerSessionRef.current;
+    snapshotAbortRef.current?.abort();
+    const controller = new AbortController();
+    snapshotAbortRef.current = controller;
     setLoadingSnapshotVersion(version.version_no);
-    setActionError(null);
+    setDrawerError(null);
     try {
       const snapshot = await getRoadmapVersion(
         accessToken,
         roadmapId,
         version.version_no,
+        { signal: controller.signal },
       );
+      if (sessionId !== drawerSessionRef.current || controller.signal.aborted) {
+        return;
+      }
       setHistoricalSnapshot(snapshot);
-      setDrawerOpen(false);
+      closeDrawer();
     } catch (err) {
-      setActionError(mapApiError(err));
+      if (sessionId !== drawerSessionRef.current || controller.signal.aborted) {
+        return;
+      }
+      setDrawerError(mapApiError(err));
     } finally {
-      setLoadingSnapshotVersion(null);
+      if (snapshotAbortRef.current === controller) {
+        snapshotAbortRef.current = null;
+      }
+      if (sessionId === drawerSessionRef.current) {
+        setLoadingSnapshotVersion(null);
+      }
     }
   };
 
@@ -593,13 +645,25 @@ export function RoadmapDetailView({
     ) {
       return;
     }
+    const sessionId = drawerSessionRef.current;
+    loadMoreVersionsAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadMoreVersionsAbortRef.current = controller;
     setLoadingMoreVersions(true);
-    setActionError(null);
+    setDrawerError(null);
     try {
-      const page = await listRoadmapVersions(accessToken, roadmapId, {
-        cursor: activeVersions.nextCursor,
-        limit: 50,
-      });
+      const page = await listRoadmapVersions(
+        accessToken,
+        roadmapId,
+        {
+          cursor: activeVersions.nextCursor,
+          limit: 50,
+        },
+        { signal: controller.signal },
+      );
+      if (sessionId !== drawerSessionRef.current || controller.signal.aborted) {
+        return;
+      }
       setVersionsState((prev) => {
         const existing =
           prev && prev.key === versionsKey && prev.status === 'loaded'
@@ -614,9 +678,17 @@ export function RoadmapDetailView({
         };
       });
     } catch (err) {
-      setActionError(mapApiError(err));
+      if (sessionId !== drawerSessionRef.current || controller.signal.aborted) {
+        return;
+      }
+      setDrawerError(mapApiError(err));
     } finally {
-      setLoadingMoreVersions(false);
+      if (loadMoreVersionsAbortRef.current === controller) {
+        loadMoreVersionsAbortRef.current = null;
+      }
+      if (sessionId === drawerSessionRef.current) {
+        setLoadingMoreVersions(false);
+      }
     }
   };
 
@@ -665,7 +737,9 @@ export function RoadmapDetailView({
           is_focus: false,
         },
       });
-      setArchiveToast(formatArchiveFeedback(res));
+      setArchiveToast(
+        formatArchiveFeedback(res, Boolean(currentRoadmap.is_focus)),
+      );
       setArchiveModalOpen(false);
     } catch (err) {
       setActionError(mapApiError(err));
@@ -819,7 +893,7 @@ export function RoadmapDetailView({
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => setDrawerOpen(true)}
+              onClick={openDrawer}
               className="h-9 rounded-lg border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               <ClockIcon className="block h-4 w-4 shrink-0" aria-hidden="true" />
@@ -1182,7 +1256,7 @@ export function RoadmapDetailView({
             <button
               type="button"
               aria-label="Close version history"
-              onClick={() => setDrawerOpen(false)}
+              onClick={closeDrawer}
               className="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary"
             >
               <CloseIcon className="h-4 w-4" aria-hidden="true" />
@@ -1190,6 +1264,21 @@ export function RoadmapDetailView({
           </div>
 
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-5">
+            {drawerError && (
+              <Alert
+                variant={
+                  drawerError.tone === 'info'
+                    ? 'info'
+                    : drawerError.tone === 'warning'
+                      ? 'warning'
+                      : 'error_retryable'
+                }
+                role="alert"
+                retryAfterSeconds={drawerError.retryAfterSeconds}
+              >
+                {drawerError.message}
+              </Alert>
+            )}
             {activeVersions === null ? (
               drawerOpen ? (
                 <div
