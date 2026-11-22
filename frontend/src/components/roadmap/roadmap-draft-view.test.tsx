@@ -10,6 +10,7 @@ import {
 } from '@testing-library/react';
 import {
   ApiError,
+  createDailyPlan,
   getRoadmap,
   lockRoadmap,
   reviseRoadmap,
@@ -36,6 +37,7 @@ vi.mock('@/lib/api/client', async () => {
   );
   return {
     ...actual,
+    createDailyPlan: vi.fn(),
     getRoadmap: vi.fn(),
     reviseRoadmap: vi.fn(),
     lockRoadmap: vi.fn(),
@@ -408,6 +410,17 @@ describe('RoadmapDraftView (Screen 12)', () => {
         { expected_version_no: 3, confirm_large_roadmap: true },
         expect.stringMatching(/^[0-9a-f-]{36}$/i),
       );
+    });
+    // Opens HoursPromptModal prefilled with preferred_daily_hours (2); skipping navigates cleanly to /roadmaps/rm-draft-1
+    const hoursDialog = await screen.findByRole('dialog');
+    expect(hoursDialog).toBeInTheDocument();
+    expect(
+      (within(hoursDialog).getByLabelText(/Hours per day/i) as HTMLInputElement)
+        .value,
+    ).toBe('2');
+
+    fireEvent.click(within(hoursDialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith('/roadmaps/rm-draft-1');
     });
     // Zero flicker: Lock button stays stably disabled in "Opening roadmap..." until unmount, with no competing router.refresh()
@@ -735,5 +748,86 @@ describe('RoadmapDraftView (Screen 12)', () => {
     );
     expect(screen.getByText('Revising your roadmap draft')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('routes to /daily-plan?roadmap_id=... after creating Daily Plan for a non-focus locked roadmap, and /today for a focus locked roadmap', async () => {
+    const nonFocusPlan = {
+      plan_id: 'plan-nf-1',
+      roadmap_id: 'rm-draft-1',
+      roadmap_version_no: 1,
+      is_focus: false,
+      hours_per_day: 2,
+      total_days: 5,
+      completed_days: 0,
+      next_incomplete_day_no: 1,
+      days: [],
+    };
+    vi.mocked(lockRoadmap).mockResolvedValueOnce({
+      roadmap_id: 'rm-draft-1',
+      status: 'locked',
+      version_no: 1,
+      current_version_id: 'ver-1',
+      is_focus: false,
+      locked_at: '2026-11-19T12:00:00.000Z',
+      next_step: 'confirm_learning_hours',
+      preferred_daily_hours: 2,
+      size_guardrail: makeDraft().size_guardrail,
+    });
+    vi.mocked(createDailyPlan).mockResolvedValueOnce(nonFocusPlan);
+
+    const { unmount } = render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        initialDraft={makeDraft({ version_no: 1 })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock Roadmap' }));
+    const nonFocusDialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(nonFocusDialog).getByRole('button', { name: 'Create Daily Plan' }),
+    );
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/daily-plan?roadmap_id=rm-draft-1',
+      );
+    });
+
+    unmount();
+    mockReplace.mockClear();
+
+    vi.mocked(lockRoadmap).mockResolvedValueOnce({
+      roadmap_id: 'rm-draft-1',
+      status: 'locked',
+      version_no: 1,
+      current_version_id: 'ver-1',
+      is_focus: true,
+      locked_at: '2026-11-19T12:00:00.000Z',
+      next_step: 'confirm_learning_hours',
+      preferred_daily_hours: 2,
+      size_guardrail: makeDraft().size_guardrail,
+    });
+    vi.mocked(createDailyPlan).mockResolvedValueOnce({
+      ...nonFocusPlan,
+      is_focus: true,
+    });
+
+    render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        initialDraft={makeDraft({ version_no: 1 })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock Roadmap' }));
+    const focusDialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(focusDialog).getByRole('button', { name: 'Create Daily Plan' }),
+    );
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/today');
+    });
   });
 });

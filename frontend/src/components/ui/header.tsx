@@ -98,6 +98,22 @@ const QUICK_SEARCH_ROUTES: readonly QuickSearchRoute[] = [
     hrefLower: '/dashboard',
   },
   {
+    href: '/today',
+    label: 'Today',
+    keywords: 'today learning study lesson topic',
+    restrictedWhenSuspended: true,
+    labelLower: 'today',
+    hrefLower: '/today',
+  },
+  {
+    href: '/daily-plan',
+    label: 'Daily Plan',
+    keywords: 'daily plan schedule sequence days rebuild',
+    restrictedWhenSuspended: true,
+    labelLower: 'daily plan',
+    hrefLower: '/daily-plan',
+  },
+  {
     href: '/profile',
     label: 'Profile',
     keywords: 'profile name role experience education',

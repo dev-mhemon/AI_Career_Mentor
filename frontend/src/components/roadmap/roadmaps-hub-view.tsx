@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   archiveRoadmap,
   focusRoadmap,
@@ -25,6 +26,7 @@ import {
 } from '@/components/ui/icons';
 import { Modal } from '@/components/ui/modal';
 import { Toast } from '@/components/ui/toast';
+import { HoursPromptModal } from '@/components/learning/hours-prompt-modal';
 
 function SlidersHorizontalIcon({ className }: { className?: string }) {
   return (
@@ -148,6 +150,7 @@ function EyeIcon({ className }: { className?: string }) {
 export interface RoadmapsHubViewProps {
   accessToken: string;
   featureEnabled?: boolean;
+  preferredDailyHours?: number | null;
   initialPage?: RoadmapListResponseDTO;
 }
 
@@ -173,6 +176,8 @@ type HubFeedback =
       message: string;
       href?: string;
       hrefLabel?: string;
+      actionLabel?: string;
+      onAction?: () => void;
     }
   | null;
 
@@ -245,7 +250,10 @@ const archiveLinkClass =
 const manageGoalsLinkClass =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-xs transition-colors duration-(--duration-fast) ease-standard hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 motion-reduce:transition-none';
 
-function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedback> {
+function formatFocusFeedback(
+  res: FocusSwitchResponseDTO,
+  onOpenHoursModal: () => void,
+): NonNullable<HubFeedback> {
   if (
     res.daily_plan.state === 'missing' &&
     res.daily_plan.requires_learning_hours
@@ -254,9 +262,9 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedba
       variant: 'warning',
       title: 'Focus Roadmap updated — daily learning hours needed',
       message:
-        'Your Focus Roadmap is active, but a Daily Plan cannot be scheduled until you set your preferred daily learning hours.',
-      href: '/settings',
-      hrefLabel: 'Set Daily Learning Hours',
+        'Your Focus Roadmap is active. Choose your preferred daily learning hours to create its Daily Plan.',
+      actionLabel: 'Create Daily Plan',
+      onAction: onOpenHoursModal,
     };
   }
   if (res.daily_plan.state === 'missing') {
@@ -264,7 +272,9 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedba
       variant: 'info',
       title: 'Focus Roadmap updated',
       message:
-        'This roadmap is now your Focus Roadmap. Set up its Daily Plan when you are ready to start daily lessons.',
+        'This roadmap is now your Focus Roadmap. Create a Daily Plan when you are ready to start daily lessons.',
+      actionLabel: 'Create Daily Plan',
+      onAction: onOpenHoursModal,
     };
   }
   return {
@@ -272,6 +282,8 @@ function formatFocusFeedback(res: FocusSwitchResponseDTO): NonNullable<HubFeedba
     title: 'Focus Roadmap updated',
     message:
       'This roadmap is now your Focus Roadmap, and its existing Daily Plan remains active.',
+    href: '/today',
+    hrefLabel: 'Open Today',
   };
 }
 
@@ -301,8 +313,10 @@ function formatArchiveFeedback(
 export function RoadmapsHubView({
   accessToken,
   featureEnabled = true,
+  preferredDailyHours = null,
   initialPage,
 }: RoadmapsHubViewProps) {
+  const router = useRouter();
   const tabsUid = useId();
   const tabRefs = useRef<Record<HubFilter, HTMLButtonElement | null>>({
     all: null,
@@ -326,6 +340,11 @@ export function RoadmapsHubView({
     null,
   );
   const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [hoursModalTarget, setHoursModalTarget] = useState<{
+    roadmapId: string;
+    roadmapTitle?: string;
+    initialHours: number | null;
+  } | null>(null);
 
   const requestKey = `${accessToken}:${filter}:${reloadTick}`;
   const countsKey = `${accessToken}:${reloadTick}`;
@@ -614,7 +633,18 @@ export function RoadmapsHubView({
       } else {
         setReloadTick((prev) => prev + 1);
       }
-      setFeedback(formatFocusFeedback(result));
+      const openHoursModal = () =>
+        setHoursModalTarget({
+          roadmapId: roadmap.id,
+          roadmapTitle: roadmap.role_name,
+          initialHours: result.daily_plan.requires_learning_hours
+            ? null
+            : preferredDailyHours,
+        });
+      setFeedback(formatFocusFeedback(result, openHoursModal));
+      if (result.daily_plan.state === 'missing') {
+        openHoursModal();
+      }
     } catch (err) {
       setActionError(mapApiError(err));
     } finally {
@@ -737,9 +767,11 @@ export function RoadmapsHubView({
           role={feedback.variant === 'error_retryable' ? 'alert' : 'status'}
           title={feedback.title}
           action={
-            feedback.href && feedback.hrefLabel
-              ? { label: feedback.hrefLabel, href: feedback.href }
-              : undefined
+            feedback.onAction && feedback.actionLabel
+              ? { label: feedback.actionLabel, onClick: feedback.onAction }
+              : feedback.href && feedback.hrefLabel
+                ? { label: feedback.hrefLabel, href: feedback.href }
+                : undefined
           }
         >
           {feedback.message}
@@ -1113,6 +1145,35 @@ export function RoadmapsHubView({
         loading={Boolean(archiveTarget && archivingId === archiveTarget.id)}
         onConfirm={() => void handleConfirmArchive()}
       />
+
+      {hoursModalTarget && (
+        <HoursPromptModal
+          open={Boolean(hoursModalTarget)}
+          mode="create"
+          accessToken={accessToken}
+          roadmapId={hoursModalTarget.roadmapId}
+          roadmapTitle={hoursModalTarget.roadmapTitle}
+          initialHours={hoursModalTarget.initialHours}
+          onClose={() => setHoursModalTarget(null)}
+          onSuccess={() => {
+            const createdRoadmapId = hoursModalTarget.roadmapId;
+            setFetchState((prev) =>
+              prev && prev.status === 'loaded'
+                ? {
+                    ...prev,
+                    items: prev.items.map((entry) =>
+                      entry.id === createdRoadmapId
+                        ? { ...entry, has_daily_plan: true }
+                        : entry,
+                    ),
+                  }
+                : prev,
+            );
+            setHoursModalTarget(null);
+            router.push('/today');
+          }}
+        />
+      )}
     </main>
   );
 }

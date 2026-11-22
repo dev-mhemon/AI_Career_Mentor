@@ -3873,6 +3873,380 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/daily-plan:
+    get:
+      operationId: EP-L01_getDailyPlan
+      summary: EP-L01 Get Daily Plan (C05 §14.6, implemented M07-01)
+      description: >
+        Returns the sequential Daily Plan for the requested locked roadmap (`roadmap_id`)
+        or the caller's active Focus Roadmap. `Gate: none` (readable when generation flags are OFF).
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: roadmap_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-L01 success; returns paginated DailyPlanResponseDTO envelope with required top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDailyPlanResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: NO_FOCUS_ROADMAP, DAILY_PLAN_NOT_FOUND, or RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/daily-plans:
+    post:
+      operationId: EP-L02_createDailyPlan
+      summary: EP-L02 Create Daily Plan (C05 §14.6, implemented M07-01)
+      description: >
+        Deterministically builds a sequential Daily Plan for an owned locked roadmap after
+        confirming `hours_per_day` (0.5–12 in 0.5 increments), saving hours back to
+        `user_profiles.preferred_daily_hours`. Requires `H-IDEM` and `Gate: write (daily_plan)`.
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDailyPlanDTO'
+      responses:
+        '201':
+          description: C05 EP-L02 success; returns created DailyPlanResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyPlanResponseDTOEnvelope'
+        '403':
+          description: FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: ROADMAP_NOT_LOCKED, ROADMAP_ARCHIVED, DAILY_PLAN_EXISTS, or IDEMPOTENCY_KEY_REUSED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: LEARNING_HOURS_REQUIRED or VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: SERVICE_UNAVAILABLE (R14 idempotency store unavailable, epoch mismatch, or in-flight contention)
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/daily-plans/{id}/rebuild:
+    post:
+      operationId: EP-L03_rebuildDailyPlan
+      summary: EP-L03 Rebuild Daily Plan (C05 §14.6, implemented M07-01)
+      description: >
+        Re-sequences only unfrozen future pending days without modifying the locked roadmap.
+        Freezes an entire day whenever any item on that day is `completed`, `in_progress`,
+        or has an unsubmitted `quiz_attempts` row (`generated`/`started`). Saves `hours_per_day`
+        back to `user_profiles`. Requires `Gate: write (daily_plan)`.
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebuildDailyPlanDTO'
+      responses:
+        '200':
+          description: C05 EP-L03 success; returns updated DailyPlanResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyPlanResponseDTOEnvelope'
+        '403':
+          description: FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: DAILY_PLAN_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: ROADMAP_ARCHIVED or ROADMAP_NOT_LOCKED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: LEARNING_HOURS_REQUIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/today:
+    get:
+      operationId: EP-L04_getToday
+      summary: EP-L04 Get Today (C05 §14.6, implemented M07-01)
+      description: >
+        Returns Today's learning unit from the Focus Roadmap's next incomplete sequential day.
+        Serves approved canonical topic content with `Gate: none` (even when `daily_plan` is OFF);
+        generating missing/hidden shared content requires `daily_plan` ON and returns `status: preparing`.
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: C05 EP-L04 success; returns TodayResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TodayResponseDTOEnvelope'
+        '403':
+          description: FEATURE_DISABLED (only when approved content is absent and `daily_plan` is OFF)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/topics:
+    get:
+      operationId: EP-L05_listTopics
+      summary: EP-L05 List Topics (C05 §14.6, implemented M07-01)
+      description: >
+        Lists topics scoped strictly to the caller's own roadmap (default Focus Roadmap) with
+        optional `priority` and `learning_state` filters and keyset cursor pagination. `Gate: none`.
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: roadmap_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: priority
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [core, supporting, optional]
+        - name: learning_state
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/LearningState'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-L05 success; returns TopicSummaryDTO[] + meta envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicListResponseDTOEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_ENUM_VALUE or VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/topics/{id}:
+    get:
+      operationId: EP-L06_getTopic
+      summary: EP-L06 Get Topic (C05 §14.6, implemented M07-01)
+      description: >
+        Returns canonical approved topic study detail (`TopicDetailDTO`) for a topic present
+        in the caller's own roadmaps (`404 RESOURCE_NOT_FOUND` for foreign topics). `Gate: none`.
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-L06 success; returns TopicDetailDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicDetailDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/resources:
+    get:
+      operationId: EP-L07_listLearningResources
+      summary: EP-L07 List Learning Resources (C05 §14.6, implemented M07-01)
+      description: >
+        Returns paginated attribution-only external learning resources for a topic in the
+        caller's own roadmaps (`404 RESOURCE_NOT_FOUND` for foreign topics). `Gate: none`.
+      tags:
+        - Learning
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: topic_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-L07 success; returns LearningResourceDTO[] + meta envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LearningResourceListResponseDTOEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -3923,7 +4297,7 @@ components:
       in: header
       required: true
       description: >-
-        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, and EP-R05 by IdempotencyService.
+        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, EP-R05, and EP-L02 by IdempotencyService.
       schema:
         type: string
         format: uuid
@@ -5882,3 +6256,450 @@ components:
             - true
         data:
           $ref: '#/components/schemas/ArchiveRoadmapResponseDTO'
+    CreateDailyPlanDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - roadmap_id
+        - hours_per_day
+      properties:
+        roadmap_id:
+          type: string
+          format: uuid
+        hours_per_day:
+          type: number
+          minimum: 0.5
+          maximum: 12
+          multipleOf: 0.5
+    RebuildDailyPlanDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - hours_per_day
+      properties:
+        hours_per_day:
+          type: number
+          minimum: 0.5
+          maximum: 12
+          multipleOf: 0.5
+    PlanDayTopicDTO:
+      type: object
+      required:
+        - plan_item_id
+        - topic_id
+        - title
+      properties:
+        plan_item_id:
+          type: string
+          format: uuid
+        topic_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+    PlanDayDTO:
+      type: object
+      required:
+        - day_no
+        - status
+        - topics
+        - completed_at
+      properties:
+        day_no:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [pending, in_progress, completed]
+        topics:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanDayTopicDTO'
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+    DailyPlanResponseDTO:
+      type: object
+      required:
+        - plan_id
+        - roadmap_id
+        - is_focus
+        - hours_per_day
+        - roadmap_version_no
+        - next_incomplete_day_no
+        - total_days
+        - completed_days
+        - days
+      properties:
+        plan_id:
+          type: string
+          format: uuid
+        roadmap_id:
+          type: string
+          format: uuid
+        is_focus:
+          type: boolean
+        hours_per_day:
+          type: number
+        roadmap_version_no:
+          type: integer
+          minimum: 1
+        next_incomplete_day_no:
+          type: integer
+          minimum: 1
+          nullable: true
+        total_days:
+          type: integer
+          minimum: 0
+        completed_days:
+          type: integer
+          minimum: 0
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanDayDTO'
+    TopicImportantQuestionDTO:
+      type: object
+      required:
+        - question
+        - answer_markdown
+      properties:
+        question:
+          type: string
+        answer_markdown:
+          type: string
+    TopicDetailDTO:
+      type: object
+      required:
+        - topic_id
+        - title
+        - career_level
+        - content_version
+        - explanation_markdown
+        - important_questions
+        - sources
+        - learning_state
+        - required_depth
+        - rating_allowed
+        - report_allowed
+      properties:
+        topic_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        career_level:
+          type: string
+          enum: [junior, mid, senior]
+        content_version:
+          type: integer
+          minimum: 1
+        explanation_markdown:
+          type: string
+          nullable: true
+          description: Markdown study guide for approved canonical topics; null when the topic is hidden/unapproved and no approved replacement exists.
+        important_questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicImportantQuestionDTO'
+        sources:
+          type: array
+          items:
+            type: object
+            required: [publisher, url]
+            properties:
+              publisher:
+                type: string
+              url:
+                type: string
+                format: uri
+              retrieved_at:
+                type: string
+                format: date-time
+        learning_state:
+          $ref: '#/components/schemas/LearningState'
+        required_depth:
+          type: string
+        rating_allowed:
+          type: boolean
+        report_allowed:
+          type: boolean
+    NullableTopicDetailDTO:
+      type: object
+      nullable: true
+      required:
+        - topic_id
+        - title
+        - career_level
+        - content_version
+        - explanation_markdown
+        - important_questions
+        - sources
+        - learning_state
+        - required_depth
+        - rating_allowed
+        - report_allowed
+      properties:
+        topic_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        career_level:
+          type: string
+          enum: [junior, mid, senior]
+        content_version:
+          type: integer
+          minimum: 1
+        explanation_markdown:
+          type: string
+          nullable: true
+        important_questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicImportantQuestionDTO'
+        sources:
+          type: array
+          items:
+            type: object
+            required: [publisher, url]
+            properties:
+              publisher:
+                type: string
+              url:
+                type: string
+                format: uri
+              retrieved_at:
+                type: string
+                format: date-time
+        learning_state:
+          $ref: '#/components/schemas/LearningState'
+        required_depth:
+          type: string
+        rating_allowed:
+          type: boolean
+        report_allowed:
+          type: boolean
+    NullableJobAcceptedDTO:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required:
+        - job_id
+        - status
+        - poll_url
+        - retry_after_seconds
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/JobKind'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        poll_url:
+          type: string
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+    TodayResponseDTO:
+      type: object
+      required:
+        - status
+        - roadmap_id
+        - plan_id
+        - plan_day
+        - topic
+        - quiz
+        - job
+        - requires_learning_hours
+      properties:
+        status:
+          type: string
+          enum: [ready, preparing, no_focus_roadmap, no_daily_plan, plan_completed]
+        roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+        plan_id:
+          type: string
+          format: uuid
+          nullable: true
+        plan_day:
+          type: object
+          nullable: true
+          required: [day_no, total_days]
+          properties:
+            day_no:
+              type: integer
+              minimum: 1
+            total_days:
+              type: integer
+              minimum: 0
+        topic:
+          $ref: '#/components/schemas/NullableTopicDetailDTO'
+        quiz:
+          type: object
+          required: [attempt_id, status, can_retry]
+          properties:
+            attempt_id:
+              type: string
+              format: uuid
+              nullable: true
+            status:
+              type: string
+              enum: [generated, started, submitted, ai_reviewed, feedback_available, null]
+              nullable: true
+            can_retry:
+              type: boolean
+        job:
+          $ref: '#/components/schemas/NullableJobAcceptedDTO'
+        requires_learning_hours:
+          type: boolean
+        preferred_daily_hours:
+          type: number
+          nullable: true
+    TopicSummaryDTO:
+      type: object
+      required:
+        - topic_id
+        - title
+        - skill_id
+        - priority
+        - career_level
+        - learning_state
+        - plan_day_no
+      properties:
+        topic_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        skill_id:
+          type: string
+          format: uuid
+        priority:
+          type: string
+          enum: [core, supporting, optional]
+        career_level:
+          type: string
+          enum: [junior, mid, senior]
+        learning_state:
+          $ref: '#/components/schemas/LearningState'
+        plan_day_no:
+          type: integer
+          minimum: 1
+          nullable: true
+    LearningResourceDTO:
+      type: object
+      required:
+        - id
+        - title
+        - publisher
+        - url
+        - resource_type
+        - retrieved_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        publisher:
+          type: string
+        url:
+          type: string
+          format: uri
+        resource_type:
+          type: string
+          enum: [official_docs, release_notes, article, standard, video, other]
+        retrieved_at:
+          type: string
+          format: date-time
+          nullable: true
+    PaginatedDailyPlanResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/DailyPlanResponseDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    DailyPlanResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/DailyPlanResponseDTO'
+    TodayResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/TodayResponseDTO'
+    TopicListResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopicSummaryDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    TopicDetailDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/TopicDetailDTO'
+    LearningResourceListResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LearningResourceDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'

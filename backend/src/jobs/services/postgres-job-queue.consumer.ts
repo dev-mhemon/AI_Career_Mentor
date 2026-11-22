@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseService } from '../../auth/services/database.service.js';
 import { readJobWorkerConfiguration } from '../../config.js';
+import type { JobKind } from '../dto/job-status.dto.js';
 import type { JobQueryExecutor } from './job-producer.service.js';
 import { computeRetryBackoffSeconds } from './job-reaper.service.js';
 
@@ -54,6 +55,17 @@ export interface JobExecutionResult {
   latencyMs: number;
   outputHash?: string;
   output: unknown;
+  /**
+   * When true, the handler reused an already-approved shared artifact without invoking an AI provider,
+   * so the commit gate skips inserting a synthetic `public.ai_generations` row.
+   */
+  skipAiGeneration?: boolean;
+}
+
+/** Commit-gate context supplied to `JobHandler.persistArtifact` inside the R13 atomic transaction. */
+export interface JobCommitContext {
+  /** Inserted `public.ai_generations.id` when an AI generation ran, or `null` when skipped/reused. */
+  aiGenerationId: string | null;
 }
 
 /** Domain callback interface executed by `PostgresJobQueueConsumer`. */
@@ -72,8 +84,12 @@ export interface JobHandler {
     tx: JobQueryExecutor,
     job: ClaimedJobRow,
     result: JobExecutionResult,
+    context?: JobCommitContext,
   ): Promise<{ resultType?: string; resultId?: string } | void>;
 }
+
+/** Alias exported for multi-module job handler registration. */
+export type JobQueueHandler = JobHandler;
 
 export type JobProcessOutcome =
   | {
@@ -112,6 +128,18 @@ interface PreCommitRecheckRow {
   within_deadline: boolean;
   user_status: string;
   feature_allowed: boolean;
+}
+
+class CommitLeaseExpiredError extends Error {
+  constructor() {
+    super('WORKER_LEASE_EXPIRED');
+  }
+}
+
+class CommitFenceLostError extends Error {
+  constructor() {
+    super('FENCE_LOST');
+  }
 }
 
 const KINDS_REQUIRING_EXPECTED_REFS: ReadonlySet<string> = new Set([
@@ -197,6 +225,13 @@ function classifyExecutionError(error: unknown): {
           retryable,
         };
       }
+      if (rec.retryable === false) {
+        return {
+          errorCode: 'AI_GENERATION_FAILED',
+          safeMessage: SAFE_FAILURE_MESSAGES.AI_GENERATION_FAILED,
+          retryable: false,
+        };
+      }
     }
   }
   return {
@@ -235,6 +270,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
   readonly maxAgeSeconds: number;
   readonly pollIntervalMs: number;
   private readonly randomFn: () => number;
+  private readonly handlers = new Map<string, JobHandler>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollingInFlight = false;
 
@@ -257,6 +293,19 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         : `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
   }
 
+  /**
+   * Registers a domain `JobHandler` for a specific `public.job_kind` so multiple
+   * NestJS modules (`RoadmapModule`, `LearningModule`, etc.) share one queue consumer.
+   */
+  registerHandler(jobKind: JobKind, handler: JobHandler): void {
+    this.handlers.set(jobKind, handler);
+  }
+
+  /** Returns the deterministically sorted list of registered `job_kind` values. */
+  getRegisteredKinds(): string[] {
+    return Array.from(this.handlers.keys()).sort();
+  }
+
   private async runTx<T>(
     operation: (tx: JobQueryExecutor) => Promise<T>,
   ): Promise<T> {
@@ -275,9 +324,39 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
   /**
    * Claims up to `batchSize` queued async jobs via `FOR UPDATE SKIP LOCKED`
    * on `idx_ai_requests_queue` and commits `queued -> preparing` before returning.
+   * - `jobKinds === undefined`: filters by registered handler kinds when any are registered.
+   * - `jobKinds === null`: claims unfiltered (used when a fallback handler is active).
+   * - `jobKinds` non-empty array: filters strictly by `AND job_kind = ANY($5::public.job_kind[])`.
+   * - `jobKinds` explicit empty array (`[]`): returns `[]` immediately without querying.
    */
-  async claimBatch(batchSize = 1): Promise<ClaimedJobRow[]> {
+  async claimBatch(
+    batchSize = 1,
+    jobKinds?: readonly string[] | null,
+  ): Promise<ClaimedJobRow[]> {
     const boundedLimit = Math.max(1, Math.min(50, Math.floor(batchSize)));
+    if (Array.isArray(jobKinds) && jobKinds.length === 0) {
+      return [];
+    }
+    const effectiveKinds =
+      jobKinds === null
+        ? []
+        : jobKinds !== undefined
+          ? Array.from(new Set(jobKinds))
+          : this.getRegisteredKinds();
+    const hasKindFilter = effectiveKinds.length > 0;
+    const params: unknown[] = hasKindFilter
+      ? [
+          this.maxAttempts,
+          this.maxAgeSeconds,
+          boundedLimit,
+          this.workerId,
+          effectiveKinds,
+        ]
+      : [this.maxAttempts, this.maxAgeSeconds, boundedLimit, this.workerId];
+    const kindClause = hasKindFilter
+      ? '\n              AND job_kind = ANY($5::public.job_kind[])'
+      : '';
+
     const raw = await this.runTx((tx) =>
       tx.query<unknown>(
         `WITH candidates AS (
@@ -287,7 +366,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
               AND status = 'queued'
               AND available_at <= clock_timestamp()
               AND attempt_count < $1
-              AND created_at > clock_timestamp() - ($2 * interval '1 second')
+              AND created_at > clock_timestamp() - ($2 * interval '1 second')${kindClause}
             ORDER BY available_at ASC, id ASC
             LIMIT $3
             FOR UPDATE SKIP LOCKED
@@ -313,7 +392,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
                    r.subject_id,
                    r.idempotency_key,
                    r.input_payload`,
-        [this.maxAttempts, this.maxAgeSeconds, boundedLimit, this.workerId],
+        params,
       ),
     );
     return extractReturningRows<ClaimedJobRow>(raw);
@@ -435,24 +514,25 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
     handler: JobHandler,
     execResult: JobExecutionResult,
   ): Promise<JobProcessOutcome> {
-    return this.runTx(async (tx) => {
-      const lookupRows = await tx.query<
-        Array<{ user_id: string; feature_key: string | null }>
-      >(
-        `SELECT user_id,
+    try {
+      return await this.runTx(async (tx) => {
+        const lookupRows = await tx.query<
+          Array<{ user_id: string; feature_key: string | null }>
+        >(
+          `SELECT user_id,
                 feature_key::text AS feature_key
            FROM public.ai_requests
           WHERE id = $1`,
-        [fence.requestId],
-      );
-      const lookup = Array.isArray(lookupRows) ? lookupRows[0] : undefined;
-      if (!lookup) {
-        return { outcome: 'fence_lost', jobId: fence.requestId };
-      }
+          [fence.requestId],
+        );
+        const lookup = Array.isArray(lookupRows) ? lookupRows[0] : undefined;
+        if (!lookup) {
+          return { outcome: 'fence_lost', jobId: fence.requestId };
+        }
 
-      // Lock owner row FIRST (`users FOR SHARE` -> `ai_requests FOR UPDATE`) to stay deadlock-safe
-      const accessRows = await tx.query<OwnerAccessRow[]>(
-        `SELECT u.status::text AS user_status,
+        // Lock owner row FIRST (`users FOR SHARE` -> `ai_requests FOR UPDATE`) to stay deadlock-safe
+        const accessRows = await tx.query<OwnerAccessRow[]>(
+          `SELECT u.status::text AS user_status,
                 CASE
                   WHEN $2::public.feature_key IS NULL THEN true
                   ELSE private.effective_feature_access($1, $2::public.feature_key)
@@ -460,11 +540,11 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
            FROM public.users u
           WHERE u.id = $1
           FOR SHARE OF u`,
-        [lookup.user_id, lookup.feature_key],
-      );
+          [lookup.user_id, lookup.feature_key],
+        );
 
-      const lockedRows = await tx.query<LockedGateRow[]>(
-        `SELECT id,
+        const lockedRows = await tx.query<LockedGateRow[]>(
+          `SELECT id,
                 user_id,
                 task::text AS task,
                 feature_key::text AS feature_key,
@@ -476,118 +556,21 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
            FROM public.ai_requests
           WHERE id = $1
           FOR UPDATE`,
-        [fence.requestId, this.leaseSeconds, this.maxAgeSeconds],
-      );
-      const locked = Array.isArray(lockedRows) ? lockedRows[0] : undefined;
-      if (
-        !locked ||
-        locked.user_id !== lookup.user_id ||
-        locked.status !== 'preparing' ||
-        locked.locked_by !== fence.lockedBy ||
-        Number(locked.attempt_count) !== fence.attemptCount ||
-        locked.lease_valid === false
-      ) {
-        return { outcome: 'fence_lost', jobId: fence.requestId };
-      }
-
-      if (locked.within_deadline === false) {
-        await this.markTerminalFailureInTx(
-          tx,
-          fence,
-          'WORKER_LEASE_EXPIRED',
-          SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+          [fence.requestId, this.leaseSeconds, this.maxAgeSeconds],
         );
-        return {
-          outcome: 'failed_terminal',
-          jobId: fence.requestId,
-          errorCode: 'WORKER_LEASE_EXPIRED',
-        };
-      }
-
-      const access = Array.isArray(accessRows) ? accessRows[0] : undefined;
-      if (!access || access.user_status !== 'active') {
-        await this.markTerminalFailureInTx(
-          tx,
-          fence,
-          'ACCOUNT_SUSPENDED',
-          SAFE_FAILURE_MESSAGES.ACCOUNT_SUSPENDED,
-        );
-        return {
-          outcome: 'failed_terminal',
-          jobId: fence.requestId,
-          errorCode: 'ACCOUNT_SUSPENDED',
-        };
-      }
-      if (access.feature_allowed === false) {
-        await this.markTerminalFailureInTx(
-          tx,
-          fence,
-          'FEATURE_DISABLED',
-          SAFE_FAILURE_MESSAGES.FEATURE_DISABLED,
-        );
-        return {
-          outcome: 'failed_terminal',
-          jobId: fence.requestId,
-          errorCode: 'FEATURE_DISABLED',
-        };
-      }
-
-      const requiresRefCheck = jobRequiresExpectedRefCheck(job);
-      if (
-        requiresRefCheck &&
-        typeof handler.verifyExpectedRefs !== 'function'
-      ) {
-        await this.markTerminalFailureInTx(
-          tx,
-          fence,
-          'STALE_JOB_INPUT',
-          SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
-        );
-        return {
-          outcome: 'failed_terminal',
-          jobId: fence.requestId,
-          errorCode: 'STALE_JOB_INPUT',
-        };
-      }
-
-      if (typeof handler.verifyExpectedRefs === 'function') {
-        const refCheck = await handler.verifyExpectedRefs(tx, job);
-        if (!refCheck.ok) {
-          await this.markTerminalFailureInTx(
-            tx,
-            fence,
-            'STALE_JOB_INPUT',
-            SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
-          );
-          return {
-            outcome: 'failed_terminal',
-            jobId: fence.requestId,
-            errorCode: 'STALE_JOB_INPUT',
-          };
+        const locked = Array.isArray(lockedRows) ? lockedRows[0] : undefined;
+        if (
+          !locked ||
+          locked.user_id !== lookup.user_id ||
+          locked.status !== 'preparing' ||
+          locked.locked_by !== fence.lockedBy ||
+          Number(locked.attempt_count) !== fence.attemptCount ||
+          locked.lease_valid === false
+        ) {
+          return { outcome: 'fence_lost', jobId: fence.requestId };
         }
-      }
 
-      // Unconditionally recheck deadline & live owner/feature access under row locks immediately before persistArtifact
-      const recheckRows = await tx.query<PreCommitRecheckRow[]>(
-        `SELECT (r.created_at > clock_timestamp() - ($2 * interval '1 second')) AS within_deadline,
-                u.status::text AS user_status,
-                CASE
-                  WHEN $4::public.feature_key IS NULL THEN true
-                  ELSE private.effective_feature_access($3, $4::public.feature_key)
-                END AS feature_allowed
-           FROM public.ai_requests r
-           JOIN public.users u ON u.id = $3
-          WHERE r.id = $1`,
-        [
-          fence.requestId,
-          this.maxAgeSeconds,
-          locked.user_id,
-          locked.feature_key,
-        ],
-      );
-      const recheck = Array.isArray(recheckRows) ? recheckRows[0] : undefined;
-      if (recheck) {
-        if (recheck.within_deadline === false) {
+        if (locked.within_deadline === false) {
           await this.markTerminalFailureInTx(
             tx,
             fence,
@@ -600,7 +583,9 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             errorCode: 'WORKER_LEASE_EXPIRED',
           };
         }
-        if (recheck.user_status !== 'active') {
+
+        const access = Array.isArray(accessRows) ? accessRows[0] : undefined;
+        if (!access || access.user_status !== 'active') {
           await this.markTerminalFailureInTx(
             tx,
             fence,
@@ -613,7 +598,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             errorCode: 'ACCOUNT_SUSPENDED',
           };
         }
-        if (recheck.feature_allowed === false) {
+        if (access.feature_allowed === false) {
           await this.markTerminalFailureInTx(
             tx,
             fence,
@@ -626,64 +611,187 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             errorCode: 'FEATURE_DISABLED',
           };
         }
-      }
 
-      const persisted = await handler.persistArtifact(tx, job, execResult);
-      const resultType = persisted?.resultType ?? execResult.resultType;
-      const resultId = persisted?.resultId ?? execResult.resultId;
-      const outputHash = execResult.outputHash ?? sha256Hex(execResult.output);
+        const requiresRefCheck = jobRequiresExpectedRefCheck(job);
+        if (
+          requiresRefCheck &&
+          typeof handler.verifyExpectedRefs !== 'function'
+        ) {
+          await this.markTerminalFailureInTx(
+            tx,
+            fence,
+            'STALE_JOB_INPUT',
+            SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
+          );
+          return {
+            outcome: 'failed_terminal',
+            jobId: fence.requestId,
+            errorCode: 'STALE_JOB_INPUT',
+          };
+        }
 
-      await tx.query(
-        `INSERT INTO public.ai_generations (
-           request_id,
-           task,
-           provider_key,
-           model_id,
-           prompt_version_id,
-           output_schema_id,
-           validation_status,
-           fallback_used,
-           language,
-           input_units,
-           output_units,
-           latency_ms,
-           output_hash
-         )
-         VALUES (
-           $1,
-           $2::public.ai_task,
-           $3,
-           $4,
-           $5,
-           $6,
-           $7::public.ai_validation_status,
-           $8,
-           $9::public.ui_language,
-           $10,
-           $11,
-           $12,
-           $13
-         )
-         RETURNING id`,
-        [
-          fence.requestId,
-          locked.task,
-          execResult.providerKey,
-          execResult.modelId,
-          execResult.promptVersionId,
-          execResult.outputSchemaId,
-          'passed',
-          execResult.fallbackUsed,
-          execResult.language,
-          Math.max(0, Math.trunc(execResult.inputUnits)),
-          Math.max(0, Math.trunc(execResult.outputUnits)),
-          Math.max(0, Math.trunc(execResult.latencyMs)),
-          outputHash,
-        ],
-      );
+        if (typeof handler.verifyExpectedRefs === 'function') {
+          const refCheck = await handler.verifyExpectedRefs(tx, job);
+          if (!refCheck.ok) {
+            await this.markTerminalFailureInTx(
+              tx,
+              fence,
+              'STALE_JOB_INPUT',
+              SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
+            );
+            return {
+              outcome: 'failed_terminal',
+              jobId: fence.requestId,
+              errorCode: 'STALE_JOB_INPUT',
+            };
+          }
+        }
 
-      const finalizedRaw = await tx.query<unknown>(
-        `UPDATE public.ai_requests
+        // Unconditionally recheck deadline & live owner/feature access under row locks immediately before persistArtifact
+        const recheckRows = await tx.query<PreCommitRecheckRow[]>(
+          `SELECT (r.created_at > clock_timestamp() - ($2 * interval '1 second')) AS within_deadline,
+                u.status::text AS user_status,
+                CASE
+                  WHEN $4::public.feature_key IS NULL THEN true
+                  ELSE private.effective_feature_access($3, $4::public.feature_key)
+                END AS feature_allowed
+           FROM public.ai_requests r
+           JOIN public.users u ON u.id = $3
+          WHERE r.id = $1`,
+          [
+            fence.requestId,
+            this.maxAgeSeconds,
+            locked.user_id,
+            locked.feature_key,
+          ],
+        );
+        const recheck = Array.isArray(recheckRows) ? recheckRows[0] : undefined;
+        if (recheck) {
+          if (recheck.within_deadline === false) {
+            await this.markTerminalFailureInTx(
+              tx,
+              fence,
+              'WORKER_LEASE_EXPIRED',
+              SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+            );
+            return {
+              outcome: 'failed_terminal',
+              jobId: fence.requestId,
+              errorCode: 'WORKER_LEASE_EXPIRED',
+            };
+          }
+          if (recheck.user_status !== 'active') {
+            await this.markTerminalFailureInTx(
+              tx,
+              fence,
+              'ACCOUNT_SUSPENDED',
+              SAFE_FAILURE_MESSAGES.ACCOUNT_SUSPENDED,
+            );
+            return {
+              outcome: 'failed_terminal',
+              jobId: fence.requestId,
+              errorCode: 'ACCOUNT_SUSPENDED',
+            };
+          }
+          if (recheck.feature_allowed === false) {
+            await this.markTerminalFailureInTx(
+              tx,
+              fence,
+              'FEATURE_DISABLED',
+              SAFE_FAILURE_MESSAGES.FEATURE_DISABLED,
+            );
+            return {
+              outcome: 'failed_terminal',
+              jobId: fence.requestId,
+              errorCode: 'FEATURE_DISABLED',
+            };
+          }
+        }
+
+        const outputHash =
+          execResult.outputHash ?? sha256Hex(execResult.output);
+        let aiGenerationId: string | null = null;
+        if (execResult.skipAiGeneration !== true) {
+          const genRaw = await tx.query<unknown>(
+            `INSERT INTO public.ai_generations (
+             request_id,
+             task,
+             provider_key,
+             model_id,
+             prompt_version_id,
+             output_schema_id,
+             validation_status,
+             fallback_used,
+             language,
+             input_units,
+             output_units,
+             latency_ms,
+             output_hash
+           )
+           VALUES (
+             $1,
+             $2::public.ai_task,
+             $3,
+             $4,
+             $5,
+             $6,
+             $7::public.ai_validation_status,
+             $8,
+             $9::public.ui_language,
+             $10,
+             $11,
+             $12,
+             $13
+           )
+           RETURNING id`,
+            [
+              fence.requestId,
+              locked.task,
+              execResult.providerKey,
+              execResult.modelId,
+              execResult.promptVersionId,
+              execResult.outputSchemaId,
+              'passed',
+              execResult.fallbackUsed,
+              execResult.language,
+              Math.max(0, Math.trunc(execResult.inputUnits)),
+              Math.max(0, Math.trunc(execResult.outputUnits)),
+              Math.max(0, Math.trunc(execResult.latencyMs)),
+              outputHash,
+            ],
+          );
+          const genRows = extractReturningRows<{ id: string }>(genRaw);
+          aiGenerationId = genRows[0]?.id ? String(genRows[0].id) : null;
+        }
+
+        // Recheck lease/deadline before persistArtifact for both generated and reused (skipAiGeneration) paths
+        const postInsertRows = await tx.query<
+          Array<{ lease_valid?: boolean; within_deadline?: boolean }>
+        >(
+          `SELECT (locked_at IS NOT NULL AND locked_at > clock_timestamp() - ($2 * interval '1 second')) AS lease_valid,
+                  (created_at > clock_timestamp() - ($3 * interval '1 second')) AS within_deadline
+             FROM public.ai_requests
+            WHERE id = $1`,
+          [fence.requestId, this.leaseSeconds, this.maxAgeSeconds],
+        );
+        const postInsert = Array.isArray(postInsertRows)
+          ? postInsertRows[0]
+          : undefined;
+        if (postInsert?.within_deadline === false) {
+          throw new CommitLeaseExpiredError();
+        }
+        if (postInsert?.lease_valid === false) {
+          throw new CommitFenceLostError();
+        }
+
+        const persisted = await handler.persistArtifact(tx, job, execResult, {
+          aiGenerationId,
+        });
+        const resultType = persisted?.resultType ?? execResult.resultType;
+        const resultId = persisted?.resultId ?? execResult.resultId;
+
+        const finalizedRaw = await tx.query<unknown>(
+          `UPDATE public.ai_requests
             SET status = 'succeeded',
                 result_type = $4,
                 result_id = $5,
@@ -704,35 +812,79 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             AND status = 'preparing'
             AND locked_by = $2
             AND attempt_count = $3
+            AND created_at > clock_timestamp() - ($13 * interval '1 second')
          RETURNING id`,
-        [
-          fence.requestId,
-          fence.lockedBy,
-          fence.attemptCount,
+          [
+            fence.requestId,
+            fence.lockedBy,
+            fence.attemptCount,
+            resultType,
+            resultId,
+            execResult.skipAiGeneration === true
+              ? null
+              : execResult.providerKey,
+            execResult.skipAiGeneration === true ? null : execResult.modelId,
+            execResult.fallbackUsed,
+            execResult.skipAiGeneration === true
+              ? null
+              : execResult.promptVersionId,
+            Math.max(0, Math.trunc(execResult.inputUnits)),
+            Math.max(0, Math.trunc(execResult.outputUnits)),
+            Math.max(0, Math.trunc(execResult.latencyMs)),
+            this.maxAgeSeconds,
+          ],
+        );
+        const finalized = extractReturningRows<{ id: string }>(finalizedRaw);
+
+        if (finalized.length === 0) {
+          const deadlineRows = await tx.query<
+            Array<{ within_deadline?: boolean }>
+          >(
+            `SELECT (created_at > clock_timestamp() - ($2 * interval '1 second')) AS within_deadline
+               FROM public.ai_requests
+              WHERE id = $1`,
+            [fence.requestId, this.maxAgeSeconds],
+          );
+          const deadlineCheck = Array.isArray(deadlineRows)
+            ? deadlineRows[0]
+            : undefined;
+          if (deadlineCheck?.within_deadline === false) {
+            throw new CommitLeaseExpiredError();
+          }
+          throw new CommitFenceLostError();
+        }
+
+        return {
+          outcome: 'succeeded',
+          jobId: fence.requestId,
           resultType,
           resultId,
-          execResult.providerKey,
-          execResult.modelId,
-          execResult.fallbackUsed,
-          execResult.promptVersionId,
-          Math.max(0, Math.trunc(execResult.inputUnits)),
-          Math.max(0, Math.trunc(execResult.outputUnits)),
-          Math.max(0, Math.trunc(execResult.latencyMs)),
-        ],
-      );
-      const finalized = extractReturningRows<{ id: string }>(finalizedRaw);
-
-      if (finalized.length === 0) {
-        throw new Error('Attempt fence lost during final status update');
+        };
+      });
+    } catch (error) {
+      if (error instanceof CommitFenceLostError) {
+        return { outcome: 'fence_lost', jobId: fence.requestId };
       }
-
-      return {
-        outcome: 'succeeded',
-        jobId: fence.requestId,
-        resultType,
-        resultId,
-      };
-    });
+      if (error instanceof CommitLeaseExpiredError) {
+        const updated = await this.runTx((tx) =>
+          this.markTerminalFailureInTx(
+            tx,
+            fence,
+            'WORKER_LEASE_EXPIRED',
+            SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+          ),
+        );
+        if (!updated) {
+          return { outcome: 'fence_lost', jobId: fence.requestId };
+        }
+        return {
+          outcome: 'failed_terminal',
+          jobId: fence.requestId,
+          errorCode: 'WORKER_LEASE_EXPIRED',
+        };
+      }
+      throw error;
+    }
   }
 
   private async markTerminalFailureInTx(
@@ -863,17 +1015,55 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
    * Claims and starts processing up to `batchSize` queued jobs concurrently, waiting for EVERY
    * started job to settle (`Promise.allSettled`) before returning or rethrowing so `pollingInFlight`
    * cannot clear while sibling jobs are still running.
+   *
+   * Supports both registry mode (`pollOnce(batchSize?)`) and backward-compatible single-handler mode
+   * (`pollOnce(handler, batchSize?)`).
    */
   async pollOnce(
-    handler: JobHandler,
-    batchSize = 1,
+    handlerOrBatchSize?: JobHandler | number,
+    batchSizeArg?: number,
   ): Promise<JobProcessOutcome[]> {
-    const claimed = await this.claimBatch(batchSize);
+    const fallbackHandler =
+      typeof handlerOrBatchSize === 'object' && handlerOrBatchSize !== null
+        ? handlerOrBatchSize
+        : undefined;
+    const effectiveBatchSize =
+      typeof handlerOrBatchSize === 'number'
+        ? handlerOrBatchSize
+        : (batchSizeArg ?? 1);
+
+    if (!fallbackHandler && this.handlers.size === 0) {
+      return [];
+    }
+
+    const claimed = await this.claimBatch(
+      effectiveBatchSize,
+      fallbackHandler ? null : undefined,
+    );
     if (claimed.length === 0) {
       return [];
     }
+
     const settled = await Promise.allSettled(
-      claimed.map((job) => this.processClaimedJob(job, handler)),
+      claimed.map((job) => {
+        const resolvedHandler =
+          this.handlers.get(job.job_kind) ?? fallbackHandler;
+        if (!resolvedHandler) {
+          this.logger.warn(
+            JSON.stringify({
+              operation: 'job_queue.dispatch',
+              code: 'UNREGISTERED_JOB_KIND',
+              jobKind: job.job_kind,
+              jobId: job.id,
+            }),
+          );
+          return Promise.resolve<JobProcessOutcome>({
+            outcome: 'fence_lost',
+            jobId: job.id,
+          });
+        }
+        return this.processClaimedJob(job, resolvedHandler);
+      }),
     );
     const outcomes: JobProcessOutcome[] = [];
     let firstError: unknown;
@@ -892,17 +1082,32 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
     return outcomes;
   }
 
-  /** Starts a non-overlapping polling loop (`pollIntervalMs`). */
-  start(handler: JobHandler, batchSize = 1): void {
+  /**
+   * Starts a single idempotent non-overlapping polling loop (`pollIntervalMs`).
+   * Safe to invoke from multiple modules' `onModuleInit()` hooks.
+   */
+  start(handlerOrBatchSize?: JobHandler | number, batchSizeArg = 1): void {
     if (this.pollTimer !== null) {
       return;
     }
+    const fallbackHandler =
+      typeof handlerOrBatchSize === 'object' && handlerOrBatchSize !== null
+        ? handlerOrBatchSize
+        : undefined;
+    const effectiveBatchSize =
+      typeof handlerOrBatchSize === 'number'
+        ? handlerOrBatchSize
+        : batchSizeArg;
+
     this.pollTimer = setInterval(() => {
       if (this.pollingInFlight) {
         return;
       }
       this.pollingInFlight = true;
-      void this.pollOnce(handler, batchSize)
+      void this.pollOnce(
+        fallbackHandler ?? effectiveBatchSize,
+        effectiveBatchSize,
+      )
         .catch(() => {
           this.logger.warn('Queue poll failed (JOB_QUEUE_POLL_ERROR)');
         })
