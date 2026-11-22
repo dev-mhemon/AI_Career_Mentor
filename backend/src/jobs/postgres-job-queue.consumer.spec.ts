@@ -133,7 +133,8 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
       if (
         sql.includes('FROM public.ai_requests') &&
         !sql.includes('FOR UPDATE') &&
-        !sql.includes('JOIN public.users')
+        !sql.includes('JOIN public.users') &&
+        !sql.includes('lease_valid')
       ) {
         lockOrder.push('ai_requests_unlocked_lookup');
         return [{ user_id: USER_ID, feature_key: 'roadmap_generator' }];
@@ -908,5 +909,604 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     await vi.advanceTimersByTimeAsync(1_000);
     expect(claimSpy).toHaveBeenCalledTimes(2);
     consumer.stop();
+  });
+
+  it('registers multiple handlers by job_kind, filters claimBatch via ANY($5::public.job_kind[]), dispatches per kind, and starts idempotently', async () => {
+    const roadmapJob = makeClaimedJob({
+      id: '11111111-1111-4111-8111-111111111111',
+      job_kind: 'roadmap_generate',
+      task: 'roadmap_generate',
+    });
+    const topicJob = makeClaimedJob({
+      id: '22222222-2222-4222-8222-222222222222',
+      job_kind: 'topic_content',
+      task: 'topic_content',
+      feature_key: 'daily_plan',
+      input_payload: {
+        v: 1,
+        args: {
+          topic_id: RESULT_ID,
+          skill_id: RESULT_ID,
+          career_level: 'junior',
+          content_version: 1,
+        },
+        expected_refs: { content_version: 1 },
+      },
+    });
+
+    const roadmapHandler: JobHandler = {
+      execute: vi.fn().mockResolvedValue(makeExecResult()),
+      verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+      persistArtifact: vi.fn().mockResolvedValue({
+        resultType: 'roadmap',
+        resultId: RESULT_ID,
+      }),
+    };
+    const topicHandler: JobHandler = {
+      execute: vi.fn().mockResolvedValue({
+        ...makeExecResult(),
+        resultType: 'topic',
+        outputSchemaId: 'topic_content.v1',
+      }),
+      verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+      persistArtifact: vi.fn().mockResolvedValue({
+        resultType: 'topic',
+        resultId: RESULT_ID,
+      }),
+    };
+
+    consumer.registerHandler('roadmap_generate', roadmapHandler);
+    consumer.registerHandler('topic_content', topicHandler);
+    expect(consumer.getRegisteredKinds()).toEqual([
+      'roadmap_generate',
+      'topic_content',
+    ]);
+
+    const accessFeatureKeys: string[] = [];
+    const recheckFeatureKeys: Record<string, unknown> = {};
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FOR UPDATE SKIP LOCKED')) {
+        expect(sql).toContain('AND job_kind = ANY($5::public.job_kind[])');
+        expect(params).toEqual([
+          5,
+          3600,
+          2,
+          WORKER_ID,
+          ['roadmap_generate', 'topic_content'],
+        ]);
+        return [[roadmapJob, topicJob], 2];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users') &&
+        !sql.includes('lease_valid')
+      ) {
+        const reqId = String(params?.[0]);
+        return [
+          {
+            user_id: USER_ID,
+            feature_key:
+              reqId === topicJob.id ? 'daily_plan' : 'roadmap_generator',
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        const reqId = String(params?.[0]);
+        return [
+          {
+            id: reqId,
+            user_id: USER_ID,
+            task: reqId === topicJob.id ? 'topic_content' : 'roadmap_generate',
+            feature_key:
+              reqId === topicJob.id ? 'daily_plan' : 'roadmap_generator',
+            status: 'preparing',
+            locked_by: WORKER_ID,
+            attempt_count: 1,
+            lease_valid: true,
+            within_deadline: true,
+          },
+        ];
+      }
+      if (sql.includes('FROM public.users u')) {
+        accessFeatureKeys.push(String(params?.[1]));
+        return [{ user_status: 'active', feature_allowed: true }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests r') &&
+        sql.includes('JOIN public.users u')
+      ) {
+        recheckFeatureKeys[String(params?.[0])] = params?.[3];
+        return [
+          {
+            within_deadline: true,
+            user_status: 'active',
+            feature_allowed: true,
+          },
+        ];
+      }
+      if (sql.includes('INSERT INTO public.ai_generations')) {
+        return [[{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }], 1];
+      }
+      if (sql.includes('lease_valid') && !sql.includes('FOR UPDATE')) {
+        return [{ lease_valid: true, within_deadline: true }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'succeeded'")
+      ) {
+        return [[{ id: String(params?.[0]) }], 1];
+      }
+      return [];
+    });
+
+    const outcomes = await consumer.pollOnce(2);
+    expect(outcomes).toEqual([
+      {
+        outcome: 'succeeded',
+        jobId: roadmapJob.id,
+        resultType: 'roadmap',
+        resultId: RESULT_ID,
+      },
+      {
+        outcome: 'succeeded',
+        jobId: topicJob.id,
+        resultType: 'topic',
+        resultId: RESULT_ID,
+      },
+    ]);
+    expect(accessFeatureKeys.sort()).toEqual([
+      'daily_plan',
+      'roadmap_generator',
+    ]);
+    expect(recheckFeatureKeys).toEqual({
+      [roadmapJob.id]: 'roadmap_generator',
+      [topicJob.id]: 'daily_plan',
+    });
+    expect(roadmapHandler.execute).toHaveBeenCalledTimes(1);
+    expect(topicHandler.execute).toHaveBeenCalledTimes(1);
+
+    // Idempotent start() starts only one interval timer across modules
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    consumer.start();
+    consumer.start();
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    consumer.stop();
+  });
+
+  it('inserts ai_generations BEFORE calling persistArtifact and passes aiGenerationId in commit context, and skips ai_generations on skipAiGeneration=true', async () => {
+    const GEN_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const order: string[] = [];
+
+    queryMock.mockImplementation(async (sql: string) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users')
+      ) {
+        return [{ user_id: USER_ID, feature_key: 'daily_plan' }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return [
+          {
+            id: JOB_ID,
+            user_id: USER_ID,
+            task: 'topic_content',
+            feature_key: 'daily_plan',
+            status: 'preparing',
+            locked_by: WORKER_ID,
+            attempt_count: 1,
+            lease_valid: true,
+            within_deadline: true,
+          },
+        ];
+      }
+      if (sql.includes('FROM public.users u')) {
+        return [{ user_status: 'active', feature_allowed: true }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests r') &&
+        sql.includes('JOIN public.users u')
+      ) {
+        return [
+          {
+            within_deadline: true,
+            user_status: 'active',
+            feature_allowed: true,
+          },
+        ];
+      }
+      if (sql.includes('INSERT INTO public.ai_generations')) {
+        order.push('insert_ai_generations');
+        return [[{ id: GEN_ID }], 1];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'succeeded'")
+      ) {
+        order.push('update_ai_requests_succeeded');
+        return [[{ id: JOB_ID }], 1];
+      }
+      return [];
+    });
+
+    const persistSpy = vi.fn(async (_tx, _job, _res, ctx) => {
+      order.push(`persist_artifact:${ctx?.aiGenerationId ?? 'null'}`);
+      return { resultType: 'topic', resultId: RESULT_ID };
+    });
+
+    const normalOutcome = await consumer.processClaimedJob(
+      makeClaimedJob({
+        task: 'topic_content',
+        job_kind: 'topic_content',
+        feature_key: 'daily_plan',
+      }),
+      {
+        execute: vi.fn().mockResolvedValue({
+          ...makeExecResult(),
+          resultType: 'topic',
+          outputSchemaId: 'topic_content.v1',
+        }),
+        verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+        persistArtifact: persistSpy,
+      },
+    );
+
+    expect(normalOutcome).toEqual({
+      outcome: 'succeeded',
+      jobId: JOB_ID,
+      resultType: 'topic',
+      resultId: RESULT_ID,
+    });
+    expect(order).toEqual([
+      'insert_ai_generations',
+      `persist_artifact:${GEN_ID}`,
+      'update_ai_requests_succeeded',
+    ]);
+
+    // Short-circuit reuse (`skipAiGeneration: true`) omits ai_generations insert and passes null
+    order.length = 0;
+    const reuseOutcome = await consumer.processClaimedJob(
+      makeClaimedJob({
+        task: 'topic_content',
+        job_kind: 'topic_content',
+        feature_key: 'daily_plan',
+      }),
+      {
+        execute: vi.fn().mockResolvedValue({
+          ...makeExecResult(),
+          resultType: 'topic',
+          outputSchemaId: 'topic_content.v1',
+          skipAiGeneration: true,
+        }),
+        verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+        persistArtifact: persistSpy,
+      },
+    );
+
+    expect(reuseOutcome).toEqual({
+      outcome: 'succeeded',
+      jobId: JOB_ID,
+      resultType: 'topic',
+      resultId: RESULT_ID,
+    });
+    expect(order).toEqual([
+      'persist_artifact:null',
+      'update_ai_requests_succeeded',
+    ]);
+  });
+
+  it('returns [] immediately for explicit empty jobKinds in claimBatch and preserves unfiltered claim when fallback handler is passed alongside registered handlers', async () => {
+    // Explicit empty list must NOT drop the job_kind filter
+    const emptyClaim = await consumer.claimBatch(5, []);
+    expect(emptyClaim).toEqual([]);
+    expect(queryMock).not.toHaveBeenCalled();
+
+    const roadmapJob = makeClaimedJob({
+      id: '11111111-1111-4111-8111-111111111111',
+      job_kind: 'roadmap_generate',
+      task: 'roadmap_generate',
+    });
+    const fallbackJob = makeClaimedJob({
+      id: '22222222-2222-4222-8222-222222222222',
+      job_kind: 'topic_content',
+      task: 'topic_content',
+      feature_key: 'daily_plan',
+      input_payload: {
+        v: 1,
+        args: {
+          topic_id: RESULT_ID,
+          skill_id: RESULT_ID,
+          career_level: 'mid',
+          content_version: 1,
+        },
+        expected_refs: { content_version: 1 },
+      },
+    });
+
+    const registeredHandler: JobHandler = {
+      execute: vi.fn().mockResolvedValue(makeExecResult()),
+      verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+      persistArtifact: vi.fn().mockResolvedValue({
+        resultType: 'roadmap',
+        resultId: RESULT_ID,
+      }),
+    };
+    const fallbackHandler: JobHandler = {
+      execute: vi.fn().mockResolvedValue({
+        ...makeExecResult(),
+        resultType: 'topic',
+        outputSchemaId: 'topic_content.v1',
+      }),
+      verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+      persistArtifact: vi.fn().mockResolvedValue({
+        resultType: 'topic',
+        resultId: RESULT_ID,
+      }),
+    };
+
+    consumer.registerHandler('roadmap_generate', registeredHandler);
+
+    const fallbackAccessFeatureKeys: string[] = [];
+    const fallbackRecheckFeatureKeys: Record<string, unknown> = {};
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FOR UPDATE SKIP LOCKED')) {
+        expect(sql).not.toContain('AND job_kind = ANY($5::public.job_kind[])');
+        expect(params).toEqual([5, 3600, 2, WORKER_ID]);
+        return [[roadmapJob, fallbackJob], 2];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        !sql.includes('FOR UPDATE') &&
+        !sql.includes('JOIN public.users') &&
+        !sql.includes('lease_valid')
+      ) {
+        const reqId = String(params?.[0]);
+        return [
+          {
+            user_id: USER_ID,
+            feature_key:
+              reqId === fallbackJob.id ? 'daily_plan' : 'roadmap_generator',
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        const reqId = String(params?.[0]);
+        return [
+          {
+            id: reqId,
+            user_id: USER_ID,
+            task:
+              reqId === fallbackJob.id ? 'topic_content' : 'roadmap_generate',
+            feature_key:
+              reqId === fallbackJob.id ? 'daily_plan' : 'roadmap_generator',
+            status: 'preparing',
+            locked_by: WORKER_ID,
+            attempt_count: 1,
+            lease_valid: true,
+            within_deadline: true,
+          },
+        ];
+      }
+      if (sql.includes('FROM public.users u')) {
+        fallbackAccessFeatureKeys.push(String(params?.[1]));
+        return [{ user_status: 'active', feature_allowed: true }];
+      }
+      if (
+        sql.includes('FROM public.ai_requests r') &&
+        sql.includes('JOIN public.users u')
+      ) {
+        fallbackRecheckFeatureKeys[String(params?.[0])] = params?.[3];
+        return [
+          {
+            within_deadline: true,
+            user_status: 'active',
+            feature_allowed: true,
+          },
+        ];
+      }
+      if (sql.includes('INSERT INTO public.ai_generations')) {
+        return [[{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }], 1];
+      }
+      if (sql.includes('lease_valid') && !sql.includes('FOR UPDATE')) {
+        return [{ lease_valid: true, within_deadline: true }];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'succeeded'")
+      ) {
+        return [[{ id: String(params?.[0]) }], 1];
+      }
+      return [];
+    });
+
+    const outcomes = await consumer.pollOnce(fallbackHandler, 2);
+    expect(outcomes).toEqual([
+      {
+        outcome: 'succeeded',
+        jobId: roadmapJob.id,
+        resultType: 'roadmap',
+        resultId: RESULT_ID,
+      },
+      {
+        outcome: 'succeeded',
+        jobId: fallbackJob.id,
+        resultType: 'topic',
+        resultId: RESULT_ID,
+      },
+    ]);
+    expect(fallbackAccessFeatureKeys.sort()).toEqual([
+      'daily_plan',
+      'roadmap_generator',
+    ]);
+    expect(fallbackRecheckFeatureKeys).toEqual({
+      [roadmapJob.id]: 'roadmap_generator',
+      [fallbackJob.id]: 'daily_plan',
+    });
+    expect(registeredHandler.execute).toHaveBeenCalledTimes(1);
+    expect(fallbackHandler.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back provisional ai_generations and marks WORKER_LEASE_EXPIRED when pre-persist lease/deadline recheck expires (generated and reused paths)', async () => {
+    const trace: string[] = [];
+    const fakeQueryRunner = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn(async () => {
+        trace.push('commit');
+      }),
+      rollbackTransaction: vi.fn(async () => {
+        trace.push('rollback');
+      }),
+      release: vi.fn().mockResolvedValue(undefined),
+      manager: {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('SET LOCAL ROLE')) {
+            return [];
+          }
+          if (
+            sql.includes('FROM public.ai_requests') &&
+            !sql.includes('FOR UPDATE') &&
+            !sql.includes('JOIN public.users') &&
+            !sql.includes('lease_valid')
+          ) {
+            return [{ user_id: USER_ID, feature_key: 'daily_plan' }];
+          }
+          if (sql.includes('FROM public.users u')) {
+            return [{ user_status: 'active', feature_allowed: true }];
+          }
+          if (
+            sql.includes('FROM public.ai_requests') &&
+            sql.includes('FOR UPDATE')
+          ) {
+            return [
+              {
+                id: JOB_ID,
+                user_id: USER_ID,
+                task: 'topic_content',
+                feature_key: 'daily_plan',
+                status: 'preparing',
+                locked_by: WORKER_ID,
+                attempt_count: 1,
+                lease_valid: true,
+                within_deadline: true,
+              },
+            ];
+          }
+          if (
+            sql.includes('FROM public.ai_requests r') &&
+            sql.includes('JOIN public.users u')
+          ) {
+            return [
+              {
+                within_deadline: true,
+                user_status: 'active',
+                feature_allowed: true,
+              },
+            ];
+          }
+          if (sql.includes('INSERT INTO public.ai_generations')) {
+            trace.push('insert_ai_generations');
+            return [[{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }], 1];
+          }
+          if (sql.includes('lease_valid') && !sql.includes('FOR UPDATE')) {
+            trace.push('lease_recheck');
+            return [{ lease_valid: false, within_deadline: true }];
+          }
+          if (
+            sql.includes('UPDATE public.ai_requests') &&
+            sql.includes("SET status = 'failed'")
+          ) {
+            trace.push('update_failed');
+            return [[{ id: JOB_ID }], 1];
+          }
+          return [];
+        }),
+      },
+    };
+
+    const realDatabase = new DatabaseService({
+      createQueryRunner: vi.fn(() => fakeQueryRunner),
+    } as unknown as DataSource);
+    const realConsumer = new PostgresJobQueueConsumer(
+      realDatabase,
+      configMock,
+      () => 0,
+      WORKER_ID,
+    );
+
+    const persistArtifact = vi.fn();
+    const outcome = await realConsumer.processClaimedJob(
+      makeClaimedJob({
+        task: 'topic_content',
+        job_kind: 'topic_content',
+        feature_key: 'daily_plan',
+      }),
+      {
+        execute: vi.fn().mockResolvedValue({
+          ...makeExecResult(),
+          resultType: 'topic',
+          outputSchemaId: 'topic_content.v1',
+        }),
+        verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+        persistArtifact,
+      },
+    );
+
+    expect(outcome).toEqual({
+      outcome: 'failed_terminal',
+      jobId: JOB_ID,
+      errorCode: 'WORKER_LEASE_EXPIRED',
+    });
+    expect(persistArtifact).not.toHaveBeenCalled();
+    expect(trace).toEqual([
+      'insert_ai_generations',
+      'lease_recheck',
+      'rollback',
+      'update_failed',
+      'commit',
+    ]);
+
+    // Reused artifact path (skipAiGeneration: true) also runs lease/deadline recheck before persistArtifact
+    trace.length = 0;
+    const reusedOutcome = await realConsumer.processClaimedJob(
+      makeClaimedJob({
+        task: 'topic_content',
+        job_kind: 'topic_content',
+        feature_key: 'daily_plan',
+      }),
+      {
+        execute: vi.fn().mockResolvedValue({
+          ...makeExecResult(),
+          resultType: 'topic',
+          outputSchemaId: 'topic_content.v1',
+          skipAiGeneration: true,
+        }),
+        verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+        persistArtifact,
+      },
+    );
+    expect(reusedOutcome).toEqual({
+      outcome: 'failed_terminal',
+      jobId: JOB_ID,
+      errorCode: 'WORKER_LEASE_EXPIRED',
+    });
+    expect(persistArtifact).not.toHaveBeenCalled();
+    expect(trace).toEqual([
+      'lease_recheck',
+      'rollback',
+      'update_failed',
+      'commit',
+    ]);
   });
 });

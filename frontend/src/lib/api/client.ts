@@ -539,12 +539,17 @@ export async function getCurrentUserState(
 
 export type ExperienceLevel = 'beginner' | 'junior' | 'mid' | 'senior';
 export type LearningPreference = 'reading' | 'hands_on' | 'visual' | 'mixed';
+export type LearningState =
+  | 'not_started'
+  | 'learning'
+  | 'practicing'
+  | 'proficient';
 
 export interface ProfileSkillDTO {
   skill_id: string;
   name: string;
   alias_resolved: boolean;
-  learning_state: 'not_started' | 'learning' | 'practicing' | 'proficient';
+  learning_state: LearningState;
   source: 'self_reported' | 'evidence';
 }
 
@@ -1649,4 +1654,315 @@ export function archiveRoadmap(
       ...(options?.signal ? { signal: options.signal } : {}),
     },
   );
+}
+
+// ─── Learning, Daily Plans, Topic Content & Today API (C05 §14.6 / §15.6) ───
+
+export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
+export type PlanDayStatus = PlanItemStatus;
+export type TodayStatus =
+  | 'ready'
+  | 'preparing'
+  | 'no_focus_roadmap'
+  | 'no_daily_plan'
+  | 'plan_completed';
+export type ResourceType =
+  | 'official_docs'
+  | 'release_notes'
+  | 'article'
+  | 'standard'
+  | 'video'
+  | 'other';
+export type AttemptStatus =
+  | 'generated'
+  | 'started'
+  | 'submitted'
+  | 'ai_reviewed'
+  | 'feedback_available';
+
+export interface PlanDayTopicDTO {
+  plan_item_id: string;
+  topic_id: string;
+  title: string;
+}
+
+export interface PlanDayDTO {
+  day_no: number;
+  status: PlanDayStatus;
+  topics: PlanDayTopicDTO[];
+  completed_at: string | null;
+}
+
+export interface DailyPlanResponseDTO {
+  plan_id: string;
+  roadmap_id: string;
+  is_focus: boolean;
+  hours_per_day: number;
+  roadmap_version_no: number;
+  next_incomplete_day_no: number | null;
+  total_days: number;
+  completed_days: number;
+  days: PlanDayDTO[];
+}
+
+export interface PaginatedDailyPlanResponseDTO {
+  plan: DailyPlanResponseDTO;
+  meta: PageMetaDTO;
+}
+
+export interface GetDailyPlanParams {
+  roadmap_id?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface CreateDailyPlanDTO {
+  roadmap_id: string;
+  hours_per_day: number;
+}
+
+export interface RebuildDailyPlanDTO {
+  hours_per_day: number;
+}
+
+export interface TopicImportantQuestionDTO {
+  question: string;
+  answer_markdown: string;
+}
+
+export interface TopicSourceRefDTO {
+  publisher: string;
+  url: string;
+  retrieved_at?: string;
+}
+
+export interface TopicDetailDTO {
+  topic_id: string;
+  title: string;
+  career_level: CareerLevel;
+  content_version: number;
+  explanation_markdown: string | null;
+  important_questions: TopicImportantQuestionDTO[];
+  sources: TopicSourceRefDTO[];
+  learning_state: LearningState;
+  required_depth: string;
+  rating_allowed: boolean;
+  report_allowed: boolean;
+}
+
+export interface TodayPlanDayDTO {
+  day_no: number;
+  total_days: number;
+}
+
+export interface TodayQuizSummaryDTO {
+  attempt_id: string | null;
+  status: AttemptStatus | null;
+  can_retry: boolean;
+}
+
+export interface TodayResponseDTO {
+  status: TodayStatus;
+  roadmap_id: string | null;
+  plan_id: string | null;
+  plan_day: TodayPlanDayDTO | null;
+  topic: TopicDetailDTO | null;
+  quiz: TodayQuizSummaryDTO;
+  job: JobAcceptedDTO | null;
+  requires_learning_hours: boolean;
+  preferred_daily_hours?: number | null;
+}
+
+export interface ListLearningTopicsParams {
+  roadmap_id?: string;
+  priority?: ItemPriority;
+  learning_state?: LearningState;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TopicSummaryDTO {
+  topic_id: string;
+  title: string;
+  skill_id: string;
+  priority: ItemPriority;
+  career_level: CareerLevel;
+  learning_state: LearningState;
+  plan_day_no: number | null;
+}
+
+export interface TopicListResponseDTO {
+  items: TopicSummaryDTO[];
+  meta: PageMetaDTO;
+}
+
+export interface ListLearningResourcesParams {
+  topic_id: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface LearningResourceDTO {
+  id: string;
+  title: string;
+  publisher: string;
+  url: string;
+  resource_type: ResourceType;
+  retrieved_at: string | null;
+}
+
+export interface LearningResourceListResponseDTO {
+  items: LearningResourceDTO[];
+  meta: PageMetaDTO;
+}
+
+/**
+ * GET /learning/daily-plan (EP-L01, Gate: none)
+ */
+export async function getDailyPlan(
+  accessToken: string,
+  params?: GetDailyPlanParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedDailyPlanResponseDTO> {
+  const search = new URLSearchParams();
+  if (params?.roadmap_id) search.set('roadmap_id', params.roadmap_id.trim());
+  if (params?.cursor) search.set('cursor', params.cursor);
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) {
+    search.set('limit', String(params.limit));
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<DailyPlanResponseDTO>(
+    qs ? `/learning/daily-plan?${qs}` : '/learning/daily-plan',
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  return {
+    plan: envelope.data,
+    meta: envelope.meta ?? {
+      limit: params?.limit ?? 20,
+      next_cursor: null,
+    },
+  };
+}
+
+/**
+ * POST /learning/daily-plans (EP-L02, 201 Created, H-IDEM, Gate: write daily_plan)
+ */
+export function createDailyPlan(
+  accessToken: string,
+  body: CreateDailyPlanDTO,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<DailyPlanResponseDTO> {
+  return apiFetch<DailyPlanResponseDTO>('/learning/daily-plans', accessToken, {
+    method: 'POST',
+    headers: withIdempotencyKey(idempotencyKey),
+    body: JSON.stringify(body),
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+}
+
+/**
+ * POST /learning/daily-plans/:id/rebuild (EP-L03, 200 OK, Gate: write daily_plan)
+ */
+export function rebuildDailyPlan(
+  accessToken: string,
+  planId: string,
+  body: RebuildDailyPlanDTO,
+  options?: AuthStateRequestOptions,
+): Promise<DailyPlanResponseDTO> {
+  return apiFetch<DailyPlanResponseDTO>(
+    `/learning/daily-plans/${encodeURIComponent(planId.trim())}/rebuild`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /learning/today (EP-L04, Gate: none for reads; daily_plan checked on missing-content enqueue)
+ */
+export function getToday(
+  accessToken: string,
+  options?: AuthStateRequestOptions,
+): Promise<TodayResponseDTO> {
+  return apiFetch<TodayResponseDTO>('/learning/today', accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+}
+
+/**
+ * GET /learning/topics (EP-L05, Gate: none)
+ */
+export async function listLearningTopics(
+  accessToken: string,
+  params?: ListLearningTopicsParams,
+  options?: AuthStateRequestOptions,
+): Promise<TopicListResponseDTO> {
+  const search = new URLSearchParams();
+  if (params?.roadmap_id) search.set('roadmap_id', params.roadmap_id.trim());
+  if (params?.priority) search.set('priority', params.priority);
+  if (params?.learning_state) search.set('learning_state', params.learning_state);
+  if (params?.cursor) search.set('cursor', params.cursor);
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) {
+    search.set('limit', String(params.limit));
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<
+    TopicSummaryDTO[] | { items: TopicSummaryDTO[]; meta?: PageMetaDTO }
+  >(qs ? `/learning/topics?${qs}` : '/learning/topics', accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  return normalizePaginatedEnvelope(envelope, params?.limit ?? 20);
+}
+
+/**
+ * GET /learning/topics/:id (EP-L06, Gate: none)
+ */
+export function getLearningTopic(
+  accessToken: string,
+  topicId: string,
+  options?: AuthStateRequestOptions,
+): Promise<TopicDetailDTO> {
+  return apiFetch<TopicDetailDTO>(
+    `/learning/topics/${encodeURIComponent(topicId.trim())}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /learning/resources (EP-L07, Gate: none)
+ */
+export async function listLearningResources(
+  accessToken: string,
+  params: ListLearningResourcesParams,
+  options?: AuthStateRequestOptions,
+): Promise<LearningResourceListResponseDTO> {
+  const search = new URLSearchParams();
+  search.set('topic_id', params.topic_id.trim());
+  if (params.cursor) search.set('cursor', params.cursor);
+  if (typeof params.limit === 'number' && Number.isFinite(params.limit)) {
+    search.set('limit', String(params.limit));
+  }
+  const envelope = await apiFetchEnvelope<
+    LearningResourceDTO[] | { items: LearningResourceDTO[]; meta?: PageMetaDTO }
+  >(`/learning/resources?${search.toString()}`, accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  return normalizePaginatedEnvelope(envelope, params.limit ?? 20);
 }

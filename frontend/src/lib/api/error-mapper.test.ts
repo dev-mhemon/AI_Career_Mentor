@@ -345,6 +345,67 @@ describe("mapApiError", () => {
       expect(mapped.message).not.toContain("stack trace");
     }
   });
+
+  it("maps all M07 learning error codes cleanly with zero internal leaks", () => {
+    const rawInternalLeak = "google-gemini internal postgres detail stack trace";
+    const cases: Array<{
+      status: number;
+      code: string;
+      tone: "error" | "warning" | "info";
+      match: RegExp;
+    }> = [
+      {
+        status: 404,
+        code: "DAILY_PLAN_NOT_FOUND",
+        tone: "info",
+        match: /no daily plan exists/i,
+      },
+      {
+        status: 404,
+        code: "NO_FOCUS_ROADMAP",
+        tone: "info",
+        match: /no focus roadmap.*selected/i,
+      },
+      {
+        status: 409,
+        code: "DAILY_PLAN_EXISTS",
+        tone: "warning",
+        match: /already exists.*rebuild/i,
+      },
+      {
+        status: 422,
+        code: "LEARNING_HOURS_REQUIRED",
+        tone: "warning",
+        match: /0\.5.*12.*0\.5/i,
+      },
+      {
+        status: 409,
+        code: "ROADMAP_NOT_LOCKED",
+        tone: "warning",
+        match: /roadmap must be locked/i,
+      },
+      {
+        status: 409,
+        code: "ROADMAP_ARCHIVED",
+        tone: "warning",
+        match: /archived.*read-only/i,
+      },
+    ];
+
+    for (const c of cases) {
+      const mapped = mapApiError(
+        new ApiError(c.status, rawInternalLeak, c.code, "req-l-1"),
+      );
+      expect(mapped.code).toBe(c.code);
+      expect(mapped.status).toBe(c.status);
+      expect(mapped.tone).toBe(c.tone);
+      expect(mapped.retryable).toBe(false);
+      expect(mapped.message).toMatch(c.match);
+      expect(mapped.message).not.toContain("gemini");
+      expect(mapped.message).not.toContain("postgres");
+      expect(mapped.message).not.toContain("stack trace");
+    }
+  });
 });
 
 describe("mapActionResult", () => {

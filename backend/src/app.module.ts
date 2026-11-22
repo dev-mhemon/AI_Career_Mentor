@@ -10,6 +10,7 @@ import { AccountModule } from './account/account.module.js';
 import { AiModule } from './ai/ai.module.js';
 import { CareerModule } from './career/career.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
+import { LearningModule } from './learning/learning.module.js';
 import { RoadmapModule } from './roadmap/roadmap.module.js';
 
 @Module({
@@ -44,6 +45,7 @@ import { RoadmapModule } from './roadmap/roadmap.module.js';
     CareerModule,
     JobsModule,
     RoadmapModule,
+    LearningModule,
   ],
   controllers: [AppController],
   providers: [AppService],

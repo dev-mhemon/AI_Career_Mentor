@@ -42,6 +42,17 @@ import {
   getRoadmapVersion,
   focusRoadmap,
   archiveRoadmap,
+  getDailyPlan,
+  createDailyPlan,
+  rebuildDailyPlan,
+  getToday,
+  listLearningTopics,
+  getLearningTopic,
+  listLearningResources,
+  type DailyPlanResponseDTO,
+  type JobKind,
+  type TodayResponseDTO,
+  type TopicDetailDTO,
   ApiError,
   UnauthorizedError,
   NetworkError,
@@ -1451,6 +1462,215 @@ describe('M06 Roadmap API Client (EP-R01..EP-R07, EP-R14, EP-R15)', () => {
         method: 'POST',
         body: JSON.stringify({ reason: 'Switching tracks' }),
       }),
+    );
+  });
+});
+
+describe('M07 Learning API client (EP-L01..EP-L07)', () => {
+  const ROADMAP_ID = '11111111-1111-4111-8111-111111111111';
+  const PLAN_ID = '22222222-2222-4222-8222-222222222222';
+  const TOPIC_ID = '33333333-3333-4333-8333-333333333333';
+
+  it('calls EP-L01 getDailyPlan, EP-L02 createDailyPlan with Idempotency-Key, and EP-L03 rebuildDailyPlan', async () => {
+    const planPayload: DailyPlanResponseDTO = {
+      plan_id: PLAN_ID,
+      roadmap_id: ROADMAP_ID,
+      roadmap_version_no: 1,
+      is_focus: true,
+      hours_per_day: 2,
+      total_days: 4,
+      completed_days: 0,
+      next_incomplete_day_no: 1,
+      days: [],
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: planPayload,
+          meta: { limit: 14, next_cursor: 'day-15' },
+        }),
+    });
+
+    const getRes = await getDailyPlan(MOCK_TOKEN, {
+      roadmap_id: ROADMAP_ID,
+      limit: 14,
+      cursor: 'day-1',
+    });
+    expect(getRes).toEqual({
+      plan: planPayload,
+      meta: { limit: 14, next_cursor: 'day-15' },
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/learning/daily-plan?roadmap_id=${ROADMAP_ID}&cursor=day-1&limit=14`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ success: true, data: planPayload }),
+    });
+    const idemKey = createIdempotencyKey();
+    await expect(
+      createDailyPlan(
+        MOCK_TOKEN,
+        { roadmap_id: ROADMAP_ID, hours_per_day: 2 },
+        idemKey,
+      ),
+    ).resolves.toEqual(planPayload);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/learning/daily-plans',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Idempotency-Key': idemKey,
+        }),
+        body: JSON.stringify({ roadmap_id: ROADMAP_ID, hours_per_day: 2 }),
+      }),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { ...planPayload, hours_per_day: 3 },
+        }),
+    });
+    await expect(
+      rebuildDailyPlan(MOCK_TOKEN, PLAN_ID, { hours_per_day: 3 }),
+    ).resolves.toMatchObject({ hours_per_day: 3 });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/learning/daily-plans/${PLAN_ID}/rebuild`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ hours_per_day: 3 }),
+      }),
+    );
+  });
+
+  it('calls EP-L04 getToday, EP-L05 listLearningTopics, EP-L06 getLearningTopic, and EP-L07 listLearningResources', async () => {
+    const todayRes: TodayResponseDTO = {
+      status: 'no_focus_roadmap',
+      roadmap_id: null,
+      plan_id: null,
+      plan_day: null,
+      topic: null,
+      quiz: { attempt_id: null, status: null, can_retry: false },
+      job: null,
+      requires_learning_hours: false,
+      preferred_daily_hours: null,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: todayRes }),
+    });
+    await expect(getToday(MOCK_TOKEN)).resolves.toEqual(todayRes);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/learning/today',
+      expect.any(Object),
+    );
+
+    const topicJobKind: JobKind = 'topic_content';
+    const preparingToday: TodayResponseDTO = {
+      status: 'preparing',
+      roadmap_id: ROADMAP_ID,
+      plan_id: PLAN_ID,
+      plan_day: { day_no: 1, total_days: 4 },
+      topic: null,
+      quiz: { attempt_id: null, status: null, can_retry: false },
+      job: {
+        job_id: '44444444-4444-4444-8444-444444444444',
+        kind: topicJobKind,
+        status: 'queued',
+        poll_url: '/api/v1/jobs/44444444-4444-4444-8444-444444444444',
+        retry_after_seconds: 3,
+      },
+      requires_learning_hours: false,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: preparingToday }),
+    });
+    await expect(getToday(MOCK_TOKEN)).resolves.toEqual(preparingToday);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { items: [] },
+          meta: { limit: 20, next_cursor: null },
+        }),
+    });
+    await expect(
+      listLearningTopics(MOCK_TOKEN, {
+        roadmap_id: ROADMAP_ID,
+        priority: 'core',
+        learning_state: 'not_started',
+        limit: 20,
+      }),
+    ).resolves.toEqual({ items: [], meta: { limit: 20, next_cursor: null } });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/learning/topics?roadmap_id=${ROADMAP_ID}&priority=core&learning_state=not_started&limit=20`,
+      expect.any(Object),
+    );
+
+    const topicDetail: TopicDetailDTO = {
+      topic_id: TOPIC_ID,
+      title: 'Indexing',
+      career_level: 'mid',
+      content_version: 1,
+      explanation_markdown: '## Indexing',
+      important_questions: [],
+      sources: [],
+      learning_state: 'learning',
+      required_depth: 'B-Tree internals',
+      rating_allowed: true,
+      report_allowed: true,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: topicDetail }),
+    });
+    await expect(getLearningTopic(MOCK_TOKEN, TOPIC_ID)).resolves.toEqual(
+      topicDetail,
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/learning/topics/${TOPIC_ID}`,
+      expect.any(Object),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { items: [] },
+          meta: { limit: 10, next_cursor: null },
+        }),
+    });
+    await expect(
+      listLearningResources(MOCK_TOKEN, { topic_id: TOPIC_ID, limit: 10 }),
+    ).resolves.toEqual({ items: [], meta: { limit: 10, next_cursor: null } });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/learning/resources?topic_id=${TOPIC_ID}&limit=10`,
+      expect.any(Object),
     );
   });
 });

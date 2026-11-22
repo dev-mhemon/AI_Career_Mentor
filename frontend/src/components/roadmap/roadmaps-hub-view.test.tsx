@@ -304,6 +304,13 @@ describe('RoadmapsHubView', () => {
       'token-1',
       'rm-locked-2',
     );
+    // Dismiss the HoursPromptModal before continuing to Archive confirmation
+    const hoursDialog = screen.getByRole('dialog');
+    expect(hoursDialog).toBeInTheDocument();
+    fireEvent.click(within(hoursDialog).getByRole('button', { name: 'Cancel' }));
+    expect(
+      screen.getByRole('button', { name: 'Create Daily Plan' }),
+    ).toBeInTheDocument();
 
     const archiveButtons = screen.getAllByRole('button', { name: 'Archive' });
     fireEvent.click(archiveButtons[1]);

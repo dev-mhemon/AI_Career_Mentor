@@ -180,7 +180,7 @@ export function ModalHeader({
   return (
     <div
       className={cn(
-        'flex items-start justify-between gap-4 border-b border-border-subtle px-6 pt-5 pb-4',
+        'flex shrink-0 items-start justify-between gap-4 border-b border-border-subtle px-6 pt-5 pb-4',
         className,
       )}
       {...rest}
@@ -299,7 +299,10 @@ export function ModalBody({
 }: ModalSectionProps) {
   return (
     <div
-      className={cn('flex-1 overflow-visible px-6 py-5', className)}
+      className={cn(
+        'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5',
+        className,
+      )}
       {...rest}
     >
       {children}
@@ -315,7 +318,7 @@ export function ModalFooter({
   return (
     <div
       className={cn(
-        'flex flex-col-reverse gap-2.5 rounded-b-2xl border-t border-border-default bg-surface-subtle px-6 py-4 sm:flex-row sm:items-center sm:justify-end',
+        'flex shrink-0 flex-col-reverse gap-2.5 rounded-b-2xl border-t border-border-default bg-surface-subtle px-6 py-4 sm:flex-row sm:items-center sm:justify-end',
         className,
       )}
       {...rest}
@@ -548,7 +551,7 @@ function ModalInner({
     <ModalContext.Provider value={contextValue}>
       <div
         {...backdropDismiss}
-        className="fixed inset-0 z-(--z-modal) flex min-h-full items-center justify-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-[1px] sm:p-6"
+        className="fixed inset-0 z-(--z-modal) flex overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-[1px] sm:p-6"
       >
         <div
           ref={panel}
@@ -560,7 +563,7 @@ function ModalInner({
           aria-label={resolvedAriaLabel}
           onKeyDown={onKey}
           className={cn(
-            'relative z-10 my-auto flex w-full flex-col overflow-visible rounded-2xl border border-border-default bg-surface-raised text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none',
+            'relative z-10 m-auto flex max-h-[90dvh] w-full flex-col overflow-y-auto rounded-2xl border border-border-default bg-surface-raised text-text-primary shadow-xl outline-none focus:outline-none focus-visible:outline-none',
             SIZE_CLASS[resolvedSize],
             className,
           )}

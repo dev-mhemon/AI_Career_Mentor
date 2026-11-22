@@ -15,6 +15,7 @@ import {
   type JobAcceptedDTO,
   type JobStatusDTO,
   type LockRoadmapDTO,
+  type LockRoadmapResponseDTO,
   type RevisionRequestDTO,
   type RoadmapDetailDTO,
   type RoadmapItemDTO,
@@ -33,6 +34,7 @@ import {
   SparklesIcon,
   WarningIcon,
 } from '@/components/ui/icons';
+import { HoursPromptModal } from '@/components/learning/hours-prompt-modal';
 
 function ArrowLeftIcon({ className }: { className?: string }) {
   return (
@@ -228,7 +230,11 @@ export function RoadmapDraftView({
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveDraftJob>(null);
   const [submittingRevision, setSubmittingRevision] = useState(false);
-  const [lockState, setLockState] = useState<'idle' | 'locking' | 'navigating'>('idle');
+  const [lockState, setLockState] = useState<
+    'idle' | 'locking' | 'hours_prompt' | 'navigating'
+  >('idle');
+  const [lockedResult, setLockedResult] =
+    useState<LockRoadmapResponseDTO | null>(null);
   const locking = lockState !== 'idle';
   const [confirmedLargeVersion, setConfirmedLargeVersion] = useState<string | null>(
     null,
@@ -537,6 +543,11 @@ export function RoadmapDraftView({
         idempotencyKey,
       );
       pendingLockKeyRef.current = null;
+      if (locked.next_step === 'confirm_learning_hours') {
+        setLockedResult(locked);
+        setLockState('hours_prompt');
+        return;
+      }
       setLockState('navigating');
       if (onLockedNavigate) {
         onLockedNavigate(locked.roadmap_id);
@@ -808,7 +819,9 @@ export function RoadmapDraftView({
               loadingText={
                 lockState === 'navigating'
                   ? 'Opening roadmap...'
-                  : 'Locking roadmap...'
+                  : lockState === 'hours_prompt'
+                    ? 'Roadmap locked'
+                    : 'Locking roadmap...'
               }
               disabled={lockDisabled}
               onClick={() => void handleLockRoadmap()}
@@ -1299,6 +1312,32 @@ export function RoadmapDraftView({
           </article>
         ))}
       </section>
+
+      {lockedResult && (
+        <HoursPromptModal
+          open={lockState === 'hours_prompt'}
+          mode="create"
+          accessToken={accessToken}
+          roadmapId={lockedResult.roadmap_id}
+          roadmapTitle={draft.role_name}
+          initialHours={lockedResult.preferred_daily_hours}
+          onClose={() => {
+            const targetId = lockedResult.roadmap_id;
+            setLockedResult(null);
+            setLockState('navigating');
+            if (onLockedNavigate) {
+              onLockedNavigate(targetId);
+              return;
+            }
+            router.replace(`/roadmaps/${encodeURIComponent(targetId)}`);
+          }}
+          onSuccess={() => {
+            setLockedResult(null);
+            setLockState('navigating');
+            router.replace('/today');
+          }}
+        />
+      )}
     </main>
   );
 }

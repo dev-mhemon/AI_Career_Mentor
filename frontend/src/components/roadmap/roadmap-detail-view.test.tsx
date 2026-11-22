@@ -10,6 +10,7 @@ import {
 } from '@testing-library/react';
 import {
   archiveRoadmap,
+  createDailyPlan,
   focusRoadmap,
   getRoadmap,
   getRoadmapVersion,
@@ -17,6 +18,14 @@ import {
   type RoadmapDetailDTO,
 } from '@/lib/api/client';
 import { RoadmapDetailView } from '@/components/roadmap/roadmap-detail-view';
+
+const mockPush = vi.fn();
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
+  }),
+}));
 
 vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>(
@@ -29,6 +38,7 @@ vi.mock('@/lib/api/client', async () => {
     getRoadmapVersion: vi.fn(),
     focusRoadmap: vi.fn(),
     archiveRoadmap: vi.fn(),
+    createDailyPlan: vi.fn(),
   };
 });
 
@@ -272,10 +282,36 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(
       await screen.findByText(/set your daily learning hours/i),
     ).toBeInTheDocument();
+    // Opens HoursPromptModal immediately for missing Daily Plan
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(
-      screen.getByRole('link', { name: 'Configure Daily Hours' }),
-    ).toHaveAttribute('href', '/settings');
+      screen.getByRole('button', { name: 'Create Daily Plan' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Focus Roadmap')).toBeInTheDocument();
+
+    // Re-opening via alert action creates plan and navigates to /today
+    vi.mocked(createDailyPlan).mockResolvedValueOnce({
+      plan_id: 'plan-new',
+      roadmap_id: 'rm-locked-1',
+      roadmap_version_no: 2,
+      is_focus: true,
+      hours_per_day: 2,
+      total_days: 4,
+      completed_days: 0,
+      next_incomplete_day_no: 1,
+      days: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Daily Plan' }));
+    const reopened = screen.getByRole('dialog');
+    fireEvent.click(within(reopened).getByRole('button', { name: '2h' }));
+    fireEvent.click(
+      within(reopened).getByRole('button', { name: 'Create Daily Plan' }),
+    );
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/today');
+    });
   });
 
   it('handles EP-R14 existing daily plan notice and EP-R15 Archive confirmation', async () => {
@@ -400,11 +436,14 @@ describe('RoadmapDetailView (Screen 15)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Set as Focus Roadmap' }));
     expect(
-      await screen.findByText(/set up a Daily Plan for this roadmap next/i),
+      await screen.findByText(/Create a Daily Plan to begin sequential daily lessons/i),
     ).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(
-      screen.queryByRole('link', { name: 'Configure Daily Hours' }),
-    ).not.toBeInTheDocument();
+      screen.getByRole('button', { name: 'Create Daily Plan' }),
+    ).toBeInTheDocument();
   });
 
   it('renders amber Draft badge and clear 3-button header hierarchy (ghost Archive -> secondary Version History -> primary Open Draft Review)', async () => {

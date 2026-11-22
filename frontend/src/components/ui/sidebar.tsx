@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ComponentType, RefObject, SVGProps } from 'react';
 import { cn } from './cn';
 import {
+  CalendarDaysIcon,
   CloseIcon,
   CompassIcon,
   LayoutDashboardIcon,
@@ -19,6 +20,7 @@ export interface SidebarNavItem {
   label: string;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   lockedWhenSuspended?: boolean;
+  activePrefixes?: string[];
 }
 
 export interface SidebarSection {
@@ -35,6 +37,13 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         label: 'Dashboard',
         icon: LayoutDashboardIcon,
         lockedWhenSuspended: true,
+      },
+      {
+        href: '/daily-plan',
+        label: 'Daily Plan',
+        icon: CalendarDaysIcon,
+        lockedWhenSuspended: true,
+        activePrefixes: ['/daily-plan', '/today'],
       },
       {
         href: '/roadmaps',
@@ -102,11 +111,14 @@ function BrandBadgeIcon() {
   );
 }
 
-function isRouteActive(pathname: string, href: string): boolean {
-  if (href === '/') {
-    return pathname === '/';
-  }
-  return pathname === href || pathname.startsWith(`${href}/`);
+function isRouteActive(pathname: string, item: SidebarNavItem): boolean {
+  const prefixes = item.activePrefixes ?? [item.href];
+  return prefixes.some((prefix) => {
+    if (prefix === '/') {
+      return pathname === '/';
+    }
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  });
 }
 
 export function Sidebar({
@@ -215,7 +227,7 @@ export function Sidebar({
             <div key={section.title}>
               <p
                 className={cn(
-                  'mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500',
+                  'mb-2 px-5 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500',
                   isCollapsed && 'lg:sr-only',
                 )}
               >
@@ -224,7 +236,7 @@ export function Sidebar({
               <ul className="flex flex-col gap-1">
                 {section.items.map((item) => {
                   const Icon = item.icon;
-                  const active = isRouteActive(pathname, item.href);
+                  const active = isRouteActive(pathname, item);
                   const locked = isSuspended && Boolean(item.lockedWhenSuspended);
 
                   if (locked) {
@@ -235,10 +247,10 @@ export function Sidebar({
                           title={isCollapsed ? `${item.label} (Locked)` : undefined}
                           className={cn(
                             'mx-2 flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-400 opacity-75 cursor-not-allowed dark:text-slate-600',
-                            isCollapsed && 'lg:justify-center lg:px-2',
+                            isCollapsed && 'lg:mx-0 lg:justify-center lg:px-2',
                           )}
                         >
-                          <Icon className="h-4 w-4 shrink-0" />
+                          <Icon className="block h-4 w-4 shrink-0" />
                           <span
                             className={cn(
                               'truncate',
@@ -249,7 +261,7 @@ export function Sidebar({
                           </span>
                           <LockIcon
                             className={cn(
-                              'ml-auto h-3.5 w-3.5 shrink-0',
+                              'ml-auto block h-3.5 w-3.5 shrink-0',
                               isCollapsed && 'lg:hidden',
                             )}
                           />
@@ -266,14 +278,14 @@ export function Sidebar({
                         aria-current={active ? 'page' : undefined}
                         title={isCollapsed ? item.label : undefined}
                         className={cn(
-                          'flex min-h-11 items-center gap-3 px-3 py-2 text-sm transition-colors cursor-pointer',
+                          'flex min-h-11 items-center gap-3 py-2 text-sm transition-colors cursor-pointer',
                           active
-                            ? 'border-r-2 border-teal-600 bg-teal-50 font-semibold text-teal-700 dark:bg-teal-500/10 dark:text-teal-300'
-                            : 'mx-2 rounded-lg text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-slate-100',
+                            ? 'border-r-2 border-teal-600 bg-teal-50 px-5 font-semibold text-teal-700 dark:bg-teal-500/10 dark:text-teal-300'
+                            : 'mx-2 rounded-lg px-3 text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-slate-100',
                           isCollapsed && 'lg:mx-0 lg:justify-center lg:px-2',
                         )}
                       >
-                        <Icon className="h-4 w-4 shrink-0" />
+                        <Icon className="block h-4 w-4 shrink-0" />
                         <span
                           className={cn(
                             'truncate',

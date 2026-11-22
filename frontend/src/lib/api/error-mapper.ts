@@ -164,6 +164,42 @@ const SAFE_CODE_ERRORS: Readonly<
     tone: 'warning',
     retryable: true,
   },
+  DAILY_PLAN_NOT_FOUND: {
+    message:
+      'No Daily Plan exists for this roadmap yet. Confirm your daily study hours to create one.',
+    tone: 'info',
+    retryable: false,
+  },
+  NO_FOCUS_ROADMAP: {
+    message:
+      'No Focus Roadmap is currently selected. Lock or set a Focus Roadmap first.',
+    tone: 'info',
+    retryable: false,
+  },
+  DAILY_PLAN_EXISTS: {
+    message:
+      'A Daily Plan already exists for this roadmap. Use Rebuild Plan if you want to adjust daily study hours.',
+    tone: 'warning',
+    retryable: false,
+  },
+  LEARNING_HOURS_REQUIRED: {
+    message:
+      'Choose daily study hours between 0.5 and 12 hours in 0.5-hour increments before continuing.',
+    tone: 'warning',
+    retryable: false,
+  },
+  ROADMAP_NOT_LOCKED: {
+    message:
+      'This roadmap must be locked before creating or rebuilding a Daily Plan.',
+    tone: 'warning',
+    retryable: false,
+  },
+  ROADMAP_ARCHIVED: {
+    message:
+      'This roadmap is archived and read-only. Select an active locked roadmap to create or rebuild a Daily Plan.',
+    tone: 'warning',
+    retryable: false,
+  },
 };
 
 /**

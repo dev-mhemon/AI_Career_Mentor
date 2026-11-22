@@ -1,6 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { listCareerGoals, type CareerGoalResponse } from '@/lib/api/client';
+import {
+  getToday,
+  listCareerGoals,
+  listRoadmaps,
+  type CareerGoalResponse,
+  type RoadmapSummaryDTO,
+  type TodayResponseDTO,
+} from '@/lib/api/client';
 import { logoutAction } from '@/lib/auth/actions';
 import { getAppSessionStateResult } from '@/lib/auth/user';
 import { getUserDisplayName } from '@/lib/auth/user-display';
@@ -8,6 +15,7 @@ import { resolveWorkspaceProfile } from '@/lib/auth/workspace-profile';
 import { computeProfileCompletion } from '@/lib/onboarding/completion';
 import { EXPERIENCE_LEVEL_LABELS } from '@/lib/profile/metadata';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { DashboardLearningSection } from '@/components/learning/dashboard-learning-section';
 import { Alert } from '@/components/ui/alert';
 import { AppShellSync } from '@/components/ui/app-shell-context';
 import { Button } from '@/components/ui/button';
@@ -26,37 +34,67 @@ export const dynamic = 'force-dynamic';
 
 const MAX_GOAL_PAGES = 20;
 
-async function loadNonDiscontinuedGoals(): Promise<CareerGoalResponse[] | null> {
+interface DashboardAsyncData {
+  accessToken: string | null;
+  goals: CareerGoalResponse[] | null;
+  today: TodayResponseDTO | null;
+  roadmaps: RoadmapSummaryDTO[];
+}
+
+async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
   try {
     const supabase = await createSupabaseServerClient({ readOnly: true });
     if (typeof supabase.auth.getSession !== 'function') {
-      return null;
+      return { accessToken: null, goals: null, today: null, roadmaps: [] };
     }
     const {
       data: { session },
     } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      return null;
+    const accessToken = session?.access_token ?? null;
+    if (!accessToken) {
+      return { accessToken: null, goals: null, today: null, roadmaps: [] };
     }
-    const allItems: CareerGoalResponse[] = [];
-    let cursor: string | undefined;
-    const seenCursors = new Set<string>();
-    for (let page = 0; page < MAX_GOAL_PAGES; page += 1) {
-      const res = await listCareerGoals(
-        session.access_token,
-        cursor ? { limit: 100, cursor } : { limit: 100 },
-      );
-      allItems.push(...res.items);
-      const nextCursor = res.meta?.next_cursor;
-      if (!nextCursor || seenCursors.has(nextCursor)) {
-        break;
+
+    const loadGoals = async (): Promise<CareerGoalResponse[] | null> => {
+      try {
+        const allItems: CareerGoalResponse[] = [];
+        let cursor: string | undefined;
+        const seenCursors = new Set<string>();
+        for (let page = 0; page < MAX_GOAL_PAGES; page += 1) {
+          const res = await listCareerGoals(
+            accessToken,
+            cursor ? { limit: 100, cursor } : { limit: 100 },
+          );
+          allItems.push(...res.items);
+          const nextCursor = res.meta?.next_cursor;
+          if (!nextCursor || seenCursors.has(nextCursor)) {
+            break;
+          }
+          seenCursors.add(nextCursor);
+          cursor = nextCursor;
+        }
+        return allItems.filter((g) => g.status !== 'discontinued');
+      } catch {
+        return null;
       }
-      seenCursors.add(nextCursor);
-      cursor = nextCursor;
-    }
-    return allItems.filter((g) => g.status !== 'discontinued');
+    };
+
+    const [goals, todayRes, roadmapsRes] = await Promise.all([
+      loadGoals(),
+      getToday(accessToken).catch(() => null),
+      listRoadmaps(accessToken, { limit: 10 })
+        .then((res) => res.items)
+        .catch(() => [] as RoadmapSummaryDTO[]),
+    ]);
+
+    return {
+      accessToken,
+      goals,
+      today: todayRes,
+      roadmaps: roadmapsRes,
+    };
   } catch {
-    return null;
+    return { accessToken: null, goals: null, today: null, roadmaps: [] };
   }
 }
 
@@ -128,12 +166,18 @@ export default async function DashboardPage() {
   }
 
   const state = result.data;
-  const [workspace, loadedGoals] = await Promise.all([
+  const [workspace, asyncData] = await Promise.all([
     resolveWorkspaceProfile(state),
     state.user.status === 'suspended'
-      ? Promise.resolve(null)
-      : loadNonDiscontinuedGoals(),
+      ? Promise.resolve<DashboardAsyncData>({
+          accessToken: null,
+          goals: null,
+          today: null,
+          roadmaps: [],
+        })
+      : loadDashboardAsyncData(),
   ]);
+  const loadedGoals = asyncData.goals;
 
   if (workspace.unauthorized) {
     redirect('/login');
@@ -429,6 +473,17 @@ export default async function DashboardPage() {
             </div>
           </article>
         </section>
+
+        {/* Screen 13 Learning Strip: Today Hero + Active Roadmaps */}
+        {asyncData.accessToken && (
+          <DashboardLearningSection
+            accessToken={asyncData.accessToken}
+            initialToday={asyncData.today}
+            initialRoadmaps={asyncData.roadmaps}
+            dailyPlanEnabled={effective_access.daily_plan ?? true}
+            preferredDailyHours={dailyHours}
+          />
+        )}
 
         {/* Row 2: Career Intelligence & Learning Modules */}
         <section aria-label="Career intelligence and learning modules">

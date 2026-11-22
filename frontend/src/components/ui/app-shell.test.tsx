@@ -63,6 +63,18 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(dashboardLink.className).toContain('bg-teal-50');
     expect(dashboardLink.className).toContain('text-teal-700');
     expect(dashboardLink.className).toContain('border-teal-600');
+    expect(dashboardLink.className).toContain('px-5');
+
+    expect(
+      within(sidebar).queryByRole('link', { name: 'Today' }),
+    ).not.toBeInTheDocument();
+
+    const dailyPlanLink = within(sidebar).getByRole('link', {
+      name: 'Daily Plan',
+    });
+    expect(dailyPlanLink).toHaveAttribute('href', '/daily-plan');
+    expect(dailyPlanLink.className).toContain('mx-2');
+    expect(dailyPlanLink.className).toContain('px-3');
 
     const profileLink = within(sidebar).getByRole('link', { name: 'Profile' });
     expect(profileLink).toHaveAttribute('href', '/profile');
@@ -102,6 +114,28 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(settingsLink).toHaveAttribute('aria-current', 'page');
     expect(settingsLink.className).toContain('bg-teal-50');
     expect(dashboardLink).not.toHaveAttribute('aria-current');
+  });
+
+  it('highlights Daily Plan when pathname matches /today without rendering a separate Today sidebar link', () => {
+    mockPathname = '/today';
+    render(
+      <AppShell user={{ fullName: 'Mehedi Hasan' }}>
+        <div>Today body</div>
+      </AppShell>,
+    );
+
+    const sidebar = screen.getByRole('complementary', { name: 'Primary sidebar' });
+    expect(
+      within(sidebar).queryByRole('link', { name: 'Today' }),
+    ).not.toBeInTheDocument();
+
+    const dailyPlanLink = within(sidebar).getByRole('link', {
+      name: 'Daily Plan',
+    });
+    expect(dailyPlanLink).toHaveAttribute('href', '/daily-plan');
+    expect(dailyPlanLink).toHaveAttribute('aria-current', 'page');
+    expect(dailyPlanLink.className).toContain('bg-teal-50');
+    expect(dailyPlanLink.className).toContain('px-5');
   });
 
   it('toggles desktop sidebar collapsed rail width and aria-expanded state', () => {
@@ -495,9 +529,12 @@ describe('AppShell, Sidebar, and Header', () => {
     );
     expect(within(sidebar).getByText('Admin')).toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Dashboard' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Today' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Daily Plan' })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Career Goals' })).not.toBeInTheDocument();
     expect(within(sidebar).getByText('Dashboard').closest('[aria-disabled="true"]')).toBeInTheDocument();
+    expect(within(sidebar).getByText('Daily Plan').closest('[aria-disabled="true"]')).toBeInTheDocument();
     expect(within(sidebar).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
 
     // User dropdown omits Profile item when suspended

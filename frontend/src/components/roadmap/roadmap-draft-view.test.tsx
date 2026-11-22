@@ -408,6 +408,17 @@ describe('RoadmapDraftView (Screen 12)', () => {
         { expected_version_no: 3, confirm_large_roadmap: true },
         expect.stringMatching(/^[0-9a-f-]{36}$/i),
       );
+    });
+    // Opens HoursPromptModal prefilled with preferred_daily_hours (2); skipping navigates cleanly to /roadmaps/rm-draft-1
+    const hoursDialog = await screen.findByRole('dialog');
+    expect(hoursDialog).toBeInTheDocument();
+    expect(
+      (within(hoursDialog).getByLabelText(/Hours per day/i) as HTMLInputElement)
+        .value,
+    ).toBe('2');
+
+    fireEvent.click(within(hoursDialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith('/roadmaps/rm-draft-1');
     });
     // Zero flicker: Lock button stays stably disabled in "Opening roadmap..." until unmount, with no competing router.refresh()

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { getAppSessionStateResult } from '@/lib/auth/user';
 import type { loadProfileForSetup } from '@/lib/profile/actions';
 
@@ -8,18 +8,28 @@ type ProfileSetupResult = Awaited<ReturnType<typeof loadProfileForSetup>>;
 
 const {
   mockRedirect,
+  mockPush,
+  mockRefresh,
   mockGetAppSessionStateResult,
   mockLoadProfileForSetup,
   mockListCareerGoals,
+  mockGetToday,
+  mockListRoadmaps,
+  mockFocusRoadmap,
   mockGetUser,
   mockGetSession,
 } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string): never => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
+  mockPush: vi.fn(),
+  mockRefresh: vi.fn(),
   mockGetAppSessionStateResult: vi.fn<() => Promise<SessionStateResult>>(),
   mockLoadProfileForSetup: vi.fn<() => Promise<ProfileSetupResult>>(),
   mockListCareerGoals: vi.fn(),
+  mockGetToday: vi.fn(),
+  mockListRoadmaps: vi.fn(),
+  mockFocusRoadmap: vi.fn(),
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
 }));
@@ -27,6 +37,10 @@ const {
 vi.mock('next/navigation', () => ({
   redirect: mockRedirect,
   usePathname: () => '/dashboard',
+  useRouter: () => ({
+    push: mockPush,
+    refresh: mockRefresh,
+  }),
 }));
 
 vi.mock('@/lib/auth/user', () => ({
@@ -42,6 +56,9 @@ vi.mock('@/lib/api/client', async (importOriginal) => {
   return {
     ...actual,
     listCareerGoals: mockListCareerGoals,
+    getToday: mockGetToday,
+    listRoadmaps: mockListRoadmaps,
+    focusRoadmap: mockFocusRoadmap,
   };
 });
 
@@ -67,6 +84,21 @@ describe('DashboardPage', () => {
     vi.clearAllMocks();
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockGetToday.mockResolvedValue({
+      status: 'no_focus_roadmap',
+      roadmap_id: null,
+      plan_id: null,
+      plan_day: null,
+      topic: null,
+      quiz: { attempt_id: null, status: null, can_retry: false },
+      job: null,
+      requires_learning_hours: false,
+      preferred_daily_hours: null,
+    });
+    mockListRoadmaps.mockResolvedValue({
+      items: [],
+      meta: { limit: 10, next_cursor: null },
+    });
     mockLoadProfileForSetup.mockResolvedValue({
       profile: null,
     });
@@ -355,5 +387,464 @@ describe('DashboardPage', () => {
     );
     expect(screen.getAllByText('Unlocks after full onboarding')).toHaveLength(3);
     expect(document.body.textContent).not.toMatch(/[\u0980-\u09FF]/);
+  });
+
+  it('promotes focused roadmap in left hero card and shows only non-focused active roadmaps in right card', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-focus' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [{ id: 'g-1', status: 'confirmed' }],
+      meta: { limit: 100, next_cursor: null },
+    });
+    mockGetToday.mockResolvedValue({
+      status: 'ready',
+      roadmap_id: 'rm-focus',
+      plan_id: 'plan-1',
+      plan_day: { day_no: 2, total_days: 12 },
+      topic: {
+        topic_id: 'top-1',
+        title: 'Python for Data Engineering',
+        career_level: 'junior',
+        content_version: 1,
+        explanation_markdown: '## Notes',
+        important_questions: [],
+        sources: [],
+        learning_state: 'learning',
+        required_depth: 'Core',
+        rating_allowed: true,
+        report_allowed: true,
+      },
+      quiz: { attempt_id: null, status: null, can_retry: false },
+      job: null,
+      requires_learning_hours: false,
+      preferred_daily_hours: 2,
+    });
+    mockListRoadmaps.mockResolvedValue({
+      items: [
+        {
+          id: 'rm-focus',
+          career_goal_id: 'g-1',
+          canonical_role_id: 'r-1',
+          role_name: 'Data Engineering',
+          target_level: 'junior',
+          status: 'locked',
+          is_focus: true,
+          current_version_id: 'v-1',
+          current_version_no: 1,
+          draft_version_no: null,
+          has_open_draft: false,
+          has_open_merge: false,
+          has_daily_plan: true,
+          stale: false,
+          stale_draft: false,
+          locked_at: '2026-11-20T00:00:00.000Z',
+          archived_at: null,
+          created_at: '2026-11-20T00:00:00.000Z',
+          updated_at: '2026-11-20T00:00:00.000Z',
+        },
+        {
+          id: 'rm-other-locked',
+          career_goal_id: 'g-2',
+          canonical_role_id: 'r-2',
+          role_name: 'Backend Development',
+          target_level: 'mid',
+          status: 'locked',
+          is_focus: false,
+          current_version_id: 'v-2',
+          current_version_no: 1,
+          draft_version_no: null,
+          has_open_draft: false,
+          has_open_merge: false,
+          has_daily_plan: false,
+          stale: false,
+          stale_draft: false,
+          locked_at: '2026-11-20T00:00:00.000Z',
+          archived_at: null,
+          created_at: '2026-11-20T00:00:00.000Z',
+          updated_at: '2026-11-20T00:00:00.000Z',
+        },
+        {
+          id: 'rm-other-draft',
+          career_goal_id: 'g-3',
+          canonical_role_id: 'r-3',
+          role_name: 'Cloud Architecture',
+          target_level: 'senior',
+          status: 'draft',
+          is_focus: false,
+          current_version_id: null,
+          current_version_no: null,
+          draft_version_no: 1,
+          has_open_draft: true,
+          has_open_merge: false,
+          has_daily_plan: false,
+          stale: false,
+          stale_draft: false,
+          locked_at: null,
+          archived_at: null,
+          created_at: '2026-11-20T00:00:00.000Z',
+          updated_at: '2026-11-20T00:00:00.000Z',
+        },
+      ],
+      meta: { limit: 10, next_cursor: null },
+    });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          id: 'user-1',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          verified_contact: true,
+          linked_providers: ['email'],
+        },
+        profile_complete: true,
+        effective_access: {
+          roadmap_generator: true,
+          daily_plan: true,
+          ai_mentor: true,
+        },
+        focus_roadmap_id: 'rm-focus',
+        can_delete_account: true,
+      },
+    });
+    mockLoadProfileForSetup.mockResolvedValue({
+      fullName: 'Mehedi Hasan',
+      profile: {
+        current_role: 'Engineer',
+        education: 'BSc',
+        experience_level: 'mid',
+        existing_skills: [],
+        existing_skills_none: true,
+        learning_preference: 'hands_on',
+        preferred_daily_hours: 2,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: true,
+        active_career_goal_ids: ['g-1'],
+        profile_complete: true,
+        missing_fields: [],
+        updated_at: '2026-11-20T00:00:00.000Z',
+      },
+    });
+
+    const page = await DashboardPage();
+    render(
+      <AppShellProvider>
+        <AppShell>{page}</AppShell>
+      </AppShellProvider>,
+    );
+
+    const heroCard = screen.getByRole('article', {
+      name: /Focused roadmap and today's learning/i,
+    });
+    expect(within(heroCard).getByText('Data Engineering')).toBeInTheDocument();
+    expect(within(heroCard).getByText('Focus')).toBeInTheDocument();
+    expect(within(heroCard).getByText('locked')).toBeInTheDocument();
+    expect(within(heroCard).getByText('Day 2 of 12')).toBeInTheDocument();
+    expect(
+      within(heroCard).getByRole('link', { name: /Continue Today/i }),
+    ).toHaveAttribute('href', '/today');
+
+    const othersCard = screen.getByRole('article', {
+      name: /Other active roadmaps/i,
+    });
+    expect(within(othersCard).getByText('3 / 3 active')).toBeInTheDocument();
+    expect(
+      within(othersCard).queryByText('Data Engineering'),
+    ).not.toBeInTheDocument();
+    expect(
+      within(othersCard).getByText('Backend Development'),
+    ).toBeInTheDocument();
+    expect(
+      within(othersCard).getByRole('button', { name: 'Set as Focus' }),
+    ).toBeInTheDocument();
+    expect(
+      within(othersCard).getByRole('link', { name: 'Review Draft' }),
+    ).toHaveAttribute('href', '/roadmaps/rm-other-draft/draft');
+  });
+
+  it('renders compact empty state in right card when user only has 1 focused roadmap', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-single' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [{ id: 'g-1', status: 'confirmed' }],
+      meta: { limit: 100, next_cursor: null },
+    });
+    mockGetToday.mockResolvedValue({
+      status: 'no_daily_plan',
+      roadmap_id: 'rm-only',
+      plan_id: null,
+      plan_day: null,
+      topic: null,
+      quiz: { attempt_id: null, status: null, can_retry: false },
+      job: null,
+      requires_learning_hours: false,
+      preferred_daily_hours: 2,
+    });
+    mockListRoadmaps.mockResolvedValue({
+      items: [
+        {
+          id: 'rm-only',
+          career_goal_id: 'g-1',
+          canonical_role_id: 'r-1',
+          role_name: 'Data Engineering',
+          target_level: 'junior',
+          status: 'locked',
+          is_focus: true,
+          current_version_id: 'v-1',
+          current_version_no: 1,
+          draft_version_no: null,
+          has_open_draft: false,
+          has_open_merge: false,
+          has_daily_plan: false,
+          stale: false,
+          stale_draft: false,
+          locked_at: '2026-11-20T00:00:00.000Z',
+          archived_at: null,
+          created_at: '2026-11-20T00:00:00.000Z',
+          updated_at: '2026-11-20T00:00:00.000Z',
+        },
+      ],
+      meta: { limit: 10, next_cursor: null },
+    });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          id: 'user-1',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          verified_contact: true,
+          linked_providers: ['email'],
+        },
+        profile_complete: true,
+        effective_access: {
+          roadmap_generator: true,
+          daily_plan: true,
+          ai_mentor: true,
+        },
+        focus_roadmap_id: 'rm-only',
+        can_delete_account: true,
+      },
+    });
+    mockLoadProfileForSetup.mockResolvedValue({
+      fullName: 'Mehedi Hasan',
+      profile: {
+        current_role: 'Engineer',
+        education: 'BSc',
+        experience_level: 'mid',
+        existing_skills: [],
+        existing_skills_none: true,
+        learning_preference: 'hands_on',
+        preferred_daily_hours: 2,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: true,
+        active_career_goal_ids: ['g-1'],
+        profile_complete: true,
+        missing_fields: [],
+        updated_at: '2026-11-20T00:00:00.000Z',
+      },
+    });
+
+    const page = await DashboardPage();
+    render(
+      <AppShellProvider>
+        <AppShell>{page}</AppShell>
+      </AppShellProvider>,
+    );
+
+    const othersCard = screen.getByRole('article', {
+      name: /Other active roadmaps/i,
+    });
+    expect(within(othersCard).getByText('1 / 3 active')).toBeInTheDocument();
+    expect(
+      within(othersCard).getByText(/No other active roadmaps yet/i),
+    ).toBeInTheDocument();
+    expect(
+      within(othersCard).queryByText('Data Engineering'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('reloads getToday after EP-R14 focus switch to a roadmap without a Daily Plan even if HoursPromptModal is cancelled, preventing stale roadmap_id submission', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-switch' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [{ id: 'g-1', status: 'confirmed' }],
+      meta: { limit: 100, next_cursor: null },
+    });
+    mockGetToday
+      .mockResolvedValueOnce({
+        status: 'ready',
+        roadmap_id: 'rm-old',
+        plan_id: 'plan-old',
+        plan_day: { day_no: 2, total_days: 12 },
+        topic: {
+          topic_id: 'top-old',
+          title: 'Old Roadmap Topic',
+          career_level: 'junior',
+          content_version: 1,
+          explanation_markdown: '## Old',
+          important_questions: [],
+          sources: [],
+          learning_state: 'learning',
+          required_depth: 'Core',
+          rating_allowed: true,
+          report_allowed: true,
+        },
+        quiz: { attempt_id: null, status: null, can_retry: false },
+        job: null,
+        requires_learning_hours: false,
+        preferred_daily_hours: 2,
+      })
+      .mockResolvedValueOnce({
+        status: 'no_daily_plan',
+        roadmap_id: 'rm-new',
+        plan_id: null,
+        plan_day: null,
+        topic: null,
+        quiz: { attempt_id: null, status: null, can_retry: false },
+        job: null,
+        requires_learning_hours: false,
+        preferred_daily_hours: 2,
+      });
+
+    mockFocusRoadmap.mockResolvedValueOnce({
+      focus_roadmap_id: 'rm-new',
+      daily_plan: {
+        state: 'missing',
+        plan_id: null,
+        requires_learning_hours: false,
+      },
+    });
+
+    mockListRoadmaps.mockResolvedValue({
+      items: [
+        {
+          id: 'rm-old',
+          career_goal_id: 'g-1',
+          canonical_role_id: 'r-1',
+          role_name: 'Data Engineering',
+          target_level: 'junior',
+          status: 'locked',
+          is_focus: true,
+          current_version_id: 'v-1',
+          current_version_no: 1,
+          draft_version_no: null,
+          has_open_draft: false,
+          has_open_merge: false,
+          has_daily_plan: true,
+          stale: false,
+          stale_draft: false,
+          locked_at: '2026-11-20T00:00:00.000Z',
+          archived_at: null,
+          created_at: '2026-11-20T00:00:00.000Z',
+          updated_at: '2026-11-20T00:00:00.000Z',
+        },
+        {
+          id: 'rm-new',
+          career_goal_id: 'g-2',
+          canonical_role_id: 'r-2',
+          role_name: 'Backend Development',
+          target_level: 'mid',
+          status: 'locked',
+          is_focus: false,
+          current_version_id: 'v-2',
+          current_version_no: 1,
+          draft_version_no: null,
+          has_open_draft: false,
+          has_open_merge: false,
+          has_daily_plan: false,
+          stale: false,
+          stale_draft: false,
+          locked_at: '2026-11-20T00:00:00.000Z',
+          archived_at: null,
+          created_at: '2026-11-20T00:00:00.000Z',
+          updated_at: '2026-11-20T00:00:00.000Z',
+        },
+      ],
+      meta: { limit: 10, next_cursor: null },
+    });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          id: 'user-1',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          verified_contact: true,
+          linked_providers: ['email'],
+        },
+        profile_complete: true,
+        effective_access: {
+          roadmap_generator: true,
+          daily_plan: true,
+          ai_mentor: true,
+        },
+        focus_roadmap_id: 'rm-old',
+        can_delete_account: true,
+      },
+    });
+    mockLoadProfileForSetup.mockResolvedValue({
+      fullName: 'Mehedi Hasan',
+      profile: {
+        current_role: 'Engineer',
+        education: 'BSc',
+        experience_level: 'mid',
+        existing_skills: [],
+        existing_skills_none: true,
+        learning_preference: 'hands_on',
+        preferred_daily_hours: 2,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: true,
+        active_career_goal_ids: ['g-1'],
+        profile_complete: true,
+        missing_fields: [],
+        updated_at: '2026-11-20T00:00:00.000Z',
+      },
+    });
+
+    const page = await DashboardPage();
+    render(
+      <AppShellProvider>
+        <AppShell>{page}</AppShell>
+      </AppShellProvider>,
+    );
+
+    const othersCard = screen.getByRole('article', {
+      name: /Other active roadmaps/i,
+    });
+    fireEvent.click(
+      within(othersCard).getByRole('button', { name: 'Set as Focus' }),
+    );
+
+    // Modal opens for the new focused roadmap; cancel it
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    // Hero card MUST reflect refreshed Today for rm-new (no_daily_plan), NOT stale rm-old ready state
+    await waitFor(() => {
+      expect(mockGetToday).toHaveBeenCalledTimes(2);
+      const heroCard = screen.getByRole('article', {
+        name: /Focused roadmap and today's learning/i,
+      });
+      expect(
+        within(heroCard).getByText('Backend Development'),
+      ).toBeInTheDocument();
+      expect(
+        within(heroCard).queryByText('Old Roadmap Topic'),
+      ).not.toBeInTheDocument();
+      expect(
+        within(heroCard).getByRole('button', { name: /Create Daily Plan/i }),
+      ).toBeInTheDocument();
+    });
   });
 });
