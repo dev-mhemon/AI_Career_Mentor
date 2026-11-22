@@ -574,6 +574,27 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       'expected_version_no',
     ]);
 
+    const nullRevDto = plainToInstance(RevisionRequestDTO, {
+      refresh_stale: true,
+      expected_version_no: null,
+    });
+    expect((await validate(nullRevDto)).map((e) => e.property)).toEqual([
+      'expected_version_no',
+    ]);
+
+    const omittedRevDto = plainToInstance(RevisionRequestDTO, {
+      refresh_stale: true,
+    });
+    expect(await validate(omittedRevDto)).toEqual([]);
+
+    const nullLockDto = plainToInstance(LockRoadmapDTO, {
+      expected_version_no: null,
+      version_no: null,
+    });
+    expect((await validate(nullLockDto)).map((e) => e.property).sort()).toEqual(
+      ['expected_version_no', 'version_no'],
+    );
+
     const boolLockDto = plainToInstance(LockRoadmapDTO, {
       expected_version_no: true,
       version_no: 2_147_483_648,

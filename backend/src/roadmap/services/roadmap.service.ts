@@ -274,6 +274,24 @@ function encodeRoadmapCursor(updatedAt: Date | string, id: string): string {
   ).toString('base64url');
 }
 
+function isValidCalendarTimestamp(raw: string): boolean {
+  if (!PG_CURSOR_TIMESTAMPTZ_PATTERN.test(raw)) {
+    return false;
+  }
+  const year = Number(raw.slice(0, 4));
+  const month = Number(raw.slice(5, 7));
+  const day = Number(raw.slice(8, 10));
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    return false;
+  }
+  return !Number.isNaN(Date.parse(raw));
+}
+
 function decodeRoadmapCursor(rawCursor: string): {
   updatedAt: string;
   id: string;
@@ -281,17 +299,18 @@ function decodeRoadmapCursor(rawCursor: string): {
   try {
     const json = Buffer.from(rawCursor.trim(), 'base64url').toString('utf8');
     const parsed = JSON.parse(json) as { updated_at?: unknown; id?: unknown };
+    const updatedAt =
+      typeof parsed?.updated_at === 'string' ? parsed.updated_at.trim() : '';
     if (
-      typeof parsed?.updated_at !== 'string' ||
-      !PG_CURSOR_TIMESTAMPTZ_PATTERN.test(parsed.updated_at.trim()) ||
-      Number.isNaN(Date.parse(parsed.updated_at.trim())) ||
+      !updatedAt ||
+      !isValidCalendarTimestamp(updatedAt) ||
       typeof parsed?.id !== 'string' ||
       !UUID_PATTERN.test(parsed.id.trim())
     ) {
       throw new Error('Malformed roadmap cursor');
     }
     return {
-      updatedAt: parsed.updated_at.trim(),
+      updatedAt,
       id: parsed.id.trim().toLowerCase(),
     };
   } catch {
@@ -1549,13 +1568,6 @@ export class RoadmapService {
         if (!draft) {
           fail(409, 'NO_OPEN_DRAFT', 'No open draft version found');
         }
-        if (draft.stale === true && dto?.acknowledge_stale !== true) {
-          fail(
-            409,
-            'DRAFT_STALE',
-            'Draft is stale; refresh or acknowledge staleness before locking',
-          );
-        }
         const draftVersionNo = Number(draft.version_no);
         if (
           (bodyExpectedVersionNo !== undefined &&
@@ -1566,6 +1578,13 @@ export class RoadmapService {
             409,
             'STALE_VERSION',
             'Draft version has changed; reload and retry',
+          );
+        }
+        if (draft.stale === true && dto?.acknowledge_stale !== true) {
+          fail(
+            409,
+            'DRAFT_STALE',
+            'Draft is stale; refresh or acknowledge staleness before locking',
           );
         }
 

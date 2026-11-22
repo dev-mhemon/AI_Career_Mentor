@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ApiError,
@@ -85,8 +85,17 @@ export function RoadmapGenerateHandoff({
   const [errorResetKey, setErrorResetKey] = useState(0);
 
   // Reuses the same client UUID only when retrying an ambiguous/transient HTTP submission
-  // of the identical payload; cleared on `202` acceptance or deterministic rejection.
+  // of the identical payload; cleared on `202` acceptance, deterministic rejection, or confirmed `429 RATE_LIMITED`.
   const pendingKeyRef = useRef<{ signature: string; key: string } | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const navigateToDraft = (roadmapId: string) => {
     if (onNavigateToDraft) {
@@ -129,12 +138,14 @@ export function RoadmapGenerateHandoff({
         ? await onGenerateRoadmap(payload, idempotencyKey)
         : await generateRoadmap(accessToken, payload, idempotencyKey);
       pendingKeyRef.current = null;
+      activeJobIdRef.current = job.job_id;
       setJobTerminated(false);
       setAcceptedJob(job);
     } catch (err) {
       if (
         err instanceof ApiError &&
-        DETERMINISTIC_HTTP_STATUSES.has(err.statusCode)
+        (DETERMINISTIC_HTTP_STATUSES.has(err.statusCode) ||
+          (err.statusCode === 429 && err.code === 'RATE_LIMITED'))
       ) {
         pendingKeyRef.current = null;
       }
@@ -169,7 +180,12 @@ export function RoadmapGenerateHandoff({
     const status = pollJobStatus
       ? await pollJobStatus(jobId, signal)
       : await getJobStatus(accessToken, jobId, { signal });
-    if (status.status === 'failed' || status.status === 'succeeded') {
+    if (
+      isMountedRef.current &&
+      !signal.aborted &&
+      activeJobIdRef.current === jobId &&
+      (status.status === 'failed' || status.status === 'succeeded')
+    ) {
       setJobTerminated(true);
     }
     return status;

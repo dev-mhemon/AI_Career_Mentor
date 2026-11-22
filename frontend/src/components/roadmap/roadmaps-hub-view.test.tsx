@@ -573,6 +573,77 @@ describe('RoadmapsHubView', () => {
     expect(toast).toHaveTextContent('Roadmap archived');
     expect(toast).not.toHaveTextContent(/focus automatically reassigned/i);
   });
+
+  it('refreshes the newly active tab instead of overwriting it when a user switches tabs while Set as Focus or Archive is in flight', async () => {
+    const rmLocked = makeSummary({
+      id: 'rm-locked-switch',
+      role_name: 'Locked Backend',
+      status: 'locked',
+      is_focus: false,
+    });
+    const rmDraft = makeSummary({
+      id: 'rm-draft-tab',
+      role_name: 'Draft Frontend',
+      status: 'draft',
+      is_focus: false,
+    });
+
+    let resolveFocus!: (val: {
+      focus_roadmap_id: string;
+      daily_plan: {
+        state: 'existing';
+        plan_id: string;
+        requires_learning_hours: false;
+      };
+    }) => void;
+    vi.mocked(focusRoadmap).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFocus = resolve;
+        }),
+    );
+    vi.mocked(listRoadmaps)
+      .mockResolvedValueOnce({
+        items: [rmDraft],
+        meta: { limit: 20, next_cursor: null },
+      })
+      .mockResolvedValueOnce({
+        items: [rmDraft],
+        meta: { limit: 20, next_cursor: null },
+      });
+
+    render(
+      <RoadmapsHubView
+        accessToken="token-1"
+        initialPage={{
+          items: [rmLocked],
+          meta: { limit: 20, next_cursor: null },
+        }}
+      />,
+    );
+
+    // Start Set as Focus on All tab, then switch to Draft tab before POST resolves
+    fireEvent.click(screen.getByRole('button', { name: 'Set as Focus' }));
+    fireEvent.click(screen.getByRole('tab', { name: /^Draft/i }));
+    expect(await screen.findByText('Draft Frontend')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFocus({
+        focus_roadmap_id: 'rm-locked-switch',
+        daily_plan: {
+          state: 'existing',
+          plan_id: 'plan-1',
+          requires_learning_hours: false,
+        },
+      });
+      await Promise.resolve();
+    });
+
+    // Must NOT overwrite Draft tab with stale Locked Backend; instead refreshes Draft tab cleanly
+    expect(await screen.findByText('Draft Frontend')).toBeInTheDocument();
+    expect(screen.queryByText('Locked Backend')).not.toBeInTheDocument();
+    expect(vi.mocked(listRoadmaps)).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('RoadmapGenerateHandoff', () => {
@@ -743,5 +814,41 @@ describe('RoadmapGenerateHandoff', () => {
       await Promise.resolve();
     });
     expect(discontinueBtn).toBeEnabled();
+  });
+
+  it('clears Idempotency-Key on confirmed 429 RATE_LIMITED and ignores superseded poll results from an older job', async () => {
+    vi.mocked(generateRoadmap)
+      .mockRejectedValueOnce(
+        new ApiError(429, 'Quota reached', 'RATE_LIMITED', 1, [], true),
+      )
+      .mockResolvedValueOnce({
+        job_id: 'job-r01-old',
+        kind: 'roadmap_generate',
+        status: 'queued',
+        poll_url: '/api/v1/jobs/job-r01-old',
+        retry_after_seconds: 1,
+      });
+
+    render(
+      <RoadmapGenerateHandoff
+        accessToken="token-1"
+        careerGoalId="goal-uuid-1"
+        targetLevel="mid"
+        levelConfirmed={true}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Generate Roadmap Draft' }),
+    );
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
+    await waitFor(() => {
+      expect(vi.mocked(generateRoadmap)).toHaveBeenCalledTimes(2);
+    });
+    const firstKey = vi.mocked(generateRoadmap).mock.calls[0][2];
+    const secondKey = vi.mocked(generateRoadmap).mock.calls[1][2];
+    expect(secondKey).not.toBe(firstKey);
   });
 });

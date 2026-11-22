@@ -166,7 +166,7 @@ export class RevisionRequestDTO {
   @IsBoolean()
   refresh_stale?: boolean;
 
-  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @Min(1)
   @Max(2_147_483_647)
@@ -177,13 +177,13 @@ export class RevisionRequestDTO {
  * `C05` §15.5 `LockRoadmapDTO` (`EP-R05`).
  */
 export class LockRoadmapDTO {
-  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @Min(1)
   @Max(2_147_483_647)
   expected_version_no?: number;
 
-  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @Min(1)
   @Max(2_147_483_647)

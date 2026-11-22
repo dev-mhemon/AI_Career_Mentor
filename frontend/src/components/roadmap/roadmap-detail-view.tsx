@@ -341,6 +341,7 @@ export function RoadmapDetailView({
   const drawerPanelRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLButtonElement>(null);
   const drawerSessionRef = useRef(0);
+  const expandedDrawerSessionRef = useRef<number | null>(null);
   const snapshotAbortRef = useRef<AbortController | null>(null);
   const loadMoreVersionsAbortRef = useRef<AbortController | null>(null);
 
@@ -355,6 +356,7 @@ export function RoadmapDetailView({
   const [versionsState, setVersionsState] = useState<VersionsFetchState | null>(
     null,
   );
+  const [refreshingVersions, setRefreshingVersions] = useState(false);
   const [loadingMoreVersions, setLoadingMoreVersions] = useState(false);
   const [loadingSnapshotVersion, setLoadingSnapshotVersion] = useState<
     number | null
@@ -419,6 +421,7 @@ export function RoadmapDetailView({
     }
 
     let active = true;
+    const effectSession = drawerSessionRef.current;
     const controller = new AbortController();
 
     listRoadmapVersions(
@@ -431,17 +434,35 @@ export function RoadmapDetailView({
         if (!active || controller.signal.aborted) {
           return;
         }
-        setVersionsState({
-          key: versionsKey,
-          status: 'loaded',
-          items: res.items,
-          nextCursor: res.meta.next_cursor,
+        setRefreshingVersions(false);
+        setVersionsState((prev) => {
+          if (
+            expandedDrawerSessionRef.current === effectSession &&
+            prev &&
+            prev.key === versionsKey &&
+            prev.status === 'loaded'
+          ) {
+            const seen = new Set(res.items.map((v) => v.id));
+            return {
+              key: versionsKey,
+              status: 'loaded',
+              items: [...res.items, ...prev.items.filter((v) => !seen.has(v.id))],
+              nextCursor: prev.nextCursor,
+            };
+          }
+          return {
+            key: versionsKey,
+            status: 'loaded',
+            items: res.items,
+            nextCursor: res.meta.next_cursor,
+          };
         });
       })
       .catch((err) => {
         if (!active || controller.signal.aborted) {
           return;
         }
+        setRefreshingVersions(false);
         setVersionsState({
           key: versionsKey,
           status: 'error',
@@ -457,24 +478,28 @@ export function RoadmapDetailView({
 
   const openDrawer = useCallback(() => {
     drawerSessionRef.current += 1;
+    expandedDrawerSessionRef.current = null;
     snapshotAbortRef.current?.abort();
     snapshotAbortRef.current = null;
     loadMoreVersionsAbortRef.current?.abort();
     loadMoreVersionsAbortRef.current = null;
     setLoadingSnapshotVersion(null);
     setLoadingMoreVersions(false);
+    setRefreshingVersions(!seededVersions);
     setDrawerError(null);
     setDrawerOpen(true);
-  }, []);
+  }, [seededVersions]);
 
   const closeDrawer = useCallback(() => {
     drawerSessionRef.current += 1;
+    expandedDrawerSessionRef.current = null;
     snapshotAbortRef.current?.abort();
     snapshotAbortRef.current = null;
     loadMoreVersionsAbortRef.current?.abort();
     loadMoreVersionsAbortRef.current = null;
     setLoadingSnapshotVersion(null);
     setLoadingMoreVersions(false);
+    setRefreshingVersions(false);
     setDrawerOpen(false);
   }, []);
 
@@ -641,7 +666,8 @@ export function RoadmapDetailView({
     if (
       activeVersions?.status !== 'loaded' ||
       !activeVersions.nextCursor ||
-      loadingMoreVersions
+      loadingMoreVersions ||
+      refreshingVersions
     ) {
       return;
     }
@@ -664,6 +690,7 @@ export function RoadmapDetailView({
       if (sessionId !== drawerSessionRef.current || controller.signal.aborted) {
         return;
       }
+      expandedDrawerSessionRef.current = sessionId;
       setVersionsState((prev) => {
         const existing =
           prev && prev.key === versionsKey && prev.status === 'loaded'
@@ -1301,7 +1328,10 @@ export function RoadmapDetailView({
               <Alert
                 variant="error_retryable"
                 role="alert"
-                onRetry={() => setVersionsReloadTick((prev) => prev + 1)}
+                onRetry={() => {
+                  setRefreshingVersions(true);
+                  setVersionsReloadTick((prev) => prev + 1);
+                }}
               >
                 {activeVersions.error.message}
               </Alert>
@@ -1373,6 +1403,7 @@ export function RoadmapDetailView({
                     variant="secondary"
                     size="sm"
                     loading={loadingMoreVersions}
+                    disabled={loadingMoreVersions || refreshingVersions}
                     onClick={() => void handleLoadMoreVersions()}
                   >
                     Load older versions

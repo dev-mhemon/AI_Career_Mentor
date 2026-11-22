@@ -611,4 +611,74 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(toast).toHaveTextContent('Roadmap archived');
     expect(toast).not.toHaveTextContent(/focus automatically reassigned/i);
   });
+
+  it('disables Load older versions while first-page Version History refresh is in flight on drawer reopen', async () => {
+    const currentV3 = makeDetail({ id: 'rm-locked-1', version_no: 3 });
+    const v3Meta = {
+      id: 'ver-3',
+      version_no: 3,
+      state: 'locked' as const,
+      created_by: 'user_request' as const,
+      target_level: 'senior' as const,
+      base_version_id: 'ver-2',
+      merge_id: null,
+      stale: false,
+      locked_at: '2026-11-19T11:00:00.000Z',
+      superseded_at: null,
+      created_at: '2026-11-19T10:30:00.000Z',
+    };
+
+    let resolveSecondOpen!: (val: {
+      items: (typeof v3Meta)[];
+      meta: { limit: number; next_cursor: string | null };
+    }) => void;
+
+    vi.mocked(listRoadmapVersions)
+      .mockResolvedValueOnce({
+        items: [v3Meta],
+        meta: { limit: 50, next_cursor: 'cursor-v2' },
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecondOpen = resolve;
+          }),
+      );
+
+    render(
+      <RoadmapDetailView
+        accessToken="token-1"
+        roadmapId="rm-locked-1"
+        initialRoadmap={currentV3}
+      />,
+    );
+
+    // 1st open: loads page 1 with next_cursor
+    fireEvent.click(screen.getByRole('button', { name: 'Version History' }));
+    const drawer1 = await screen.findByRole('dialog', { name: 'Version History' });
+    expect(
+      await within(drawer1).findByRole('button', { name: 'Load older versions' }),
+    ).toBeEnabled();
+
+    // Close and reopen -> 1st-page refresh in flight MUST disable Load older versions until it settles
+    fireEvent.click(
+      within(drawer1).getByRole('button', { name: 'Close version history' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Version History' }));
+    const drawer2 = await screen.findByRole('dialog', { name: 'Version History' });
+    expect(
+      within(drawer2).getByRole('button', { name: 'Load older versions' }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      resolveSecondOpen({
+        items: [v3Meta],
+        meta: { limit: 50, next_cursor: 'cursor-v2' },
+      });
+      await Promise.resolve();
+    });
+    expect(
+      within(drawer2).getByRole('button', { name: 'Load older versions' }),
+    ).toBeEnabled();
+  });
 });

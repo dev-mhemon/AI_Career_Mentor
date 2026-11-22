@@ -230,10 +230,10 @@ export function RoadmapDraftView({
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [lockState, setLockState] = useState<'idle' | 'locking' | 'navigating'>('idle');
   const locking = lockState !== 'idle';
-  const [confirmedLargeVersion, setConfirmedLargeVersion] = useState<number | null>(
+  const [confirmedLargeVersion, setConfirmedLargeVersion] = useState<string | null>(
     null,
   );
-  const [forcedLargeVersion, setForcedLargeVersion] = useState<number | null>(
+  const [forcedLargeVersion, setForcedLargeVersion] = useState<string | null>(
     null,
   );
   const [actionError, setActionError] = useState<MappedError | null>(null);
@@ -314,10 +314,12 @@ export function RoadmapDraftView({
   const trimmedInstruction = instruction.trim();
   const trimmedCodePointCount = Array.from(trimmedInstruction).length;
 
+  const draftVersionKey =
+    draft !== null ? `${draft.id}:${draft.version_no}` : null;
   const confirmLarge =
-    draft !== null && confirmedLargeVersion === draft.version_no;
+    draftVersionKey !== null && confirmedLargeVersion === draftVersionKey;
   const forceLargeConfirm =
-    draft !== null && forcedLargeVersion === draft.version_no;
+    draftVersionKey !== null && forcedLargeVersion === draftVersionKey;
 
   const dispatchRevision = async (
     kind: 'refresh' | 'revision',
@@ -429,8 +431,15 @@ export function RoadmapDraftView({
     setReloadTick((prev) => prev + 1);
   };
 
+  const canRetryActiveJob =
+    draft !== null &&
+    draft.status === 'draft' &&
+    featureEnabled &&
+    !submittingRevision &&
+    !locking;
+
   const handleRetryActiveJob = () => {
-    if (!draft || !activeJob) {
+    if (!canRetryActiveJob || !draft || !activeJob) {
       return;
     }
     const { kind, payload } = activeJob;
@@ -540,7 +549,7 @@ export function RoadmapDraftView({
           pendingLockKeyRef.current = null;
         }
         if (err.code === 'LARGE_ROADMAP_CONFIRMATION_REQUIRED') {
-          setForcedLargeVersion(draft.version_no);
+          setForcedLargeVersion(`${draft.id}:${draft.version_no}`);
         }
       }
       setActionError(mapApiError(err));
@@ -835,7 +844,9 @@ export function RoadmapDraftView({
                 required
                 checked={confirmLarge}
                 onChange={(checked) =>
-                  setConfirmedLargeVersion(checked ? draft.version_no : null)
+                  setConfirmedLargeVersion(
+                    checked ? `${draft.id}:${draft.version_no}` : null,
+                  )
                 }
                 disabled={
                   !isDraftEditable ||
@@ -932,7 +943,7 @@ export function RoadmapDraftView({
                 accessToken={accessToken}
                 pollJobStatus={pollDraftJobStatus}
                 onJobSucceeded={handleJobSucceeded}
-                onRetryJob={handleRetryActiveJob}
+                onRetryJob={canRetryActiveJob ? handleRetryActiveJob : undefined}
               />
             )}
           </div>

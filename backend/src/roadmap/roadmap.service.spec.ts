@@ -538,6 +538,45 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         expectContractError(err, 400, 'INVALID_FORMAT');
         return true;
       });
+
+      // Impossible calendar dates in cursor (e.g. Feb 30 / non-leap Feb 29) -> 400 INVALID_FORMAT
+      for (const impossibleDate of [
+        '2026-02-30T10:00:00.123456Z',
+        '2026-02-29T10:00:00.000000Z',
+        '2026-04-31T00:00:00Z',
+      ]) {
+        const badDateCursor = Buffer.from(
+          JSON.stringify({ updated_at: impossibleDate, id: ROADMAP_ID }),
+          'utf8',
+        ).toString('base64url');
+        await expect(
+          service.listRoadmaps(USER_ID, { cursor: badDateCursor }),
+        ).rejects.toSatisfy((err) => {
+          expectContractError(err, 400, 'INVALID_FORMAT');
+          return true;
+        });
+      }
+
+      // Valid leap-year date preserves exact sub-millisecond precision
+      const leapCursor = Buffer.from(
+        JSON.stringify({
+          updated_at: '2024-02-29T23:59:59.654321Z',
+          id: ROADMAP_ID,
+        }),
+        'utf8',
+      ).toString('base64url');
+      queryMock.mockImplementationOnce(
+        async (_sql: string, params?: unknown[]) => {
+          expect(params).toEqual([
+            USER_ID,
+            '2024-02-29T23:59:59.654321Z',
+            ROADMAP_ID,
+            21,
+          ]);
+          return [];
+        },
+      );
+      await service.listRoadmaps(USER_ID, { cursor: leapCursor });
     });
 
     it('EP-R03 & EP-R06/EP-R07 enforce owner scoping, ?version=current|draft|<int>, and version snapshot pagination', async () => {
@@ -994,6 +1033,25 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         service.lockRoadmap(USER_ID, ROADMAP_ID, { expected_version_no: 2 }),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 409, 'DRAFT_STALE');
+        return true;
+      });
+
+      // Version precondition takes precedence over DRAFT_STALE (both body expected_version_no and If-Match)
+      await expect(
+        service.lockRoadmap(USER_ID, ROADMAP_ID, { expected_version_no: 1 }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'STALE_VERSION');
+        return true;
+      });
+      await expect(
+        service.lockRoadmap(
+          USER_ID,
+          ROADMAP_ID,
+          { expected_version_no: 2 },
+          { ifMatch: 1 },
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'STALE_VERSION');
         return true;
       });
 

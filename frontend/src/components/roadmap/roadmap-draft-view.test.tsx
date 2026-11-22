@@ -667,4 +667,73 @@ describe('RoadmapDraftView (Screen 12)', () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeDisabled();
   });
+
+  it('keeps a failed retryable revision job visible and hides Retry when roadmap generation becomes disabled', async () => {
+    const draftV1 = makeDraft({ version_no: 1 });
+    vi.mocked(reviseRoadmap).mockResolvedValueOnce({
+      job_id: 'job-fail-toggle',
+      kind: 'roadmap_revision',
+      status: 'queued',
+      poll_url: '/api/v1/jobs/job-fail-toggle',
+      retry_after_seconds: 1,
+    });
+    const pollMock = vi.fn(
+      async (): Promise<JobStatusDTO> => ({
+        job_id: 'job-fail-toggle',
+        kind: 'roadmap_revision',
+        status: 'failed',
+        result_ref: null,
+        error: {
+          code: 'AI_GENERATION_FAILED',
+          message: 'Temporary AI failure',
+          retryable: true,
+        },
+        retryable: true,
+        created_at: '2026-11-19T00:00:00.000Z',
+        finished_at: '2026-11-19T00:00:02.000Z',
+      }),
+    );
+
+    const { rerender } = render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        featureEnabled={true}
+        initialDraft={draftV1}
+        pollJobStatus={pollMock}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Revision instruction/i), {
+      target: { value: 'Add distributed tracing.' },
+    });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Submit Revision' }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+
+    // Feature flag turns off -> Retry button hides while failed job notice stays visible
+    rerender(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        featureEnabled={false}
+        initialDraft={draftV1}
+        pollJobStatus={pollMock}
+      />,
+    );
+    expect(screen.getByText('Revising your roadmap draft')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
 });

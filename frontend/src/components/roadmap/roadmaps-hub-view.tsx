@@ -589,24 +589,31 @@ export function RoadmapsHubView({
     if (focusingId || archivingId || loadingMore) {
       return;
     }
+    const mutationGen = requestGenRef.current;
+    const mutationRequestKey = requestKey;
+    const mutationNextCursor = nextCursor;
     setFocusingId(roadmap.id);
     setActionError(null);
     setFeedback(null);
     try {
       const result = await focusRoadmap(accessToken, roadmap.id);
-      setFetchState({
-        key: requestKey,
-        status: 'loaded',
-        items: items.map((entry) => ({
-          ...entry,
-          is_focus: entry.id === result.focus_roadmap_id,
-          has_daily_plan:
-            entry.id === result.focus_roadmap_id
-              ? result.daily_plan.state === 'existing'
-              : entry.has_daily_plan,
-        })),
-        nextCursor,
-      });
+      if (mutationGen === requestGenRef.current) {
+        setFetchState({
+          key: mutationRequestKey,
+          status: 'loaded',
+          items: items.map((entry) => ({
+            ...entry,
+            is_focus: entry.id === result.focus_roadmap_id,
+            has_daily_plan:
+              entry.id === result.focus_roadmap_id
+                ? result.daily_plan.state === 'existing'
+                : entry.has_daily_plan,
+          })),
+          nextCursor: mutationNextCursor,
+        });
+      } else {
+        setReloadTick((prev) => prev + 1);
+      }
       setFeedback(formatFocusFeedback(result));
     } catch (err) {
       setActionError(mapApiError(err));
@@ -620,64 +627,73 @@ export function RoadmapsHubView({
       return;
     }
     const target = archiveTarget;
+    const mutationGen = requestGenRef.current;
+    const mutationRequestKey = requestKey;
+    const mutationCountsKey = countsKey;
+    const mutationFilter = filter;
+    const mutationNextCursor = nextCursor;
     setArchivingId(target.id);
     setActionError(null);
     setFeedback(null);
     setArchiveToast(null);
     try {
       const result = await archiveRoadmap(accessToken, target.id);
-      const updatedList = items
-        .map((entry) => {
-          if (entry.id === result.archived_roadmap_id) {
-            return {
-              ...entry,
-              status: 'archived' as const,
-              is_focus: false,
-            };
-          }
-          if (result.new_focus_roadmap_id) {
-            return {
-              ...entry,
-              is_focus: entry.id === result.new_focus_roadmap_id,
-            };
-          }
-          return entry;
-        })
-        .filter((entry) =>
-          filter === 'locked' || filter === 'draft'
-            ? entry.status === filter
-            : true,
-        );
+      if (mutationGen === requestGenRef.current) {
+        const updatedList = items
+          .map((entry) => {
+            if (entry.id === result.archived_roadmap_id) {
+              return {
+                ...entry,
+                status: 'archived' as const,
+                is_focus: false,
+              };
+            }
+            if (result.new_focus_roadmap_id) {
+              return {
+                ...entry,
+                is_focus: entry.id === result.new_focus_roadmap_id,
+              };
+            }
+            return entry;
+          })
+          .filter((entry) =>
+            mutationFilter === 'locked' || mutationFilter === 'draft'
+              ? entry.status === mutationFilter
+              : true,
+          );
 
-      setFetchState({
-        key: requestKey,
-        status: 'loaded',
-        items: updatedList,
-        nextCursor,
-      });
-      setSavedCounts((prev) => {
-        const base: FilterCounts | null =
-          prev && prev.key === countsKey
-            ? prev.counts
-            : initialPage && reloadTick === 0
-              ? computeCountsFromAll(initialPage.items)
-              : null;
-        if (!base) {
-          return prev;
-        }
-        const prevStatus = target.status;
-        if (prevStatus === 'archived') {
-          return { key: countsKey, counts: base };
-        }
-        return {
-          key: countsKey,
-          counts: {
-            ...base,
-            [prevStatus]: Math.max(0, base[prevStatus] - 1),
-            archived: base.archived + 1,
-          },
-        };
-      });
+        setFetchState({
+          key: mutationRequestKey,
+          status: 'loaded',
+          items: updatedList,
+          nextCursor: mutationNextCursor,
+        });
+        setSavedCounts((prev) => {
+          const base: FilterCounts | null =
+            prev && prev.key === mutationCountsKey
+              ? prev.counts
+              : initialPage && reloadTick === 0
+                ? computeCountsFromAll(initialPage.items)
+                : null;
+          if (!base) {
+            return prev;
+          }
+          const prevStatus = target.status;
+          if (prevStatus === 'archived') {
+            return { key: mutationCountsKey, counts: base };
+          }
+          return {
+            key: mutationCountsKey,
+            counts: {
+              ...base,
+              [prevStatus]: Math.max(0, base[prevStatus] - 1),
+              archived: base.archived + 1,
+            },
+          };
+        });
+      } else {
+        setReloadTick((prev) => prev + 1);
+      }
       setArchiveToast(formatArchiveFeedback(result, Boolean(target.is_focus)));
       setArchiveTarget(null);
     } catch (err) {
