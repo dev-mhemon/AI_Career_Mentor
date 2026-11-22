@@ -238,6 +238,113 @@ describe("mapApiError", () => {
       expect(mapped.message).not.toContain("stack trace");
     }
   });
+
+  it("maps all M06 roadmap lifecycle error codes cleanly with zero internal leaks", () => {
+    const rawInternalLeak = "google-gemini internal postgres detail stack trace";
+    const cases: Array<{
+      status: number;
+      code: string;
+      tone: "error" | "warning" | "info";
+      retryable: boolean;
+      retryAfterSeconds?: number | null;
+      match: RegExp;
+    }> = [
+      {
+        status: 409,
+        code: "DRAFT_STALE",
+        tone: "warning",
+        retryable: false,
+        match: /refresh.*draft.*locking/i,
+      },
+      {
+        status: 409,
+        code: "STALE_VERSION",
+        tone: "warning",
+        retryable: false,
+        match: /newer version.*reload/i,
+      },
+      {
+        status: 422,
+        code: "LARGE_ROADMAP_CONFIRMATION_REQUIRED",
+        tone: "warning",
+        retryable: false,
+        match: /45.*confirm/i,
+      },
+      {
+        status: 409,
+        code: "RESOURCE_CONFLICT",
+        tone: "warning",
+        retryable: false,
+        match: /already exists.*career goal/i,
+      },
+      {
+        status: 409,
+        code: "ROADMAP_LIMIT_REACHED",
+        tone: "warning",
+        retryable: false,
+        match: /maximum of 3/i,
+      },
+      {
+        status: 409,
+        code: "INVALID_STATE_TRANSITION",
+        tone: "warning",
+        retryable: false,
+        match: /not allowed.*current state/i,
+      },
+      {
+        status: 409,
+        code: "STALE_JOB_INPUT",
+        tone: "warning",
+        retryable: false,
+        match: /saved data changed/i,
+      },
+      {
+        status: 404,
+        code: "RESOURCE_NOT_FOUND",
+        tone: "warning",
+        retryable: false,
+        match: /could not be found/i,
+      },
+      {
+        status: 403,
+        code: "FEATURE_DISABLED",
+        tone: "warning",
+        retryable: false,
+        match: /currently unavailable.*existing.*roadmaps/i,
+      },
+      {
+        status: 429,
+        code: "RATE_LIMIT_EXCEEDED",
+        tone: "warning",
+        retryable: true,
+        retryAfterSeconds: 180,
+        match: /limit reached.*wait/i,
+      },
+    ];
+
+    for (const c of cases) {
+      const mapped = mapApiError(
+        new ApiError(
+          c.status,
+          rawInternalLeak,
+          c.code,
+          "req-r-1",
+          [],
+          c.retryable,
+          c.retryAfterSeconds ?? null,
+        ),
+      );
+      expect(mapped.code).toBe(c.code);
+      expect(mapped.status).toBe(c.status);
+      expect(mapped.tone).toBe(c.tone);
+      expect(mapped.retryable).toBe(c.retryable);
+      expect(mapped.retryAfterSeconds).toBe(c.retryAfterSeconds ?? null);
+      expect(mapped.message).toMatch(c.match);
+      expect(mapped.message).not.toContain("gemini");
+      expect(mapped.message).not.toContain("postgres");
+      expect(mapped.message).not.toContain("stack trace");
+    }
+  });
 });
 
 describe("mapActionResult", () => {

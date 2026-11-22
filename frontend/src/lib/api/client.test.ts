@@ -32,6 +32,16 @@ import {
   getAccountDeletionStatus,
   getJobStatus,
   withIdempotencyKey,
+  createIdempotencyKey,
+  generateRoadmap,
+  listRoadmaps,
+  getRoadmap,
+  reviseRoadmap,
+  lockRoadmap,
+  listRoadmapVersions,
+  getRoadmapVersion,
+  focusRoadmap,
+  archiveRoadmap,
   ApiError,
   UnauthorizedError,
   NetworkError,
@@ -1125,5 +1135,322 @@ describe('M05 EP-P03/EP-P05 and EP-C01–EP-C07 typed fetchers', () => {
     expect(result.current_role).toBe('Backend Developer');
     const [, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1]!;
     expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('M06 Roadmap API Client (EP-R01..EP-R07, EP-R14, EP-R15)', () => {
+  const ROADMAP_ID = '11111111-1111-4111-8111-111111111111';
+  const GOAL_ID = '22222222-2222-4222-8222-222222222222';
+  const IDEM_KEY = '33333333-3333-4333-8333-333333333333';
+
+  it('creates valid UUID v4 idempotency keys', () => {
+    const key = createIdempotencyKey();
+    expect(key).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it('generateRoadmap calls POST /roadmaps/generate (EP-R01) with Idempotency-Key', async () => {
+    const accepted = {
+      job_id: '44444444-4444-4444-8444-444444444444',
+      kind: 'roadmap_generate' as const,
+      status: 'queued' as const,
+      poll_url: '/api/v1/jobs/44444444-4444-4444-8444-444444444444',
+      retry_after_seconds: 2,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({ success: true, data: accepted }),
+    });
+
+    const result = await generateRoadmap(
+      MOCK_TOKEN,
+      { career_goal_id: GOAL_ID, target_level: 'mid', level_confirmed: true },
+      IDEM_KEY,
+    );
+
+    expect(result).toEqual(accepted);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/roadmaps/generate',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Idempotency-Key': IDEM_KEY,
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          career_goal_id: GOAL_ID,
+          target_level: 'mid',
+          level_confirmed: true,
+        }),
+      }),
+    );
+  });
+
+  it('listRoadmaps calls GET /roadmaps (EP-R02) and preserves top-level pagination meta', async () => {
+    const items = [
+      {
+        id: ROADMAP_ID,
+        career_goal_id: GOAL_ID,
+        canonical_role_id: '55555555-5555-4555-8555-555555555555',
+        role_name: 'Backend Developer',
+        target_level: 'junior' as const,
+        status: 'locked' as const,
+        is_focus: true,
+        current_version_id: '66666666-6666-4666-8666-666666666666',
+        current_version_no: 1,
+        draft_version_no: null,
+        has_open_draft: false,
+        has_open_merge: false,
+        has_daily_plan: true,
+        stale: false,
+        stale_draft: false,
+        locked_at: '2026-11-19T10:00:00.000Z',
+        archived_at: null,
+        created_at: '2026-11-19T09:00:00.000Z',
+        updated_at: '2026-11-19T10:00:00.000Z',
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: items,
+          meta: { limit: 10, next_cursor: 'cursor-2' },
+        }),
+    });
+
+    const result = await listRoadmaps(MOCK_TOKEN, {
+      status: 'locked',
+      cursor: 'cursor-1',
+      limit: 10,
+    });
+
+    expect(result).toEqual({
+      items,
+      meta: { limit: 10, next_cursor: 'cursor-2' },
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/roadmaps?status=locked&cursor=cursor-1&limit=10',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+  });
+
+  it('getRoadmap calls GET /roadmaps/:id (EP-R03) with optional ?version query', async () => {
+    const detail = {
+      id: ROADMAP_ID,
+      version_no: 2,
+      version_state: 'draft' as const,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: detail }),
+    });
+
+    const result = await getRoadmap(MOCK_TOKEN, ROADMAP_ID, 'draft');
+    expect(result).toEqual(detail);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}?version=draft`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+  });
+
+  it('reviseRoadmap calls POST /roadmaps/:id/revision (EP-R04) with Idempotency-Key', async () => {
+    const accepted = {
+      job_id: '77777777-7777-4777-8777-777777777777',
+      kind: 'roadmap_revision' as const,
+      status: 'queued' as const,
+      poll_url: '/api/v1/jobs/77777777-7777-4777-8777-777777777777',
+      retry_after_seconds: 2,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({ success: true, data: accepted }),
+    });
+
+    const result = await reviseRoadmap(
+      MOCK_TOKEN,
+      ROADMAP_ID,
+      { instruction: 'Add PostgreSQL indexing', expected_version_no: 1 },
+      IDEM_KEY,
+    );
+
+    expect(result).toEqual(accepted);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}/revision`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Idempotency-Key': IDEM_KEY,
+        }),
+        body: JSON.stringify({
+          instruction: 'Add PostgreSQL indexing',
+          expected_version_no: 1,
+        }),
+      }),
+    );
+  });
+
+  it('lockRoadmap calls POST /roadmaps/:id/lock (EP-R05) with Idempotency-Key', async () => {
+    const lockRes = {
+      roadmap_id: ROADMAP_ID,
+      status: 'locked' as const,
+      version_no: 1,
+      current_version_id: '88888888-8888-4888-8888-888888888888',
+      is_focus: true,
+      locked_at: '2026-11-19T10:30:00.000Z',
+      next_step: 'confirm_learning_hours' as const,
+      preferred_daily_hours: 2,
+      size_guardrail: {
+        active_topic_count: 12,
+        soft_max_topics: 45,
+        materially_large: false,
+        warning: null,
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: lockRes }),
+    });
+
+    const result = await lockRoadmap(
+      MOCK_TOKEN,
+      ROADMAP_ID,
+      { expected_version_no: 1, confirm_large_roadmap: true },
+      IDEM_KEY,
+    );
+
+    expect(result).toEqual(lockRes);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}/lock`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Idempotency-Key': IDEM_KEY,
+        }),
+        body: JSON.stringify({
+          expected_version_no: 1,
+          confirm_large_roadmap: true,
+        }),
+      }),
+    );
+  });
+
+  it('listRoadmapVersions (EP-R06) and getRoadmapVersion (EP-R07) call version routes cleanly', async () => {
+    const versions = [
+      {
+        id: '99999999-9999-4999-8999-999999999999',
+        version_no: 1,
+        state: 'locked' as const,
+        created_by: 'ai' as const,
+        target_level: 'junior' as const,
+        base_version_id: null,
+        merge_id: null,
+        stale: false,
+        locked_at: '2026-11-19T10:00:00.000Z',
+        superseded_at: null,
+        created_at: '2026-11-19T09:00:00.000Z',
+      },
+    ];
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: versions,
+          meta: { limit: 50, next_cursor: null },
+        }),
+    });
+
+    const listRes = await listRoadmapVersions(MOCK_TOKEN, ROADMAP_ID);
+    expect(listRes).toEqual({
+      items: versions,
+      meta: { limit: 50, next_cursor: null },
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}/versions`,
+      expect.any(Object),
+    );
+
+    const snapshot = { id: ROADMAP_ID, version_no: 1 };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: snapshot }),
+    });
+
+    const snapRes = await getRoadmapVersion(MOCK_TOKEN, ROADMAP_ID, 1);
+    expect(snapRes).toEqual(snapshot);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}/versions/1`,
+      expect.any(Object),
+    );
+  });
+
+  it('focusRoadmap (EP-R14) and archiveRoadmap (EP-R15) invoke POST endpoints cleanly', async () => {
+    const focusRes = {
+      focus_roadmap_id: ROADMAP_ID,
+      daily_plan: {
+        state: 'missing' as const,
+        plan_id: null,
+        requires_learning_hours: true,
+      },
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: focusRes }),
+    });
+
+    await expect(focusRoadmap(MOCK_TOKEN, ROADMAP_ID)).resolves.toEqual(focusRes);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}/focus`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+
+    const archiveRes = {
+      archived_roadmap_id: ROADMAP_ID,
+      status: 'archived' as const,
+      new_focus_roadmap_id: null,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: archiveRes }),
+    });
+
+    await expect(
+      archiveRoadmap(MOCK_TOKEN, ROADMAP_ID, { reason: 'Switching tracks' }),
+    ).resolves.toEqual(archiveRes);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${ROADMAP_ID}/archive`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Switching tracks' }),
+      }),
+    );
   });
 });

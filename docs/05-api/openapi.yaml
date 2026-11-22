@@ -1,16 +1,16 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs & AI Gateway Contract (M05-02)
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway & Roadmaps Contract (M06)
   version: 0.3.0
   description: >-
-    Synchronized through M05-02, 2026-11-19. Derived from adopted C05 v1.5.1. Source baseline:
+    Synchronized through M06, 2026-11-20. Derived from adopted C05 v1.5.1. Source baseline:
     eda14c57c1fae7f65a69802b05a1c4472321c56c. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
     Replay Controls with R14 Loss-Epoch Fail-Closed Barrier (IdempotencyService), durable Postgres FOR UPDATE SKIP
-    LOCKED job producer/consumer/reaper (R12, R13, ADR-017), and internal-only AI Gateway contracts (ADR-008, C08)
-    are documented here.
+    LOCKED job producer/consumer/reaper (R12, R13, ADR-017), internal-only AI Gateway contracts (ADR-008, C08),
+    and M06 Roadmap Lifecycle & Async Worker APIs (EP-R01..EP-R07, EP-R14, EP-R15) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -24,7 +24,9 @@ tags:
     description: C05 14.4 Career Goal API (EP-C01..EP-C07); free-text technology career goal submission, synchronous AI goal interpretation, up to 2 clarification rounds, canonical role & career level confirmation (R07, R29), and goal discontinuation with roadmap archival.
   - name: Jobs
     description: C05 14.13 Jobs API (EP-J01 GET /api/v1/jobs/{id}); authenticated owner job status polling (Gate none).
-x-source: API-Specification.md sections 13, 13.6, 14.1, 14.2, 14.3, 14.4, 14.13, 15.1-4, 15.12, 16, 17.1 and accepted R05/R06/R07/R12/R13/R14/R18/R24/R26/R29/R31/R35
+  - name: Roadmaps
+    description: C05 14.5 Roadmaps API (EP-R01..EP-R07, EP-R14, EP-R15); roadmap draft generation/revision async jobs, review/lock, immutable version snapshots, focus switching, and archiving.
+x-source: API-Specification.md sections 13, 13.5-6, 14.1-5, 14.13, 15.1-5, 15.12, 16, 17.1, 17.3 and accepted R05/R06/R07/R12/R13/R14/R17/R18/R24/R26/R29/R31/R35
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -3283,6 +3285,594 @@ paths:
             - ROLE_MISMATCH
             - INVALID_ENUM_VALUE
             - VALIDATION_FAILED
+  /roadmaps/generate:
+    post:
+      operationId: EP-R01
+      tags:
+        - Roadmaps
+      summary: Enqueue personalized roadmap draft generation
+      description: >-
+        C05 EP-R01 (POST /api/v1/roadmaps/generate). Enqueues an asynchronous roadmap_generate job
+        after locking public.users FOR UPDATE, rechecking effective_feature_access('roadmap_generator'),
+        verifying owned confirmed career_goal_id, preventing duplicate goal roadmaps, enforcing active
+        roadmap cap < 3, and enforcing ai_quota.roadmap_drafts_per_24h (5 per 24h). Requires H-IDEM.
+      x-source: API-Specification.md sections 13.1, 14.5, 15.5, 16, 17.3; accepted R12/R13/R14/R24
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRoadmapRequestDTO'
+      responses:
+        '202':
+          description: C05 EP-R01 success; returns JobAcceptedDTO envelope and Location poll URL.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Location:
+              description: Poll URL for GET /api/v1/jobs/{job_id}.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobAcceptedDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: RESOURCE_CONFLICT, ROADMAP_LIMIT_REACHED, INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_REUSED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - RESOURCE_CONFLICT
+            - ROADMAP_LIMIT_REACHED
+            - INVALID_STATE_TRANSITION
+            - IDEMPOTENCY_KEY_REUSED
+        '422':
+          description: VALIDATION_FAILED, PROFILE_INCOMPLETE, LEVEL_NOT_CONFIRMED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: RATE_LIMITED, RATE_LIMIT_EXCEEDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps:
+    get:
+      operationId: EP-R02
+      tags:
+        - Roadmaps
+      summary: List user roadmaps with status filtering and cursor pagination
+      description: >-
+        C05 EP-R02 (GET /api/v1/roadmaps). Returns owned roadmaps ordered by updated_at DESC, id DESC
+        with top-level PageMetaDTO pagination. Uses Gate none so existing roadmaps remain readable when
+        generation feature flags are OFF.
+      x-source: API-Specification.md sections 13.5, 14.5, 15.5, 17.3
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RoadmapStatus'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-R02 success; returns RoadmapSummaryDTO[] with top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoadmapSummaryListEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_ENUM_VALUE, VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}:
+    get:
+      operationId: EP-R03
+      tags:
+        - Roadmaps
+      summary: Get roadmap detail for current, open draft, or numbered version
+      description: >-
+        C05 EP-R03 (GET /api/v1/roadmaps/{id}). Returns RoadmapDetailDTO for the requested version
+        (?version=current|draft|<int>). Uses Gate none so existing roadmaps remain readable when
+        generation flags are OFF.
+      x-source: API-Specification.md sections 14.5, 15.5, 17.3
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 32
+      responses:
+        '200':
+          description: C05 EP-R03 success; returns RoadmapDetailDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoadmapDetailDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND, VERSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: NO_OPEN_DRAFT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/revision:
+    post:
+      operationId: EP-R04
+      tags:
+        - Roadmaps
+      summary: Request conversational revision or refresh of an open draft roadmap
+      description: >-
+        C05 EP-R04 (POST /api/v1/roadmaps/{id}/revision). Enqueues an async roadmap_revision job
+        for an open draft roadmap. Validates 1..2000 Unicode code-point instruction and/or refresh_stale,
+        optimistic version concurrency (expected_version_no / If-Match -> 409 STALE_VERSION), and H-IDEM.
+      x-source: API-Specification.md sections 13.1, 14.5, 15.5, 17.3; accepted R12/R13/R14/R24
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IfMatchVersion'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequestDTO'
+      responses:
+        '202':
+          description: C05 EP-R04 success; returns JobAcceptedDTO envelope and Location poll URL.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobAcceptedDTOEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: STALE_VERSION, INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_REUSED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: RATE_LIMITED, RATE_LIMIT_EXCEEDED
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/lock:
+    post:
+      operationId: EP-R05
+      tags:
+        - Roadmaps
+      summary: Lock an open non-stale draft roadmap version
+      description: >-
+        C05 EP-R05 (POST /api/v1/roadmaps/{id}/lock). Atomically locks the draft roadmap, verifies
+        non-stale draft (409 DRAFT_STALE), verifies expected_version_no / If-Match (409 STALE_VERSION),
+        enforces confirm_large_roadmap when active_topic_count > 45 (422 LARGE_ROADMAP_CONFIRMATION_REQUIRED),
+        sets initial Focus if none active, and returns next_step = 'confirm_learning_hours' without creating
+        a Daily Plan. Requires H-IDEM.
+      x-source: API-Specification.md sections 13.1, 14.5, 15.5, 17.3; accepted R14/R24
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IfMatchVersion'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LockRoadmapDTO'
+      responses:
+        '200':
+          description: C05 EP-R05 success; returns LockRoadmapResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LockRoadmapResponseDTOEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: DRAFT_STALE, STALE_VERSION, INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_REUSED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: LARGE_ROADMAP_CONFIRMATION_REQUIRED, VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/versions:
+    get:
+      operationId: EP-R06
+      tags:
+        - Roadmaps
+      summary: List immutable version history for a roadmap
+      description: >-
+        C05 EP-R06 (GET /api/v1/roadmaps/{id}/versions). Returns keyset-paginated RoadmapVersionDTO[]
+        with top-level meta. Uses Gate none.
+      x-source: API-Specification.md sections 13.5, 14.5, 15.5
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-R06 success; returns RoadmapVersionDTO[] with top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoadmapVersionListEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/versions/{version_no}:
+    get:
+      operationId: EP-R07
+      tags:
+        - Roadmaps
+      summary: Inspect immutable historical roadmap version snapshot
+      description: >-
+        C05 EP-R07 (GET /api/v1/roadmaps/{id}/versions/{version_no}). Returns read-only RoadmapDetailDTO
+        snapshot for the specified version number. Uses Gate none.
+      x-source: API-Specification.md sections 14.5, 15.5
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version_no
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: C05 EP-R07 success; returns RoadmapDetailDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoadmapDetailDTOEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND, VERSION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/focus:
+    post:
+      operationId: EP-R14
+      tags:
+        - Roadmaps
+      summary: Switch active Focus Roadmap
+      description: >-
+        C05 EP-R14 (POST /api/v1/roadmaps/{id}/focus). Atomically switches Focus to a locked roadmap,
+        preserving prior roadmaps' Daily Plans and returning daily_plan status and requires_learning_hours.
+        Uses Gate none.
+      x-source: API-Specification.md sections 14.5, 15.5, 17.3; accepted R24
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-R14 success; returns FocusSwitchResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FocusSwitchResponseDTOEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: INVALID_STATE_TRANSITION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/archive:
+    post:
+      operationId: EP-R15
+      tags:
+        - Roadmaps
+      summary: Archive a draft or locked roadmap without deleting learning history
+      description: >-
+        C05 EP-R15 (POST /api/v1/roadmaps/{id}/archive). Archives an owned draft or locked roadmap,
+        preserving all progress, shared skill evidence, and daily plans, and automatically reassigning Focus
+        to another active locked roadmap when applicable. Uses Gate none.
+      x-source: API-Specification.md sections 14.5, 15.5, 17.3; accepted R24
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveRoadmapDTO'
+      responses:
+        '200':
+          description: C05 EP-R15 success; returns ArchiveRoadmapResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveRoadmapResponseDTOEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: INVALID_STATE_TRANSITION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -3328,6 +3918,24 @@ components:
       schema:
         type: string
         format: uuid
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >-
+        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, and EP-R05 by IdempotencyService.
+      schema:
+        type: string
+        format: uuid
+    IfMatchVersion:
+      name: If-Match
+      in: header
+      required: false
+      description: >-
+        Optional optimistic concurrency version header accepting positive integer version strings (e.g. "1" or
+        W/"1") on EP-R04 and EP-R05.
+      schema:
+        type: string
   headers:
     RequestId:
       description: Included on every response. Matches error.requestId when an error is present.
@@ -4661,3 +5269,616 @@ components:
             - true
         data:
           $ref: '#/components/schemas/DiscontinueCareerGoalResponseDTO'
+    RoadmapStatus:
+      type: string
+      enum:
+        - draft
+        - locked
+        - archived
+    RoadmapVersionState:
+      type: string
+      enum:
+        - draft
+        - locked
+        - superseded
+        - restored
+    RoadmapVersionOrigin:
+      type: string
+      enum:
+        - user_request
+        - ai
+        - merge
+        - undo
+    ItemPriority:
+      type: string
+      enum:
+        - core
+        - supporting
+        - optional
+    SkillGapType:
+      type: string
+      enum:
+        - existing
+        - transferable
+        - refresh
+        - strengthen
+        - missing
+    GenerateRoadmapRequestDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - career_goal_id
+      properties:
+        career_goal_id:
+          type: string
+          format: uuid
+        target_level:
+          $ref: '#/components/schemas/CareerLevel'
+        level_confirmed:
+          type: boolean
+    RevisionRequestDTO:
+      type: object
+      additionalProperties: false
+      properties:
+        instruction:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Unicode code-point bounded (1..2000); NUL and unpaired UTF-16 surrogates rejected.
+        refresh_stale:
+          type: boolean
+        expected_version_no:
+          type: integer
+          minimum: 1
+    LockRoadmapDTO:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_version_no:
+          type: integer
+          minimum: 1
+        version_no:
+          type: integer
+          minimum: 1
+        confirm_large_roadmap:
+          type: boolean
+        acknowledge_stale:
+          type: boolean
+    ArchiveRoadmapDTO:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    RoadmapSourceRefDTO:
+      type: object
+      required:
+        - publisher
+        - url
+      properties:
+        publisher:
+          type: string
+        url:
+          type: string
+          format: uri
+        retrieved_at:
+          type: string
+          format: date-time
+    RoadmapMilestoneDTO:
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+    RoadmapItemDTO:
+      type: object
+      required:
+        - id
+        - item_id
+        - lineage_id
+        - topic_id
+        - skill_id
+        - phase_no
+        - phase_title
+        - title
+        - priority
+        - gap_type
+        - required_depth
+        - estimated_effort_hours
+        - sequence_no
+        - depends_on
+        - depends_on_lineage_ids
+        - reason
+        - retired
+        - sources
+      properties:
+        id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        lineage_id:
+          type: string
+          format: uuid
+        topic_id:
+          type: string
+          format: uuid
+        skill_id:
+          type: string
+          format: uuid
+        phase_no:
+          type: integer
+        phase_title:
+          type: string
+          nullable: true
+        title:
+          type: string
+        priority:
+          $ref: '#/components/schemas/ItemPriority'
+        gap_type:
+          $ref: '#/components/schemas/SkillGapType'
+        required_depth:
+          type: string
+          nullable: true
+        estimated_effort_hours:
+          type: number
+          nullable: true
+        sequence_no:
+          type: integer
+        depends_on:
+          type: array
+          items:
+            type: string
+        depends_on_lineage_ids:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+          nullable: true
+        retired:
+          type: boolean
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapSourceRefDTO'
+    RoadmapPhaseDTO:
+      type: object
+      required:
+        - phase_no
+        - title
+        - milestones
+        - items
+      properties:
+        phase_no:
+          type: integer
+        title:
+          type: string
+        milestones:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapMilestoneDTO'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapItemDTO'
+    RoadmapSummaryBlockDTO:
+      type: object
+      required:
+        - current_situation
+        - target_interpretation
+        - expected_career_impact
+        - next_steps
+      properties:
+        current_situation:
+          type: string
+        target_interpretation:
+          type: string
+        expected_career_impact:
+          type: string
+        next_steps:
+          type: array
+          items:
+            type: string
+    LevelOutlineDTO:
+      type: object
+      required:
+        - career_level
+        - outline
+      properties:
+        career_level:
+          $ref: '#/components/schemas/CareerLevel'
+        outline:
+          type: array
+          items:
+            type: string
+    RoadmapSizeGuardrailDTO:
+      type: object
+      required:
+        - active_topic_count
+        - soft_max_topics
+        - materially_large
+        - warning
+      properties:
+        active_topic_count:
+          type: integer
+        soft_max_topics:
+          type: integer
+        materially_large:
+          type: boolean
+        warning:
+          type: string
+          nullable: true
+    RoadmapSummaryDTO:
+      type: object
+      required:
+        - id
+        - career_goal_id
+        - canonical_role_id
+        - role_name
+        - target_level
+        - status
+        - is_focus
+        - current_version_id
+        - current_version_no
+        - draft_version_no
+        - has_open_draft
+        - has_open_merge
+        - has_daily_plan
+        - stale
+        - stale_draft
+        - locked_at
+        - archived_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        career_goal_id:
+          type: string
+          format: uuid
+        canonical_role_id:
+          type: string
+          format: uuid
+        role_name:
+          type: string
+        target_level:
+          $ref: '#/components/schemas/CareerLevel'
+        status:
+          $ref: '#/components/schemas/RoadmapStatus'
+        is_focus:
+          type: boolean
+        current_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        current_version_no:
+          type: integer
+          nullable: true
+        draft_version_no:
+          type: integer
+          nullable: true
+        has_open_draft:
+          type: boolean
+        has_open_merge:
+          type: boolean
+        has_daily_plan:
+          type: boolean
+        stale:
+          type: boolean
+        stale_draft:
+          type: boolean
+        locked_at:
+          type: string
+          format: date-time
+          nullable: true
+        archived_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RoadmapDetailDTO:
+      type: object
+      required:
+        - id
+        - career_goal_id
+        - canonical_role_id
+        - role_name
+        - target_level
+        - status
+        - is_focus
+        - version_id
+        - version_no
+        - version_state
+        - summary
+        - phases
+        - items
+        - level_outline
+        - size_guardrail
+        - warnings
+        - stale
+        - stale_reason
+        - locked_at
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        career_goal_id:
+          type: string
+          format: uuid
+        canonical_role_id:
+          type: string
+          format: uuid
+        role_name:
+          type: string
+        target_level:
+          $ref: '#/components/schemas/CareerLevel'
+        status:
+          $ref: '#/components/schemas/RoadmapStatus'
+        is_focus:
+          type: boolean
+        version_id:
+          type: string
+          format: uuid
+        version_no:
+          type: integer
+        version_state:
+          $ref: '#/components/schemas/RoadmapVersionState'
+        summary:
+          $ref: '#/components/schemas/RoadmapSummaryBlockDTO'
+        phases:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapPhaseDTO'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapItemDTO'
+        level_outline:
+          type: array
+          items:
+            $ref: '#/components/schemas/LevelOutlineDTO'
+        size_guardrail:
+          $ref: '#/components/schemas/RoadmapSizeGuardrailDTO'
+        warnings:
+          type: array
+          items:
+            type: string
+        stale:
+          type: boolean
+        stale_reason:
+          type: string
+          nullable: true
+        locked_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    LockRoadmapResponseDTO:
+      type: object
+      required:
+        - roadmap_id
+        - status
+        - version_no
+        - current_version_id
+        - is_focus
+        - locked_at
+        - next_step
+        - preferred_daily_hours
+        - size_guardrail
+      properties:
+        roadmap_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - locked
+        version_no:
+          type: integer
+        current_version_id:
+          type: string
+          format: uuid
+        is_focus:
+          type: boolean
+        locked_at:
+          type: string
+          format: date-time
+        next_step:
+          type: string
+          enum:
+            - confirm_learning_hours
+        preferred_daily_hours:
+          type: number
+          nullable: true
+        size_guardrail:
+          $ref: '#/components/schemas/RoadmapSizeGuardrailDTO'
+    RoadmapVersionDTO:
+      type: object
+      required:
+        - id
+        - version_no
+        - state
+        - created_by
+        - target_level
+        - base_version_id
+        - merge_id
+        - stale
+        - locked_at
+        - superseded_at
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        version_no:
+          type: integer
+        state:
+          $ref: '#/components/schemas/RoadmapVersionState'
+        created_by:
+          $ref: '#/components/schemas/RoadmapVersionOrigin'
+        target_level:
+          $ref: '#/components/schemas/CareerLevel'
+        base_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        merge_id:
+          type: string
+          format: uuid
+          nullable: true
+        stale:
+          type: boolean
+        locked_at:
+          type: string
+          format: date-time
+          nullable: true
+        superseded_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    FocusSwitchResponseDTO:
+      type: object
+      required:
+        - focus_roadmap_id
+        - daily_plan
+      properties:
+        focus_roadmap_id:
+          type: string
+          format: uuid
+        daily_plan:
+          type: object
+          required:
+            - state
+            - plan_id
+            - requires_learning_hours
+          properties:
+            state:
+              type: string
+              enum:
+                - existing
+                - missing
+            plan_id:
+              type: string
+              format: uuid
+              nullable: true
+            requires_learning_hours:
+              type: boolean
+    ArchiveRoadmapResponseDTO:
+      type: object
+      required:
+        - archived_roadmap_id
+        - status
+        - new_focus_roadmap_id
+      properties:
+        archived_roadmap_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - archived
+        new_focus_roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+    RoadmapSummaryListEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapSummaryDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    RoadmapDetailDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/RoadmapDetailDTO'
+    LockRoadmapResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/LockRoadmapResponseDTO'
+    RoadmapVersionListEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoadmapVersionDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    FocusSwitchResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/FocusSwitchResponseDTO'
+    ArchiveRoadmapResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/ArchiveRoadmapResponseDTO'

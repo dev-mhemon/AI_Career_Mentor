@@ -9,7 +9,14 @@ import {
   type FormEvent,
   type SVGProps,
 } from 'react';
-import type { CareerGoalResponse, CareerLevel } from '@/lib/api/client';
+import type {
+  CareerGoalResponse,
+  CareerLevel,
+  GenerateRoadmapRequestDTO,
+  JobAcceptedDTO,
+  JobStatusDTO,
+} from '@/lib/api/client';
+import { ApiError } from '@/lib/api/client';
 import {
   mapApiError,
   type M05Invoke,
@@ -20,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { CareerCard, CareerCardGroup } from '@/components/ui/career-card';
 import { Input } from '@/components/ui/input';
 import { toneToAlertVariant } from '@/components/ui/multi-step-form-wrapper';
+import { RoadmapGenerateHandoff } from '@/components/roadmap/roadmap-generate-handoff';
 import {
   clearGoalDraft,
   clearPendingGoalTargetLevel,
@@ -123,6 +131,14 @@ export interface GoalClarifyFormProps {
   onGoalUpdated?: (goal: CareerGoalResponse) => void;
   /** Optional callback fired when EP-C05 confirms the goal instead of navigating to `/career-profile`. */
   onSuccess?: (goal: CareerGoalResponse) => void;
+  /** When true, transitions into the inline `RoadmapGenerateHandoff` (`EP-R01` + `AILoadingState`) upon confirmation instead of auto-redirecting to `/career-profile`. */
+  showGenerateHandoff?: boolean;
+  /** Optional bearer access token for direct `RoadmapGenerateHandoff` API calls when not using `invoke`. */
+  accessToken?: string;
+  /** Feature gate status from `effective_access.roadmap_generator` for `RoadmapGenerateHandoff`. */
+  roadmapFeatureEnabled?: boolean;
+  /** Optional custom job poller forwarded to `RoadmapGenerateHandoff`. */
+  pollJobStatus?: (jobId: string, signal: AbortSignal) => Promise<JobStatusDTO>;
   /** Optional Back handler when embedded inside a wizard or inline view. */
   onBack?: () => void;
   /** When true, omits the standalone stepper header so an outer shell owns stepper chrome. */
@@ -144,6 +160,10 @@ export function GoalClarifyForm({
   onPendingChange,
   onGoalUpdated,
   onSuccess,
+  showGenerateHandoff = false,
+  accessToken,
+  roadmapFeatureEnabled = true,
+  pollJobStatus,
   onBack,
   embedded = false,
 }: GoalClarifyFormProps) {
@@ -313,6 +333,10 @@ export function GoalClarifyForm({
     setPending(false);
     if (onSuccess) {
       onSuccess(result.data);
+      return;
+    }
+    onGoalUpdated?.(result.data);
+    if (showGenerateHandoff) {
       return;
     }
     router.push('/career-profile');
@@ -515,11 +539,91 @@ export function GoalClarifyForm({
     );
   }
 
+  async function invokeGenerateRoadmap(
+    body: GenerateRoadmapRequestDTO,
+    idempotencyKey: string,
+  ): Promise<JobAcceptedDTO> {
+    const res = await invoke('generateRoadmap', { body, idempotencyKey });
+    if (!res.ok) {
+      throw new ApiError(
+        res.error.status ?? 500,
+        res.error.message,
+        res.error.code,
+        res.error.requestId,
+        [],
+        res.error.retryable,
+        res.error.retryAfterSeconds,
+      );
+    }
+    return res.data;
+  }
+
+  async function invokePollJobStatus(jobId: string): Promise<JobStatusDTO> {
+    const res = await invoke('getJobStatus', { jobId });
+    if (!res.ok) {
+      throw new ApiError(
+        res.error.status ?? 500,
+        res.error.message,
+        res.error.code,
+        res.error.requestId,
+        [],
+        res.error.retryable,
+        res.error.retryAfterSeconds,
+      );
+    }
+    return res.data;
+  }
+
+  if (goal.status === 'confirmed') {
+    const confirmedLevel: CareerLevel =
+      goal.target_level ?? resolvedLevel ?? 'junior';
+    return (
+      <StepFrame
+        currentStep={5}
+        embedded={embedded}
+        heading="Goal confirmed"
+        actions={
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/career-profile"
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-border-default px-4 py-2.5 text-label-lg text-text-primary hover:bg-surface-subtle"
+            >
+              Go to Career Profile
+            </Link>
+            {embedded && (
+              <Link
+                href="/dashboard"
+                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-border-default px-4 py-2.5 text-label-lg text-text-primary hover:bg-surface-subtle"
+              >
+                Go to Dashboard
+              </Link>
+            )}
+          </div>
+        }
+      >
+        <p dir="auto" className="text-body text-text-secondary">
+          {`“${goal.goal_text}” is confirmed${goal.proposed_role ? ` as ${goal.proposed_role.name}` : ''}. Generate your personalized roadmap draft now, or manage your goals in Career Profile.`}
+        </p>
+        <RoadmapGenerateHandoff
+          accessToken={accessToken}
+          careerGoalId={goal.id}
+          targetLevel={confirmedLevel}
+          levelConfirmed={true}
+          featureEnabled={roadmapFeatureEnabled}
+          onGenerateRoadmap={accessToken ? undefined : invokeGenerateRoadmap}
+          pollJobStatus={
+            pollJobStatus ?? (accessToken ? undefined : invokePollJobStatus)
+          }
+        />
+      </StepFrame>
+    );
+  }
+
   return (
     <StepFrame
       currentStep={5}
       embedded={embedded}
-      heading={goal.status === 'confirmed' ? 'Goal confirmed' : 'Goal discontinued'}
+      heading="Goal discontinued"
       actions={
         <Link
           href={embedded ? '/dashboard' : '/career-profile'}
@@ -530,9 +634,7 @@ export function GoalClarifyForm({
       }
     >
       <p dir="auto" className="text-body text-text-secondary">
-        {goal.status === 'confirmed'
-          ? `“${goal.goal_text}” is already confirmed.`
-          : `“${goal.goal_text}” was discontinued and can no longer be changed.`}
+        {`“${goal.goal_text}” was discontinued and can no longer be changed.`}
       </p>
     </StepFrame>
   );

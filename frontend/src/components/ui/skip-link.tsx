@@ -5,9 +5,9 @@ export function SkipLink({ href = '#main-content', children = 'Skip to main cont
     <a
       href={href}
       className={cn(
-        'sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-(--z-tooltip)',
-        'focus:rounded-md focus:bg-action-primary-background focus:px-4 focus:py-2',
-        'focus:text-label-lg focus:text-action-primary-foreground',
+        'sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:left-4 focus-visible:top-4 focus-visible:z-(--z-tooltip)',
+        'focus-visible:rounded-md focus-visible:bg-action-primary-background focus-visible:px-4 focus-visible:py-2',
+        'focus-visible:text-label-lg focus-visible:text-action-primary-foreground',
       )}
     >
       {children}

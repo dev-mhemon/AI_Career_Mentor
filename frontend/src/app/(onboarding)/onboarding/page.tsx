@@ -25,7 +25,7 @@ import { OnboardingWizard } from '@/components/onboarding/onboarding-wizard';
 
 export const dynamic = 'force-dynamic';
 
-/** Operations allowed by the unified onboarding wizard (EP-P01..P05, EP-C01..C06). */
+/** Operations allowed by the unified onboarding wizard (EP-P01..P05, EP-C01..C06, EP-R01, EP-J01). */
 const ALLOWED_OPERATIONS: ReadonlySet<M05OperationName> = new Set([
   'getProfile',
   'updateProfile',
@@ -39,6 +39,8 @@ const ALLOWED_OPERATIONS: ReadonlySet<M05OperationName> = new Set([
   'submitGoalClarification',
   'confirmCareerGoal',
   'updateCareerGoal',
+  'generateRoadmap',
+  'getJobStatus',
 ]);
 
 function isNextRedirect(err: unknown): boolean {

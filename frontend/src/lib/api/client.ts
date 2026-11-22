@@ -172,25 +172,16 @@ export function createTimedAbortSignal(
   };
 }
 
-/** Success envelope pieces: `data` plus optional top-level `meta` (e.g. EP-C02 `PageMetaDTO`). */
-interface ApiEnvelope<T> {
+interface ApiEnvelopeResult<T> {
   data: T;
-  meta: unknown;
-}
-
-async function apiFetch<T>(
-  path: string,
-  accessToken: string | null,
-  options: ApiFetchOptions = {},
-): Promise<T> {
-  return (await apiFetchEnvelope<T>(path, accessToken, options)).data;
+  meta?: PageMetaDTO;
 }
 
 async function apiFetchEnvelope<T>(
   path: string,
   accessToken: string | null,
   options: ApiFetchOptions = {},
-): Promise<ApiEnvelope<T>> {
+): Promise<ApiEnvelopeResult<T>> {
   const url = `${getApiBaseUrl()}${path}`;
   const { timeoutMs, signal: callerSignal, ...fetchOptions } = options;
 
@@ -288,7 +279,30 @@ async function apiFetchEnvelope<T>(
   }
   if (body?.success !== true || !('data' in body))
     throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');
-  return { data: body.data as T, meta: body.meta ?? null };
+  const rawMeta =
+    body.meta &&
+    typeof body.meta === 'object' &&
+    typeof (body.meta as Record<string, unknown>).limit === 'number' &&
+    ((body.meta as Record<string, unknown>).next_cursor === null ||
+      typeof (body.meta as Record<string, unknown>).next_cursor === 'string')
+      ? {
+          limit: (body.meta as PageMetaDTO).limit,
+          next_cursor: (body.meta as PageMetaDTO).next_cursor,
+        }
+      : undefined;
+  return {
+    data: body.data as T,
+    ...(rawMeta ? { meta: rawMeta } : {}),
+  };
+}
+
+async function apiFetch<T>(
+  path: string,
+  accessToken: string | null,
+  options: ApiFetchOptions = {},
+): Promise<T> {
+  const envelope = await apiFetchEnvelope<T>(path, accessToken, options);
+  return envelope.data;
 }
 
 // ─── Auth API Functions ──────────────────────────────────────
@@ -933,6 +947,14 @@ export interface M05OperationMap {
     input: { id: string };
     output: DiscontinueCareerGoalResponse;
   };
+  generateRoadmap: {
+    input: { body: GenerateRoadmapRequestDTO; idempotencyKey: string };
+    output: JobAcceptedDTO;
+  };
+  getJobStatus: {
+    input: { jobId: string };
+    output: JobStatusDTO;
+  };
 }
 
 export type M05OperationName = keyof M05OperationMap;
@@ -990,6 +1012,15 @@ export async function dispatchM05Operation<K extends M05OperationName>(
       }
       case 'deleteCareerGoal':
         return deleteCareerGoal(accessToken, (input as { id: string }).id);
+      case 'generateRoadmap': {
+        const v = input as {
+          body: GenerateRoadmapRequestDTO;
+          idempotencyKey: string;
+        };
+        return generateRoadmap(accessToken, v.body, v.idempotencyKey);
+      }
+      case 'getJobStatus':
+        return getJobStatus(accessToken, (input as { jobId: string }).jobId);
       default:
         throw new ApiError(400, 'Unsupported operation', 'INVALID_OPERATION');
     }
@@ -1155,6 +1186,465 @@ export function getJobStatus(
     `/jobs/${encodeURIComponent(jobId.trim())}`,
     accessToken,
     {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * Generates a fresh client UUIDv4 for `Idempotency-Key` (`H-IDEM`, C05 §13.1) mutations.
+ */
+export function createIdempotencyKey(): string {
+  if (
+    typeof globalThis.crypto !== 'undefined' &&
+    typeof globalThis.crypto.randomUUID === 'function'
+  ) {
+    return globalThis.crypto.randomUUID();
+  }
+  if (
+    typeof globalThis.crypto !== 'undefined' &&
+    typeof globalThis.crypto.getRandomValues === 'function'
+  ) {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// ─── Roadmap Lifecycle API Types & Functions (C05 §14.5 / §15.5) ───
+
+export type RoadmapStatus = 'draft' | 'locked' | 'archived';
+export type RoadmapVersionState = 'draft' | 'locked' | 'superseded' | 'restored';
+export type RoadmapVersionOrigin = 'user_request' | 'ai' | 'merge' | 'undo';
+export type ItemPriority = 'core' | 'supporting' | 'optional';
+export type SkillGapType =
+  | 'existing'
+  | 'transferable'
+  | 'refresh'
+  | 'strengthen'
+  | 'missing';
+
+export interface RoadmapSourceRefDTO {
+  publisher: string;
+  url: string;
+  retrieved_at?: string;
+}
+
+export interface RoadmapMilestoneDTO {
+  id: string;
+  title: string;
+}
+
+export interface RoadmapItemDTO {
+  id: string;
+  item_id: string;
+  lineage_id: string;
+  topic_id: string;
+  skill_id: string;
+  phase_no: number;
+  phase_title: string | null;
+  title: string;
+  priority: ItemPriority;
+  gap_type: SkillGapType;
+  required_depth: string | null;
+  estimated_effort_hours: number | null;
+  sequence_no: number;
+  depends_on: string[];
+  depends_on_lineage_ids: string[];
+  reason: string | null;
+  retired: boolean;
+  sources: RoadmapSourceRefDTO[];
+}
+
+export interface RoadmapPhaseDTO {
+  phase_no: number;
+  title: string;
+  milestones: RoadmapMilestoneDTO[];
+  items: RoadmapItemDTO[];
+}
+
+export interface RoadmapSummaryBlockDTO {
+  current_situation: string;
+  target_interpretation: string;
+  expected_career_impact: string;
+  next_steps: string[];
+}
+
+export interface LevelOutlineDTO {
+  career_level: CareerLevel;
+  outline: string[];
+}
+
+export interface RoadmapSizeGuardrailDTO {
+  active_topic_count: number;
+  soft_max_topics: number;
+  materially_large: boolean;
+  warning: string | null;
+}
+
+export interface RoadmapSummaryDTO {
+  id: string;
+  career_goal_id: string;
+  canonical_role_id: string;
+  role_name: string;
+  target_level: CareerLevel;
+  status: RoadmapStatus;
+  is_focus: boolean;
+  current_version_id: string | null;
+  current_version_no: number | null;
+  draft_version_no: number | null;
+  has_open_draft: boolean;
+  has_open_merge: boolean;
+  has_daily_plan: boolean;
+  stale: boolean;
+  stale_draft: boolean;
+  locked_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoadmapListResponseDTO {
+  items: RoadmapSummaryDTO[];
+  meta: PageMetaDTO;
+}
+
+export interface RoadmapDetailDTO {
+  id: string;
+  career_goal_id: string;
+  canonical_role_id: string;
+  role_name: string;
+  target_level: CareerLevel;
+  status: RoadmapStatus;
+  is_focus: boolean;
+  version_id: string;
+  version_no: number;
+  version_state: RoadmapVersionState;
+  summary: RoadmapSummaryBlockDTO;
+  phases: RoadmapPhaseDTO[];
+  items: RoadmapItemDTO[];
+  level_outline: LevelOutlineDTO[];
+  size_guardrail: RoadmapSizeGuardrailDTO;
+  warnings: string[];
+  stale: boolean;
+  stale_reason: string | null;
+  locked_at: string | null;
+  created_at: string;
+}
+
+export type RoadmapResponseDTO = RoadmapDetailDTO;
+
+export interface GenerateRoadmapRequestDTO {
+  career_goal_id: string;
+  target_level: CareerLevel;
+  level_confirmed: boolean;
+}
+
+export interface ListRoadmapsParams {
+  status?: RoadmapStatus;
+  cursor?: string;
+  limit?: number;
+}
+
+export type RoadmapVersionQuery = 'current' | 'draft' | number | string;
+
+export interface RevisionRequestDTO {
+  instruction?: string;
+  refresh_stale?: boolean;
+  expected_version_no?: number;
+}
+
+export interface LockRoadmapDTO {
+  expected_version_no?: number;
+  version_no?: number;
+  confirm_large_roadmap?: boolean;
+  acknowledge_stale?: boolean;
+}
+
+export interface LockRoadmapResponseDTO {
+  roadmap_id: string;
+  status: 'locked';
+  version_no: number;
+  current_version_id: string;
+  is_focus: boolean;
+  locked_at: string;
+  next_step: 'confirm_learning_hours';
+  preferred_daily_hours: number | null;
+  size_guardrail: RoadmapSizeGuardrailDTO;
+}
+
+export interface RoadmapVersionDTO {
+  id: string;
+  version_no: number;
+  state: RoadmapVersionState;
+  created_by: RoadmapVersionOrigin;
+  target_level: CareerLevel;
+  base_version_id: string | null;
+  merge_id: string | null;
+  stale: boolean;
+  locked_at: string | null;
+  superseded_at: string | null;
+  created_at: string;
+}
+
+export interface ListRoadmapVersionsParams {
+  cursor?: string;
+  limit?: number;
+}
+
+export interface RoadmapVersionListResponseDTO {
+  items: RoadmapVersionDTO[];
+  meta: PageMetaDTO;
+}
+
+export interface FocusSwitchResponseDTO {
+  focus_roadmap_id: string;
+  daily_plan: {
+    state: 'existing' | 'missing';
+    plan_id: string | null;
+    requires_learning_hours: boolean;
+  };
+}
+
+export interface ArchiveRoadmapDTO {
+  reason?: string;
+}
+
+export interface ArchiveRoadmapResponseDTO {
+  archived_roadmap_id: string;
+  status: 'archived';
+  new_focus_roadmap_id: string | null;
+}
+
+function normalizePaginatedEnvelope<T>(
+  envelope: ApiEnvelopeResult<T[] | { items: T[]; meta?: PageMetaDTO }>,
+  defaultLimit = 20,
+): { items: T[]; meta: PageMetaDTO } {
+  const payload = envelope.data;
+  if (Array.isArray(payload)) {
+    return {
+      items: payload,
+      meta: envelope.meta ?? {
+        limit: defaultLimit,
+        next_cursor: null,
+      },
+    };
+  }
+  if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
+    return {
+      items: payload.items,
+      meta: payload.meta ??
+        envelope.meta ?? {
+          limit: defaultLimit,
+          next_cursor: null,
+        },
+    };
+  }
+  return {
+    items: [],
+    meta: envelope.meta ?? { limit: defaultLimit, next_cursor: null },
+  };
+}
+
+/**
+ * POST /roadmaps/generate (EP-R01, 202 Accepted, H-IDEM)
+ */
+export function generateRoadmap(
+  accessToken: string,
+  body: GenerateRoadmapRequestDTO,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<JobAcceptedDTO> {
+  return apiFetch<JobAcceptedDTO>('/roadmaps/generate', accessToken, {
+    method: 'POST',
+    headers: withIdempotencyKey(idempotencyKey),
+    body: JSON.stringify(body),
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+}
+
+/**
+ * GET /roadmaps (EP-R02, Gate: none)
+ */
+export async function listRoadmaps(
+  accessToken: string,
+  params?: ListRoadmapsParams,
+  options?: AuthStateRequestOptions,
+): Promise<RoadmapListResponseDTO> {
+  const search = new URLSearchParams();
+  if (params?.status) search.set('status', params.status);
+  if (params?.cursor) search.set('cursor', params.cursor);
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) {
+    search.set('limit', String(params.limit));
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<
+    RoadmapSummaryDTO[] | { items: RoadmapSummaryDTO[]; meta?: PageMetaDTO }
+  >(qs ? `/roadmaps?${qs}` : '/roadmaps', accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  return normalizePaginatedEnvelope(envelope, params?.limit ?? 20);
+}
+
+/**
+ * GET /roadmaps/:id (EP-R03, optional ?version=current|draft|<int>, Gate: none)
+ */
+export function getRoadmap(
+  accessToken: string,
+  roadmapId: string,
+  version?: RoadmapVersionQuery,
+  options?: AuthStateRequestOptions,
+): Promise<RoadmapDetailDTO> {
+  const encodedId = encodeURIComponent(roadmapId.trim());
+  const versionParam =
+    version !== undefined && String(version).trim() !== ''
+      ? `?version=${encodeURIComponent(String(version).trim())}`
+      : '';
+  return apiFetch<RoadmapDetailDTO>(
+    `/roadmaps/${encodedId}${versionParam}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/revision (EP-R04, 202 Accepted, H-IDEM)
+ */
+export function reviseRoadmap(
+  accessToken: string,
+  roadmapId: string,
+  body: RevisionRequestDTO,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<JobAcceptedDTO> {
+  return apiFetch<JobAcceptedDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/revision`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey),
+      body: JSON.stringify(body),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/lock (EP-R05, 200 OK, H-IDEM)
+ */
+export function lockRoadmap(
+  accessToken: string,
+  roadmapId: string,
+  body: LockRoadmapDTO,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<LockRoadmapResponseDTO> {
+  return apiFetch<LockRoadmapResponseDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/lock`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey),
+      body: JSON.stringify(body),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /roadmaps/:id/versions (EP-R06, Gate: none)
+ */
+export async function listRoadmapVersions(
+  accessToken: string,
+  roadmapId: string,
+  params?: ListRoadmapVersionsParams,
+  options?: AuthStateRequestOptions,
+): Promise<RoadmapVersionListResponseDTO> {
+  const search = new URLSearchParams();
+  if (params?.cursor) search.set('cursor', params.cursor);
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) {
+    search.set('limit', String(params.limit));
+  }
+  const qs = search.toString();
+  const base = `/roadmaps/${encodeURIComponent(roadmapId.trim())}/versions`;
+  const envelope = await apiFetchEnvelope<
+    RoadmapVersionDTO[] | { items: RoadmapVersionDTO[]; meta?: PageMetaDTO }
+  >(qs ? `${base}?${qs}` : base, accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  return normalizePaginatedEnvelope(envelope, params?.limit ?? 50);
+}
+
+/**
+ * GET /roadmaps/:id/versions/:version_no (EP-R07, Gate: none)
+ */
+export function getRoadmapVersion(
+  accessToken: string,
+  roadmapId: string,
+  versionNo: number | string,
+  options?: AuthStateRequestOptions,
+): Promise<RoadmapDetailDTO> {
+  return apiFetch<RoadmapDetailDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/versions/${encodeURIComponent(String(versionNo).trim())}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/focus (EP-R14, Gate: none)
+ */
+export function focusRoadmap(
+  accessToken: string,
+  roadmapId: string,
+  options?: AuthStateRequestOptions,
+): Promise<FocusSwitchResponseDTO> {
+  return apiFetch<FocusSwitchResponseDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/focus`,
+    accessToken,
+    {
+      method: 'POST',
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/archive (EP-R15, Gate: none)
+ */
+export function archiveRoadmap(
+  accessToken: string,
+  roadmapId: string,
+  body?: ArchiveRoadmapDTO,
+  options?: AuthStateRequestOptions,
+): Promise<ArchiveRoadmapResponseDTO> {
+  return apiFetch<ArchiveRoadmapResponseDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/archive`,
+    accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options?.signal ? { signal: options.signal } : {}),
     },

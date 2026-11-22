@@ -15,7 +15,7 @@ import { AppShellSync } from '@/components/ui/app-shell-context';
 
 export const dynamic = 'force-dynamic';
 
-/** Operations this screen may run through its server action (EP-P01..P05, EP-C01..C07). */
+/** Operations this screen may run through its server action (EP-P01..P05, EP-C01..C07, EP-R01, EP-J01). */
 const ALLOWED_OPERATIONS: ReadonlySet<M05OperationName> = new Set([
   'listCareerGoals',
   'getProfile',
@@ -29,6 +29,8 @@ const ALLOWED_OPERATIONS: ReadonlySet<M05OperationName> = new Set([
   'confirmCareerGoal',
   'updateCareerGoal',
   'deleteCareerGoal',
+  'generateRoadmap',
+  'getJobStatus',
 ]);
 
 function isNextRedirect(err: unknown): boolean {
