@@ -433,4 +433,152 @@ describe('RoadmapDraftView (Screen 12)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reload Draft' }));
     expect(await screen.findByText('Draft v2')).toBeInTheDocument();
   });
+
+  it('retries a failed retryable job with a fresh Idempotency-Key (no stale activeJob block) and releases draft controls on non-retryable terminal failure', async () => {
+    const draftV1 = makeDraft({ version_no: 1 });
+    vi.mocked(getRoadmap).mockResolvedValue(draftV1);
+    vi.mocked(reviseRoadmap)
+      .mockResolvedValueOnce({
+        job_id: 'job-fail-1',
+        kind: 'roadmap_revision',
+        status: 'queued',
+        poll_url: '/api/v1/jobs/job-fail-1',
+        retry_after_seconds: 1,
+      })
+      .mockResolvedValueOnce({
+        job_id: 'job-fail-2',
+        kind: 'roadmap_revision',
+        status: 'queued',
+        poll_url: '/api/v1/jobs/job-fail-2',
+        retry_after_seconds: 1,
+      });
+
+    const pollMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        job_id: 'job-fail-1',
+        kind: 'roadmap_revision',
+        status: 'failed',
+        result_ref: null,
+        error: {
+          code: 'AI_GENERATION_FAILED',
+          message: 'Temporary AI failure',
+          retryable: true,
+        },
+        retryable: true,
+        created_at: '2026-11-19T00:00:00.000Z',
+        finished_at: '2026-11-19T00:00:02.000Z',
+      } satisfies JobStatusDTO)
+      .mockResolvedValueOnce({
+        job_id: 'job-fail-2',
+        kind: 'roadmap_revision',
+        status: 'failed',
+        result_ref: null,
+        error: {
+          code: 'STALE_JOB_INPUT',
+          message: 'Source data changed',
+          retryable: false,
+        },
+        retryable: false,
+        created_at: '2026-11-19T00:00:03.000Z',
+        finished_at: '2026-11-19T00:00:04.000Z',
+      } satisfies JobStatusDTO);
+
+    render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        pollJobStatus={pollMock}
+      />,
+    );
+    expect(await screen.findByText('Draft v1')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Revision instruction/i), {
+      target: { value: 'Add more SQL exercises.' },
+    });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Submit Revision' }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Poll 1 -> retryable failure -> Retry button appears
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const retryBtn = screen.getByRole('button', { name: 'Retry' });
+
+    // Clicking Retry MUST dispatch a 2nd reviseRoadmap call with a fresh Idempotency-Key
+    await act(async () => {
+      fireEvent.click(retryBtn);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(reviseRoadmap)).toHaveBeenCalledTimes(2);
+    const firstKey = vi.mocked(reviseRoadmap).mock.calls[0][3];
+    const secondKey = vi.mocked(reviseRoadmap).mock.calls[1][3];
+    expect(secondKey).not.toBe(firstKey);
+
+    // Poll 2 -> non-retryable terminal failure -> releases activeJob so Lock & Submit are enabled again + shows dismissible error
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+
+    expect(screen.getByText('Draft update failed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('Draft update failed')).not.toBeInTheDocument();
+  });
+
+  it('binds large-draft confirmation checkbox to draft.version_no so reloading a newer version requires fresh confirmation', async () => {
+    const largeV1 = makeDraft({
+      version_no: 1,
+      size_guardrail: {
+        active_topic_count: 50,
+        soft_max_topics: 45,
+        materially_large: true,
+        warning: '50 active topics exceed 45.',
+      },
+    });
+    const largeV2 = makeDraft({
+      version_no: 2,
+      size_guardrail: {
+        active_topic_count: 52,
+        soft_max_topics: 45,
+        materially_large: true,
+        warning: '52 active topics exceed 45.',
+      },
+    });
+
+    vi.mocked(getRoadmap)
+      .mockResolvedValueOnce(largeV1)
+      .mockResolvedValueOnce(largeV2);
+    vi.mocked(lockRoadmap).mockRejectedValueOnce(
+      new ApiError(409, 'Version changed', 'STALE_VERSION'),
+    );
+
+    render(<RoadmapDraftView accessToken="token-1" roadmapId="rm-draft-1" />);
+    expect(await screen.findByText('Draft v1')).toBeInTheDocument();
+
+    const checkbox = screen.getByRole('checkbox');
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock Roadmap' }));
+    expect(await screen.findByRole('button', { name: 'Reload Draft' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload Draft' }));
+    expect(await screen.findByText('Draft v2')).toBeInTheDocument();
+    // Version changed v1 -> v2: checkbox MUST automatically reset and Lock MUST be disabled
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Lock Roadmap' })).toBeDisabled();
+  });
 });

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   ApiError,
   createIdempotencyKey,
+  getJobStatus,
   getRoadmap,
   lockRoadmap,
   reviseRoadmap,
@@ -69,8 +70,8 @@ type DraftFetchState =
   | { key: string; status: 'error'; error: MappedError };
 
 type ActiveDraftJob =
-  | { kind: 'refresh'; job: JobAcceptedDTO }
-  | { kind: 'revision'; job: JobAcceptedDTO }
+  | { kind: 'refresh'; job: JobAcceptedDTO; payload: RevisionRequestDTO }
+  | { kind: 'revision'; job: JobAcceptedDTO; payload: RevisionRequestDTO }
   | null;
 
 const MAX_REVISION_CODEPOINTS = 2000;
@@ -229,9 +230,16 @@ export function RoadmapDraftView({
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [lockState, setLockState] = useState<'idle' | 'locking' | 'navigating'>('idle');
   const locking = lockState !== 'idle';
-  const [confirmLarge, setConfirmLarge] = useState(false);
-  const [forceLargeConfirm, setForceLargeConfirm] = useState(false);
+  const [confirmedLargeVersion, setConfirmedLargeVersion] = useState<number | null>(
+    null,
+  );
+  const [forcedLargeVersion, setForcedLargeVersion] = useState<number | null>(
+    null,
+  );
   const [actionError, setActionError] = useState<MappedError | null>(null);
+  const [terminalJobError, setTerminalJobError] = useState<MappedError | null>(
+    null,
+  );
   const [actionErrorResetKey, setActionErrorResetKey] = useState(0);
 
   const pendingRevisionKeyRef = useRef<{ signature: string; key: string } | null>(
@@ -306,12 +314,23 @@ export function RoadmapDraftView({
   const trimmedInstruction = instruction.trim();
   const trimmedCodePointCount = Array.from(trimmedInstruction).length;
 
+  const confirmLarge =
+    draft !== null && confirmedLargeVersion === draft.version_no;
+  const forceLargeConfirm =
+    draft !== null && forcedLargeVersion === draft.version_no;
+
   const dispatchRevision = async (
     kind: 'refresh' | 'revision',
     body: RevisionRequestDTO,
     forceFreshKey: boolean,
+    replaceActiveJob = false,
   ) => {
-    if (!featureEnabled || submittingRevision || activeJob || locking) {
+    if (
+      !featureEnabled ||
+      submittingRevision ||
+      (!replaceActiveJob && activeJob) ||
+      locking
+    ) {
       return;
     }
 
@@ -324,6 +343,7 @@ export function RoadmapDraftView({
     pendingRevisionKeyRef.current = { signature, key: idempotencyKey };
     setSubmittingRevision(true);
     setActionError(null);
+    setTerminalJobError(null);
 
     try {
       const job = await reviseRoadmap(
@@ -333,7 +353,7 @@ export function RoadmapDraftView({
         idempotencyKey,
       );
       pendingRevisionKeyRef.current = null;
-      setActiveJob({ kind, job });
+      setActiveJob({ kind, job, payload: body });
     } catch (err) {
       if (
         err instanceof ApiError &&
@@ -401,8 +421,9 @@ export function RoadmapDraftView({
     setInstruction('');
     setInstructionError(null);
     setActionError(null);
-    setConfirmLarge(false);
-    setForceLargeConfirm(false);
+    setTerminalJobError(null);
+    setConfirmedLargeVersion(null);
+    setForcedLargeVersion(null);
     setReloadTick((prev) => prev + 1);
   };
 
@@ -410,29 +431,58 @@ export function RoadmapDraftView({
     if (!draft || !activeJob) {
       return;
     }
-    const kind = activeJob.kind;
+    const { kind, payload } = activeJob;
     setActiveJob(null);
-    if (kind === 'refresh') {
-      void dispatchRevision(
-        'refresh',
-        {
-          refresh_stale: true,
-          expected_version_no: draft.version_no,
-        },
-        true,
-      );
-      return;
+    void dispatchRevision(
+      kind,
+      {
+        ...payload,
+        expected_version_no: draft.version_no,
+      },
+      true,
+      true,
+    );
+  };
+
+  const pollDraftJobStatus = async (
+    jobId: string,
+    signal: AbortSignal,
+  ): Promise<JobStatusDTO> => {
+    const status = pollJobStatus
+      ? await pollJobStatus(jobId, signal)
+      : await getJobStatus(accessToken, jobId, { signal });
+    if (
+      status.status === 'failed' &&
+      !status.retryable &&
+      !status.error?.retryable
+    ) {
+      const code = status.error?.code;
+      const mapped: MappedError = code
+        ? mapApiError(
+            new ApiError(
+              409,
+              status.error?.message ?? '',
+              code,
+              undefined,
+              [],
+              false,
+            ),
+          )
+        : {
+            message:
+              status.error?.message ||
+              'This draft update could not be completed. Refresh the draft or adjust your request and try again.',
+            tone: 'error',
+            status: null,
+            fieldErrors: {},
+            retryAfterSeconds: null,
+            retryable: false,
+            requiresSignIn: false,
+          };
+      setActiveJob(null);
+      setTerminalJobError(mapped);
     }
-    if (trimmedCodePointCount >= 1 && trimmedCodePointCount <= MAX_REVISION_CODEPOINTS) {
-      void dispatchRevision(
-        'revision',
-        {
-          instruction: trimmedInstruction,
-          expected_version_no: draft.version_no,
-        },
-        true,
-      );
-    }
+    return status;
   };
 
   const handleLockRoadmap = async () => {
@@ -480,7 +530,7 @@ export function RoadmapDraftView({
           pendingLockKeyRef.current = null;
         }
         if (err.code === 'LARGE_ROADMAP_CONFIRMATION_REQUIRED') {
-          setForceLargeConfirm(true);
+          setForcedLargeVersion(draft.version_no);
         }
       }
       setActionError(mapApiError(err));
@@ -718,7 +768,11 @@ export function RoadmapDraftView({
           </div>
         </div>
 
-        {(draft.stale || requiresLargeConfirmation || actionError || activeJob) && (
+        {(draft.stale ||
+          requiresLargeConfirmation ||
+          actionError ||
+          terminalJobError ||
+          activeJob) && (
           <div className="flex flex-col gap-3 border-b border-slate-100 py-4 dark:border-slate-800">
             {draft.stale && (
               <div className="flex items-start gap-2 rounded-md border border-feedback-warning-border bg-feedback-warning-background p-3 text-body-sm text-feedback-warning-text">
@@ -737,7 +791,9 @@ export function RoadmapDraftView({
                 variant="warning_callout"
                 required
                 checked={confirmLarge}
-                onChange={setConfirmLarge}
+                onChange={(checked) =>
+                  setConfirmedLargeVersion(checked ? draft.version_no : null)
+                }
                 disabled={draft.stale || !featureEnabled || Boolean(activeJob) || locking}
                 label={`I confirm that I want to lock this large roadmap (${draft.size_guardrail.active_topic_count} active topics, above the ${draft.size_guardrail.soft_max_topics}-topic guideline).`}
               />
@@ -771,6 +827,49 @@ export function RoadmapDraftView({
               </Alert>
             )}
 
+            {terminalJobError && (
+              <Alert
+                variant={
+                  terminalJobError.tone === 'warning'
+                    ? 'warning'
+                    : 'error_retryable'
+                }
+                role="alert"
+                title="Draft update failed"
+                action={
+                  terminalJobError.code === 'STALE_JOB_INPUT' ||
+                  terminalJobError.code === 'STALE_VERSION' ||
+                  terminalJobError.code === 'DRAFT_STALE'
+                    ? {
+                        label: 'Reload Draft',
+                        onClick: () => {
+                          setTerminalJobError(null);
+                          setReloadTick((prev) => prev + 1);
+                        },
+                      }
+                    : {
+                        label: 'Dismiss',
+                        onClick: () => setTerminalJobError(null),
+                      }
+                }
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{terminalJobError.message}</span>
+                  {(terminalJobError.code === 'STALE_JOB_INPUT' ||
+                    terminalJobError.code === 'STALE_VERSION' ||
+                    terminalJobError.code === 'DRAFT_STALE') && (
+                    <button
+                      type="button"
+                      onClick={() => setTerminalJobError(null)}
+                      className="text-caption font-medium underline underline-offset-2"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              </Alert>
+            )}
+
             {activeJob && (
               <AILoadingState
                 job={activeJob.job}
@@ -781,7 +880,7 @@ export function RoadmapDraftView({
                 }
                 variant="inline_banner"
                 accessToken={accessToken}
-                pollJobStatus={pollJobStatus}
+                pollJobStatus={pollDraftJobStatus}
                 onJobSucceeded={handleJobSucceeded}
                 onRetryJob={handleRetryActiveJob}
               />

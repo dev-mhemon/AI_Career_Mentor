@@ -29,13 +29,16 @@ import {
 import { JobProducerService } from '../jobs/services/job-producer.service.js';
 import { PostgresJobQueueConsumer } from '../jobs/services/postgres-job-queue.consumer.js';
 import { RoadmapController } from './controllers/roadmap.controller.js';
-import type {
-  ArchiveRoadmapResponseDTO,
-  FocusSwitchResponseDTO,
-  LockRoadmapResponseDTO,
-  RoadmapDetailDTO,
-  RoadmapSummaryDTO,
-  RoadmapVersionDTO,
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import {
+  GenerateRoadmapRequestDTO,
+  type ArchiveRoadmapResponseDTO,
+  type FocusSwitchResponseDTO,
+  type LockRoadmapResponseDTO,
+  type RoadmapDetailDTO,
+  type RoadmapSummaryDTO,
+  type RoadmapVersionDTO,
 } from './dto/roadmap.dto.js';
 import { RoadmapModule } from './roadmap.module.js';
 import { RoadmapJobHandler } from './services/roadmap-job.handler.js';
@@ -383,10 +386,14 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     }
   });
 
-  it('enforces H-IDEM on EP-R01, EP-R04, and EP-R05 (missing key -> 400, replay -> same body, reuse different body -> 409)', async () => {
+  it('enforces H-IDEM on EP-R01, EP-R04, and EP-R05 (missing key -> 400, replay -> same body, reuse different body or If-Match -> 409)', async () => {
     const reqWithoutKey = { user: { sub: USER_ID }, headers: {} };
     await expect(
-      controller.generateRoadmap(reqWithoutKey, { career_goal_id: GOAL_ID }),
+      controller.generateRoadmap(reqWithoutKey, {
+        career_goal_id: GOAL_ID,
+        target_level: 'mid',
+        level_confirmed: true,
+      }),
     ).rejects.toSatisfy((err) => {
       expectContractError(err, 400, 'INVALID_FORMAT');
       return true;
@@ -423,7 +430,7 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     };
     const first = await controller.generateRoadmap(
       req1,
-      { career_goal_id: GOAL_ID },
+      { career_goal_id: GOAL_ID, target_level: 'mid', level_confirmed: true },
       mockRes as never,
     );
     expect(first).toEqual(SAMPLE_ACCEPTED_GENERATE);
@@ -433,7 +440,7 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     // Replay same key + same body -> service NOT called again
     const replay = await controller.generateRoadmap(
       req1,
-      { career_goal_id: GOAL_ID },
+      { career_goal_id: GOAL_ID, target_level: 'mid', level_confirmed: true },
       mockRes as never,
     );
     expect(replay).toEqual(SAMPLE_ACCEPTED_GENERATE);
@@ -443,13 +450,15 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     await expect(
       controller.generateRoadmap(req1, {
         career_goal_id: '99999999-9999-4999-8999-999999999999',
+        target_level: 'mid',
+        level_confirmed: true,
       }),
     ).rejects.toSatisfy((err) => {
       expectContractError(err, 409, 'IDEMPOTENCY_KEY_REUSED');
       return true;
     });
 
-    // Lock with H-IDEM + concrete route + If-Match header
+    // Lock with H-IDEM + normalized If-Match header: `"1"`, `W/"1"`, and `1` replay; `"2"` conflicts
     const lockReq = {
       user: { sub: USER_ID },
       headers: {
@@ -471,11 +480,90 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       }),
     );
 
-    const lockReplay = await controller.lockRoadmap(lockReq, ROADMAP_ID, {
-      version_no: 1,
-    });
-    expect(lockReplay).toEqual(SAMPLE_LOCK_RESPONSE);
+    const lockReplayWeak = await controller.lockRoadmap(
+      {
+        user: { sub: USER_ID },
+        headers: { 'idempotency-key': IDEM_KEY_2, 'if-match': 'W/"1"' },
+      },
+      ROADMAP_ID,
+      { version_no: 1 },
+    );
+    expect(lockReplayWeak).toEqual(SAMPLE_LOCK_RESPONSE);
     expect(serviceMock.lockRoadmap).toHaveBeenCalledTimes(1);
+
+    await expect(
+      controller.lockRoadmap(
+        {
+          user: { sub: USER_ID },
+          headers: { 'idempotency-key': IDEM_KEY_2, 'if-match': '"2"' },
+        },
+        ROADMAP_ID,
+        { version_no: 1 },
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 409, 'IDEMPOTENCY_KEY_REUSED');
+      return true;
+    });
+
+    // Revision with H-IDEM + normalized If-Match header: `1` and `W/"1"` replay; `"2"` conflicts
+    const revKey = '99999999-9999-4999-8999-999999999991';
+    const revFirst = await controller.requestRevision(
+      {
+        user: { sub: USER_ID },
+        headers: { 'idempotency-key': revKey, 'if-match': '1' },
+      },
+      ROADMAP_ID,
+      { instruction: 'Expand indexing exercises' },
+      mockRes as never,
+    );
+    expect(revFirst).toEqual(SAMPLE_ACCEPTED_REVISION);
+    expect(serviceMock.requestRevision).toHaveBeenCalledTimes(1);
+
+    const revReplay = await controller.requestRevision(
+      {
+        user: { sub: USER_ID },
+        headers: { 'idempotency-key': revKey, 'if-match': 'W/"1"' },
+      },
+      ROADMAP_ID,
+      { instruction: 'Expand indexing exercises' },
+      mockRes as never,
+    );
+    expect(revReplay).toEqual(SAMPLE_ACCEPTED_REVISION);
+    expect(serviceMock.requestRevision).toHaveBeenCalledTimes(1);
+
+    await expect(
+      controller.requestRevision(
+        {
+          user: { sub: USER_ID },
+          headers: { 'idempotency-key': revKey, 'if-match': '"2"' },
+        },
+        ROADMAP_ID,
+        { instruction: 'Expand indexing exercises' },
+        mockRes as never,
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 409, 'IDEMPOTENCY_KEY_REUSED');
+      return true;
+    });
+
+    // DTO validation requires target_level and level_confirmed === true
+    const missingFieldsDto = plainToInstance(GenerateRoadmapRequestDTO, {
+      career_goal_id: GOAL_ID,
+    });
+    const missingErrors = await validate(missingFieldsDto);
+    expect(missingErrors.map((e) => e.property).sort()).toEqual([
+      'level_confirmed',
+      'target_level',
+    ]);
+    const unconfirmedDto = plainToInstance(GenerateRoadmapRequestDTO, {
+      career_goal_id: GOAL_ID,
+      target_level: 'mid',
+      level_confirmed: false,
+    });
+    const unconfirmedErrors = await validate(unconfirmedDto);
+    expect(unconfirmedErrors.map((e) => e.property)).toEqual([
+      'level_confirmed',
+    ]);
   });
 
   it('logs safe non-prod metadata (no secrets/PII) when EP-R01 fails closed with 503 SERVICE_UNAVAILABLE (missing Redis idempotency:epoch) and suppresses log in production', async () => {
@@ -508,7 +596,11 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       await expect(
         controllerWithUnseededEpoch.generateRoadmap(
           req,
-          { career_goal_id: GOAL_ID },
+          {
+            career_goal_id: GOAL_ID,
+            target_level: 'mid',
+            level_confirmed: true,
+          },
           mockRes as never,
         ),
       ).rejects.toSatisfy((err) => {
@@ -543,7 +635,11 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       await expect(
         controller.generateRoadmap(
           req,
-          { career_goal_id: GOAL_ID },
+          {
+            career_goal_id: GOAL_ID,
+            target_level: 'mid',
+            level_confirmed: true,
+          },
           mockRes as never,
         ),
       ).rejects.toThrow('super-secret-pass');
@@ -564,7 +660,11 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       await expect(
         controllerWithUnseededEpoch.generateRoadmap(
           req,
-          { career_goal_id: GOAL_ID },
+          {
+            career_goal_id: GOAL_ID,
+            target_level: 'mid',
+            level_confirmed: true,
+          },
           mockRes as never,
         ),
       ).rejects.toSatisfy((err) => {

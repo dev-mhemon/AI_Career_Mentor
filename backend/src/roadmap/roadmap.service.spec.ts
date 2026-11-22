@@ -195,7 +195,35 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       );
     });
 
-    it('rejects missing/foreign goal (404), unconfirmed goal (409), incomplete profile (422), existing roadmap (409), 3-cap (409), and 24h quota (429)', async () => {
+    it('rejects missing/foreign goal (404), unconfirmed goal (409), missing target_level/level_confirmed (422), incomplete profile (422), existing roadmap (409), 3-cap (409), and 24h quota (429)', async () => {
+      const validGenerateDto = {
+        career_goal_id: GOAL_ID,
+        target_level: 'mid' as const,
+        level_confirmed: true,
+      };
+
+      // Missing target_level -> 422 INVALID_ENUM_VALUE before tx
+      await expect(
+        service.generateRoadmap(USER_ID, {
+          career_goal_id: GOAL_ID,
+          level_confirmed: true,
+        } as never),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'INVALID_ENUM_VALUE');
+        return true;
+      });
+      // Missing level_confirmed -> 422 LEVEL_NOT_CONFIRMED before tx
+      await expect(
+        service.generateRoadmap(USER_ID, {
+          career_goal_id: GOAL_ID,
+          target_level: 'mid',
+        } as never),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'LEVEL_NOT_CONFIRMED');
+        return true;
+      });
+      expect(transactionMock).not.toHaveBeenCalled();
+
       // Missing / foreign goal
       queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('effective_feature_access'))
@@ -204,7 +232,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return [];
       });
       await expect(
-        service.generateRoadmap(USER_ID, { career_goal_id: GOAL_ID }),
+        service.generateRoadmap(USER_ID, validGenerateDto),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 404, 'RESOURCE_NOT_FOUND');
         return true;
@@ -227,7 +255,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return [];
       });
       await expect(
-        service.generateRoadmap(USER_ID, { career_goal_id: GOAL_ID }),
+        service.generateRoadmap(USER_ID, validGenerateDto),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 409, 'INVALID_STATE_TRANSITION');
         return true;
@@ -237,6 +265,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       await expect(
         service.generateRoadmap(USER_ID, {
           career_goal_id: GOAL_ID,
+          target_level: 'mid',
           level_confirmed: false,
         }),
       ).rejects.toSatisfy((err) => {
@@ -275,7 +304,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return [];
       });
       await expect(
-        service.generateRoadmap(USER_ID, { career_goal_id: GOAL_ID }),
+        service.generateRoadmap(USER_ID, validGenerateDto),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 422, 'PROFILE_INCOMPLETE');
         return true;
@@ -314,7 +343,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return [];
       });
       await expect(
-        service.generateRoadmap(USER_ID, { career_goal_id: GOAL_ID }),
+        service.generateRoadmap(USER_ID, validGenerateDto),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 409, 'RESOURCE_CONFLICT');
         return true;
@@ -354,7 +383,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return [];
       });
       await expect(
-        service.generateRoadmap(USER_ID, { career_goal_id: GOAL_ID }),
+        service.generateRoadmap(USER_ID, validGenerateDto),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 409, 'ROADMAP_LIMIT_REACHED');
         return true;
@@ -396,7 +425,7 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return [];
       });
       await expect(
-        service.generateRoadmap(USER_ID, { career_goal_id: GOAL_ID }),
+        service.generateRoadmap(USER_ID, validGenerateDto),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 429, 'RATE_LIMITED');
         return true;
@@ -810,6 +839,29 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
         return true;
       });
 
+      // Mismatched If-Match header rejects even when body expected_version_no matches open draft
+      await expect(
+        service.requestRevision(
+          USER_ID,
+          ROADMAP_ID,
+          { refresh_stale: true, expected_version_no: 2 },
+          { idempotencyKey: IDEM_KEY, ifMatch: 1 },
+        ),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'STALE_VERSION');
+        return true;
+      });
+
+      // Both body expected_version_no and If-Match matching open draft succeeds
+      await expect(
+        service.requestRevision(
+          USER_ID,
+          ROADMAP_ID,
+          { refresh_stale: true, expected_version_no: 2 },
+          { idempotencyKey: IDEM_KEY, ifMatch: 2 },
+        ),
+      ).resolves.toMatchObject({ job_id: JOB_ID });
+
       // Locked roadmap -> 409 INVALID_STATE_TRANSITION
       queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('effective_feature_access'))
@@ -831,6 +883,16 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
   describe('EP-R05 lockRoadmap', () => {
     it('enforces DRAFT_STALE, STALE_VERSION, LARGE_ROADMAP_CONFIRMATION_REQUIRED (> 45), auto-focus only when none exists, and never creates daily_plans', async () => {
       const sqlStatements: string[] = [];
+
+      // Missing all version preconditions (expected_version_no, version_no, If-Match) -> 422 before any DB query
+      transactionMock.mockClear();
+      await expect(
+        service.lockRoadmap(USER_ID, ROADMAP_ID, {}),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'VALIDATION_FAILED');
+        return true;
+      });
+      expect(transactionMock).not.toHaveBeenCalled();
 
       // Stale draft without acknowledge_stale -> 409 DRAFT_STALE
       queryMock.mockImplementation(async (sql: string) => {
@@ -869,6 +931,19 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       });
       await expect(
         service.lockRoadmap(USER_ID, ROADMAP_ID, { expected_version_no: 1 }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 409, 'STALE_VERSION');
+        return true;
+      });
+
+      // Mismatched If-Match rejects with 409 STALE_VERSION even when body expected_version_no matches open draft
+      await expect(
+        service.lockRoadmap(
+          USER_ID,
+          ROADMAP_ID,
+          { expected_version_no: 2 },
+          { ifMatch: 1 },
+        ),
       ).rejects.toSatisfy((err) => {
         expectContractError(err, 409, 'STALE_VERSION');
         return true;

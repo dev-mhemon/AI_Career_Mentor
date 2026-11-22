@@ -307,6 +307,7 @@ describe('RoadmapDetailView (Screen 15)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive Roadmap' }));
     const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toMatch(/discontinues its linked career goal/i);
     expect(dialog.textContent).toMatch(/preserves all learning progress/i);
     expect(dialog.textContent).toMatch(/focus will automatically reassign/i);
 

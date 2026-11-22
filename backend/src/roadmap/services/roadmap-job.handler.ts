@@ -1055,26 +1055,67 @@ export class RoadmapJobHandler implements JobHandler {
             topic_id: string;
             skill_id: string;
             phase_no: number | string;
+            phase_title: string | null;
             title: string;
             priority: string;
             gap_type: string;
+            required_depth: string | null;
+            estimated_effort_hours: number | string | null;
             sequence_no: number | string;
+            depends_on_lineage_ids: string[] | null;
+            reason: string | null;
+            retired: boolean;
+            sources: unknown;
           }>
         >(
           `SELECT lineage_id,
                   topic_id,
                   skill_id,
                   phase_no,
+                  phase_title,
                   title,
                   priority::text AS priority,
                   gap_type::text AS gap_type,
-                  sequence_no
+                  required_depth,
+                  estimated_effort_hours,
+                  sequence_no,
+                  depends_on_lineage_ids,
+                  reason,
+                  retired,
+                  sources
              FROM public.roadmap_items
             WHERE user_id = $1
               AND version_id = $2
+              AND retired = false
             ORDER BY sequence_no ASC`,
           [userId, roadmap.draft_version_id],
         );
+
+        const serializedItems = (
+          Array.isArray(currentItems) ? currentItems : []
+        ).map((item) => ({
+          lineage_id: String(item.lineage_id),
+          topic_id: String(item.topic_id),
+          skill_id: String(item.skill_id),
+          phase_no: Number(item.phase_no),
+          phase_title: item.phase_title ?? null,
+          title: String(item.title),
+          priority: item.priority,
+          gap_type: item.gap_type,
+          required_depth: item.required_depth ?? null,
+          estimated_effort_hours:
+            item.estimated_effort_hours !== null &&
+            item.estimated_effort_hours !== undefined
+              ? Number(item.estimated_effort_hours)
+              : null,
+          sequence_no: Number(item.sequence_no),
+          depends_on_lineage_ids: Array.isArray(item.depends_on_lineage_ids)
+            ? item.depends_on_lineage_ids.map((id) => String(id))
+            : [],
+          reason: item.reason ?? null,
+          retired: Boolean(item.retired),
+          sources: Array.isArray(item.sources) ? item.sources : [],
+        }));
 
         return {
           context: {
@@ -1087,7 +1128,7 @@ export class RoadmapJobHandler implements JobHandler {
               stale: Boolean(roadmap.stale),
               summary: roadmap.summary ?? {},
               phases: roadmap.phases ?? [],
-              items: Array.isArray(currentItems) ? currentItems : [],
+              items: serializedItems,
             },
             refresh_stale: parsed.refreshStale,
             approved_skills: approvedSkills,
@@ -1659,6 +1700,70 @@ export class RoadmapJobHandler implements JobHandler {
           undefined,
           false,
         );
+      }
+
+      // Validate retained items preserve their locked base draft lineage_id (fail closed on drift)
+      const prevBaseItems = await tx.query<
+        Array<{
+          lineage_id: string;
+          topic_id: string;
+          skill_id: string;
+          title: string;
+        }>
+      >(
+        `SELECT lineage_id, topic_id, skill_id, title
+           FROM public.roadmap_items
+          WHERE user_id = $1
+            AND version_id = $2
+            AND retired = false`,
+        [userId, prevDraft.id],
+      );
+      const prevLineageIds = new Set<string>();
+      const prevLineageByTopicId = new Map<string, string>();
+      const prevLineageBySkillAndTitle = new Map<string, string | null>();
+      for (const baseItem of Array.isArray(prevBaseItems)
+        ? prevBaseItems
+        : []) {
+        const baseLineage = String(baseItem.lineage_id).trim().toLowerCase();
+        const baseTopic = String(baseItem.topic_id).trim().toLowerCase();
+        const baseSkill = String(baseItem.skill_id).trim().toLowerCase();
+        const baseTitleKey = `${baseSkill}::${String(baseItem.title).trim().toLowerCase()}`;
+        prevLineageIds.add(baseLineage);
+        if (UUID_PATTERN.test(baseTopic)) {
+          prevLineageByTopicId.set(baseTopic, baseLineage);
+        }
+        if (prevLineageBySkillAndTitle.has(baseTitleKey)) {
+          prevLineageBySkillAndTitle.set(baseTitleKey, null);
+        } else {
+          prevLineageBySkillAndTitle.set(baseTitleKey, baseLineage);
+        }
+      }
+      for (const item of normalized.items) {
+        const expectedByTopic = UUID_PATTERN.test(item.raw_topic_id)
+          ? prevLineageByTopicId.get(item.raw_topic_id)
+          : undefined;
+        if (expectedByTopic && expectedByTopic !== item.lineage_id) {
+          fail(
+            502,
+            'AI_VALIDATION_FAILED',
+            'Retained roadmap item must preserve its existing lineage_id',
+            undefined,
+            true,
+          );
+        }
+        if (!prevLineageIds.has(item.lineage_id)) {
+          const titleKey = `${item.skill_id}::${item.title.trim().toLowerCase()}`;
+          const expectedByTitle = prevLineageBySkillAndTitle.get(titleKey);
+          if (expectedByTitle && expectedByTitle !== item.lineage_id) {
+            fail(
+              502,
+              'AI_VALIDATION_FAILED',
+              'Retained roadmap item must preserve its existing lineage_id',
+              undefined,
+              true,
+            );
+          }
+        }
       }
 
       const topicIdByLineage = await this.resolveOrProvisionTopics(

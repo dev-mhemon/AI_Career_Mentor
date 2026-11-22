@@ -1345,8 +1345,8 @@ export type RoadmapResponseDTO = RoadmapDetailDTO;
 
 export interface GenerateRoadmapRequestDTO {
   career_goal_id: string;
-  target_level?: CareerLevel;
-  level_confirmed?: boolean;
+  target_level: CareerLevel;
+  level_confirmed: boolean;
 }
 
 export interface ListRoadmapsParams {

@@ -427,7 +427,10 @@ export class RoadmapController {
           idempotencyKey: idempotencyKeyHeader,
           method: 'POST',
           route: `/api/v1/roadmaps/${roadmapId.toLowerCase()}/revision`,
-          body: dto ?? null,
+          body: {
+            payload: dto ?? null,
+            if_match: ifMatch ?? null,
+          },
         },
         async (execCtx) => {
           if (execCtx.signal.aborted) {
@@ -505,7 +508,10 @@ export class RoadmapController {
           idempotencyKey: idempotencyKeyHeader,
           method: 'POST',
           route: `/api/v1/roadmaps/${roadmapId.toLowerCase()}/lock`,
-          body: dto ?? {},
+          body: {
+            payload: dto ?? {},
+            if_match: ifMatch ?? null,
+          },
         },
         async (execCtx) => {
           if (execCtx.signal.aborted) {

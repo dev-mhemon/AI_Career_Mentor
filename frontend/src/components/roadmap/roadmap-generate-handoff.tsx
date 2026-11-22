@@ -24,9 +24,9 @@ export interface RoadmapGenerateHandoffProps {
   accessToken?: string;
   /** Confirmed career goal UUID (`EP-R01` `career_goal_id`). */
   careerGoalId: string;
-  /** Optional target career level (`junior` | `mid` | `senior`). */
-  targetLevel?: CareerLevel;
-  /** Explicit confirmation flag when supplying `targetLevel`. */
+  /** Target career level (`junior` | `mid` | `senior`), required by `EP-R01`. */
+  targetLevel: CareerLevel;
+  /** Explicit level confirmation flag (`true` required by `EP-R01`). */
   levelConfirmed?: boolean;
   /** Feature gate status from `effective_access.roadmap_generator`. */
   featureEnabled?: boolean;
@@ -65,7 +65,7 @@ export function RoadmapGenerateHandoff({
   accessToken = '',
   careerGoalId,
   targetLevel,
-  levelConfirmed,
+  levelConfirmed = true,
   featureEnabled = true,
   disabled = false,
   buttonLabel = 'Generate Roadmap Draft',
@@ -96,14 +96,21 @@ export function RoadmapGenerateHandoff({
 
   const startGeneration = async (forceFreshKey: boolean) => {
     const trimmedGoalId = careerGoalId.trim();
-    if (!trimmedGoalId || !featureEnabled || disabled || submitting) {
+    if (
+      !trimmedGoalId ||
+      !targetLevel ||
+      levelConfirmed !== true ||
+      !featureEnabled ||
+      disabled ||
+      submitting
+    ) {
       return;
     }
 
     const payload: GenerateRoadmapRequestDTO = {
       career_goal_id: trimmedGoalId,
-      ...(targetLevel ? { target_level: targetLevel } : {}),
-      ...(levelConfirmed !== undefined ? { level_confirmed: levelConfirmed } : {}),
+      target_level: targetLevel,
+      level_confirmed: true,
     };
     const signature = JSON.stringify(payload);
     const idempotencyKey =
@@ -207,6 +214,8 @@ export function RoadmapGenerateHandoff({
         !featureEnabled ||
         disabled ||
         !careerGoalId.trim() ||
+        !targetLevel ||
+        levelConfirmed !== true ||
         submitting ||
         isJobActive
       }

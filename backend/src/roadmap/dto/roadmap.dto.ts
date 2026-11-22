@@ -1,6 +1,8 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  Equals,
   IsBoolean,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsString,
@@ -92,14 +94,14 @@ export class GenerateRoadmapRequestDTO {
   @IsUUID()
   career_goal_id!: string;
 
-  @ValidateIf((_object, value) => value !== undefined && value !== null)
+  @Transform(trimLower)
   @IsString()
-  @Transform(trim)
-  target_level?: CareerLevel;
+  @IsIn(['junior', 'mid', 'senior'])
+  target_level!: CareerLevel;
 
-  @ValidateIf((_object, value) => value !== undefined && value !== null)
   @IsBoolean()
-  level_confirmed?: boolean;
+  @Equals(true, { message: 'level_confirmed must be true' })
+  level_confirmed!: boolean;
 }
 
 /**

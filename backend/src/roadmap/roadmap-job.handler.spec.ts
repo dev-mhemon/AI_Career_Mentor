@@ -722,4 +722,197 @@ describe('RoadmapJobHandler (roadmap_generate & roadmap_revision)', () => {
       return true;
     });
   });
+
+  it('supplies full editable item snapshot in roadmap_revision context and rejects retained items whose lineage_id drifted', async () => {
+    // 1. Verify full editable item snapshot in revision context
+    const revJob = makeRevisionJob();
+    let capturedAiRequest: AIRequestDTO | undefined;
+    const dbMock = {
+      transaction: vi.fn(
+        async (
+          _userId: string | null,
+          op: (db: JobQueryExecutor) => Promise<unknown>,
+        ) =>
+          op(
+            makeTxMock(async (sql: string) => {
+              if (sql.includes('effective_feature_access')) {
+                return [{ enabled: true }];
+              }
+              if (sql.includes('system_configurations')) {
+                return [{ config_value: 45 }];
+              }
+              if (sql.includes('FROM public.skills')) {
+                return [
+                  { id: SKILL_1_ID, slug: 'sql', canonical_name: 'SQL' },
+                  { id: SKILL_2_ID, slug: 'api', canonical_name: 'REST API' },
+                ];
+              }
+              if (
+                sql.includes('FROM public.roadmaps') &&
+                !sql.includes('JOIN')
+              ) {
+                return [{ id: ROADMAP_ID, status: 'draft' }];
+              }
+              if (sql.includes('FROM public.roadmap_versions')) {
+                return [{ id: VERSION_1_ID, version_no: 1 }];
+              }
+              if (sql.includes('FROM public.roadmaps r')) {
+                return [
+                  {
+                    id: ROADMAP_ID,
+                    canonical_role_id: ROLE_ID,
+                    role_name: 'Backend Engineer',
+                    target_level: 'mid',
+                    draft_version_id: VERSION_1_ID,
+                    version_no: 1,
+                    summary: { current_situation: 'Base' },
+                    phases: [{ phase_no: 1, title: 'Core', milestones: [] }],
+                    stale: false,
+                  },
+                ];
+              }
+              if (sql.includes('FROM public.roadmap_items')) {
+                expect(sql).toContain('estimated_effort_hours');
+                expect(sql).toContain('depends_on_lineage_ids');
+                expect(sql).toContain('sources');
+                expect(sql).toContain('required_depth');
+                expect(sql).toContain('reason');
+                return [
+                  {
+                    lineage_id: LINEAGE_1_ID,
+                    topic_id: EXISTING_TOPIC_ID,
+                    skill_id: SKILL_1_ID,
+                    phase_no: 1,
+                    phase_title: 'Database & API Core',
+                    title: 'SQL Indexing Fundamentals',
+                    priority: 'core',
+                    gap_type: 'missing',
+                    required_depth: 'application',
+                    estimated_effort_hours: '6.5',
+                    sequence_no: 1,
+                    depends_on_lineage_ids: [],
+                    reason: 'Preserved reason',
+                    retired: false,
+                    sources: [
+                      {
+                        publisher: 'PostgreSQL Docs',
+                        url: 'https://www.postgresql.org/docs/',
+                      },
+                    ],
+                  },
+                ];
+              }
+              return [];
+            }),
+          ),
+      ),
+    } as unknown as DatabaseService;
+
+    const aiMock = {
+      execute: vi.fn(
+        async (
+          req: AIRequestDTO,
+        ): Promise<AIResponseDTO<RoadmapGenerationOutput>> => {
+          capturedAiRequest = req;
+          return {
+            request_id: req.request_id ?? JOB_ID,
+            generation_id: null,
+            status: 'ok',
+            provider_id: 'synthetic',
+            model_id: MODEL_ID,
+            prompt_version_id: PROMPT_ID,
+            fallback_used: false,
+            latency_ms: 15,
+            usage_units: { input: 100, output: 200 },
+            cost: 0,
+            validation_status: 'passed',
+            sources: [],
+            output: makeSampleRoadmapOutput(2),
+          };
+        },
+      ),
+    } as unknown as AiGatewayService;
+
+    const handlerWithSnapshot = new RoadmapJobHandler(dbMock, aiMock);
+    await handlerWithSnapshot.execute(revJob, new AbortController().signal);
+    const ctxRoadmap = (
+      capturedAiRequest?.context as { roadmap?: { items?: unknown[] } }
+    )?.roadmap;
+    expect(ctxRoadmap?.items).toEqual([
+      expect.objectContaining({
+        lineage_id: LINEAGE_1_ID,
+        phase_title: 'Database & API Core',
+        required_depth: 'application',
+        estimated_effort_hours: 6.5,
+        depends_on_lineage_ids: [],
+        reason: 'Preserved reason',
+        retired: false,
+        sources: [
+          {
+            publisher: 'PostgreSQL Docs',
+            url: 'https://www.postgresql.org/docs/',
+          },
+        ],
+      }),
+    ]);
+
+    // 2. Retained item changing lineage_id (matched by topic_id OR skill_id+title) fails closed 502 AI_VALIDATION_FAILED
+    const driftedOutput = makeSampleRoadmapOutput(2);
+    driftedOutput.phases[0]!.items[0]!.lineage_id =
+      '12345678-1234-4123-8123-1234567890ab';
+    driftedOutput.phases[0]!.items[1]!.depends_on_lineage_ids = [
+      '12345678-1234-4123-8123-1234567890ab',
+    ];
+    const txDrifted = makeTxMock(async (sql: string) => {
+      if (sql.includes('FROM public.users')) return [{ status: 'active' }];
+      if (sql.includes('FROM public.skills')) {
+        return [{ id: SKILL_1_ID }, { id: SKILL_2_ID }];
+      }
+      if (sql.includes('system_configurations')) return [{ config_value: 45 }];
+      if (sql.includes('FROM public.roadmaps')) {
+        return [
+          {
+            id: ROADMAP_ID,
+            status: 'draft',
+            canonical_role_id: ROLE_ID,
+            target_level: 'mid',
+          },
+        ];
+      }
+      if (sql.includes('FROM public.roadmap_versions')) {
+        return [{ id: VERSION_1_ID, version_no: 1 }];
+      }
+      if (sql.includes('FROM public.roadmap_items')) {
+        return [
+          {
+            lineage_id: LINEAGE_1_ID,
+            topic_id: EXISTING_TOPIC_ID,
+            skill_id: SKILL_1_ID,
+            title: 'SQL Indexing Fundamentals',
+          },
+        ];
+      }
+      return [];
+    });
+
+    await expect(
+      handler.persistArtifact(txDrifted, revJob, {
+        resultType: 'roadmap',
+        resultId: ROADMAP_ID,
+        providerKey: 'synthetic',
+        modelId: MODEL_ID,
+        promptVersionId: PROMPT_ID,
+        outputSchemaId: 'roadmap.v1',
+        fallbackUsed: false,
+        language: 'en',
+        inputUnits: 50,
+        outputUnits: 100,
+        latencyMs: 10,
+        output: driftedOutput,
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 502, 'AI_VALIDATION_FAILED');
+      return true;
+    });
+  });
 });

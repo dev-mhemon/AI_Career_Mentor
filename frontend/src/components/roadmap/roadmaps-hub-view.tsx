@@ -309,6 +309,8 @@ export function RoadmapsHubView({
     draft: null,
     archived: null,
   });
+  const requestGenRef = useRef(0);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
 
   const [filter, setFilter] = useState<HubFilter>('all');
   const [reloadTick, setReloadTick] = useState(0);
@@ -335,6 +337,7 @@ export function RoadmapsHubView({
     }
 
     let active = true;
+    const requestGen = ++requestGenRef.current;
     const controller = new AbortController();
 
     listRoadmaps(
@@ -346,7 +349,11 @@ export function RoadmapsHubView({
       { signal: controller.signal },
     )
       .then((res) => {
-        if (!active || controller.signal.aborted) {
+        if (
+          !active ||
+          controller.signal.aborted ||
+          requestGen !== requestGenRef.current
+        ) {
           return;
         }
         setFetchState({
@@ -397,7 +404,11 @@ export function RoadmapsHubView({
         }
       })
       .catch((err) => {
-        if (!active || controller.signal.aborted) {
+        if (
+          !active ||
+          controller.signal.aborted ||
+          requestGen !== requestGenRef.current
+        ) {
           return;
         }
         setFetchState({
@@ -409,7 +420,10 @@ export function RoadmapsHubView({
 
     return () => {
       active = false;
+      requestGenRef.current += 1;
       controller.abort();
+      loadMoreAbortRef.current?.abort();
+      loadMoreAbortRef.current = null;
     };
   }, [
     accessToken,
@@ -428,6 +442,18 @@ export function RoadmapsHubView({
         ? computeCountsFromAll(initialPage.items)
         : null;
 
+  const selectFilter = (nextId: HubFilter) => {
+    if (nextId === filter) {
+      return;
+    }
+    requestGenRef.current += 1;
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    setFilter(nextId);
+    setLoadingMore(false);
+    setActionError(null);
+  };
+
   const handleTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const idx = FILTER_TABS.findIndex((t) => t.id === filter);
     let next = -1;
@@ -439,8 +465,7 @@ export function RoadmapsHubView({
     if (next < 0) return;
     e.preventDefault();
     const nextId = FILTER_TABS[next].id;
-    setFilter(nextId);
-    setActionError(null);
+    selectFilter(nextId);
     tabRefs.current[nextId]?.focus();
   };
 
@@ -466,29 +491,45 @@ export function RoadmapsHubView({
     if (!nextCursor || loadingMore) {
       return;
     }
+    const loadGen = requestGenRef.current;
+    const loadFilter = filter;
+    const loadRequestKey = requestKey;
+    const loadCountsKey = countsKey;
+    const baseItems = items;
+    loadMoreAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadMoreAbortRef.current = controller;
+
     setLoadingMore(true);
     setActionError(null);
     try {
-      const page = await listRoadmaps(accessToken, {
-        ...(filter !== 'all' ? { status: filter } : {}),
-        cursor: nextCursor,
-        limit: 20,
-      });
-      const seenIds = new Set(items.map((entry) => entry.id));
+      const page = await listRoadmaps(
+        accessToken,
+        {
+          ...(loadFilter !== 'all' ? { status: loadFilter } : {}),
+          cursor: nextCursor,
+          limit: 20,
+        },
+        { signal: controller.signal },
+      );
+      if (loadGen !== requestGenRef.current || controller.signal.aborted) {
+        return;
+      }
+      const seenIds = new Set(baseItems.map((entry) => entry.id));
       const merged = [
-        ...items,
+        ...baseItems,
         ...page.items.filter((entry) => !seenIds.has(entry.id)),
       ];
       setFetchState({
-        key: requestKey,
+        key: loadRequestKey,
         status: 'loaded',
         items: merged,
         nextCursor: page.meta.next_cursor,
       });
-      if (filter === 'all') {
+      if (loadFilter === 'all') {
         const computed = computeCountsFromAll(merged);
         setSavedCounts((prev) => {
-          if (page.meta.next_cursor && prev && prev.key === countsKey) {
+          if (page.meta.next_cursor && prev && prev.key === loadCountsKey) {
             const mergedCounts: FilterCounts = {
               all: Math.max(prev.counts.all, computed.all),
               locked: Math.max(prev.counts.locked, computed.locked),
@@ -499,34 +540,42 @@ export function RoadmapsHubView({
               mergedCounts.all,
               mergedCounts.locked + mergedCounts.draft + mergedCounts.archived,
             );
-            return { key: countsKey, counts: mergedCounts };
+            return { key: loadCountsKey, counts: mergedCounts };
           }
-          return { key: countsKey, counts: computed };
+          return { key: loadCountsKey, counts: computed };
         });
       } else {
         setSavedCounts((prev) => {
           const base: FilterCounts =
-            prev && prev.key === countsKey
+            prev && prev.key === loadCountsKey
               ? prev.counts
               : { all: 0, locked: 0, draft: 0, archived: 0 };
           const nextFilterCount = page.meta.next_cursor
-            ? Math.max(base[filter], merged.length)
+            ? Math.max(base[loadFilter], merged.length)
             : merged.length;
           const updated: FilterCounts = {
             ...base,
-            [filter]: nextFilterCount,
+            [loadFilter]: nextFilterCount,
           };
           updated.all = Math.max(
             base.all,
             updated.locked + updated.draft + updated.archived,
           );
-          return { key: countsKey, counts: updated };
+          return { key: loadCountsKey, counts: updated };
         });
       }
     } catch (err) {
+      if (loadGen !== requestGenRef.current || controller.signal.aborted) {
+        return;
+      }
       setActionError(mapApiError(err));
     } finally {
-      setLoadingMore(false);
+      if (loadMoreAbortRef.current === controller) {
+        loadMoreAbortRef.current = null;
+      }
+      if (loadGen === requestGenRef.current) {
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -713,10 +762,7 @@ export function RoadmapsHubView({
                   id={`${tabsUid}-tab-${tab.id}`}
                   aria-selected={isSelected}
                   tabIndex={isSelected ? 0 : -1}
-                  onClick={() => {
-                    setFilter(tab.id);
-                    setActionError(null);
-                  }}
+                  onClick={() => selectFilter(tab.id)}
                   className={cn(
                     'inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-label-lg leading-none transition-colors duration-(--duration-fast) ease-standard sm:px-4',
                     isSelected
@@ -1025,7 +1071,7 @@ export function RoadmapsHubView({
             ? `Archive "${archiveTarget.role_name}"?`
             : 'Archive Roadmap?'
         }
-        description="Archiving this roadmap preserves all learning progress, shared skill evidence, and daily plans. If this is your Focus Roadmap, focus will automatically reassign to another active locked roadmap if available."
+        description="Archiving this roadmap also discontinues its linked career goal. Archiving preserves all learning progress, shared skill evidence, and daily plans. If this is your Focus Roadmap, focus will automatically reassign to another active locked roadmap if available."
         confirmLabel="Archive Roadmap"
         loading={Boolean(archiveTarget && archivingId === archiveTarget.id)}
         onConfirm={() => void handleConfirmArchive()}

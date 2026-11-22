@@ -208,6 +208,7 @@ describe('RoadmapsHubView', () => {
     expect(vi.mocked(listRoadmaps)).toHaveBeenCalledWith(
       'token-1',
       { cursor: 'cursor-page-2', limit: 20 },
+      expect.any(Object),
     );
 
     // Filter tab counts update after loading page 2 with archived roadmap
@@ -303,6 +304,7 @@ describe('RoadmapsHubView', () => {
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog.textContent).toMatch(/discontinues its linked career goal/i);
     expect(dialog.textContent).toMatch(/preserves all learning progress/i);
     expect(dialog.textContent).toMatch(/focus will automatically reassign/i);
 
@@ -439,6 +441,71 @@ describe('RoadmapsHubView', () => {
     expect(screen.getByTestId('filter-tab-count-draft')).toHaveTextContent('0');
     expect(screen.getByTestId('filter-tab-count-locked')).toHaveTextContent('3');
   });
+
+  it('ignores a late Load more response from a previous filter after switching tabs', async () => {
+    const lockedItem = makeSummary({
+      id: 'rm-all-1',
+      role_name: 'Active Backend',
+      status: 'locked',
+      is_focus: true,
+    });
+    const stalePageTwoItem = makeSummary({
+      id: 'rm-all-2',
+      role_name: 'Stale All Page 2 Item',
+      status: 'locked',
+      is_focus: false,
+    });
+    const archivedItem = makeSummary({
+      id: 'rm-arch-1',
+      role_name: 'Archived Frontend',
+      status: 'archived',
+      is_focus: false,
+    });
+
+    let resolveLoadMore!: (val: {
+      items: RoadmapSummaryDTO[];
+      meta: { limit: number; next_cursor: string | null };
+    }) => void;
+
+    vi.mocked(listRoadmaps)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLoadMore = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        items: [archivedItem],
+        meta: { limit: 20, next_cursor: null },
+      });
+
+    render(
+      <RoadmapsHubView
+        accessToken="token-1"
+        initialPage={{
+          items: [lockedItem],
+          meta: { limit: 20, next_cursor: 'cursor-all-2' },
+        }}
+      />,
+    );
+
+    // Start Load more on All, then switch to Archived before Load more resolves
+    fireEvent.click(screen.getByRole('button', { name: 'Load more roadmaps' }));
+    fireEvent.click(screen.getByRole('tab', { name: /^Archived/i }));
+    expect(await screen.findByText('Archived Frontend')).toBeInTheDocument();
+
+    // Late All page-2 resolves -> MUST be ignored and NEVER overwrite Archived tab
+    await act(async () => {
+      resolveLoadMore({
+        items: [stalePageTwoItem],
+        meta: { limit: 20, next_cursor: null },
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Archived Frontend')).toBeInTheDocument();
+    expect(screen.queryByText('Stale All Page 2 Item')).not.toBeInTheDocument();
+  });
 });
 
 describe('RoadmapGenerateHandoff', () => {
@@ -525,6 +592,8 @@ describe('RoadmapGenerateHandoff', () => {
       <RoadmapGenerateHandoff
         accessToken="token-1"
         careerGoalId="goal-uuid-1"
+        targetLevel="mid"
+        levelConfirmed={true}
       />,
     );
 

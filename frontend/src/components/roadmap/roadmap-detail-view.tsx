@@ -1312,7 +1312,7 @@ export function RoadmapDetailView({
         onClose={() => setArchiveModalOpen(false)}
         variant="confirm"
         title={`Archive "${currentRoadmap.role_name}"?`}
-        description="Archiving preserves all learning progress, shared skill evidence, and daily plans. If this is your Focus Roadmap, focus will automatically reassign to another active locked roadmap if available."
+        description="Archiving this roadmap also discontinues its linked career goal. Archiving preserves all learning progress, shared skill evidence, and daily plans. If this is your Focus Roadmap, focus will automatically reassign to another active locked roadmap if available."
         confirmLabel="Archive Roadmap"
         loading={archiving}
         onConfirm={() => void handleConfirmArchive()}

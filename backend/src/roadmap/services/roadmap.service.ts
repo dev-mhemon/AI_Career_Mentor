@@ -849,7 +849,7 @@ export class RoadmapService {
         },
       ]);
     }
-    if (dto?.level_confirmed === false) {
+    if (dto?.level_confirmed !== true) {
       fail(
         422,
         'LEVEL_NOT_CONFIRMED',
@@ -863,9 +863,13 @@ export class RoadmapService {
         ],
       );
     }
+    const normalizedTargetLevel =
+      typeof dto?.target_level === 'string'
+        ? (dto.target_level.trim().toLowerCase() as CareerLevel)
+        : undefined;
     if (
-      dto?.target_level !== undefined &&
-      !CAREER_LEVEL_SET.has(dto.target_level)
+      normalizedTargetLevel === undefined ||
+      !CAREER_LEVEL_SET.has(normalizedTargetLevel)
     ) {
       fail(
         422,
@@ -915,10 +919,7 @@ export class RoadmapService {
             'Career goal must be confirmed before generating a roadmap',
           );
         }
-        if (
-          dto?.target_level !== undefined &&
-          dto.target_level !== goal.target_level
-        ) {
+        if (normalizedTargetLevel !== goal.target_level) {
           fail(
             422,
             'VALIDATION_FAILED',
@@ -1345,7 +1346,8 @@ export class RoadmapService {
       );
     }
 
-    const expectedVersionNo = dto?.expected_version_no ?? options.ifMatch;
+    const bodyExpectedVersionNo = dto?.expected_version_no;
+    const headerIfMatch = options.ifMatch;
 
     return this.database.transaction(
       normalizedUserId,
@@ -1391,8 +1393,9 @@ export class RoadmapService {
         }
         const baseVersionNo = Number(draft.version_no);
         if (
-          expectedVersionNo !== undefined &&
-          baseVersionNo !== expectedVersionNo
+          (bodyExpectedVersionNo !== undefined &&
+            baseVersionNo !== bodyExpectedVersionNo) ||
+          (headerIfMatch !== undefined && baseVersionNo !== headerIfMatch)
         ) {
           fail(
             409,
@@ -1465,8 +1468,23 @@ export class RoadmapService {
       );
     }
 
-    const expectedVersionNo =
-      dto?.expected_version_no ?? dto?.version_no ?? options.ifMatch;
+    const bodyExpectedVersionNo = dto?.expected_version_no ?? dto?.version_no;
+    const headerIfMatch = options.ifMatch;
+    if (bodyExpectedVersionNo === undefined && headerIfMatch === undefined) {
+      fail(
+        422,
+        'VALIDATION_FAILED',
+        'A version precondition (expected_version_no, version_no, or If-Match) is required to lock a roadmap',
+        [
+          {
+            field: 'expected_version_no',
+            code: 'VALIDATION_FAILED',
+            message:
+              'Provide expected_version_no, version_no, or an If-Match header',
+          },
+        ],
+      );
+    }
 
     return this.database.transaction(
       normalizedUserId,
@@ -1535,8 +1553,9 @@ export class RoadmapService {
         }
         const draftVersionNo = Number(draft.version_no);
         if (
-          expectedVersionNo !== undefined &&
-          draftVersionNo !== expectedVersionNo
+          (bodyExpectedVersionNo !== undefined &&
+            draftVersionNo !== bodyExpectedVersionNo) ||
+          (headerIfMatch !== undefined && draftVersionNo !== headerIfMatch)
         ) {
           fail(
             409,
