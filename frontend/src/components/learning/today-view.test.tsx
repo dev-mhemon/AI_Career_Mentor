@@ -477,4 +477,45 @@ describe('TodayView', () => {
     ).toBeInTheDocument();
     expect(getToday).toHaveBeenCalledTimes(2);
   });
+
+  it('parses markdown containing Unicode line separators without hanging and normalizes heading hierarchy below card h2', async () => {
+    const ready = makeReadyToday();
+    ready.topic = {
+      ...ready.topic!,
+      explanation_markdown:
+        '# First\u2028Second\n\n## Section Heading\n\n### Subheading Detail\n\nPlain paragraph.',
+      important_questions: [
+        {
+          question: 'How does heading normalization work?',
+          answer_markdown: '## Answer Heading\n\n### Nested Point',
+        },
+      ],
+    };
+    vi.mocked(getToday).mockResolvedValueOnce(ready);
+
+    render(<TodayView accessToken="token-1" />);
+
+    expect(
+      await screen.findByRole('heading', { level: 3, name: 'First' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Second')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Section Heading' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 4, name: 'Subheading Detail' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /How does heading normalization work/i,
+      }),
+    );
+    expect(
+      screen.getByRole('heading', { level: 4, name: 'Answer Heading' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 5, name: 'Nested Point' }),
+    ).toBeInTheDocument();
+  });
 });

@@ -18,6 +18,8 @@ export interface DailyTaskCardProps {
   topics: readonly PlanDayTopicDTO[];
   /** Highlights this card as the next active incomplete day. */
   isActiveDay?: boolean;
+  /** Reserves the `Today` badge strictly for the active Focus Roadmap (`false` renders `Current Day`). */
+  isFocusRoadmap?: boolean;
   /** Optional skill or career level pills for Today / single-topic views. */
   skillLabel?: string;
   careerLevel?: CareerLevel;
@@ -76,6 +78,7 @@ export function DailyTaskCard({
   status,
   topics,
   isActiveDay = false,
+  isFocusRoadmap = true,
   skillLabel,
   careerLevel,
   effortHours,
@@ -112,9 +115,16 @@ export function DailyTaskCard({
             </span>
 
             {isActiveDay && status !== 'completed' && (
-              <span className="inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold leading-none text-teal-800 dark:border-teal-800/70 dark:bg-teal-950/60 dark:text-teal-200">
+              <span
+                className={cn(
+                  'inline-flex items-center justify-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-none',
+                  isFocusRoadmap
+                    ? 'border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-800/70 dark:bg-teal-950/60 dark:text-teal-200'
+                    : 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200',
+                )}
+              >
                 <BookOpenIcon className="block h-3.5 w-3.5 shrink-0" />
-                <span>Today</span>
+                <span>{isFocusRoadmap ? 'Today' : 'Current Day'}</span>
               </span>
             )}
 

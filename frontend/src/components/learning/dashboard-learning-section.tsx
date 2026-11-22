@@ -21,6 +21,7 @@ import {
   ClockIcon,
   CompassIcon,
   LockIcon,
+  RefreshCwIcon,
   SpinnerIcon,
   TargetIcon,
 } from '@/components/ui/icons';
@@ -29,6 +30,7 @@ import { HoursPromptModal } from './hours-prompt-modal';
 export interface DashboardLearningSectionProps {
   accessToken: string;
   initialToday: TodayResponseDTO | null;
+  initialTodayError?: boolean;
   initialRoadmaps: RoadmapSummaryDTO[];
   dailyPlanEnabled: boolean;
   preferredDailyHours: number | null;
@@ -51,6 +53,7 @@ const compactSecondaryLinkClass =
 export function DashboardLearningSection({
   accessToken,
   initialToday,
+  initialTodayError = false,
   initialRoadmaps,
   dailyPlanEnabled,
   preferredDailyHours,
@@ -63,6 +66,10 @@ export function DashboardLearningSection({
   const [todayOverride, setTodayOverride] = useState<{
     base: TodayResponseDTO | null;
     value: TodayResponseDTO | null;
+  } | null>(null);
+  const [todayErrorOverride, setTodayErrorOverride] = useState<{
+    base: TodayResponseDTO | null;
+    failed: boolean;
   } | null>(null);
   const [refreshingToday, setRefreshingToday] = useState(false);
   const [focusingId, setFocusingId] = useState<string | null>(null);
@@ -84,13 +91,16 @@ export function DashboardLearningSection({
     todayOverride && todayOverride.base === initialToday
       ? todayOverride.value
       : initialToday;
+  const todayLoadError =
+    todayErrorOverride && todayErrorOverride.base === initialToday
+      ? todayErrorOverride.failed
+      : initialTodayError;
 
   const activeRoadmaps = roadmaps.filter((rm) => rm.status !== 'archived');
-  const focusedRoadmap =
-    activeRoadmaps.find((rm) => rm.is_focus) ??
-    (today?.roadmap_id
-      ? (activeRoadmaps.find((rm) => rm.id === today.roadmap_id) ?? null)
-      : null);
+  // Keep hero roadmap title/link/modal strictly aligned with today.roadmap_id when present
+  const focusedRoadmap = today?.roadmap_id
+    ? (activeRoadmaps.find((rm) => rm.id === today.roadmap_id) ?? null)
+    : (activeRoadmaps.find((rm) => rm.is_focus) ?? null);
   const otherActiveRoadmaps = focusedRoadmap
     ? activeRoadmaps.filter((rm) => rm.id !== focusedRoadmap.id)
     : activeRoadmaps;
@@ -104,12 +114,16 @@ export function DashboardLearningSection({
         return;
       }
       setTodayOverride({ base: initialToday, value: freshToday });
+      setTodayErrorOverride({ base: initialToday, failed: false });
     } catch {
       if (gen !== todayRefreshGenRef.current) {
         return;
       }
       if (fallbackToday) {
         setTodayOverride({ base: initialToday, value: fallbackToday });
+        setTodayErrorOverride({ base: initialToday, failed: false });
+      } else if (!today) {
+        setTodayErrorOverride({ base: initialToday, failed: true });
       }
       router.refresh();
     } finally {
@@ -180,7 +194,9 @@ export function DashboardLearningSection({
     }
   };
 
-  if (!today && activeRoadmaps.length === 0) {
+  const showHeroCard = Boolean(today || todayLoadError);
+
+  if (!showHeroCard && activeRoadmaps.length === 0) {
     return null;
   }
 
@@ -202,7 +218,7 @@ export function DashboardLearningSection({
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         {/* Left Hero Card: Highlighted Focus Roadmap + Today's Learning */}
-        {today && (
+        {showHeroCard && (
           <article
             aria-label="Focused roadmap and today's learning"
             className="flex flex-col justify-between gap-4 rounded-xl border border-teal-200/80 bg-white p-5 shadow-xs lg:col-span-7 dark:border-teal-900/60 dark:bg-slate-900"
@@ -213,7 +229,7 @@ export function DashboardLearningSection({
                   <BookOpenIcon className="block h-3.5 w-3.5 shrink-0" />
                   <span>Today&apos;s Learning</span>
                 </span>
-                {today.plan_day && (
+                {today?.plan_day && (
                   <span className="inline-flex items-center justify-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 font-mono text-xs font-semibold leading-none tabular-nums text-teal-800 dark:border-teal-800/70 dark:bg-teal-950/60 dark:text-teal-200">
                     Day {today.plan_day.day_no} of {today.plan_day.total_days}
                   </span>
@@ -244,7 +260,18 @@ export function DashboardLearningSection({
                 </div>
               )}
 
-              {today.status === 'ready' && today.topic && (
+              {!today && todayLoadError && (
+                <Alert
+                  variant="warning"
+                  role="alert"
+                  title="Could not load Today's learning status"
+                >
+                  Today&apos;s learning summary is temporarily unavailable. Retry
+                  here or open Today directly.
+                </Alert>
+              )}
+
+              {today?.status === 'ready' && today.topic && (
                 <div>
                   <h2
                     className="text-heading-md font-semibold text-slate-900 dark:text-slate-100"
@@ -259,7 +286,7 @@ export function DashboardLearningSection({
                 </div>
               )}
 
-              {today.status === 'preparing' && (
+              {today?.status === 'preparing' && (
                 <div className="flex items-start gap-2.5">
                   <SpinnerIcon className="mt-0.5 block h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />
                   <div>
@@ -274,7 +301,7 @@ export function DashboardLearningSection({
                 </div>
               )}
 
-              {today.status === 'no_daily_plan' && (
+              {today?.status === 'no_daily_plan' && (
                 <div>
                   <h2 className="text-heading-sm font-semibold text-slate-900 dark:text-slate-100">
                     Confirm daily hours to launch your Daily Plan
@@ -286,7 +313,7 @@ export function DashboardLearningSection({
                 </div>
               )}
 
-              {today.status === 'no_focus_roadmap' && (
+              {today?.status === 'no_focus_roadmap' && (
                 <div>
                   <h2 className="text-heading-sm font-semibold text-slate-900 dark:text-slate-100">
                     Choose a Focus Roadmap
@@ -298,7 +325,7 @@ export function DashboardLearningSection({
                 </div>
               )}
 
-              {today.status === 'plan_completed' && (
+              {today?.status === 'plan_completed' && (
                 <div className="flex items-start gap-2.5">
                   <CheckCircleIcon className="mt-0.5 block h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   <div>
@@ -326,25 +353,44 @@ export function DashboardLearningSection({
                 >
                   <span>Updating Today...</span>
                 </Button>
-              ) : today.status === 'no_daily_plan' && today.roadmap_id ? (
+              ) : !today && todayLoadError ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void refreshToday()}
+                    className="w-full shrink-0 justify-center whitespace-nowrap border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 sm:w-auto"
+                  >
+                    <RefreshCwIcon className="block h-4 w-4 shrink-0" />
+                    <span>Retry Today</span>
+                  </Button>
+                  <Link href="/today" className={primaryLinkClass}>
+                    <BookOpenIcon className="block h-4 w-4 shrink-0" />
+                    <span>Open Today</span>
+                  </Link>
+                </>
+              ) : today?.status === 'no_daily_plan' && today.roadmap_id ? (
                 <Button
                   type="button"
                   variant="primary"
                   disabled={!dailyPlanEnabled}
-                  onClick={() =>
+                  onClick={() => {
+                    const matched = activeRoadmaps.find(
+                      (rm) => rm.id === today.roadmap_id,
+                    );
                     setHoursModalTarget({
                       roadmapId: today.roadmap_id!,
-                      roadmapTitle: focusedRoadmap?.role_name,
+                      roadmapTitle: matched?.role_name,
                       initialHours:
                         today.preferred_daily_hours ?? preferredDailyHours,
-                    })
-                  }
+                    });
+                  }}
                   className="w-full shrink-0 justify-center whitespace-nowrap sm:w-auto"
                 >
                   <ClockIcon className="block h-4 w-4 shrink-0" />
                   <span>Create Daily Plan</span>
                 </Button>
-              ) : today.status === 'no_focus_roadmap' ? (
+              ) : today?.status === 'no_focus_roadmap' ? (
                 <Link href="/roadmaps" className={primaryLinkClass}>
                   <CompassIcon className="block h-4 w-4 shrink-0" />
                   <span>Open Roadmaps</span>
@@ -369,7 +415,7 @@ export function DashboardLearningSection({
           aria-label="Other active roadmaps"
           className={cn(
             'flex flex-col justify-between gap-4 rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900',
-            today ? 'lg:col-span-5' : 'lg:col-span-12',
+            showHeroCard ? 'lg:col-span-5' : 'lg:col-span-12',
           )}
         >
           <div className="flex flex-col gap-3">

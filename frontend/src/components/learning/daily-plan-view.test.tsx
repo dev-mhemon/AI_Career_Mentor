@@ -230,8 +230,17 @@ describe('DailyPlanView', () => {
       expect.any(Object),
     );
 
-    // Switch locked roadmap tab
-    fireEvent.click(screen.getByRole('tab', { name: /Platform Engineer/i }));
+    // Switch locked roadmap tab via keyboard (roving tabIndex + ArrowRight) and verify non-focus active day uses Current Day (not Today)
+    const tab1 = screen.getByRole('tab', { name: /Backend Engineer/i });
+    const tab2 = screen.getByRole('tab', { name: /Platform Engineer/i });
+    expect(tab1).toHaveAttribute('tabindex', '0');
+    expect(tab2).toHaveAttribute('tabindex', '-1');
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('aria-labelledby', tab1.id);
+
+    tab1.focus();
+    fireEvent.keyDown(tab1, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(tab2);
     expect(
       await screen.findByText('Kubernetes Ingress'),
     ).toBeInTheDocument();
@@ -240,6 +249,11 @@ describe('DailyPlanView', () => {
       { roadmap_id: 'rm-2', limit: 20 },
       expect.any(Object),
     );
+    const nonFocusTimeline = screen.getByRole('region', {
+      name: 'Sequential learning days',
+    });
+    expect(within(nonFocusTimeline).getByText('Current Day')).toBeInTheDocument();
+    expect(within(nonFocusTimeline).queryByText('Today')).not.toBeInTheDocument();
   });
 
   it('rebuilds future incomplete days via HoursPromptModal (EP-L03) and keeps Rebuild disabled when dailyPlanEnabled is false', async () => {
@@ -516,5 +530,57 @@ describe('DailyPlanView', () => {
     expect(
       screen.getByRole('button', { name: 'Load more days' }),
     ).not.toBeDisabled();
+  });
+
+  it('omits role="tabpanel" for a single locked roadmap and preserves confirmed plan with Retry Refresh if post-modal refresh fails', async () => {
+    vi.mocked(getDailyPlan).mockRejectedValueOnce(
+      new ApiError(503, 'refresh failed', 'SERVICE_UNAVAILABLE'),
+    );
+    vi.mocked(rebuildDailyPlan).mockResolvedValueOnce(
+      makePlan({
+        hours_per_day: 3,
+        total_days: 2,
+        days: [
+          {
+            day_no: 1,
+            status: 'pending',
+            completed_at: null,
+            topics: [
+              {
+                plan_item_id: 'pi-rebuilt',
+                topic_id: 'top-rebuilt',
+                title: 'Confirmed Rebuilt Topic',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    render(
+      <DailyPlanView
+        accessToken="token-1"
+        initialPlan={makePlan()}
+        initialLockedRoadmaps={[makeRoadmapSummary()]}
+      />,
+    );
+
+    // Single locked roadmap renders no tablist and no orphan tabpanel
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Rebuild Plan/i }));
+    fireEvent.click(screen.getByRole('button', { name: '3h' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save & Rebuild Plan' }),
+    );
+
+    // Confirmed plan remains rendered even though background pagination refresh returned 503
+    expect(
+      await screen.findByText('Confirmed Rebuilt Topic'),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /Retry Refresh/i }),
+    ).toBeInTheDocument();
   });
 });

@@ -563,6 +563,14 @@ describe('DashboardPage', () => {
     expect(
       within(othersCard).getByRole('link', { name: 'Review Draft' }),
     ).toHaveAttribute('href', '/roadmaps/rm-other-draft/draft');
+    expect(mockListRoadmaps).toHaveBeenCalledWith('tok-focus', {
+      status: 'locked',
+      limit: 10,
+    });
+    expect(mockListRoadmaps).toHaveBeenCalledWith('tok-focus', {
+      status: 'draft',
+      limit: 10,
+    });
   });
 
   it('renders compact empty state in right card when user only has 1 focused roadmap', async () => {
@@ -844,6 +852,100 @@ describe('DashboardPage', () => {
       ).not.toBeInTheDocument();
       expect(
         within(heroCard).getByRole('button', { name: /Create Daily Plan/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('renders Today recovery hero card with Retry Today and Open Today when server getToday fails', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-err' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [{ id: 'g-1', status: 'confirmed' }],
+      meta: { limit: 100, next_cursor: null },
+    });
+    mockGetToday
+      .mockRejectedValueOnce(new Error('transient upstream failure'))
+      .mockResolvedValueOnce({
+        status: 'no_focus_roadmap',
+        roadmap_id: null,
+        plan_id: null,
+        plan_day: null,
+        topic: null,
+        quiz: { attempt_id: null, status: null, can_retry: false },
+        job: null,
+        requires_learning_hours: false,
+        preferred_daily_hours: null,
+      });
+    mockListRoadmaps.mockResolvedValue({
+      items: [],
+      meta: { limit: 10, next_cursor: null },
+    });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          id: 'user-1',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          verified_contact: true,
+          linked_providers: ['email'],
+        },
+        profile_complete: true,
+        effective_access: {
+          roadmap_generator: true,
+          daily_plan: true,
+          ai_mentor: true,
+        },
+        focus_roadmap_id: null,
+        can_delete_account: true,
+      },
+    });
+    mockLoadProfileForSetup.mockResolvedValue({
+      fullName: 'Mehedi Hasan',
+      profile: {
+        current_role: 'Engineer',
+        education: 'BSc',
+        experience_level: 'mid',
+        existing_skills: [],
+        existing_skills_none: true,
+        learning_preference: 'hands_on',
+        preferred_daily_hours: 2,
+        timezone: 'Asia/Dhaka',
+        timezone_detected: true,
+        active_career_goal_ids: ['g-1'],
+        profile_complete: true,
+        missing_fields: [],
+        updated_at: '2026-11-20T00:00:00.000Z',
+      },
+    });
+
+    const page = await DashboardPage();
+    render(
+      <AppShellProvider>
+        <AppShell>{page}</AppShell>
+      </AppShellProvider>,
+    );
+
+    const heroCard = screen.getByRole('article', {
+      name: /Focused roadmap and today's learning/i,
+    });
+    expect(
+      within(heroCard).getByText(/Could not load Today's learning status/i),
+    ).toBeInTheDocument();
+    expect(
+      within(heroCard).getByRole('link', { name: /Open Today/i }),
+    ).toHaveAttribute('href', '/today');
+
+    fireEvent.click(
+      within(heroCard).getByRole('button', { name: /Retry Today/i }),
+    );
+    await waitFor(() => {
+      expect(mockGetToday).toHaveBeenCalledTimes(2);
+      expect(
+        within(heroCard).getByText(/Choose a Focus Roadmap/i),
       ).toBeInTheDocument();
     });
   });

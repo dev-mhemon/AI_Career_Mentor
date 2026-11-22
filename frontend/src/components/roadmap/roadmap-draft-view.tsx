@@ -1332,9 +1332,15 @@ export function RoadmapDraftView({
             router.replace(`/roadmaps/${encodeURIComponent(targetId)}`);
           }}
           onSuccess={() => {
+            const targetId = lockedResult.roadmap_id;
+            const targetIsFocus = lockedResult.is_focus;
             setLockedResult(null);
             setLockState('navigating');
-            router.replace('/today');
+            router.replace(
+              targetIsFocus
+                ? '/today'
+                : `/daily-plan?roadmap_id=${encodeURIComponent(targetId)}`,
+            );
           }}
         />
       )}

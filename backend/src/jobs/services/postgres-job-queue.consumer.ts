@@ -136,6 +136,12 @@ class CommitLeaseExpiredError extends Error {
   }
 }
 
+class CommitFenceLostError extends Error {
+  constructor() {
+    super('FENCE_LOST');
+  }
+}
+
 const KINDS_REQUIRING_EXPECTED_REFS: ReadonlySet<string> = new Set([
   'roadmap_generate',
   'roadmap_revision',
@@ -217,6 +223,13 @@ function classifyExecutionError(error: unknown): {
           errorCode: rec.code,
           safeMessage: SAFE_FAILURE_MESSAGES[rec.code],
           retryable,
+        };
+      }
+      if (rec.retryable === false) {
+        return {
+          errorCode: 'AI_GENERATION_FAILED',
+          safeMessage: SAFE_FAILURE_MESSAGES.AI_GENERATION_FAILED,
+          retryable: false,
         };
       }
     }
@@ -764,12 +777,11 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         const postInsert = Array.isArray(postInsertRows)
           ? postInsertRows[0]
           : undefined;
-        if (
-          postInsert &&
-          (postInsert.lease_valid === false ||
-            postInsert.within_deadline === false)
-        ) {
+        if (postInsert?.within_deadline === false) {
           throw new CommitLeaseExpiredError();
+        }
+        if (postInsert?.lease_valid === false) {
+          throw new CommitFenceLostError();
         }
 
         const persisted = await handler.persistArtifact(tx, job, execResult, {
@@ -800,6 +812,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             AND status = 'preparing'
             AND locked_by = $2
             AND attempt_count = $3
+            AND created_at > clock_timestamp() - ($13 * interval '1 second')
          RETURNING id`,
           [
             fence.requestId,
@@ -818,12 +831,27 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             Math.max(0, Math.trunc(execResult.inputUnits)),
             Math.max(0, Math.trunc(execResult.outputUnits)),
             Math.max(0, Math.trunc(execResult.latencyMs)),
+            this.maxAgeSeconds,
           ],
         );
         const finalized = extractReturningRows<{ id: string }>(finalizedRaw);
 
         if (finalized.length === 0) {
-          throw new Error('Attempt fence lost during final status update');
+          const deadlineRows = await tx.query<
+            Array<{ within_deadline?: boolean }>
+          >(
+            `SELECT (created_at > clock_timestamp() - ($2 * interval '1 second')) AS within_deadline
+               FROM public.ai_requests
+              WHERE id = $1`,
+            [fence.requestId, this.maxAgeSeconds],
+          );
+          const deadlineCheck = Array.isArray(deadlineRows)
+            ? deadlineRows[0]
+            : undefined;
+          if (deadlineCheck?.within_deadline === false) {
+            throw new CommitLeaseExpiredError();
+          }
+          throw new CommitFenceLostError();
         }
 
         return {
@@ -834,6 +862,9 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         };
       });
     } catch (error) {
+      if (error instanceof CommitFenceLostError) {
+        return { outcome: 'fence_lost', jobId: fence.requestId };
+      }
       if (error instanceof CommitLeaseExpiredError) {
         const updated = await this.runTx((tx) =>
           this.markTerminalFailureInTx(

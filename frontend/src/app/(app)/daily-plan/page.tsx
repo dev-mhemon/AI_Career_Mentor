@@ -26,6 +26,19 @@ interface DailyPlanPageProps {
 export default async function DailyPlanPage({
   searchParams,
 }: DailyPlanPageProps) {
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const rawRoadmapId = resolvedSearchParams?.roadmap_id;
+  const candidateRoadmapId = Array.isArray(rawRoadmapId)
+    ? rawRoadmapId[0]
+    : rawRoadmapId;
+  const initialRoadmapId =
+    candidateRoadmapId && candidateRoadmapId.trim().length > 0
+      ? candidateRoadmapId.trim()
+      : undefined;
+  const retryHref = initialRoadmapId
+    ? `/daily-plan?roadmap_id=${encodeURIComponent(initialRoadmapId)}`
+    : '/daily-plan';
+
   const result = await getAppSessionStateResult();
 
   if (result.status === 'unauthenticated') {
@@ -46,7 +59,7 @@ export default async function DailyPlanPage({
                 We could not load your daily plan right now. Please try again in a moment.
               </Alert>
               <div className="flex flex-wrap items-center gap-3 pt-1">
-                <Link href="/daily-plan" className={primaryLinkClass}>
+                <Link href={retryHref} className={primaryLinkClass}>
                   Try Again
                 </Link>
                 <form action={logoutAction}>
@@ -74,16 +87,6 @@ export default async function DailyPlanPage({
     redirect('/login');
   }
 
-  const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const rawRoadmapId = resolvedSearchParams?.roadmap_id;
-  const candidateRoadmapId = Array.isArray(rawRoadmapId)
-    ? rawRoadmapId[0]
-    : rawRoadmapId;
-  const initialRoadmapId =
-    candidateRoadmapId && candidateRoadmapId.trim().length > 0
-      ? candidateRoadmapId.trim()
-      : undefined;
-
   const [shellUser, preferredDailyHours] = await Promise.all([
     getAuthenticatedShellUser(state.user),
     getProfile(accessToken)
@@ -100,6 +103,7 @@ export default async function DailyPlanPage({
         user={shellUser}
       />
       <DailyPlanView
+        key={initialRoadmapId ?? 'focus'}
         accessToken={accessToken}
         initialRoadmapId={initialRoadmapId}
         dailyPlanEnabled={dailyPlanEnabled}

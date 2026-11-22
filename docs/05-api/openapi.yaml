@@ -3873,9 +3873,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/daily-plan:
+  /learning/daily-plan:
     get:
-      operationId: getDailyPlan
+      operationId: EP-L01_getDailyPlan
       summary: EP-L01 Get Daily Plan (C05 §14.6, implemented M07-01)
       description: >
         Returns the sequential Daily Plan for the requested locked roadmap (`roadmap_id`)
@@ -3908,14 +3908,14 @@ paths:
             maxLength: 512
       responses:
         '200':
-          description: C05 EP-L01 success; returns paginated DailyPlanResponseDTO envelope.
+          description: C05 EP-L01 success; returns paginated DailyPlanResponseDTO envelope with required top-level meta.
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DailyPlanResponseDTOEnvelope'
+                $ref: '#/components/schemas/PaginatedDailyPlanResponseDTOEnvelope'
         '400':
           description: INVALID_FORMAT
           content:
@@ -3928,9 +3928,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/daily-plans:
+  /learning/daily-plans:
     post:
-      operationId: createDailyPlan
+      operationId: EP-L02_createDailyPlan
       summary: EP-L02 Create Daily Plan (C05 §14.6, implemented M07-01)
       description: >
         Deterministically builds a sequential Daily Plan for an owned locked roadmap after
@@ -3942,7 +3942,7 @@ paths:
         - SupabaseBearer: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
       requestBody:
         required: true
         content:
@@ -3983,9 +3983,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/daily-plans/{id}/rebuild:
+        '503':
+          description: SERVICE_UNAVAILABLE (R14 idempotency store unavailable, epoch mismatch, or in-flight contention)
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /learning/daily-plans/{id}/rebuild:
     post:
-      operationId: rebuildDailyPlan
+      operationId: EP-L03_rebuildDailyPlan
       summary: EP-L03 Rebuild Daily Plan (C05 §14.6, implemented M07-01)
       description: >
         Re-sequences only unfrozen future pending days without modifying the locked roadmap.
@@ -4044,9 +4055,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/today:
+  /learning/today:
     get:
-      operationId: getToday
+      operationId: EP-L04_getToday
       summary: EP-L04 Get Today (C05 §14.6, implemented M07-01)
       description: >
         Returns Today's learning unit from the Focus Roadmap's next incomplete sequential day.
@@ -4074,9 +4085,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/topics:
+  /learning/topics:
     get:
-      operationId: listTopics
+      operationId: EP-L05_listTopics
       summary: EP-L05 List Topics (C05 §14.6, implemented M07-01)
       description: >
         Lists topics scoped strictly to the caller's own roadmap (default Focus Roadmap) with
@@ -4140,9 +4151,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/topics/{id}:
+  /learning/topics/{id}:
     get:
-      operationId: getTopic
+      operationId: EP-L06_getTopic
       summary: EP-L06 Get Topic (C05 §14.6, implemented M07-01)
       description: >
         Returns canonical approved topic study detail (`TopicDetailDTO`) for a topic present
@@ -4181,9 +4192,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/learning/resources:
+  /learning/resources:
     get:
-      operationId: listLearningResources
+      operationId: EP-L07_listLearningResources
       summary: EP-L07 List Learning Resources (C05 §14.6, implemented M07-01)
       description: >
         Returns paginated attribution-only external learning resources for a topic in the
@@ -4286,7 +4297,7 @@ components:
       in: header
       required: true
       description: >-
-        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, and EP-R05 by IdempotencyService.
+        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, EP-R05, and EP-L02 by IdempotencyService.
       schema:
         type: string
         format: uuid
@@ -6607,6 +6618,21 @@ components:
           type: string
           format: date-time
           nullable: true
+    PaginatedDailyPlanResponseDTOEnvelope:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        data:
+          $ref: '#/components/schemas/DailyPlanResponseDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
     DailyPlanResponseDTOEnvelope:
       type: object
       required:
@@ -6619,8 +6645,6 @@ components:
             - true
         data:
           $ref: '#/components/schemas/DailyPlanResponseDTO'
-        meta:
-          $ref: '#/components/schemas/PageMetaDTO'
     TodayResponseDTOEnvelope:
       type: object
       required:

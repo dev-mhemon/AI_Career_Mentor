@@ -20,8 +20,10 @@ type MarkdownBlock =
   | { type: 'list'; ordered: boolean; items: string[] }
   | { type: 'paragraph'; text: string };
 
+const HEADING_PATTERN = /^(#{1,3})\s+([\s\S]+)$/;
+
 function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const lines = markdown.replace(/\r\n|\r|\u2028|\u2029/g, '\n').split('\n');
   const blocks: MarkdownBlock[] = [];
   let i = 0;
 
@@ -49,7 +51,7 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
       continue;
     }
 
-    const headingMatch = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    const headingMatch = HEADING_PATTERN.exec(trimmed);
     if (headingMatch) {
       const level = Math.min(3, headingMatch[1].length) as 1 | 2 | 3;
       blocks.push({ type: 'heading', level, text: headingMatch[2].trim() });
@@ -83,7 +85,7 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
       if (
         !cur ||
         cur.startsWith('```') ||
-        /^#{1,3}\s+/.test(cur) ||
+        HEADING_PATTERN.test(cur) ||
         /^[-*+]\s+/.test(cur) ||
         /^\d+\.\s+/.test(cur)
       ) {
@@ -92,9 +94,11 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
       paragraphLines.push(cur);
       i += 1;
     }
-    if (paragraphLines.length > 0) {
-      blocks.push({ type: 'paragraph', text: paragraphLines.join(' ') });
+    if (paragraphLines.length === 0) {
+      paragraphLines.push(trimmed);
+      i += 1;
     }
+    blocks.push({ type: 'paragraph', text: paragraphLines.join(' ') });
   }
 
   return blocks;
@@ -144,32 +148,55 @@ function renderInlineText(text: string): ReactNode[] {
   return nodes;
 }
 
-function MarkdownContent({ markdown }: { markdown: string }) {
+function MarkdownContent({
+  markdown,
+  baseHeadingLevel = 3,
+}: {
+  markdown: string;
+  baseHeadingLevel?: 3 | 4;
+}) {
   const blocks = parseMarkdownBlocks(markdown);
 
   return (
     <div className="flex flex-col gap-3.5 text-body-md leading-relaxed text-slate-700 dark:text-slate-300">
       {blocks.map((block, idx) => {
         if (block.type === 'heading') {
-          if (block.level === 1) {
+          // Normalize relative to card's h2 (or Q&A h3): `#`/`##` -> baseHeadingLevel, `###` -> baseHeadingLevel + 1
+          const resolvedLevel =
+            block.level <= 2 ? baseHeadingLevel : baseHeadingLevel + 1;
+          if (resolvedLevel === 3) {
             return (
               <h3
                 key={idx}
                 dir="auto"
-                className="text-heading-md font-semibold text-slate-900 dark:text-slate-100"
+                className={cn(
+                  'font-semibold text-slate-900 dark:text-slate-100',
+                  block.level === 1 ? 'text-heading-md' : 'text-body-lg',
+                )}
               >
                 {renderInlineText(block.text)}
               </h3>
             );
           }
+          if (resolvedLevel === 4) {
+            return (
+              <h4
+                key={idx}
+                dir="auto"
+                className="text-body-lg font-semibold text-slate-900 dark:text-slate-100"
+              >
+                {renderInlineText(block.text)}
+              </h4>
+            );
+          }
           return (
-            <h4
+            <h5
               key={idx}
               dir="auto"
-              className="text-body-lg font-semibold text-slate-900 dark:text-slate-100"
+              className="text-body-md font-semibold text-slate-900 dark:text-slate-100"
             >
               {renderInlineText(block.text)}
-            </h4>
+            </h5>
           );
         }
 
@@ -332,7 +359,10 @@ export function AIExplanationCard({
                       id={panelId}
                       className="border-t border-slate-200 bg-white px-4 py-3.5 dark:border-slate-800 dark:bg-slate-900"
                     >
-                      <MarkdownContent markdown={qa.answer_markdown} />
+                      <MarkdownContent
+                        markdown={qa.answer_markdown}
+                        baseHeadingLevel={4}
+                      />
                     </div>
                   )}
                 </div>

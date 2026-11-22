@@ -111,14 +111,16 @@ function BrandBadgeIcon() {
   );
 }
 
+function matchesPrefix(pathname: string, prefix: string): boolean {
+  if (prefix === '/') {
+    return pathname === '/';
+  }
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
 function isRouteActive(pathname: string, item: SidebarNavItem): boolean {
   const prefixes = item.activePrefixes ?? [item.href];
-  return prefixes.some((prefix) => {
-    if (prefix === '/') {
-      return pathname === '/';
-    }
-    return pathname === prefix || pathname.startsWith(`${prefix}/`);
-  });
+  return prefixes.some((prefix) => matchesPrefix(pathname, prefix));
 }
 
 export function Sidebar({
@@ -237,6 +239,7 @@ export function Sidebar({
                 {section.items.map((item) => {
                   const Icon = item.icon;
                   const active = isRouteActive(pathname, item);
+                  const isCurrentPage = matchesPrefix(pathname, item.href);
                   const locked = isSuspended && Boolean(item.lockedWhenSuspended);
 
                   if (locked) {
@@ -275,7 +278,7 @@ export function Sidebar({
                       <Link
                         href={item.href}
                         onClick={onCloseMobile}
-                        aria-current={active ? 'page' : undefined}
+                        aria-current={isCurrentPage ? 'page' : undefined}
                         title={isCollapsed ? item.label : undefined}
                         className={cn(
                           'flex min-h-11 items-center gap-3 py-2 text-sm transition-colors cursor-pointer',

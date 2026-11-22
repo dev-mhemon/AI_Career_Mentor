@@ -391,5 +391,61 @@ describe('TodayService (EP-L04 — all 5 today_status states, feature gate & R24
       }),
       expect.anything(),
     );
+
+    // Case D: approved canonical topic commits right after lock/active-job lookup -> returns ready without feature gate or enqueue
+    queryMock.mockClear();
+    jobProducerMock.enqueue.mockClear();
+    let approvedLookupCount = 0;
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM public.roadmaps'))
+        return [{ id: ROADMAP_ID, current_version_id: VERSION_ID }];
+      if (sql.includes('FROM public.daily_plans'))
+        return [
+          { id: PLAN_ID, hours_per_day: '2.0', roadmap_version_id: VERSION_ID },
+        ];
+      if (sql.includes('COUNT(DISTINCT day_no)')) return [{ total_days: 5 }];
+      if (sql.includes('FROM public.daily_plan_items dpi'))
+        return [baseNextItem];
+      if (sql.includes('FROM public.quiz_attempts')) return [];
+      if (sql.includes('pg_advisory_xact_lock')) return [];
+      if (sql.includes('FROM public.ai_requests')) return [];
+      if (
+        sql.includes('FROM public.topics') &&
+        sql.includes("status = 'approved'")
+      ) {
+        approvedLookupCount += 1;
+        if (approvedLookupCount === 1) {
+          return [];
+        }
+        return [
+          {
+            id: APPROVED_TOPIC_ID,
+            skill_id: SKILL_ID,
+            slug: 'sql-joins',
+            title: 'SQL Joins',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'approved',
+            explanation_markdown: '# Ready on recheck',
+            important_questions: [],
+            language: 'mixed',
+            approved_at: '2026-11-21T00:00:00.000Z',
+          },
+        ];
+      }
+      if (sql.includes('FROM public.learning_resources')) return [];
+      if (sql.includes('FROM public.content_reports')) return [];
+      throw new Error(`Unexpected SQL in TodayService Case D: ${sql}`);
+    });
+
+    const readyAfterRecheck = await service.getToday(USER_ID);
+    expect(readyAfterRecheck.status).toBe('ready');
+    expect(readyAfterRecheck.topic?.topic_id).toBe(APPROVED_TOPIC_ID);
+    expect(jobProducerMock.enqueue).not.toHaveBeenCalled();
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        String(sql).includes('effective_feature_access'),
+      ),
+    ).toBe(false);
   });
 });

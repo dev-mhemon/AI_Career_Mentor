@@ -162,11 +162,14 @@ function decodeTopicCursor(raw: string): { sequenceNo: number; id: string } {
   return { sequenceNo: seq, id: id.toLowerCase() };
 }
 
-function encodeResourceCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
+function encodeResourceCursor(topicId: string, offset: number): string {
+  return Buffer.from(
+    JSON.stringify({ topic_id: topicId.toLowerCase(), offset }),
+    'utf8',
+  ).toString('base64url');
 }
 
-function decodeResourceCursor(raw: string): number {
+function decodeResourceCursor(raw: string, expectedTopicId: string): number {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
@@ -176,8 +179,12 @@ function decodeResourceCursor(raw: string): number {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     fail(400, 'INVALID_FORMAT', 'Invalid pagination cursor');
   }
+  const cursorTopicId = (parsed as { topic_id?: unknown }).topic_id;
   const offset = (parsed as { offset?: unknown }).offset;
   if (
+    typeof cursorTopicId !== 'string' ||
+    !UUID_PATTERN.test(cursorTopicId) ||
+    cursorTopicId.toLowerCase() !== expectedTopicId.toLowerCase() ||
     typeof offset !== 'number' ||
     !Number.isSafeInteger(offset) ||
     offset < 1 ||
@@ -666,6 +673,7 @@ export class TopicContentService {
           access.slug,
           access.career_level,
         );
+        // Never serve stale approved content if the topic was concurrently hidden between queries
         const targetTopic: CanonicalTopicRow = approved ?? {
           id: access.topic_id,
           skill_id: access.skill_id,
@@ -673,9 +681,9 @@ export class TopicContentService {
           title: access.title,
           career_level: access.career_level,
           content_version: access.content_version,
-          status: access.status,
-          explanation_markdown: access.explanation_markdown,
-          important_questions: access.important_questions,
+          status: access.status === 'approved' ? 'hidden' : access.status,
+          explanation_markdown: null,
+          important_questions: [],
           language: 'mixed',
           approved_at: null,
         };
@@ -703,8 +711,6 @@ export class TopicContentService {
     const normalizedUserId = this.assertUuid(userId, 'user_id', 'User id');
     const topicId = this.assertUuid(query?.topic_id, 'topic_id', 'Topic id');
     const limit = this.normalizeLimit(query?.limit);
-    const offset =
-      query?.cursor !== undefined ? decodeResourceCursor(query.cursor) : 0;
 
     return this.database.transaction(
       normalizedUserId,
@@ -724,13 +730,17 @@ export class TopicContentService {
           access.slug,
           access.career_level,
         );
-        if (!approved && access.status !== 'approved') {
+        if (!approved) {
           return {
             items: [],
             meta: { limit, next_cursor: null },
           };
         }
-        const resolvedTopicId = approved ? approved.id : access.topic_id;
+        const resolvedTopicId = String(approved.id);
+        const offset =
+          query?.cursor !== undefined
+            ? decodeResourceCursor(query.cursor, resolvedTopicId)
+            : 0;
 
         const rows = await db.query<LearningResourceRow[]>(
           `SELECT id,
@@ -765,7 +775,7 @@ export class TopicContentService {
         const meta: PageMetaDTO = {
           limit,
           next_cursor: hasMore
-            ? encodeResourceCursor(offset + pageRows.length)
+            ? encodeResourceCursor(resolvedTopicId, offset + pageRows.length)
             : null,
         };
 

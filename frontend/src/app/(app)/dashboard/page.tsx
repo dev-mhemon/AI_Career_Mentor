@@ -38,6 +38,7 @@ interface DashboardAsyncData {
   accessToken: string | null;
   goals: CareerGoalResponse[] | null;
   today: TodayResponseDTO | null;
+  todayLoadError: boolean;
   roadmaps: RoadmapSummaryDTO[];
 }
 
@@ -45,14 +46,26 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
   try {
     const supabase = await createSupabaseServerClient({ readOnly: true });
     if (typeof supabase.auth.getSession !== 'function') {
-      return { accessToken: null, goals: null, today: null, roadmaps: [] };
+      return {
+        accessToken: null,
+        goals: null,
+        today: null,
+        todayLoadError: false,
+        roadmaps: [],
+      };
     }
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const accessToken = session?.access_token ?? null;
     if (!accessToken) {
-      return { accessToken: null, goals: null, today: null, roadmaps: [] };
+      return {
+        accessToken: null,
+        goals: null,
+        today: null,
+        todayLoadError: false,
+        roadmaps: [],
+      };
     }
 
     const loadGoals = async (): Promise<CareerGoalResponse[] | null> => {
@@ -79,22 +92,58 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
       }
     };
 
-    const [goals, todayRes, roadmapsRes] = await Promise.all([
+    const loadToday = async (): Promise<{
+      today: TodayResponseDTO | null;
+      failed: boolean;
+    }> => {
+      try {
+        const data = await getToday(accessToken);
+        return { today: data, failed: false };
+      } catch {
+        return { today: null, failed: true };
+      }
+    };
+
+    // Fetch active statuses explicitly so 10+ archived roadmaps can never push active roadmaps off dashboard
+    const loadActiveRoadmaps = async (): Promise<RoadmapSummaryDTO[]> => {
+      const [lockedRes, draftRes] = await Promise.all([
+        listRoadmaps(accessToken, { status: 'locked', limit: 10 })
+          .then((res) => res.items)
+          .catch(() => [] as RoadmapSummaryDTO[]),
+        listRoadmaps(accessToken, { status: 'draft', limit: 10 })
+          .then((res) => res.items)
+          .catch(() => [] as RoadmapSummaryDTO[]),
+      ]);
+      const byId = new Map<string, RoadmapSummaryDTO>();
+      for (const rm of [...lockedRes, ...draftRes]) {
+        if (rm.status !== 'archived' && !byId.has(rm.id)) {
+          byId.set(rm.id, rm);
+        }
+      }
+      return Array.from(byId.values());
+    };
+
+    const [goals, todayOutcome, roadmapsRes] = await Promise.all([
       loadGoals(),
-      getToday(accessToken).catch(() => null),
-      listRoadmaps(accessToken, { limit: 10 })
-        .then((res) => res.items)
-        .catch(() => [] as RoadmapSummaryDTO[]),
+      loadToday(),
+      loadActiveRoadmaps(),
     ]);
 
     return {
       accessToken,
       goals,
-      today: todayRes,
+      today: todayOutcome.today,
+      todayLoadError: todayOutcome.failed,
       roadmaps: roadmapsRes,
     };
   } catch {
-    return { accessToken: null, goals: null, today: null, roadmaps: [] };
+    return {
+      accessToken: null,
+      goals: null,
+      today: null,
+      todayLoadError: false,
+      roadmaps: [],
+    };
   }
 }
 
@@ -173,6 +222,7 @@ export default async function DashboardPage() {
           accessToken: null,
           goals: null,
           today: null,
+          todayLoadError: false,
           roadmaps: [],
         })
       : loadDashboardAsyncData(),
@@ -479,6 +529,7 @@ export default async function DashboardPage() {
           <DashboardLearningSection
             accessToken={asyncData.accessToken}
             initialToday={asyncData.today}
+            initialTodayError={asyncData.todayLoadError}
             initialRoadmaps={asyncData.roadmaps}
             dailyPlanEnabled={effective_access.daily_plan ?? true}
             preferredDailyHours={dailyHours}

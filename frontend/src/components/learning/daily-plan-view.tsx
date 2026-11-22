@@ -98,9 +98,14 @@ export function DailyPlanView({
   );
   const [reloadTick, setReloadTick] = useState(0);
   const [fetchState, setFetchState] = useState<PlanFetchState | null>(null);
-  const [lockedRoadmaps, setLockedRoadmaps] = useState<RoadmapSummaryDTO[]>(
-    initialLockedRoadmaps ?? [],
-  );
+  const [confirmedPlanState, setConfirmedPlanState] = useState<{
+    scopeKey: string;
+    plan: DailyPlanResponseDTO;
+  } | null>(null);
+  const [lockedRoadmapsState, setLockedRoadmapsState] = useState<{
+    token: string;
+    items: RoadmapSummaryDTO[];
+  } | null>(null);
   const [metadataReloadTick, setMetadataReloadTick] = useState(0);
   const [metadataErrorState, setMetadataErrorState] = useState<{
     key: string;
@@ -116,6 +121,7 @@ export function DailyPlanView({
   const requestGenRef = useRef(0);
   const bannerSeqRef = useRef(0);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     if (!banner) {
@@ -129,8 +135,14 @@ export function DailyPlanView({
     };
   }, [banner]);
 
-  const requestKey = `${accessToken}:${selectedRoadmapId ?? 'focus'}:${reloadTick}`;
+  const scopeKey = `${accessToken}:${selectedRoadmapId ?? 'focus'}`;
+  const requestKey = `${scopeKey}:${reloadTick}`;
   const loadingMore = loadingMoreKey === requestKey;
+  const lockedRoadmaps = initialLockedRoadmaps
+    ? initialLockedRoadmaps
+    : lockedRoadmapsState && lockedRoadmapsState.token === accessToken
+      ? lockedRoadmapsState.items
+      : [];
   const metadataKey = `${accessToken}:${metadataReloadTick}`;
   const activeMetadataError =
     !initialLockedRoadmaps &&
@@ -177,7 +189,7 @@ export function DailyPlanView({
         if (!active || controller.signal.aborted) {
           return;
         }
-        setLockedRoadmaps(res.items);
+        setLockedRoadmapsState({ token: accessToken, items: res.items });
         setMetadataErrorState(null);
       })
       .catch((err) => {
@@ -252,11 +264,23 @@ export function DailyPlanView({
 
   const activeState =
     fetchState && fetchState.key === requestKey ? fetchState : seededState;
-  const isLoading = activeState === null;
-  const loadedPlan = activeState?.status === 'loaded' ? activeState.plan : null;
-  const days = activeState?.status === 'loaded' ? activeState.days : [];
+  const confirmedPlan =
+    confirmedPlanState && confirmedPlanState.scopeKey === scopeKey
+      ? confirmedPlanState.plan
+      : null;
+  const isLoading = activeState === null && confirmedPlan === null;
+  const loadedPlan =
+    activeState?.status === 'loaded' ? activeState.plan : confirmedPlan;
+  const days =
+    activeState?.status === 'loaded'
+      ? activeState.days
+      : (confirmedPlan?.days ?? []);
   const nextCursor =
     activeState?.status === 'loaded' ? activeState.nextCursor : null;
+  const refreshError =
+    confirmedPlan !== null && activeState?.status === 'error'
+      ? activeState.error
+      : null;
 
   const activeRoadmapMeta = lockedRoadmaps.find(
     (rm) =>
@@ -345,15 +369,48 @@ export function DailyPlanView({
         ? `Daily Plan created at ${updatedPlan.hours_per_day} hrs/day (${updatedPlan.total_days} sequential days).`
         : `Daily Plan rebuilt at ${updatedPlan.hours_per_day} hrs/day. Completed days and any in-progress quiz remain preserved.`,
     });
+    // Keep confirmed plan visible while refreshing server pagination metadata cleanly from page 1
+    setConfirmedPlanState({ scopeKey, plan: updatedPlan });
     requestGenRef.current += 1;
-    setFetchState({
-      key: requestKey,
-      status: 'loaded',
-      plan: updatedPlan,
-      days: updatedPlan.days,
-      nextCursor: null,
-    });
     setReloadTick((prev) => prev + 1);
+  };
+
+  const hasRoadmapTabs = lockedRoadmaps.length > 1;
+  const activeTabIndex = lockedRoadmaps.findIndex(
+    (rm) => rm.id === effectiveRoadmapId,
+  );
+  const selectedTabIndex = activeTabIndex >= 0 ? activeTabIndex : 0;
+  const selectedTabId = hasRoadmapTabs
+    ? `${tabListId}-tab-${lockedRoadmaps[selectedTabIndex]?.id}`
+    : undefined;
+
+  const handleTabKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    if (!hasRoadmapTabs || loadingMore || modalMode !== null) {
+      return;
+    }
+    const count = lockedRoadmaps.length;
+    let nextIdx: number | null = null;
+    if (e.key === 'ArrowRight') {
+      nextIdx = (index + 1) % count;
+    } else if (e.key === 'ArrowLeft') {
+      nextIdx = (index - 1 + count) % count;
+    } else if (e.key === 'Home') {
+      nextIdx = 0;
+    } else if (e.key === 'End') {
+      nextIdx = count - 1;
+    }
+    if (nextIdx === null) {
+      return;
+    }
+    e.preventDefault();
+    const target = lockedRoadmaps[nextIdx];
+    if (target) {
+      handleSelectRoadmap(target.id);
+      tabRefs.current[nextIdx]?.focus();
+    }
   };
 
   const progressPct =
@@ -409,25 +466,30 @@ export function DailyPlanView({
         </div>
       </header>
 
-      {lockedRoadmaps.length > 1 && (
+      {hasRoadmapTabs && (
         <div className="border-b border-slate-200 dark:border-slate-800">
           <div
             role="tablist"
             aria-label="Select locked roadmap Daily Plan"
             className="-mb-px flex flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           >
-            {lockedRoadmaps.map((rm) => {
-              const selected = rm.id === effectiveRoadmapId;
+            {lockedRoadmaps.map((rm, idx) => {
+              const selected = idx === selectedTabIndex;
               return (
                 <button
                   key={rm.id}
+                  ref={(el) => {
+                    tabRefs.current[idx] = el;
+                  }}
                   role="tab"
                   type="button"
                   id={`${tabListId}-tab-${rm.id}`}
                   aria-selected={selected}
                   aria-controls={`${tabListId}-panel`}
+                  tabIndex={selected ? 0 : -1}
                   disabled={loadingMore}
                   onClick={() => handleSelectRoadmap(rm.id)}
+                  onKeyDown={(e) => handleTabKeyDown(e, idx)}
                   className={cn(
                     'inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-3.5 text-label-md font-medium leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                     selected
@@ -493,7 +555,11 @@ export function DailyPlanView({
         </div>
       )}
 
-      <div id={`${tabListId}-panel`} role="tabpanel">
+      <div
+        id={hasRoadmapTabs ? `${tabListId}-panel` : undefined}
+        role={hasRoadmapTabs ? 'tabpanel' : undefined}
+        aria-labelledby={selectedTabId}
+      >
         {isLoading && (
           <section
             aria-busy="true"
@@ -512,7 +578,7 @@ export function DailyPlanView({
           </section>
         )}
 
-        {!isLoading && activeState?.status === 'error' && (
+        {!isLoading && !loadedPlan && activeState?.status === 'error' && (
           <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
             <Alert
               variant={
@@ -622,6 +688,27 @@ export function DailyPlanView({
 
         {!isLoading && loadedPlan && (
           <div className="flex flex-col gap-5">
+            {refreshError && (
+              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <Alert
+                  variant="warning"
+                  role="alert"
+                  className="flex-1"
+                  title="Could not refresh full pagination"
+                >
+                  {refreshError.message} Your updated Daily Plan is shown below.
+                </Alert>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setReloadTick((prev) => prev + 1)}
+                  className="w-full shrink-0 justify-center whitespace-nowrap border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 sm:w-auto"
+                >
+                  <RefreshCwIcon className="block h-4 w-4 shrink-0" />
+                  <span>Retry Refresh</span>
+                </Button>
+              </div>
+            )}
             {/* Summary Strip */}
             <section
               aria-label="Daily Plan summary"
@@ -697,6 +784,7 @@ export function DailyPlanView({
                     status={day.status}
                     topics={day.topics}
                     isActiveDay={isNextDay}
+                    isFocusRoadmap={loadedPlan.is_focus}
                     action={
                       isNextDay && loadedPlan.is_focus ? (
                         <Link href="/today" className={primaryLinkClass}>

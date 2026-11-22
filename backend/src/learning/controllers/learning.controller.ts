@@ -18,6 +18,7 @@ import { fail } from '../../common/http.js';
 import { IdempotencyService } from '../../jobs/services/idempotency.service.js';
 import type { PageMetaDTO } from '../../roadmap/dto/roadmap.dto.js';
 import {
+  assertValidLearningHours,
   CreateDailyPlanDTO,
   type DailyPlanResponseDTO,
   GetDailyPlanQueryDTO,
@@ -217,6 +218,28 @@ export class LearningController {
   ): Promise<DailyPlanResponseDTO> {
     const userId = assertAuthenticatedUserId(req);
     const idempotencyKeyHeader = req?.headers?.['idempotency-key'];
+    const rawIdemKey = Array.isArray(idempotencyKeyHeader)
+      ? idempotencyKeyHeader[0]
+      : idempotencyKeyHeader;
+    if (
+      typeof rawIdemKey !== 'string' ||
+      !UUID_PATTERN.test(rawIdemKey.trim())
+    ) {
+      fail(
+        400,
+        'INVALID_FORMAT',
+        'Idempotency-Key header is required and must be a valid UUID',
+        [
+          {
+            field: 'Idempotency-Key',
+            code: 'INVALID_FORMAT',
+            message: 'Idempotency-Key must be a valid UUID',
+          },
+        ],
+      );
+    }
+    // Validate hours_per_day BEFORE reserving an H-IDEM in_flight key so invalid inputs never strand keys
+    assertValidLearningHours(dto?.hours_per_day);
 
     let step = 'ep_l02.idempotency_execute';
     let executed;
@@ -224,7 +247,7 @@ export class LearningController {
       executed = await this.idempotencyService.execute<DailyPlanResponseDTO>(
         {
           userId,
-          idempotencyKey: idempotencyKeyHeader,
+          idempotencyKey: rawIdemKey.trim(),
           method: 'POST',
           route: '/api/v1/learning/daily-plans',
           body: dto ?? null,

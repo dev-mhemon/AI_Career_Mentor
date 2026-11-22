@@ -314,6 +314,37 @@ export class TodayService {
             LIMIT 1`,
           [normalizedUserId, nextItem.topic_id],
         );
+
+        // Recheck canonical approved topic after active-job lookup in case worker just committed
+        const recheckedApprovedTopic =
+          await this.topicContentService.findApprovedCanonicalTopicInTx(
+            db,
+            nextItem.skill_id,
+            nextItem.slug,
+            nextItem.career_level,
+          );
+        if (recheckedApprovedTopic) {
+          const topicDetail =
+            await this.topicContentService.buildTopicDetailInTx(
+              db,
+              normalizedUserId,
+              recheckedApprovedTopic,
+              nextItem.learning_state ?? 'not_started',
+              String(nextItem.required_depth ?? ''),
+            );
+
+          return {
+            status: 'ready',
+            roadmap_id: String(focus.id),
+            plan_id: String(plan.id),
+            plan_day: planDay,
+            topic: topicDetail,
+            quiz: quizSummary,
+            job: null,
+            requires_learning_hours: false,
+          };
+        }
+
         const existingJob = Array.isArray(activeJobRows)
           ? activeJobRows[0]
           : undefined;

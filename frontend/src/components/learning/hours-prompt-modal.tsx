@@ -1,10 +1,11 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ApiError,
   createDailyPlan,
   createIdempotencyKey,
+  getDailyPlan,
   rebuildDailyPlan,
   type DailyPlanResponseDTO,
 } from '@/lib/api/client';
@@ -34,7 +35,7 @@ export interface HoursPromptModalProps {
 
 function parseHoursInput(raw: string): number | null {
   const trimmed = raw.trim();
-  if (!trimmed || !/^\d+(?:\.\d+)?$/.test(trimmed)) {
+  if (!trimmed || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed)) {
     return null;
   }
   const num = Number(trimmed);
@@ -42,10 +43,10 @@ function parseHoursInput(raw: string): number | null {
     return null;
   }
   const doubled = num * 2;
-  if (Math.abs(doubled - Math.round(doubled)) > 1e-9) {
+  if (!Number.isInteger(doubled)) {
     return null;
   }
-  return Math.round(doubled) / 2;
+  return doubled / 2;
 }
 
 function formatHoursLabel(hours: number): string {
@@ -88,11 +89,35 @@ function HoursPromptForm({
   const [hoursInput, setHoursInput] = useState<string>(defaultValue);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<MappedError | null>(null);
+  const [cooldownUntilMs, setCooldownUntilMs] = useState<number | null>(null);
+  const [cooldownSecondsLeft, setCooldownSecondsLeft] = useState(0);
 
   const pendingCreateKeyRef = useRef<{ signature: string; key: string } | null>(
     null,
   );
 
+  useEffect(() => {
+    if (cooldownUntilMs === null) {
+      return;
+    }
+    const timer = setInterval(() => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((cooldownUntilMs - Date.now()) / 1_000),
+      );
+      if (remaining <= 0) {
+        setCooldownUntilMs(null);
+        setCooldownSecondsLeft(0);
+      } else {
+        setCooldownSecondsLeft(remaining);
+      }
+    }, 1_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [cooldownUntilMs]);
+
+  const cooldownActive = cooldownUntilMs !== null && cooldownSecondsLeft > 0;
   const parsedHours = parseHoursInput(hoursInput);
   const isCreate = mode === 'create';
 
@@ -115,7 +140,7 @@ function HoursPromptForm({
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (submitting) {
+    if (submitting || cooldownActive) {
       return;
     }
 
@@ -162,11 +187,40 @@ function HoursPromptForm({
       if (
         isCreate &&
         err instanceof ApiError &&
+        err.code === 'DAILY_PLAN_EXISTS'
+      ) {
+        pendingCreateKeyRef.current = null;
+        try {
+          const existing = await getDailyPlan(accessToken, {
+            roadmap_id: roadmapId,
+            limit: 20,
+          });
+          onSubmittingChange(false);
+          onSuccess(existing.plan);
+          return;
+        } catch {
+          // Fall through to mapped error if recovery fetch fails.
+        }
+      }
+      if (
+        isCreate &&
+        err instanceof ApiError &&
         DETERMINISTIC_HTTP_STATUSES.has(err.statusCode)
       ) {
         pendingCreateKeyRef.current = null;
       }
-      setSubmitError(mapApiError(err));
+      const mapped = mapApiError(err);
+      if (
+        err instanceof ApiError &&
+        err.statusCode === 429 &&
+        typeof mapped.retryAfterSeconds === 'number' &&
+        mapped.retryAfterSeconds > 0
+      ) {
+        const secs = Math.max(1, Math.ceil(mapped.retryAfterSeconds));
+        setCooldownUntilMs(Date.now() + secs * 1_000);
+        setCooldownSecondsLeft(secs);
+      }
+      setSubmitError(mapped);
     } finally {
       onSubmittingChange(false);
     }
@@ -357,10 +411,14 @@ function HoursPromptForm({
           variant="primary"
           loading={submitting}
           loadingText={isCreate ? 'Creating plan...' : 'Rebuilding plan...'}
-          disabled={submitting}
+          disabled={submitting || cooldownActive}
           className="w-full justify-center sm:w-auto"
         >
-          {isCreate ? 'Create Daily Plan' : 'Save & Rebuild Plan'}
+          {cooldownActive
+            ? `Retry in ${cooldownSecondsLeft}s`
+            : isCreate
+              ? 'Create Daily Plan'
+              : 'Save & Rebuild Plan'}
         </Button>
       </Modal.Footer>
     </form>

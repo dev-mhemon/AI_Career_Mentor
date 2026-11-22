@@ -91,7 +91,7 @@ export function assertValidLearningHours(value: unknown): number {
     );
   }
   const doubled = value * 2;
-  const isHalfStep = Math.abs(doubled - Math.round(doubled)) < 1e-9;
+  const isHalfStep = Number.isInteger(doubled);
   if (value < MIN_DAILY_HOURS || value > MAX_DAILY_HOURS || !isHalfStep) {
     fail(
       422,

@@ -116,9 +116,9 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(dashboardLink).not.toHaveAttribute('aria-current');
   });
 
-  it('highlights Daily Plan when pathname matches /today without rendering a separate Today sidebar link', () => {
+  it('visually highlights Daily Plan on /today without setting aria-current="page", and sets aria-current="page" on /daily-plan', () => {
     mockPathname = '/today';
-    render(
+    const { rerender } = render(
       <AppShell user={{ fullName: 'Mehedi Hasan' }}>
         <div>Today body</div>
       </AppShell>,
@@ -133,9 +133,19 @@ describe('AppShell, Sidebar, and Header', () => {
       name: 'Daily Plan',
     });
     expect(dailyPlanLink).toHaveAttribute('href', '/daily-plan');
-    expect(dailyPlanLink).toHaveAttribute('aria-current', 'page');
+    expect(dailyPlanLink).not.toHaveAttribute('aria-current');
     expect(dailyPlanLink.className).toContain('bg-teal-50');
     expect(dailyPlanLink.className).toContain('px-5');
+
+    mockPathname = '/daily-plan';
+    rerender(
+      <AppShell user={{ fullName: 'Mehedi Hasan' }}>
+        <div>Daily plan body</div>
+      </AppShell>,
+    );
+    expect(
+      within(sidebar).getByRole('link', { name: 'Daily Plan' }),
+    ).toHaveAttribute('aria-current', 'page');
   });
 
   it('toggles desktop sidebar collapsed rail width and aria-expanded state', () => {

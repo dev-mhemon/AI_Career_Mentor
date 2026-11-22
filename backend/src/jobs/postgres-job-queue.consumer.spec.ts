@@ -1357,8 +1357,9 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     expect(fallbackHandler.execute).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls back provisional ai_generations and marks WORKER_LEASE_EXPIRED when pre-persist lease/deadline recheck expires (generated and reused paths)', async () => {
+  it('rolls back provisional ai_generations and distinguishes pre-persist deadline expiry (WORKER_LEASE_EXPIRED) from lease-only expiry (fence_lost)', async () => {
     const trace: string[] = [];
+    let prePersistRow = { lease_valid: true, within_deadline: false };
     const fakeQueryRunner = {
       connect: vi.fn().mockResolvedValue(undefined),
       startTransaction: vi.fn().mockResolvedValue(undefined),
@@ -1421,7 +1422,7 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
           }
           if (sql.includes('lease_valid') && !sql.includes('FOR UPDATE')) {
             trace.push('lease_recheck');
-            return [{ lease_valid: false, within_deadline: true }];
+            return [prePersistRow];
           }
           if (
             sql.includes('UPDATE public.ai_requests') &&
@@ -1446,7 +1447,8 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     );
 
     const persistArtifact = vi.fn();
-    const outcome = await realConsumer.processClaimedJob(
+    // 1. Deadline expiry (`within_deadline: false`) -> rolls back and marks terminal WORKER_LEASE_EXPIRED
+    const deadlineOutcome = await realConsumer.processClaimedJob(
       makeClaimedJob({
         task: 'topic_content',
         job_kind: 'topic_content',
@@ -1463,7 +1465,7 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
       },
     );
 
-    expect(outcome).toEqual({
+    expect(deadlineOutcome).toEqual({
       outcome: 'failed_terminal',
       jobId: JOB_ID,
       errorCode: 'WORKER_LEASE_EXPIRED',
@@ -1477,7 +1479,7 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
       'commit',
     ]);
 
-    // Reused artifact path (skipAiGeneration: true) also runs lease/deadline recheck before persistArtifact
+    // 2. Reused artifact path (skipAiGeneration: true) with deadline expiry also marks WORKER_LEASE_EXPIRED
     trace.length = 0;
     const reusedOutcome = await realConsumer.processClaimedJob(
       makeClaimedJob({
@@ -1504,6 +1506,188 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     expect(persistArtifact).not.toHaveBeenCalled();
     expect(trace).toEqual([
       'lease_recheck',
+      'rollback',
+      'update_failed',
+      'commit',
+    ]);
+
+    // 3. Lease-only expiry (`lease_valid: false, within_deadline: true`) -> rolls back and returns fence_lost without terminal failure
+    trace.length = 0;
+    prePersistRow = { lease_valid: false, within_deadline: true };
+    const leaseOnlyOutcome = await realConsumer.processClaimedJob(
+      makeClaimedJob({
+        task: 'topic_content',
+        job_kind: 'topic_content',
+        feature_key: 'daily_plan',
+      }),
+      {
+        execute: vi.fn().mockResolvedValue({
+          ...makeExecResult(),
+          resultType: 'topic',
+          outputSchemaId: 'topic_content.v1',
+        }),
+        verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+        persistArtifact,
+      },
+    );
+    expect(leaseOnlyOutcome).toEqual({
+      outcome: 'fence_lost',
+      jobId: JOB_ID,
+    });
+    expect(persistArtifact).not.toHaveBeenCalled();
+    expect(trace).toEqual([
+      'insert_ai_generations',
+      'lease_recheck',
+      'rollback',
+    ]);
+  });
+
+  it('enforces max-age deadline atomically in finalizing UPDATE and rolls back persisted artifact to WORKER_LEASE_EXPIRED on expiry', async () => {
+    const trace: string[] = [];
+    let finalizeSqlSeen = '';
+    let finalizeParamsSeen: unknown[] = [];
+
+    const fakeQueryRunner = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      startTransaction: vi.fn().mockResolvedValue(undefined),
+      commitTransaction: vi.fn(async () => {
+        trace.push('commit');
+      }),
+      rollbackTransaction: vi.fn(async () => {
+        trace.push('rollback');
+      }),
+      release: vi.fn().mockResolvedValue(undefined),
+      manager: {
+        query: vi.fn(async (sql: string, params?: unknown[]) => {
+          if (sql.includes('SET LOCAL ROLE')) {
+            return [];
+          }
+          if (
+            sql.includes('FROM public.ai_requests') &&
+            !sql.includes('FOR UPDATE') &&
+            !sql.includes('JOIN public.users') &&
+            !sql.includes('lease_valid') &&
+            !sql.includes('within_deadline')
+          ) {
+            return [{ user_id: USER_ID, feature_key: 'daily_plan' }];
+          }
+          if (sql.includes('FROM public.users u')) {
+            return [{ user_status: 'active', feature_allowed: true }];
+          }
+          if (
+            sql.includes('FROM public.ai_requests') &&
+            sql.includes('FOR UPDATE')
+          ) {
+            return [
+              {
+                id: JOB_ID,
+                user_id: USER_ID,
+                task: 'topic_content',
+                feature_key: 'daily_plan',
+                status: 'preparing',
+                locked_by: WORKER_ID,
+                attempt_count: 1,
+                lease_valid: true,
+                within_deadline: true,
+              },
+            ];
+          }
+          if (
+            sql.includes('FROM public.ai_requests r') &&
+            sql.includes('JOIN public.users u')
+          ) {
+            return [
+              {
+                within_deadline: true,
+                user_status: 'active',
+                feature_allowed: true,
+              },
+            ];
+          }
+          if (sql.includes('INSERT INTO public.ai_generations')) {
+            trace.push('insert_ai_generations');
+            return [[{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }], 1];
+          }
+          if (sql.includes('lease_valid') && !sql.includes('FOR UPDATE')) {
+            trace.push('lease_recheck');
+            return [{ lease_valid: true, within_deadline: true }];
+          }
+          if (
+            sql.includes('UPDATE public.ai_requests') &&
+            sql.includes("SET status = 'succeeded'")
+          ) {
+            finalizeSqlSeen = sql;
+            finalizeParamsSeen = params ?? [];
+            trace.push('finalize_update_empty');
+            return [[], 0];
+          }
+          if (
+            sql.includes('AS within_deadline') &&
+            !sql.includes('lease_valid') &&
+            !sql.includes('JOIN public.users')
+          ) {
+            trace.push('deadline_recheck');
+            return [{ within_deadline: false }];
+          }
+          if (
+            sql.includes('UPDATE public.ai_requests') &&
+            sql.includes("SET status = 'failed'")
+          ) {
+            trace.push('update_failed');
+            return [[{ id: JOB_ID }], 1];
+          }
+          return [];
+        }),
+      },
+    };
+
+    const realDatabase = new DatabaseService({
+      createQueryRunner: vi.fn(() => fakeQueryRunner),
+    } as unknown as DataSource);
+    const realConsumer = new PostgresJobQueueConsumer(
+      realDatabase,
+      configMock,
+      () => 0,
+      WORKER_ID,
+    );
+
+    const persistArtifact = vi.fn(async () => {
+      trace.push('persist_artifact');
+      return { resultType: 'topic' as const, resultId: RESULT_ID };
+    });
+
+    const outcome = await realConsumer.processClaimedJob(
+      makeClaimedJob({
+        task: 'topic_content',
+        job_kind: 'topic_content',
+        feature_key: 'daily_plan',
+      }),
+      {
+        execute: vi.fn().mockResolvedValue({
+          ...makeExecResult(),
+          resultType: 'topic',
+          outputSchemaId: 'topic_content.v1',
+        }),
+        verifyExpectedRefs: vi.fn().mockResolvedValue({ ok: true }),
+        persistArtifact,
+      },
+    );
+
+    expect(finalizeSqlSeen).toContain(
+      "created_at > clock_timestamp() - ($13 * interval '1 second')",
+    );
+    expect(finalizeParamsSeen[12]).toBe(3600);
+    expect(outcome).toEqual({
+      outcome: 'failed_terminal',
+      jobId: JOB_ID,
+      errorCode: 'WORKER_LEASE_EXPIRED',
+    });
+    expect(trace).toEqual([
+      'insert_ai_generations',
+      'lease_recheck',
+      'persist_artifact',
+      'finalize_update_empty',
+      'deadline_recheck',
       'rollback',
       'update_failed',
       'commit',

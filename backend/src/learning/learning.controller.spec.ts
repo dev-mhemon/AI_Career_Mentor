@@ -18,7 +18,6 @@ import type { PostgresJobQueueConsumer } from '../jobs/services/postgres-job-que
 import type { TopicContentJobHandler } from './services/topic-content-job.handler.js';
 import {
   assertValidLearningHours,
-  CreateDailyPlanDTO,
   GetDailyPlanQueryDTO,
   ListLearningResourcesQueryDTO,
   ListTopicsQueryDTO,
@@ -298,25 +297,46 @@ describe('LearningController (EP-L01–EP-L07 routes, policy metadata, DTO stric
       });
     expect(badExtraRes.status).toBe(422);
 
-    // JSON boolean `true` for hours_per_day is NOT coerced to 1 (reaches service uncoerced -> 422 LEARNING_HOURS_REQUIRED)
-    dailyPlanServiceMock.createDailyPlan.mockImplementationOnce(
-      (_u: string, dto: CreateDailyPlanDTO) => {
-        expect(dto.hours_per_day).toBe(true);
-        assertValidLearningHours(dto.hours_per_day);
-      },
-    );
+    // Missing or malformed Idempotency-Key fails 400 INVALID_FORMAT before touching service or idempotency cache
+    const badIdemRes = await request(app.getHttpServer())
+      .post('/api/v1/learning/daily-plans')
+      .set('Idempotency-Key', 'not-a-uuid')
+      .send({ roadmap_id: ROADMAP_ID, hours_per_day: 2 });
+    expect(badIdemRes.status).toBe(400);
+    expect(badIdemRes.body.error.code).toBe('INVALID_FORMAT');
+    expect(dailyPlanServiceMock.createDailyPlan).not.toHaveBeenCalled();
+
+    // JSON boolean `true` and float drift `1.5000000001` are rejected 422 LEARNING_HOURS_REQUIRED BEFORE reserving Idempotency-Key
     const boolHoursRes = await request(app.getHttpServer())
       .post('/api/v1/learning/daily-plans')
       .set('Idempotency-Key', IDEM_KEY_2)
       .send({ roadmap_id: ROADMAP_ID, hours_per_day: true });
     expect(boolHoursRes.status).toBe(422);
     expect(boolHoursRes.body.error.code).toBe('LEARNING_HOURS_REQUIRED');
+    expect(dailyPlanServiceMock.createDailyPlan).not.toHaveBeenCalled();
+
+    const driftHoursRes = await request(app.getHttpServer())
+      .post('/api/v1/learning/daily-plans')
+      .set('Idempotency-Key', IDEM_KEY_2)
+      .send({ roadmap_id: ROADMAP_ID, hours_per_day: 1.5000000001 });
+    expect(driftHoursRes.status).toBe(422);
+    expect(driftHoursRes.body.error.code).toBe('LEARNING_HOURS_REQUIRED');
+    expect(dailyPlanServiceMock.createDailyPlan).not.toHaveBeenCalled();
+
+    // Because invalid hours failed pre-reservation, IDEM_KEY_2 remains free for a valid request
+    const validAfterInvalid = await request(app.getHttpServer())
+      .post('/api/v1/learning/daily-plans')
+      .set('Idempotency-Key', IDEM_KEY_2)
+      .send({ roadmap_id: ROADMAP_ID, hours_per_day: 2 });
+    expect(validAfterInvalid.status).toBe(201);
+    expect(dailyPlanServiceMock.createDailyPlan).toHaveBeenCalledTimes(1);
 
     // RebuildDTO also preserves raw boolean without coercion
     const rebuildInst = plainToInstance(RebuildDailyPlanDTO, {
       hours_per_day: true,
     });
     expect(rebuildInst.hours_per_day).toBe(true);
+    expect(() => assertValidLearningHours(1.5000000001)).toThrow();
   });
 
   it('enforces H-IDEM replay and 409 IDEMPOTENCY_KEY_REUSED on EP-L02 and wires EP-L01–EP-L07 envelopes', async () => {

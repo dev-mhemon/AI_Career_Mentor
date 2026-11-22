@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,6 +11,7 @@ import {
   ApiError,
   NetworkError,
   createDailyPlan,
+  getDailyPlan,
   rebuildDailyPlan,
   type DailyPlanResponseDTO,
 } from '@/lib/api/client';
@@ -22,6 +24,7 @@ vi.mock('@/lib/api/client', async () => {
   return {
     ...actual,
     createDailyPlan: vi.fn(),
+    getDailyPlan: vi.fn(),
     rebuildDailyPlan: vi.fn(),
   };
 });
@@ -60,11 +63,13 @@ describe('HoursPromptModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(createDailyPlan).mockReset();
+    vi.mocked(getDailyPlan).mockReset();
     vi.mocked(rebuildDailyPlan).mockReset();
   });
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   it('validates 0.5..12 half-hour increments, supports quick-select presets and stepper controls, and submits EP-L02 with H-IDEM', async () => {
@@ -250,5 +255,80 @@ describe('HoursPromptModal', () => {
 
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts leading-decimal .5, rejects bare ., enforces 429 cooldown across input edits, and recovers on 409 DAILY_PLAN_EXISTS', async () => {
+    const onSuccess = vi.fn();
+    const existingPlan = makePlan({ plan_id: 'plan-existing', hours_per_day: 0.5 });
+
+    vi.mocked(createDailyPlan)
+      .mockRejectedValueOnce(
+        new ApiError(429, 'Slow down', 'RATE_LIMITED', undefined, [], true, 2),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(409, 'Already exists', 'DAILY_PLAN_EXISTS'),
+      );
+    vi.mocked(getDailyPlan).mockResolvedValueOnce({
+      plan: existingPlan,
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    render(
+      <HoursPromptModal
+        open={true}
+        mode="create"
+        accessToken="token-1"
+        roadmapId="rm-1"
+        initialHours={null}
+        onClose={vi.fn()}
+        onSuccess={onSuccess}
+      />,
+    );
+
+    const input = screen.getByLabelText(/Hours per day/i) as HTMLInputElement;
+    const submit = screen.getByRole('button', { name: 'Create Daily Plan' });
+
+    // Bare decimal rejected client-side
+    fireEvent.change(input, { target: { value: '.' } });
+    fireEvent.click(submit);
+    expect(
+      screen.getByText(/between 0.5 and 12 in 0.5-hour increments/i),
+    ).toBeInTheDocument();
+    expect(createDailyPlan).not.toHaveBeenCalled();
+
+    // Leading decimal .5 accepted and triggers 429 cooldown
+    vi.useFakeTimers();
+    fireEvent.change(input, { target: { value: '.5' } });
+    await act(async () => {
+      fireEvent.click(submit);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(createDailyPlan).toHaveBeenCalledWith(
+      'token-1',
+      { roadmap_id: 'rm-1', hours_per_day: 0.5 },
+      expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    );
+    expect(submit).toBeDisabled();
+
+    // Editing input clears alert but MUST keep cooldown active until timer expires
+    fireEvent.change(input, { target: { value: '1' } });
+    expect(submit).toBeDisabled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    vi.useRealTimers();
+    expect(submit).not.toBeDisabled();
+
+    // Retry hits 409 DAILY_PLAN_EXISTS -> automatically loads existing plan via getDailyPlan and calls onSuccess
+    fireEvent.click(submit);
+    await waitFor(() => {
+      expect(getDailyPlan).toHaveBeenCalledWith('token-1', {
+        roadmap_id: 'rm-1',
+        limit: 20,
+      });
+      expect(onSuccess).toHaveBeenCalledWith(existingPlan);
+    });
   });
 });

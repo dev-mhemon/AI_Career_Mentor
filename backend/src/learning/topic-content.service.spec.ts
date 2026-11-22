@@ -344,4 +344,172 @@ describe('TopicContentService (EP-L05, EP-L06, EP-L07)', () => {
       meta: { limit: 10, next_cursor: null },
     });
   });
+
+  it('redacts concurrently hidden topics when canonical approved lookup returns empty and binds resource cursor to resolved topic_id', async () => {
+    // Even if the initial access row saw status='approved', an empty canonical approved lookup must redact
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM public.topics t_req')) {
+        return [
+          {
+            topic_id: TOPIC_ID,
+            skill_id: SKILL_ID,
+            slug: 'sql-joins',
+            title: 'SQL Joins',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'approved',
+            explanation_markdown: '# Stale snapshot before hide',
+            important_questions: [{ question: 'Q', answer_markdown: 'A' }],
+            required_depth: 'application',
+            learning_state: 'learning',
+          },
+        ];
+      }
+      if (
+        sql.includes("status = 'approved'") &&
+        sql.includes('FROM public.topics')
+      ) {
+        return [];
+      }
+      throw new Error(`Unexpected SQL after concurrent hide: ${sql}`);
+    });
+
+    const redacted = await service.getTopic(USER_ID, TOPIC_ID);
+    expect(redacted.explanation_markdown).toBeNull();
+    expect(redacted.important_questions).toEqual([]);
+    expect(redacted.sources).toEqual([]);
+    expect(redacted.rating_allowed).toBe(false);
+    expect(redacted.report_allowed).toBe(false);
+
+    const emptyRes = await service.listResources(USER_ID, {
+      topic_id: TOPIC_ID,
+      limit: 10,
+    });
+    expect(emptyRes).toEqual({
+      items: [],
+      meta: { limit: 10, next_cursor: null },
+    });
+
+    // Resource cursor produced for APPROVED_TOPIC_ID cannot be replayed against a different topic
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM public.topics t_req')) {
+        return [
+          {
+            topic_id: TOPIC_ID,
+            skill_id: SKILL_ID,
+            slug: 'sql-joins',
+            title: 'SQL Joins',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'approved',
+            explanation_markdown: '# SQL Joins',
+            important_questions: [],
+            required_depth: 'application',
+            learning_state: 'learning',
+          },
+        ];
+      }
+      if (
+        sql.includes("status = 'approved'") &&
+        sql.includes('FROM public.topics')
+      ) {
+        return [
+          {
+            id: APPROVED_TOPIC_ID,
+            skill_id: SKILL_ID,
+            slug: 'sql-joins',
+            title: 'SQL Joins',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'approved',
+            explanation_markdown: '# SQL Joins',
+            important_questions: [],
+            language: 'mixed',
+            approved_at: '2026-11-21T00:00:00.000Z',
+          },
+        ];
+      }
+      if (sql.includes('FROM public.learning_resources')) {
+        return [
+          {
+            id: RES_ID_1,
+            title: 'Res 1',
+            publisher: 'Docs',
+            url: 'https://example.com/1',
+            resource_type: 'official_docs',
+            retrieved_at: '2026-11-21T00:00:00.000Z',
+          },
+          {
+            id: '77777777-7777-4777-8777-777777777772',
+            title: 'Res 2',
+            publisher: 'Docs',
+            url: 'https://example.com/2',
+            resource_type: 'official_docs',
+            retrieved_at: '2026-11-21T00:00:00.000Z',
+          },
+        ];
+      }
+      return [];
+    });
+
+    const page1 = await service.listResources(USER_ID, {
+      topic_id: TOPIC_ID,
+      limit: 1,
+    });
+    expect(page1.meta.next_cursor).toBeTruthy();
+
+    // Replay cursor against a different resolved topic -> 400 INVALID_FORMAT
+    const OTHER_APPROVED_ID = '44444444-4444-4444-8444-444444444499';
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM public.topics t_req')) {
+        return [
+          {
+            topic_id: OTHER_APPROVED_ID,
+            skill_id: SKILL_ID,
+            slug: 'indexes',
+            title: 'Indexes',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'approved',
+            explanation_markdown: '# Indexes',
+            important_questions: [],
+            required_depth: 'application',
+            learning_state: 'learning',
+          },
+        ];
+      }
+      if (
+        sql.includes("status = 'approved'") &&
+        sql.includes('FROM public.topics')
+      ) {
+        return [
+          {
+            id: OTHER_APPROVED_ID,
+            skill_id: SKILL_ID,
+            slug: 'indexes',
+            title: 'Indexes',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'approved',
+            explanation_markdown: '# Indexes',
+            important_questions: [],
+            language: 'mixed',
+            approved_at: '2026-11-21T00:00:00.000Z',
+          },
+        ];
+      }
+      return [];
+    });
+
+    await expect(
+      service.listResources(USER_ID, {
+        topic_id: OTHER_APPROVED_ID,
+        limit: 1,
+        cursor: page1.meta.next_cursor!,
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 400, 'INVALID_FORMAT');
+      return true;
+    });
+  });
 });

@@ -431,4 +431,57 @@ describe('TopicContentJobHandler (topic_content async worker)', () => {
       reason: 'TOPIC_CONTENT_VERSION_DRIFT',
     });
   });
+
+  it('marks corrupt input_payload errors non-retryable and rejects malformed source URLs lacking a hostname', async () => {
+    const controller = new AbortController();
+
+    await expect(
+      handler.execute(
+        makeTopicJob({ input_payload: { v: 1 } }),
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      response: expect.objectContaining({
+        code: 'VALIDATION_FAILED',
+        retryable: false,
+      }),
+    });
+
+    const badUrlExec = makeAiExecResult();
+    (badUrlExec.output as { sources: Array<{ url: string }> }).sources[0].url =
+      'https://?';
+
+    const txQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM public.topics') && sql.includes('FOR UPDATE')) {
+        return [
+          {
+            id: TOPIC_ID,
+            skill_id: SKILL_ID,
+            slug: 'sql-joins',
+            title: 'SQL Joins',
+            career_level: 'mid',
+            content_version: 1,
+            status: 'draft',
+          },
+        ];
+      }
+      if (sql.includes('pg_advisory_xact_lock')) return [];
+      if (sql.includes("status = 'approved'") && sql.includes('SELECT id'))
+        return [];
+      return [];
+    });
+
+    await expect(
+      handler.persistArtifact(
+        { query: txQuery as unknown as JobQueryExecutor['query'] },
+        makeTopicJob(),
+        badUrlExec,
+        { aiGenerationId: AI_GEN_ID },
+      ),
+    ).rejects.toMatchObject({
+      status: 502,
+      response: expect.objectContaining({ code: 'AI_VALIDATION_FAILED' }),
+    });
+  });
 });

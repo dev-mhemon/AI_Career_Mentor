@@ -22,13 +22,24 @@ import {
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HTTP_URL_PATTERN = /^https?:\/\/.+/i;
 const VALID_CAREER_LEVELS: ReadonlySet<string> = new Set([
   'junior',
   'mid',
   'senior',
 ]);
 const VALID_LANGUAGES: ReadonlySet<string> = new Set(['bn', 'en', 'mixed']);
+
+function isValidHttpUrl(raw: string): boolean {
+  try {
+    const parsed = new URL(raw);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.hostname.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
 
 export const SUPPORTED_LEARNING_JOB_KINDS = ['topic_content'] as const;
 export type SupportedLearningJobKind =
@@ -84,14 +95,32 @@ function parseTopicContentPayload(
   job: ClaimedJobRow,
 ): ParsedTopicContentPayload {
   if (job.job_kind !== 'topic_content') {
-    fail(422, 'INVALID_ENUM_VALUE', 'Unsupported learning job kind');
+    fail(
+      422,
+      'INVALID_ENUM_VALUE',
+      'Unsupported learning job kind',
+      undefined,
+      false,
+    );
   }
   const payload = job.input_payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    fail(422, 'VALIDATION_FAILED', 'Invalid topic_content job payload');
+    fail(
+      422,
+      'VALIDATION_FAILED',
+      'Invalid topic_content job payload',
+      undefined,
+      false,
+    );
   }
   if (payload.v !== 1) {
-    fail(422, 'VALIDATION_FAILED', 'Unsupported job envelope version');
+    fail(
+      422,
+      'VALIDATION_FAILED',
+      'Unsupported job envelope version',
+      undefined,
+      false,
+    );
   }
   const args =
     payload.args &&
@@ -110,6 +139,8 @@ function parseTopicContentPayload(
       422,
       'VALIDATION_FAILED',
       'Job envelope missing args or expected_refs',
+      undefined,
+      false,
     );
   }
 
@@ -133,7 +164,13 @@ function parseTopicContentPayload(
     !Number.isInteger(expectedContentVersion) ||
     expectedContentVersion < 1
   ) {
-    fail(422, 'VALIDATION_FAILED', 'Invalid topic_content job arguments');
+    fail(
+      422,
+      'VALIDATION_FAILED',
+      'Invalid topic_content job arguments',
+      undefined,
+      false,
+    );
   }
 
   return {
@@ -234,7 +271,7 @@ function normalizeAndValidateTopicContent(
       typeof rawSrc.publisher !== 'string' ||
       !rawSrc.publisher.trim() ||
       typeof rawSrc.url !== 'string' ||
-      !HTTP_URL_PATTERN.test(rawSrc.url.trim()) ||
+      !isValidHttpUrl(rawSrc.url.trim()) ||
       typeof rawSrc.resource_type !== 'string' ||
       !(RESOURCE_TYPE_VALUES as readonly string[]).includes(
         rawSrc.resource_type,
