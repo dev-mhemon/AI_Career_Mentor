@@ -7921,7 +7921,7 @@ components:
           $ref: '#/components/schemas/QuizMcqScoreDTO'
         performance_level:
           type: string
-          enum: [good, needs_work]
+          enum: [good, needs_work, null]
           nullable: true
         questions:
           type: array
@@ -7951,7 +7951,7 @@ components:
           $ref: '#/components/schemas/ReviewStatus'
         performance_level:
           type: string
-          enum: [good, needs_work]
+          enum: [good, needs_work, null]
           nullable: true
     PracticeReviewDimensionsDTO:
       type: object
@@ -7978,7 +7978,7 @@ components:
           $ref: '#/components/schemas/ReviewStatus'
         performance_level:
           type: string
-          enum: [good, needs_work]
+          enum: [good, needs_work, null]
           nullable: true
         dimensions:
           $ref: '#/components/schemas/PracticeReviewDimensionsDTO'
@@ -8149,18 +8149,18 @@ components:
           $ref: '#/components/schemas/ProgressEventType'
         from_state:
           type: string
-          enum: [not_started, learning, practicing, proficient]
+          enum: [not_started, learning, practicing, proficient, null]
           nullable: true
         to_state:
           type: string
-          enum: [not_started, learning, practicing, proficient]
+          enum: [not_started, learning, practicing, proficient, null]
           nullable: true
         reason:
           type: string
           nullable: true
         source:
           type: string
-          enum: [quiz_attempt, practice_review]
+          enum: [quiz_attempt, practice_review, null]
           nullable: true
         source_id:
           type: string

@@ -914,4 +914,68 @@ describe('QuizSessionView & QuizResultView (Screen 18 — EP-Q02..EP-Q07, EP-PR0
       screen.queryByText(/Stale answer text that must stay hidden/i),
     ).not.toBeInTheDocument();
   });
+
+  it('preserves recovered unsent sessionStorage backups across PATCH pruning and re-queues unsaved diffs after started IDEMPOTENCY_KEY_REUSED reload', async () => {
+    vi.useFakeTimers();
+    window.sessionStorage.setItem(
+      'agy_quiz_draft_v1:att-1',
+      JSON.stringify({
+        'q-mcq-1': {
+          selected_option_id: 'b',
+          text: null,
+          i_dont_know: false,
+        },
+      }),
+    );
+    vi.mocked(patchQuizAnswers).mockResolvedValue({
+      saved: 1,
+      saved_at: '2026-11-22T10:02:00.000Z',
+    });
+
+    render(
+      <QuizSessionView
+        accessToken="tok-1"
+        attemptId="att-1"
+        initialAttempt={makeQuizAttempt('started')}
+      />,
+    );
+
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'SELECT 1;' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(950);
+    });
+
+    expect(patchQuizAnswers).toHaveBeenCalledWith('tok-1', 'att-1', {
+      answers: [{ question_id: 'q-fr-1', text: 'SELECT 1;' }],
+    });
+    const backupAfterFrPatch = JSON.parse(
+      window.sessionStorage.getItem('agy_quiz_draft_v1:att-1') ?? '{}',
+    ) as Record<string, { selected_option_id: string | null }>;
+    expect(backupAfterFrPatch['q-mcq-1']?.selected_option_id).toBe('b');
+    expect(backupAfterFrPatch['q-fr-1']).toBeUndefined();
+
+    // Reloading as 'started' after IDEMPOTENCY_KEY_REUSED queues remaining recovered backup diff
+    vi.mocked(submitQuizAttempt).mockRejectedValueOnce(
+      new ApiError(409, 'Idempotency key reused', 'IDEMPOTENCY_KEY_REUSED'),
+    );
+    vi.mocked(getQuizAttempt).mockResolvedValueOnce(
+      makeQuizAttempt('started'),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Submit Quiz$/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(950);
+    });
+
+    expect(patchQuizAnswers).toHaveBeenLastCalledWith('tok-1', 'att-1', {
+      answers: [{ question_id: 'q-mcq-1', selected_option_id: 'b' }],
+    });
+  });
 });

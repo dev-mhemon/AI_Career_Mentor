@@ -685,9 +685,9 @@ export function TodayView({
                         error: mapApiError(
                           new ApiError(
                             422,
-                            '',
+                            status.error?.message ?? '',
                             status.error?.code ?? 'AI_GENERATION_FAILED',
-                            status.error?.message,
+                            undefined,
                             [],
                             false,
                           ),

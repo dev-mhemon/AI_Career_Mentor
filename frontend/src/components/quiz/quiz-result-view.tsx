@@ -118,7 +118,11 @@ export function QuizResultView({
   >({});
 
   // EP-Q07 retry quiz state
-  const [retryingQuiz, setRetryingQuiz] = useState(false);
+  const scope = `${accessToken}:${attemptId}`;
+  const [retryingQuizScope, setRetryingQuizScope] = useState<string | null>(
+    null,
+  );
+  const retryingQuiz = retryingQuizScope === scope;
   const [retryQuizJob, setRetryQuizJob] = useState<JobAcceptedDTO | null>(null);
   const [retryQuizError, setRetryQuizError] = useState<MappedError | null>(
     null,
@@ -517,7 +521,8 @@ export function QuizResultView({
     ) {
       return;
     }
-    setRetryingQuiz(true);
+    const capturedScope = currentScopeRef.current;
+    setRetryingQuizScope(capturedScope);
     setRetryQuizError(null);
 
     if (!retryIdemKeyRef.current) {
@@ -525,7 +530,6 @@ export function QuizResultView({
     }
     const idemKey = retryIdemKeyRef.current;
 
-    const capturedScope = currentScopeRef.current;
     try {
       const outcome = await retryQuizAttempt(accessToken, attemptId, idemKey);
       retryIdemKeyRef.current = null;
@@ -559,8 +563,8 @@ export function QuizResultView({
       }
       setRetryQuizError(mapped);
     } finally {
-      if (mountedRef.current && currentScopeRef.current === capturedScope) {
-        setRetryingQuiz(false);
+      if (mountedRef.current) {
+        setRetryingQuizScope((prev) => (prev === capturedScope ? null : prev));
       }
     }
   };

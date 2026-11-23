@@ -425,5 +425,11 @@ describe('ProgressService (EP-G01, EP-G02, EP-G03 — level-scoped reads, weak_a
       expectContractError(err, 422, 'VALIDATION_FAILED');
       return true;
     });
+    await expect(
+      service.getProgressHistory(USER_ID, { from: '2026-02-30T00:00:00Z' }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
   });
 });

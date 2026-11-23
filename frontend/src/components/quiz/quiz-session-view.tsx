@@ -223,12 +223,19 @@ export function QuizSessionView({
     answers: Record<string, QuizDraftAnswer>;
   }>(draftsByAttempt);
   const submitIdemKeyRef = useRef<string | null>(null);
+  const quizPracticeEnabledRef = useRef(quizPracticeEnabled);
   const flushAutosaveRef = useRef<
     (
       targetAttemptId: string,
       answersSnapshot?: Record<string, QuizDraftAnswer>,
     ) => Promise<void>
   >(async () => {});
+  const scheduleAutosaveRef = useRef<
+    (
+      targetAttemptId: string,
+      answersSnapshot: Record<string, QuizDraftAnswer>,
+    ) => void
+  >(() => {});
 
   useEffect(() => {
     mountedRef.current = true;
@@ -284,6 +291,54 @@ export function QuizSessionView({
           attemptId: activeAttemptId,
           answers: initialDrafts,
         };
+        pendingPatchIdsRef.current.clear();
+        if (loaded.status === 'started') {
+          const serverById = new Map<string, QuizDraftAnswer>();
+          for (const saved of loaded.saved_answers ?? []) {
+            serverById.set(saved.question_id, {
+              selected_option_id: saved.selected_option_id ?? null,
+              text: saved.text ?? null,
+              i_dont_know: Boolean(saved.i_dont_know),
+            });
+          }
+          for (const q of loaded.questions) {
+            const mergedDraft = initialDrafts[q.question_id];
+            if (!mergedDraft) {
+              continue;
+            }
+            const serverDraft = serverById.get(q.question_id);
+            const differs = serverDraft
+              ? (mergedDraft.selected_option_id ?? null) !==
+                  (serverDraft.selected_option_id ?? null) ||
+                (mergedDraft.text ?? null) !== (serverDraft.text ?? null) ||
+                Boolean(mergedDraft.i_dont_know) !==
+                  Boolean(serverDraft.i_dont_know)
+              : isQuestionAnswered(mergedDraft);
+            if (differs) {
+              pendingPatchIdsRef.current.add(q.question_id);
+            }
+          }
+          if (
+            pendingPatchIdsRef.current.size > 0 &&
+            quizPracticeEnabledRef.current
+          ) {
+            scheduleAutosaveRef.current(activeAttemptId, initialDrafts);
+          }
+        } else if (
+          loaded.status === 'submitted' ||
+          loaded.status === 'ai_reviewed' ||
+          loaded.status === 'feedback_available'
+        ) {
+          if (typeof window !== 'undefined') {
+            try {
+              window.sessionStorage.removeItem(
+                `${STORAGE_KEY_PREFIX}${activeAttemptId}`,
+              );
+            } catch {
+              // Ignore storage errors
+            }
+          }
+        }
         setAttemptState({ id: activeAttemptId, attempt: loaded });
         setDraftsByAttempt({
           attemptId: activeAttemptId,
@@ -408,23 +463,55 @@ export function QuizSessionView({
                 pendingPatchIdsRef.current.delete(qId);
               }
             }
-            // Retain only unacknowledged edits in sessionStorage backup
+            // Retain only unacknowledged edits (plus any recovered un-sent backup entries) in sessionStorage
             if (typeof window !== 'undefined') {
               try {
                 const storageKey = `${STORAGE_KEY_PREFIX}${targetAttemptId}`;
-                const unacknowledged: Record<string, QuizDraftAnswer> = {};
+                const nextBackup: Record<string, QuizDraftAnswer> = {};
+                const rawExisting = window.sessionStorage.getItem(storageKey);
+                if (rawExisting) {
+                  try {
+                    const parsed = JSON.parse(rawExisting) as Record<
+                      string,
+                      QuizDraftAnswer
+                    >;
+                    if (parsed && typeof parsed === 'object') {
+                      for (const [qId, savedDraft] of Object.entries(parsed)) {
+                        if (savedDraft && typeof savedDraft === 'object') {
+                          nextBackup[qId] = savedDraft;
+                        }
+                      }
+                    }
+                  } catch {
+                    // Ignore malformed backup JSON
+                  }
+                }
+                for (const [qId, sentDraft] of sentDraftById.entries()) {
+                  const current = latestAnswers[qId];
+                  if (
+                    current &&
+                    current.selected_option_id ===
+                      sentDraft.selected_option_id &&
+                    current.text === sentDraft.text &&
+                    current.i_dont_know === sentDraft.i_dont_know
+                  ) {
+                    delete nextBackup[qId];
+                  } else if (current) {
+                    nextBackup[qId] = current;
+                  }
+                }
                 for (const pendingId of pendingPatchIdsRef.current) {
                   const pendingDraft = latestAnswers[pendingId];
                   if (pendingDraft) {
-                    unacknowledged[pendingId] = pendingDraft;
+                    nextBackup[pendingId] = pendingDraft;
                   }
                 }
-                if (Object.keys(unacknowledged).length === 0) {
+                if (Object.keys(nextBackup).length === 0) {
                   window.sessionStorage.removeItem(storageKey);
                 } else {
                   window.sessionStorage.setItem(
                     storageKey,
-                    JSON.stringify(unacknowledged),
+                    JSON.stringify(nextBackup),
                   );
                 }
               } catch {
@@ -525,6 +612,11 @@ export function QuizSessionView({
     },
     [flushAutosave],
   );
+
+  useEffect(() => {
+    quizPracticeEnabledRef.current = quizPracticeEnabled;
+    scheduleAutosaveRef.current = scheduleAutosave;
+  }, [quizPracticeEnabled, scheduleAutosave]);
 
   const updateQuestionDraft = useCallback(
     (

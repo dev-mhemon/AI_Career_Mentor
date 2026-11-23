@@ -190,20 +190,24 @@ function parseOptionalIsoBound(
   if (!STRICT_ISO_8601_PATTERN.test(trimmed)) {
     invalidError();
   }
-  const datePart = trimmed.slice(0, 10);
+  const year = Number(trimmed.slice(0, 4));
+  const month = Number(trimmed.slice(5, 7));
+  const day = Number(trimmed.slice(8, 10));
+  const calendarCheck = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarCheck.getUTCFullYear() !== year ||
+    calendarCheck.getUTCMonth() + 1 !== month ||
+    calendarCheck.getUTCDate() !== day
+  ) {
+    invalidError();
+  }
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) {
     invalidError();
   }
-  // Reject non-existent calendar dates (e.g. 2026-02-30) that V8 Date rolls forward
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    if (parsed.toISOString().slice(0, 10) !== datePart) {
-      invalidError();
-    }
-    if (field === 'to') {
-      const endOfDay = new Date(`${trimmed}T23:59:59.999Z`);
-      return endOfDay.toISOString();
-    }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed) && field === 'to') {
+    const endOfDay = new Date(`${trimmed}T23:59:59.999Z`);
+    return endOfDay.toISOString();
   }
   return parsed.toISOString();
 }

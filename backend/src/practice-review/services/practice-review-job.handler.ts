@@ -783,11 +783,18 @@ export class PracticeReviewJobHandler implements JobHandler {
       if (rawSubmittedAnswer.length < 8) {
         return entry;
       }
-      const escaped = rawSubmittedAnswer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return entry.replace(
-        new RegExp(escaped, 'gi'),
-        '[submitted response redacted]',
-      );
+      const needleLower = rawSubmittedAnswer.toLowerCase();
+      const entryLower = entry.toLowerCase();
+      const replacement = '[submitted response redacted]';
+      let resultText = '';
+      let cursor = 0;
+      let matchIdx = entryLower.indexOf(needleLower, cursor);
+      while (matchIdx !== -1) {
+        resultText += entry.slice(cursor, matchIdx) + replacement;
+        cursor = matchIdx + needleLower.length;
+        matchIdx = entryLower.indexOf(needleLower, cursor);
+      }
+      return cursor === 0 ? entry : resultText + entry.slice(cursor);
     };
     const sanitizedStrengths = normalized.strengths.map(redactSubmittedAnswer);
     const sanitizedMistakes = normalized.mistakes.map(redactSubmittedAnswer);
