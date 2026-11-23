@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module.js';
 import { JobsModule } from '../jobs/jobs.module.js';
 import { PostgresJobQueueConsumer } from '../jobs/services/postgres-job-queue.consumer.js';
 import { LearningController } from './controllers/learning.controller.js';
+import { DailyPlanReconciler } from './services/daily-plan-reconciler.service.js';
 import { DailyPlanService } from './services/daily-plan.service.js';
 import { TodayService } from './services/today.service.js';
 import {
@@ -24,12 +25,14 @@ import { TopicContentService } from './services/topic-content.service.js';
   controllers: [LearningController],
   providers: [
     DailyPlanService,
+    DailyPlanReconciler,
     TodayService,
     TopicContentService,
     TopicContentJobHandler,
   ],
   exports: [
     DailyPlanService,
+    DailyPlanReconciler,
     TodayService,
     TopicContentService,
     TopicContentJobHandler,

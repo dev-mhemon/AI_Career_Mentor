@@ -40,6 +40,12 @@ import {
   lockRoadmap,
   listRoadmapVersions,
   getRoadmapVersion,
+  createRoadmapMerge,
+  listRoadmapMerges,
+  getRoadmapMerge,
+  acceptRoadmapMerge,
+  rejectRoadmapMerge,
+  undoLastRoadmapMerge,
   focusRoadmap,
   archiveRoadmap,
   getDailyPlan,
@@ -1971,5 +1977,232 @@ describe('M08 Quiz, Practice Review & Progress API client (EP-Q01..Q07, EP-PR01.
       expect.any(Object),
     );
     expect(invalidLimitHistory.meta.limit).toBe(20);
+  });
+
+  it('calls M09 roadmap merge endpoints (EP-R08–EP-R13) with Idempotency-Key and If-Match headers', async () => {
+    const RM_ID = '22222222-2222-4222-8222-222222222222';
+    const MERGE_ID = '66666666-6666-4666-8666-666666666666';
+    const IDEM_1 = '11111111-1111-4111-8111-111111111111';
+    const IDEM_2 = '33333333-3333-4333-8333-333333333333';
+    const IDEM_3 = '44444444-4444-4444-8444-444444444444';
+
+    // EP-R08 createRoadmapMerge
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            job_id: 'job-m-1',
+            kind: 'merge_proposal',
+            status: 'queued',
+            poll_url: '/api/v1/jobs/job-m-1',
+            retry_after_seconds: 3,
+          },
+        }),
+    });
+    const created = await createRoadmapMerge(
+      MOCK_TOKEN,
+      RM_ID,
+      { origin: 'level_change', target_level: 'senior', base_version_no: 2 },
+      IDEM_1,
+      2,
+    );
+    expect(created.kind).toBe('merge_proposal');
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${RM_ID}/merges`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Idempotency-Key': IDEM_1,
+          'If-Match': '2',
+        }),
+      }),
+    );
+
+    // EP-R09 listRoadmapMerges
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [],
+          meta: { limit: 10, next_cursor: null },
+        }),
+    });
+    const listed = await listRoadmapMerges(MOCK_TOKEN, RM_ID, {
+      status: 'proposed',
+      limit: 10.7,
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${RM_ID}/merges?status=proposed&limit=10`,
+      expect.any(Object),
+    );
+    expect(listed.meta.limit).toBe(10);
+
+    // EP-R10 getRoadmapMerge
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            id: MERGE_ID,
+            roadmap_id: RM_ID,
+            status: 'proposed',
+            operations: [],
+          },
+        }),
+    });
+    const detail = await getRoadmapMerge(MOCK_TOKEN, RM_ID, MERGE_ID);
+    expect(detail.id).toBe(MERGE_ID);
+    const getDetailCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    expect(getDetailCall?.[0]).toBe(
+      `http://localhost:3000/api/v1/roadmaps/${RM_ID}/merges/${MERGE_ID}`,
+    );
+    expect((getDetailCall?.[1] as RequestInit | undefined)?.method ?? 'GET').toBe(
+      'GET',
+    );
+
+    // EP-R11 acceptRoadmapMerge
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            roadmap_id: RM_ID,
+            merge_id: MERGE_ID,
+            new_version_no: 3,
+            undo_available: true,
+            daily_plan_reconciled: true,
+          },
+        }),
+    });
+    const accepted = await acceptRoadmapMerge(
+      MOCK_TOKEN,
+      RM_ID,
+      MERGE_ID,
+      { base_version_no: 2, acknowledge_large_expansion: true },
+      IDEM_2,
+      2,
+    );
+    expect(accepted.new_version_no).toBe(3);
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${RM_ID}/merges/${MERGE_ID}/accept`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Idempotency-Key': IDEM_2,
+          'If-Match': '2',
+        }),
+      }),
+    );
+
+    // EP-R12 rejectRoadmapMerge
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            merge_id: MERGE_ID,
+            status: 'rejected',
+            rejected_at: '2026-11-23T12:00:00.000Z',
+          },
+        }),
+    });
+    const rejected = await rejectRoadmapMerge(MOCK_TOKEN, RM_ID, MERGE_ID);
+    expect(rejected.status).toBe('rejected');
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${RM_ID}/merges/${MERGE_ID}/reject`,
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
+
+    // EP-R13 undoLastRoadmapMerge
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            restored_version_no: 2,
+            merge_id: MERGE_ID,
+            status: 'undone',
+          },
+        }),
+    });
+    const undone = await undoLastRoadmapMerge(MOCK_TOKEN, RM_ID, IDEM_3);
+    expect(undone.restored_version_no).toBe(2);
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/roadmaps/${RM_ID}/merges/undo`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Idempotency-Key': IDEM_3,
+        }),
+      }),
+    );
+  });
+
+  it('rejects malformed merge list and merge detail payloads with controlled ApiError', async () => {
+    const RM_ID = '22222222-2222-4222-8222-222222222222';
+    const MERGE_ID = '66666666-6666-4666-8666-666666666666';
+
+    // Valid wrapped empty list still works
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { items: [] },
+          meta: { limit: 20, next_cursor: null },
+        }),
+    });
+    await expect(listRoadmapMerges(MOCK_TOKEN, RM_ID)).resolves.toEqual({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    // Malformed { items: null } rejected
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { items: null },
+        }),
+    });
+    await expect(listRoadmapMerges(MOCK_TOKEN, RM_ID)).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+
+    // Malformed detail missing operations array rejected
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { id: MERGE_ID, roadmap_id: RM_ID, operations: null },
+        }),
+    });
+    await expect(
+      getRoadmapMerge(MOCK_TOKEN, RM_ID, MERGE_ID),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
   });
 });

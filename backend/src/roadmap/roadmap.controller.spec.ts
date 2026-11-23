@@ -4,6 +4,7 @@ import {
   Logger,
   type INestApplication,
   Module,
+  RequestMethod,
 } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -27,6 +28,7 @@ import {
 import { JobProducerService } from '../jobs/services/job-producer.service.js';
 import { PostgresJobQueueConsumer } from '../jobs/services/postgres-job-queue.consumer.js';
 import { RoadmapController } from './controllers/roadmap.controller.js';
+import type { RoadmapMergeService } from './services/roadmap-merge.service.js';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import {
@@ -42,6 +44,7 @@ import {
   type RoadmapVersionDTO,
 } from './dto/roadmap.dto.js';
 import { RoadmapModule } from './roadmap.module.js';
+import { MergeProposalJobHandler } from './services/merge-proposal-job.handler.js';
 import { RoadmapJobHandler } from './services/roadmap-job.handler.js';
 import { RoadmapService } from './services/roadmap.service.js';
 
@@ -371,7 +374,23 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     }
   });
 
-  it('strictly excludes EP-R08–EP-R13 merge routes and EP-L01–EP-L07 learning routes', () => {
+  it('exposes exact (method, path) pairs for all 6 merge routes (EP-R08–EP-R13) and no learning routes on RoadmapController', () => {
+    const expectedMergeRoutes = [
+      'POST :id/merges',
+      'GET :id/merges',
+      'GET :id/merges/:merge_id',
+      'POST :id/merges/:merge_id/accept',
+      'POST :id/merges/:merge_id/reject',
+      'POST :id/merges/undo',
+    ].sort();
+    const methodNames: Record<number, string> = {
+      [RequestMethod.GET]: 'GET',
+      [RequestMethod.POST]: 'POST',
+      [RequestMethod.PUT]: 'PUT',
+      [RequestMethod.PATCH]: 'PATCH',
+      [RequestMethod.DELETE]: 'DELETE',
+    };
+    const discoveredMergeRoutes: string[] = [];
     for (const key of Object.getOwnPropertyNames(RoadmapController.prototype)) {
       if (key === 'constructor') continue;
       const fn = (
@@ -379,11 +398,90 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       )[key];
       if (typeof fn === 'function') {
         const routePath = String(Reflect.getMetadata('path', fn) ?? '');
-        expect(routePath).not.toContain('merge');
+        const routeMethod = Reflect.getMetadata('method', fn) as
+          number | undefined;
+        if (routePath.includes('merge')) {
+          const methodName =
+            routeMethod !== undefined ? methodNames[routeMethod] : 'UNKNOWN';
+          discoveredMergeRoutes.push(`${methodName} ${routePath}`);
+        }
         expect(routePath).not.toContain('learning');
         expect(routePath).not.toContain('daily-plan');
       }
     }
+    expect(discoveredMergeRoutes.sort()).toEqual(expectedMergeRoutes);
+    expect(
+      Reflect.getMetadata(
+        'access-policy',
+        RoadmapController.prototype.acceptMergeProposal,
+      ),
+    ).toEqual({ feature: 'roadmap_generator' });
+    expect(
+      Reflect.getMetadata(
+        'access-policy',
+        RoadmapController.prototype.undoLastMerge,
+      ),
+    ).toEqual({});
+  });
+
+  it('forwards optional If-Match on EP-R13 undoLastMerge and includes it in the idempotency fingerprint', async () => {
+    const undoResponse = {
+      restored_version_no: 3,
+      merge_id: '66666666-6666-4666-8666-666666666666',
+      status: 'undone' as const,
+    };
+    const mergeServiceMock = {
+      undoLastMerge: vi.fn().mockResolvedValue(undoResponse),
+    };
+    const ctrl = new RoadmapController(
+      serviceMock as unknown as RoadmapService,
+      idempotencyService,
+      mergeServiceMock as unknown as RoadmapMergeService,
+    );
+
+    const key1 = '99999999-9999-4999-8999-999999999911';
+    const first = await ctrl.undoLastMerge(
+      {
+        user: { sub: USER_ID },
+        headers: { 'idempotency-key': key1, 'if-match': '"4"' },
+      },
+      ROADMAP_ID,
+    );
+    expect(first).toEqual(undoResponse);
+    expect(mergeServiceMock.undoLastMerge).toHaveBeenCalledWith(
+      USER_ID,
+      ROADMAP_ID,
+      { ifMatch: 4 },
+    );
+
+    // Same key with different If-Match -> 409 IDEMPOTENCY_KEY_REUSED
+    await expect(
+      ctrl.undoLastMerge(
+        {
+          user: { sub: USER_ID },
+          headers: { 'idempotency-key': key1, 'if-match': '"5"' },
+        },
+        ROADMAP_ID,
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 409, 'IDEMPOTENCY_KEY_REUSED');
+      return true;
+    });
+
+    // Omitting If-Match preserves existing behavior ({ ifMatch: undefined })
+    const key2 = '99999999-9999-4999-8999-999999999912';
+    await ctrl.undoLastMerge(
+      {
+        user: { sub: USER_ID },
+        headers: { 'idempotency-key': key2 },
+      },
+      ROADMAP_ID,
+    );
+    expect(mergeServiceMock.undoLastMerge).toHaveBeenLastCalledWith(
+      USER_ID,
+      ROADMAP_ID,
+      { ifMatch: undefined },
+    );
   });
 
   it('enforces H-IDEM on EP-R01, EP-R04, and EP-R05 (missing key -> 400, replay -> same body, reuse different body or If-Match -> 409)', async () => {
@@ -790,12 +888,17 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     }
   });
 
-  it('registers RoadmapJobHandler for roadmap_generate & roadmap_revision on module init when consumer exposes registerHandler', () => {
+  it('registers RoadmapJobHandler and MergeProposalJobHandler on module init when consumer exposes registerHandler', () => {
     const handlerMock = {} as RoadmapJobHandler;
+    const mergeHandlerMock = {} as MergeProposalJobHandler;
     const registerHandler = vi.fn();
-    const moduleWithRegistrar = new RoadmapModule(handlerMock, {
-      registerHandler,
-    } as unknown as PostgresJobQueueConsumer);
+    const moduleWithRegistrar = new RoadmapModule(
+      handlerMock,
+      mergeHandlerMock,
+      {
+        registerHandler,
+      } as unknown as PostgresJobQueueConsumer,
+    );
     moduleWithRegistrar.onModuleInit();
 
     expect(registerHandler).toHaveBeenCalledWith(
@@ -806,9 +909,14 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
       'roadmap_revision',
       handlerMock,
     );
+    expect(registerHandler).toHaveBeenCalledWith(
+      'merge_proposal',
+      mergeHandlerMock,
+    );
 
     const moduleWithoutRegistrar = new RoadmapModule(
       handlerMock,
+      mergeHandlerMock,
       {} as PostgresJobQueueConsumer,
     );
     expect(() => moduleWithoutRegistrar.onModuleInit()).not.toThrow();
@@ -820,9 +928,13 @@ describe('RoadmapController (EP-R01–EP-R07, EP-R14, EP-R15 /api/v1/roadmaps)',
     try {
       process.env.NODE_ENV = 'development';
       delete process.env.VITEST;
-      const moduleWithConsumer = new RoadmapModule(handlerMock, {
-        start: startMock,
-      } as unknown as PostgresJobQueueConsumer);
+      const moduleWithConsumer = new RoadmapModule(
+        handlerMock,
+        mergeHandlerMock,
+        {
+          start: startMock,
+        } as unknown as PostgresJobQueueConsumer,
+      );
       moduleWithConsumer.onModuleInit();
       expect(startMock).toHaveBeenCalledTimes(1);
       expect(startMock).toHaveBeenCalledWith(handlerMock);

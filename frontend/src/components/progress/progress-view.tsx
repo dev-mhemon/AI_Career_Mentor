@@ -16,7 +16,6 @@ import {
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/components/ui/cn';
 import {
   AlertCircleIcon,
   BookOpenIcon,
@@ -28,6 +27,7 @@ import {
   RefreshCwIcon,
   TargetIcon,
 } from '@/components/ui/icons';
+import { SegmentedTabs } from '@/components/ui/segmented-tabs';
 import { Select } from '@/components/ui/select';
 import { ProgressHistoryCard } from './progress-history-card';
 import { SkillDetailDrawer } from './skill-detail-drawer';
@@ -200,7 +200,6 @@ export function ProgressView({
   const historyGenRef = useRef(0);
   const loadMoreSkillsReqIdRef = useRef(0);
   const loadMoreHistoryReqIdRef = useRef(0);
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const hasActiveFilters = Boolean(
     selectedRoadmapId || selectedCareerLevel || selectedLearningState,
@@ -562,33 +561,6 @@ export function ProgressView({
     }
   };
 
-  const handleTabKeyDown = (
-    e: React.KeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) => {
-    const count = PROGRESS_TABS.length;
-    let nextIdx: number | null = null;
-    if (e.key === 'ArrowRight') {
-      nextIdx = (index + 1) % count;
-    } else if (e.key === 'ArrowLeft') {
-      nextIdx = (index - 1 + count) % count;
-    } else if (e.key === 'Home') {
-      nextIdx = 0;
-    } else if (e.key === 'End') {
-      nextIdx = count - 1;
-    }
-    if (nextIdx === null) {
-      return;
-    }
-    e.preventDefault();
-    const target = PROGRESS_TABS[nextIdx];
-    if (target) {
-      setActiveTab(target.key);
-      tabRefs.current[nextIdx]?.focus();
-    }
-  };
-
-  const selectedTabIndex = PROGRESS_TABS.findIndex((t) => t.key === activeTab);
   const selectedTabId = `${tabListId}-tab-${activeTab}`;
   const roadmapProgress = activeProgressData?.progress.roadmap_progress;
   const roadmapCompletionPct =
@@ -719,52 +691,32 @@ export function ProgressView({
       )}
 
       {/* Accessible 4-Tab Bar */}
-      <div className="border-b border-slate-200 dark:border-slate-800">
-        <div
-          role="tablist"
-          aria-label="Skill progress views"
-          className="-mb-px flex flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-        >
-          {PROGRESS_TABS.map((tab, idx) => {
-            const selected = idx === selectedTabIndex;
-            const badgeCount =
-              tab.key === 'shared_skills'
-                ? sharedSkills.length
-                : tab.key === 'weak_areas'
-                  ? weakAreas.length
-                  : null;
-            return (
-              <button
-                key={tab.key}
-                ref={(el) => {
-                  tabRefs.current[idx] = el;
-                }}
-                role="tab"
-                type="button"
-                id={`${tabListId}-tab-${tab.key}`}
-                aria-selected={selected}
-                aria-controls={`${tabListId}-panel`}
-                tabIndex={selected ? 0 : -1}
-                onClick={() => setActiveTab(tab.key)}
-                onKeyDown={(e) => handleTabKeyDown(e, idx)}
-                className={cn(
-                  'inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap border-b-2 px-4 text-label-md font-medium leading-none transition-colors',
-                  selected
-                    ? 'border-teal-600 text-teal-700 dark:border-teal-400 dark:text-teal-300'
-                    : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100',
-                )}
-              >
-                <span>{tab.label}</span>
-                {badgeCount !== null && badgeCount > 0 && (
-                  <span className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold leading-none tabular-nums text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                    {badgeCount}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <SegmentedTabs
+        label="Progress Views"
+        ariaLabel="Skill progress views"
+        idPrefix={tabListId}
+        panelId={`${tabListId}-panel`}
+        activeId={activeTab}
+        onChange={(id) => setActiveTab(id as ProgressTabKey)}
+        items={PROGRESS_TABS.map((tab) => {
+          const badgeCount =
+            tab.key === 'shared_skills'
+              ? sharedSkills.length
+              : tab.key === 'weak_areas'
+                ? weakAreas.length
+                : null;
+          return {
+            id: tab.key,
+            label: tab.label,
+            badge:
+              badgeCount !== null && badgeCount > 0 ? (
+                <span className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold leading-none tabular-nums text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {badgeCount}
+                </span>
+              ) : undefined,
+          };
+        })}
+      />
 
       {/* Filters Bar (for Overview & Shared Skills & Weak Areas) */}
       {activeTab !== 'history' && (

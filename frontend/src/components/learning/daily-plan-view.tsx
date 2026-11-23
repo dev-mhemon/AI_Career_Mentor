@@ -11,6 +11,7 @@ import {
 } from 'react';
 import {
   ApiError,
+  focusRoadmap,
   getDailyPlan,
   listRoadmaps,
   type DailyPlanResponseDTO,
@@ -20,7 +21,6 @@ import {
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/components/ui/cn';
 import { IconButton } from '@/components/ui/icon-button';
 import {
   BookOpenIcon,
@@ -32,6 +32,7 @@ import {
   RefreshCwIcon,
   TargetIcon,
 } from '@/components/ui/icons';
+import { SegmentedTabs } from '@/components/ui/segmented-tabs';
 import { DailyTaskCard } from './daily-task-card';
 import { HoursPromptModal } from './hours-prompt-modal';
 
@@ -115,14 +116,29 @@ export function DailyPlanView({
   const [loadingMoreKey, setLoadingMoreKey] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<MappedError | null>(null);
   const [modalMode, setModalMode] = useState<'create' | 'rebuild' | null>(null);
+  const [focusOverride, setFocusOverride] = useState<{
+    token: string;
+    focusRoadmapId: string;
+    seq: number;
+  } | null>(null);
+  const [switchingFocus, setSwitchingFocus] = useState(false);
+  const [focusError, setFocusError] = useState<MappedError | null>(null);
   const [banner, setBanner] = useState<{ id: number; message: string } | null>(
     null,
   );
 
   const requestGenRef = useRef(0);
+  const focusMutationSeqRef = useRef(0);
   const bannerSeqRef = useRef(0);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!banner) {
@@ -139,11 +155,32 @@ export function DailyPlanView({
   const scopeKey = `${accessToken}:${selectedRoadmapId ?? 'focus'}`;
   const requestKey = `${scopeKey}:${reloadTick}`;
   const loadingMore = loadingMoreKey === requestKey;
-  const lockedRoadmaps = initialLockedRoadmaps
-    ? initialLockedRoadmaps
-    : lockedRoadmapsState && lockedRoadmapsState.token === accessToken
-      ? lockedRoadmapsState.items
-      : [];
+  const activeFocusOverrideId =
+    focusOverride && focusOverride.token === accessToken
+      ? focusOverride.focusRoadmapId
+      : null;
+  const lockedRoadmaps = useMemo(() => {
+    const raw = initialLockedRoadmaps
+      ? initialLockedRoadmaps
+      : lockedRoadmapsState && lockedRoadmapsState.token === accessToken
+        ? lockedRoadmapsState.items
+        : [];
+    const normalized = activeFocusOverrideId
+      ? raw.map((rm) => ({
+          ...rm,
+          is_focus: rm.id === activeFocusOverrideId,
+        }))
+      : raw;
+    return [...normalized].sort((a, b) => {
+      if (a.is_focus === b.is_focus) return 0;
+      return a.is_focus ? -1 : 1;
+    });
+  }, [
+    accessToken,
+    activeFocusOverrideId,
+    initialLockedRoadmaps,
+    lockedRoadmapsState,
+  ]);
   const metadataKey = `${accessToken}:${metadataReloadTick}`;
   const activeMetadataError =
     !initialLockedRoadmaps &&
@@ -179,6 +216,7 @@ export function DailyPlanView({
       return;
     }
     let active = true;
+    const startFocusSeq = focusMutationSeqRef.current;
     const controller = new AbortController();
 
     listRoadmaps(
@@ -191,6 +229,13 @@ export function DailyPlanView({
           return;
         }
         setLockedRoadmapsState({ token: accessToken, items: res.items });
+        if (startFocusSeq === focusMutationSeqRef.current) {
+          setFocusOverride((prev) =>
+            prev && prev.token === accessToken && prev.seq <= startFocusSeq
+              ? null
+              : prev,
+          );
+        }
         setMetadataErrorState(null);
       })
       .catch((err) => {
@@ -213,6 +258,7 @@ export function DailyPlanView({
 
     loadMoreAbortRef.current?.abort();
     const gen = ++requestGenRef.current;
+    const startFocusSeq = focusMutationSeqRef.current;
     const controller = new AbortController();
 
     getDailyPlan(
@@ -226,6 +272,49 @@ export function DailyPlanView({
       .then((res) => {
         if (gen !== requestGenRef.current || controller.signal.aborted) {
           return;
+        }
+        const isFreshAfterFocusMutation =
+          startFocusSeq === focusMutationSeqRef.current;
+        if (isFreshAfterFocusMutation) {
+          setFocusOverride((prev) => {
+            if (!prev || prev.token !== accessToken || prev.seq > startFocusSeq) {
+              return prev;
+            }
+            if (
+              res.plan.is_focus &&
+              prev.focusRoadmapId !== res.plan.roadmap_id
+            ) {
+              return {
+                token: accessToken,
+                focusRoadmapId: res.plan.roadmap_id,
+                seq: startFocusSeq,
+              };
+            }
+            if (
+              !res.plan.is_focus &&
+              prev.focusRoadmapId === res.plan.roadmap_id
+            ) {
+              return null;
+            }
+            return prev;
+          });
+          setLockedRoadmapsState((prev) => {
+            if (!prev || prev.token !== accessToken) {
+              return prev;
+            }
+            return {
+              token: prev.token,
+              items: prev.items.map((rm) => {
+                if (res.plan.is_focus) {
+                  return { ...rm, is_focus: rm.id === res.plan.roadmap_id };
+                }
+                if (rm.id === res.plan.roadmap_id && rm.is_focus) {
+                  return { ...rm, is_focus: false };
+                }
+                return rm;
+              }),
+            };
+          });
         }
         setFetchState({
           key: requestKey,
@@ -292,13 +381,84 @@ export function DailyPlanView({
     selectedRoadmapId ?? loadedPlan?.roadmap_id ?? activeRoadmapMeta?.id ?? null;
 
   const handleSelectRoadmap = (roadmapId: string) => {
-    if (loadingMore || modalMode !== null) {
+    if (loadingMore || modalMode !== null || switchingFocus) {
       return;
     }
     loadMoreAbortRef.current?.abort();
     setLoadMoreError(null);
+    setFocusError(null);
     setBanner(null);
     setSelectedRoadmapId(roadmapId);
+  };
+
+  const handleSetFocusToStudy = async (roadmapId: string) => {
+    if (switchingFocus || loadingMore || modalMode !== null) {
+      return;
+    }
+    setSwitchingFocus(true);
+    setFocusError(null);
+    setBanner(null);
+    try {
+      const res = await focusRoadmap(accessToken, roadmapId);
+      if (!mountedRef.current) {
+        return;
+      }
+      const nextFocusId = res.focus_roadmap_id || roadmapId;
+      const nextFocusSeq = ++focusMutationSeqRef.current;
+      setFocusOverride({
+        token: accessToken,
+        focusRoadmapId: nextFocusId,
+        seq: nextFocusSeq,
+      });
+      setLockedRoadmapsState((prev) =>
+        prev && prev.token === accessToken
+          ? {
+              token: prev.token,
+              items: prev.items.map((rm) => ({
+                ...rm,
+                is_focus: rm.id === nextFocusId,
+              })),
+            }
+          : prev,
+      );
+      setFetchState((prev) =>
+        prev && prev.key === requestKey && prev.status === 'loaded'
+          ? {
+              ...prev,
+              plan: {
+                ...prev.plan,
+                is_focus: prev.plan.roadmap_id === nextFocusId,
+              },
+            }
+          : prev,
+      );
+      setConfirmedPlanState((prev) =>
+        prev && prev.scopeKey === scopeKey
+          ? {
+              ...prev,
+              plan: {
+                ...prev.plan,
+                is_focus: prev.plan.roadmap_id === nextFocusId,
+              },
+            }
+          : prev,
+      );
+      bannerSeqRef.current += 1;
+      setBanner({
+        id: bannerSeqRef.current,
+        message:
+          "Focus Roadmap updated. You can now open Today's Learning to study this plan.",
+      });
+    } catch (err) {
+      if (!mountedRef.current) {
+        return;
+      }
+      setFocusError(mapApiError(err));
+    } finally {
+      if (mountedRef.current) {
+        setSwitchingFocus(false);
+      }
+    }
   };
 
   const handleLoadMore = async () => {
@@ -381,38 +541,11 @@ export function DailyPlanView({
     (rm) => rm.id === effectiveRoadmapId,
   );
   const selectedTabIndex = activeTabIndex >= 0 ? activeTabIndex : 0;
-  const selectedTabId = hasRoadmapTabs
-    ? `${tabListId}-tab-${lockedRoadmaps[selectedTabIndex]?.id}`
-    : undefined;
-
-  const handleTabKeyDown = (
-    e: React.KeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) => {
-    if (!hasRoadmapTabs || loadingMore || modalMode !== null) {
-      return;
-    }
-    const count = lockedRoadmaps.length;
-    let nextIdx: number | null = null;
-    if (e.key === 'ArrowRight') {
-      nextIdx = (index + 1) % count;
-    } else if (e.key === 'ArrowLeft') {
-      nextIdx = (index - 1 + count) % count;
-    } else if (e.key === 'Home') {
-      nextIdx = 0;
-    } else if (e.key === 'End') {
-      nextIdx = count - 1;
-    }
-    if (nextIdx === null) {
-      return;
-    }
-    e.preventDefault();
-    const target = lockedRoadmaps[nextIdx];
-    if (target) {
-      handleSelectRoadmap(target.id);
-      tabRefs.current[nextIdx]?.focus();
-    }
-  };
+  const activeTabRoadmapId = lockedRoadmaps[selectedTabIndex]?.id ?? '';
+  const selectedTabId =
+    hasRoadmapTabs && activeTabRoadmapId
+      ? `${tabListId}-tab-${activeTabRoadmapId}`
+      : undefined;
 
   const progressPct =
     loadedPlan && loadedPlan.total_days > 0
@@ -468,47 +601,24 @@ export function DailyPlanView({
       </header>
 
       {hasRoadmapTabs && (
-        <div className="border-b border-slate-200 dark:border-slate-800">
-          <div
-            role="tablist"
-            aria-label="Select locked roadmap Daily Plan"
-            className="-mb-px flex flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-          >
-            {lockedRoadmaps.map((rm, idx) => {
-              const selected = idx === selectedTabIndex;
-              return (
-                <button
-                  key={rm.id}
-                  ref={(el) => {
-                    tabRefs.current[idx] = el;
-                  }}
-                  role="tab"
-                  type="button"
-                  id={`${tabListId}-tab-${rm.id}`}
-                  aria-selected={selected}
-                  aria-controls={`${tabListId}-panel`}
-                  tabIndex={selected ? 0 : -1}
-                  disabled={loadingMore}
-                  onClick={() => handleSelectRoadmap(rm.id)}
-                  onKeyDown={(e) => handleTabKeyDown(e, idx)}
-                  className={cn(
-                    'inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-3.5 text-label-md font-medium leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                    selected
-                      ? 'border-teal-600 text-teal-700 dark:border-teal-400 dark:text-teal-300'
-                      : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100',
-                  )}
-                >
-                  <span dir="auto">{rm.role_name}</span>
-                  {rm.is_focus && (
-                    <span className="inline-flex items-center justify-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[11px] font-semibold leading-none text-teal-700 dark:border-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
-                      Focus
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <SegmentedTabs
+          label="Roadmaps"
+          ariaLabel="Select locked roadmap Daily Plan"
+          idPrefix={tabListId}
+          panelId={`${tabListId}-panel`}
+          activeId={activeTabRoadmapId}
+          disabled={loadingMore || switchingFocus || modalMode !== null}
+          onChange={handleSelectRoadmap}
+          items={lockedRoadmaps.map((rm) => ({
+            id: rm.id,
+            label: rm.role_name,
+            badge: rm.is_focus ? (
+              <span className="inline-flex shrink-0 items-center justify-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[11px] font-semibold leading-none text-teal-700 dark:border-teal-800 dark:bg-teal-950/60 dark:text-teal-300">
+                Focus
+              </span>
+            ) : undefined,
+          }))}
+        />
       )}
 
       {!dailyPlanEnabled && (
@@ -725,7 +835,11 @@ export function DailyPlanView({
                 </div>
                 <span className="text-caption leading-snug text-slate-500 dark:text-slate-400">
                   Roadmap v{loadedPlan.roadmap_version_no}
-                  {loadedPlan.is_focus ? ' · Focus Roadmap' : ''}
+                  {(activeFocusOverrideId !== null
+                    ? loadedPlan.roadmap_id === activeFocusOverrideId
+                    : loadedPlan.is_focus)
+                    ? ' · Focus Roadmap'
+                    : ''}
                 </span>
               </div>
 
@@ -763,12 +877,20 @@ export function DailyPlanView({
                     : 'All days complete'}
                 </p>
                 <span className="text-caption leading-snug text-slate-500 dark:text-slate-400">
-                  {loadedPlan.is_focus
+                  {(activeFocusOverrideId !== null
+                    ? loadedPlan.roadmap_id === activeFocusOverrideId
+                    : loadedPlan.is_focus)
                     ? 'Drives your Today view'
                     : 'Non-Focus roadmap plan'}
                 </span>
               </div>
             </section>
+
+            {focusError && (
+              <Alert variant="error_retryable" role="alert">
+                {focusError.message}
+              </Alert>
+            )}
 
             {/* Sequential Timeline */}
             <section
@@ -778,6 +900,10 @@ export function DailyPlanView({
               {days.map((day) => {
                 const isNextDay =
                   loadedPlan.next_incomplete_day_no === day.day_no;
+                const isPlanFocus =
+                  activeFocusOverrideId !== null
+                    ? loadedPlan.roadmap_id === activeFocusOverrideId
+                    : loadedPlan.is_focus;
                 return (
                   <DailyTaskCard
                     key={day.day_no}
@@ -785,13 +911,31 @@ export function DailyPlanView({
                     status={day.status}
                     topics={day.topics}
                     isActiveDay={isNextDay}
-                    isFocusRoadmap={loadedPlan.is_focus}
+                    isFocusRoadmap={isPlanFocus}
                     action={
-                      isNextDay && loadedPlan.is_focus ? (
+                      isNextDay && isPlanFocus ? (
                         <Link href="/today" className={primaryLinkClass}>
                           <BookOpenIcon className="block h-4 w-4 shrink-0" />
                           <span>Study Day {day.day_no}</span>
                         </Link>
+                      ) : isNextDay && !isPlanFocus ? (
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          loading={switchingFocus}
+                          loadingText="Switching focus..."
+                          disabled={
+                            switchingFocus || loadingMore || modalMode !== null
+                          }
+                          onClick={() =>
+                            void handleSetFocusToStudy(loadedPlan.roadmap_id)
+                          }
+                          className="inline-flex h-10 min-h-11 w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-transparent bg-teal-600 px-4 text-sm font-medium leading-none text-white shadow-sm transition-colors hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500 sm:w-auto"
+                        >
+                          <CompassIcon className="block h-4 w-4 shrink-0" />
+                          <span>Set as Focus to Study</span>
+                        </Button>
                       ) : day.status === 'completed' ? (
                         <Link href="/progress" className={secondaryLinkClass}>
                           <TargetIcon className="block h-4 w-4 shrink-0" />

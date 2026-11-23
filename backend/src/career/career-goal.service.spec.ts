@@ -1648,6 +1648,41 @@ describe('CareerGoalService (EP-C01–EP-C07, R07, R24, R29)', () => {
   });
 
   describe('EP-C07 discontinueGoal & uq_roadmaps_one_focus safety', () => {
+    it('EP-C07 supersedes open merge proposals and closes open Undo windows when archiving the linked roadmap', async () => {
+      const executed: string[] = [];
+      queryMock.mockImplementation(async (sql: string) => {
+        executed.push(sql);
+        if (
+          sql.includes('FROM public.career_goals') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [{ id: GOAL_1, user_id: USER_A, status: 'confirmed' }];
+        }
+        if (
+          sql.includes('FROM public.roadmaps') &&
+          sql.includes('career_goal_id = $2') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [{ id: ROADMAP_1, status: 'locked', is_focus: false }];
+        }
+        return [];
+      });
+      await service.discontinueGoal(USER_A, GOAL_1);
+      const archiveIdx = executed.findIndex((s) =>
+        s.includes("status = 'archived'"),
+      );
+      const supersedeIdx = executed.findIndex((s) =>
+        s.includes("SET status = 'superseded'::public.merge_status"),
+      );
+      const closeIdx = executed.findIndex((s) =>
+        s.includes('SET undo_window_closed_at = clock_timestamp()'),
+      );
+      expect(archiveIdx).toBeGreaterThanOrEqual(0);
+      expect(supersedeIdx).toBeGreaterThan(archiveIdx);
+      expect(closeIdx).toBeGreaterThan(archiveIdx);
+      expect(executed.some((s) => s.includes('DELETE FROM'))).toBe(false);
+    });
+
     it('discontinues goal, clears is_focus=false on archived focus roadmap BEFORE promoting another active locked roadmap, and preserves evidence/progress', async () => {
       const executedStatements: Array<{ sql: string; params?: unknown[] }> = [];
 

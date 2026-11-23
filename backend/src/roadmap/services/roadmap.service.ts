@@ -2069,6 +2069,13 @@ export class RoadmapService {
           [normalizedUserId, normalizedRoadmapId, archiveReason],
         );
 
+        // M09: supersede open proposals and close any open Undo window (history preserved).
+        await closeRoadmapMergesOnArchiveInTx(
+          db,
+          normalizedUserId,
+          normalizedRoadmapId,
+        );
+
         await db.query(
           `UPDATE public.career_goals
               SET status = 'discontinued'::public.goal_status,
@@ -2134,4 +2141,32 @@ export class RoadmapService {
       true,
     );
   }
+}
+
+/**
+ * Supersedes open `proposed` merges and closes any open Undo window when archiving a roadmap
+ * (`EP-R15` or `EP-C07`). Preserves all merge history without deleting rows.
+ */
+export async function closeRoadmapMergesOnArchiveInTx(
+  tx: TransactionalQueryExecutor,
+  userId: string,
+  roadmapId: string,
+): Promise<void> {
+  await tx.query(
+    `UPDATE public.roadmap_merges
+        SET status = 'superseded'::public.merge_status
+      WHERE user_id = $1
+        AND roadmap_id = $2
+        AND status = 'proposed'::public.merge_status`,
+    [userId, roadmapId],
+  );
+  await tx.query(
+    `UPDATE public.roadmap_merges
+        SET undo_window_closed_at = clock_timestamp()
+      WHERE user_id = $1
+        AND roadmap_id = $2
+        AND status = 'accepted'::public.merge_status
+        AND undo_window_closed_at IS NULL`,
+    [userId, roadmapId],
+  );
 }

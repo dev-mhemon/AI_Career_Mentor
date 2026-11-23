@@ -992,9 +992,12 @@ export function RoadmapsHubView({
                         )}
 
                         {!isArchived && roadmap.has_open_merge && (
-                          <span className="inline-flex items-center justify-center rounded-full border border-feedback-info-border bg-feedback-info-background px-2.5 py-1 text-caption font-medium leading-none text-feedback-info-text">
-                            Open Merge
-                          </span>
+                          <Link
+                            href={`/roadmaps/${encodeURIComponent(roadmap.id)}?tab=merges`}
+                            className="inline-flex items-center justify-center rounded-full border border-feedback-info-border bg-feedback-info-background px-2.5 py-1 text-caption font-semibold leading-none text-feedback-info-text transition-colors hover:bg-feedback-info-background/80 hover:underline"
+                          >
+                            Open Merge Proposal
+                          </Link>
                         )}
                       </div>
 
@@ -1061,8 +1064,12 @@ export function RoadmapsHubView({
                                   Boolean(archivingId)
                                 }
                                 onClick={() => void handleSetFocus(roadmap)}
-                                className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-2xs hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-slate-700 shadow-2xs hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                               >
+                                <CompassIcon
+                                  className="block h-4 w-4 shrink-0"
+                                  aria-hidden="true"
+                                />
                                 <span>Set as Focus</span>
                               </Button>
                             )}
@@ -1140,7 +1147,11 @@ export function RoadmapsHubView({
             ? `Archive "${archiveTarget.role_name}"?`
             : 'Archive Roadmap?'
         }
-        description="Archiving this roadmap also discontinues its linked career goal. Archiving preserves all learning progress, shared skill evidence, and daily plans. If this is your Focus Roadmap, focus will automatically reassign to another active locked roadmap if available."
+        description={
+          archiveTarget?.status === 'locked'
+            ? 'Archiving this roadmap also discontinues its linked career goal. For topic updates or Career Level changes on the same goal, open the roadmap and use Request Change / Change Career Level (Merge) instead of archiving. Archiving preserves all learning progress, shared skill evidence, and daily plans. If this is your Focus Roadmap, focus will automatically reassign to another active locked roadmap if available.'
+            : 'Archiving this draft roadmap also discontinues its linked career goal. Archiving preserves all learning progress, shared skill evidence, and daily plans.'
+        }
         confirmLabel="Archive Roadmap"
         loading={Boolean(archiveTarget && archivingId === archiveTarget.id)}
         onConfirm={() => void handleConfirmArchive()}

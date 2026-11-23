@@ -6,6 +6,7 @@ import {
   HttpException,
   Inject,
   Logger,
+  Optional,
   Param,
   Post,
   Query,
@@ -33,6 +34,18 @@ import {
   type RoadmapSummaryDTO,
   type RoadmapVersionDTO,
 } from '../dto/roadmap.dto.js';
+import {
+  AcceptMergeProposalDTO,
+  CreateMergeProposalDTO,
+  ListMergeProposalsQueryDTO,
+  type MergeAcceptResponseDTO,
+  type MergeJobAcceptedDTO,
+  type MergeProposalDTO,
+  type MergeRejectResponseDTO,
+  type MergeSummaryDTO,
+  type MergeUndoResponseDTO,
+} from '../dto/roadmap-merge.dto.js';
+import { RoadmapMergeService } from '../services/roadmap-merge.service.js';
 import { RoadmapService } from '../services/roadmap.service.js';
 
 const UUID_PATTERN =
@@ -186,14 +199,16 @@ function attachPaginationMeta<T>(
 }
 
 /**
- * Controller exposing `C05` §14.5 Roadmap API (`EP-R01`–`EP-R07`, `EP-R14`, `EP-R15`).
+ * Controller exposing `C05` §14.5 Roadmap API (`EP-R01`–`EP-R15`).
  *
  * Protected by the global `APP_GUARD` pipeline (`SupabaseAuthGuard` then `AccessGuard`) registered
  * by `AuthModule` (no duplicate controller-level `@UseGuards` so `AccessGuard` runs once per request):
- * - Generation/revision/lock routes (`EP-R01`, `EP-R04`, `EP-R05`) require
- *   `@Policy({ feature: 'roadmap_generator' })` and `H-IDEM` via `IdempotencyService.execute(...)`.
- * - Read, focus switch, and archive routes (`EP-R02`, `EP-R03`, `EP-R06`, `EP-R07`, `EP-R14`, `EP-R15`)
- *   declare `@Policy({})` (`Gate: none`) so existing data remains usable when generation flags are OFF.
+ * - Generation/revision/lock/merge-proposal/merge-accept routes (`EP-R01`, `EP-R04`, `EP-R05`,
+ *   `EP-R08`, `EP-R11`) require `@Policy({ feature: 'roadmap_generator' })` and `H-IDEM` via
+ *   `IdempotencyService.execute(...)`.
+ * - Read, reject, undo, focus switch, and archive routes (`EP-R02`, `EP-R03`, `EP-R06`, `EP-R07`,
+ *   `EP-R09`, `EP-R10`, `EP-R12`, `EP-R13`, `EP-R14`, `EP-R15`) declare `@Policy({})`
+ *   (`Gate: none`) so existing data remains usable when generation flags are OFF.
  */
 @Controller('roadmaps')
 @Policy({})
@@ -204,7 +219,17 @@ export class RoadmapController {
     @Inject(RoadmapService) private readonly roadmapService: RoadmapService,
     @Inject(IdempotencyService)
     private readonly idempotencyService: IdempotencyService,
+    @Optional()
+    @Inject(RoadmapMergeService)
+    private readonly roadmapMergeService?: RoadmapMergeService,
   ) {}
+
+  private getMergeService(): RoadmapMergeService {
+    if (!this.roadmapMergeService) {
+      fail(500, 'INTERNAL_ERROR', 'RoadmapMergeService is not configured');
+    }
+    return this.roadmapMergeService;
+  }
 
   private logNonProdServerFailure(
     step: string,
@@ -381,6 +406,51 @@ export class RoadmapController {
   }
 
   /**
+   * `EP-R10` (`GET /api/v1/roadmaps/:id/merges/:merge_id`, `200 OK`, `Gate: none`).
+   */
+  @Get(':id/merges/:merge_id')
+  @HttpCode(200)
+  @Policy({})
+  async getMergeProposal(
+    @Req() req: AuthenticatedRoadmapRequest,
+    @Param('id') id: string,
+    @Param('merge_id') mergeIdParam: string,
+  ): Promise<MergeProposalDTO> {
+    const userId = assertAuthenticatedUserId(req);
+    const roadmapId = assertValidUuidParam(id, 'id', 'Roadmap id');
+    const mergeId = assertValidUuidParam(
+      mergeIdParam,
+      'merge_id',
+      'Merge proposal id',
+    );
+    return this.getMergeService().getProposal(userId, roadmapId, mergeId);
+  }
+
+  /**
+   * `EP-R09` (`GET /api/v1/roadmaps/:id/merges`, `200 OK`, `Gate: none`).
+   */
+  @Get(':id/merges')
+  @HttpCode(200)
+  @Policy({})
+  async listMergeProposals(
+    @Req() req: AuthenticatedRoadmapRequest,
+    @Param('id') id: string,
+    @Query() query?: ListMergeProposalsQueryDTO,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<
+    MergeSummaryDTO[] | { items: MergeSummaryDTO[]; meta: PageMetaDTO }
+  > {
+    const userId = assertAuthenticatedUserId(req);
+    const roadmapId = assertValidUuidParam(id, 'id', 'Roadmap id');
+    const result = await this.getMergeService().listProposals(
+      userId,
+      roadmapId,
+      query,
+    );
+    return attachPaginationMeta(result.items, result.meta, res);
+  }
+
+  /**
    * `EP-R03` (`GET /api/v1/roadmaps/:id`, `200 OK`, `Gate: none`).
    */
   @Get(':id')
@@ -545,6 +615,233 @@ export class RoadmapController {
       throw error;
     }
 
+    return executed.responseBody;
+  }
+
+  /**
+   * `EP-R12` (`POST /api/v1/roadmaps/:id/merges/:merge_id/reject`, `200 OK`, `Gate: none`).
+   */
+  @Post(':id/merges/:merge_id/reject')
+  @HttpCode(200)
+  @Policy({})
+  async rejectMergeProposal(
+    @Req() req: AuthenticatedRoadmapRequest,
+    @Param('id') id: string,
+    @Param('merge_id') mergeIdParam: string,
+  ): Promise<MergeRejectResponseDTO> {
+    const userId = assertAuthenticatedUserId(req);
+    const roadmapId = assertValidUuidParam(id, 'id', 'Roadmap id');
+    const mergeId = assertValidUuidParam(
+      mergeIdParam,
+      'merge_id',
+      'Merge proposal id',
+    );
+    return this.getMergeService().rejectProposal(userId, roadmapId, mergeId);
+  }
+
+  /**
+   * `EP-R08` (`POST /api/v1/roadmaps/:id/merges`, `202 Accepted`, `H-IDEM`, `Gate: write (roadmap_generator)`).
+   */
+  @Post(':id/merges')
+  @HttpCode(202)
+  @Policy({ feature: 'roadmap_generator' })
+  async createMergeProposal(
+    @Req() req: AuthenticatedRoadmapRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateMergeProposalDTO,
+    @Res({ passthrough: true }) res?: Response,
+  ): Promise<MergeJobAcceptedDTO> {
+    const userId = assertAuthenticatedUserId(req);
+    const roadmapId = assertValidUuidParam(id, 'id', 'Roadmap id');
+    const idempotencyKeyHeader = req?.headers?.['idempotency-key'];
+    const httpRequestId = extractOptionalUuidHeader(req, 'x-request-id');
+    const acceptLanguage = readOptionalHeader(req, 'accept-language');
+    const ifMatch = parseOptionalIfMatchHeader(req);
+
+    let step = 'ep_r08.idempotency_execute';
+    let executed;
+    try {
+      executed = await this.idempotencyService.execute<MergeJobAcceptedDTO>(
+        {
+          userId,
+          idempotencyKey: idempotencyKeyHeader,
+          method: 'POST',
+          route: `/api/v1/roadmaps/${roadmapId.toLowerCase()}/merges`,
+          body: {
+            payload: dto ?? null,
+            if_match: ifMatch ?? null,
+          },
+        },
+        async (execCtx) => {
+          if (execCtx.signal.aborted) {
+            step = 'ep_r08.idempotency_reservation_expired';
+            fail(
+              503,
+              'SERVICE_UNAVAILABLE',
+              'Idempotency reservation expired before mutation dispatch',
+              undefined,
+              true,
+            );
+          }
+          step = 'ep_r08.roadmap_merge_service_create';
+          const job = await this.getMergeService().createProposal(
+            userId,
+            roadmapId,
+            dto,
+            {
+              idempotencyKey: execCtx.idempotencyKey,
+              httpRequestId,
+              acceptLanguage,
+              ifMatch,
+            },
+          );
+          step = 'ep_r08.idempotency_complete';
+          return {
+            statusCode: 202,
+            responseBody: job,
+          };
+        },
+      );
+    } catch (error) {
+      this.logNonProdServerFailure(step, req, res, error);
+      throw error;
+    }
+
+    if (res) {
+      if (
+        typeof res.setHeader === 'function' &&
+        executed.responseBody.poll_url
+      ) {
+        res.setHeader('Location', executed.responseBody.poll_url);
+      }
+      if (typeof res.status === 'function') {
+        res.status(executed.statusCode);
+      }
+    }
+    return executed.responseBody;
+  }
+
+  /**
+   * `EP-R13` (`POST /api/v1/roadmaps/:id/merges/undo`, `200 OK`, `H-IDEM`, `Gate: none`).
+   */
+  @Post(':id/merges/undo')
+  @HttpCode(200)
+  @Policy({})
+  async undoLastMerge(
+    @Req() req: AuthenticatedRoadmapRequest,
+    @Param('id') id: string,
+  ): Promise<MergeUndoResponseDTO> {
+    const userId = assertAuthenticatedUserId(req);
+    const roadmapId = assertValidUuidParam(id, 'id', 'Roadmap id');
+    const ifMatch = parseOptionalIfMatchHeader(req);
+    const idempotencyKeyHeader = req?.headers?.['idempotency-key'];
+
+    let step = 'ep_r13.idempotency_execute';
+    let executed;
+    try {
+      executed = await this.idempotencyService.execute<MergeUndoResponseDTO>(
+        {
+          userId,
+          idempotencyKey: idempotencyKeyHeader,
+          method: 'POST',
+          route: `/api/v1/roadmaps/${roadmapId.toLowerCase()}/merges/undo`,
+          body: { if_match: ifMatch ?? null },
+        },
+        async (execCtx) => {
+          if (execCtx.signal.aborted) {
+            step = 'ep_r13.idempotency_reservation_expired';
+            fail(
+              503,
+              'SERVICE_UNAVAILABLE',
+              'Idempotency reservation expired before mutation dispatch',
+              undefined,
+              true,
+            );
+          }
+          step = 'ep_r13.roadmap_merge_service_undo';
+          const result = await this.getMergeService().undoLastMerge(
+            userId,
+            roadmapId,
+            { ifMatch },
+          );
+          step = 'ep_r13.idempotency_complete';
+          return { statusCode: 200, responseBody: result };
+        },
+      );
+    } catch (error) {
+      this.logNonProdServerFailure(step, req, undefined, error);
+      throw error;
+    }
+    return executed.responseBody;
+  }
+
+  /**
+   * `EP-R11` (`POST /api/v1/roadmaps/:id/merges/:merge_id/accept`, `200 OK`, `H-IDEM`, `Gate: write (roadmap_generator)`).
+   */
+  @Post(':id/merges/:merge_id/accept')
+  @HttpCode(200)
+  @Policy({ feature: 'roadmap_generator' })
+  async acceptMergeProposal(
+    @Req() req: AuthenticatedRoadmapRequest,
+    @Param('id') id: string,
+    @Param('merge_id') mergeIdParam: string,
+    @Body() dto?: AcceptMergeProposalDTO,
+  ): Promise<MergeAcceptResponseDTO> {
+    const userId = assertAuthenticatedUserId(req);
+    const roadmapId = assertValidUuidParam(id, 'id', 'Roadmap id');
+    const mergeId = assertValidUuidParam(
+      mergeIdParam,
+      'merge_id',
+      'Merge proposal id',
+    );
+    const idempotencyKeyHeader = req?.headers?.['idempotency-key'];
+    const httpRequestId = extractOptionalUuidHeader(req, 'x-request-id');
+    const acceptLanguage = readOptionalHeader(req, 'accept-language');
+    const ifMatch = parseOptionalIfMatchHeader(req);
+
+    let step = 'ep_r11.idempotency_execute';
+    let executed;
+    try {
+      executed = await this.idempotencyService.execute<MergeAcceptResponseDTO>(
+        {
+          userId,
+          idempotencyKey: idempotencyKeyHeader,
+          method: 'POST',
+          route: `/api/v1/roadmaps/${roadmapId.toLowerCase()}/merges/${mergeId.toLowerCase()}/accept`,
+          body: { payload: dto ?? {}, if_match: ifMatch ?? null },
+        },
+        async (execCtx) => {
+          if (execCtx.signal.aborted) {
+            step = 'ep_r11.idempotency_reservation_expired';
+            fail(
+              503,
+              'SERVICE_UNAVAILABLE',
+              'Idempotency reservation expired before mutation dispatch',
+              undefined,
+              true,
+            );
+          }
+          step = 'ep_r11.roadmap_merge_service_accept';
+          const result = await this.getMergeService().acceptProposal(
+            userId,
+            roadmapId,
+            mergeId,
+            dto ?? {},
+            {
+              idempotencyKey: execCtx.idempotencyKey,
+              httpRequestId,
+              acceptLanguage,
+              ifMatch,
+            },
+          );
+          step = 'ep_r11.idempotency_complete';
+          return { statusCode: 200, responseBody: result };
+        },
+      );
+    } catch (error) {
+      this.logNonProdServerFailure(step, req, undefined, error);
+      throw error;
+    }
     return executed.responseBody;
   }
 

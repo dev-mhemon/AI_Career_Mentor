@@ -366,8 +366,95 @@ function validateRoadmap(raw: Record<string, unknown>): void {
   }
 }
 
+export function deriveMergeTopicSlug(title: string, sortOrder: number): string {
+  const base = title
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    .slice(0, 63)
+    .replace(/-+$/g, '');
+  return base || `new-topic-${sortOrder}`;
+}
+
+function assignUnambiguousMergeSortOrders(
+  operations: Record<string, unknown>[],
+): void {
+  const count = operations.length;
+  const explicitEntries: Array<{ idx: number; order: number }> = [];
+  const omittedIndices: number[] = [];
+  const seenExplicit = new Set<number>();
+
+  for (let idx = 0; idx < count; idx += 1) {
+    const rawOrder = operations[idx].sort_order;
+    if (rawOrder === undefined || rawOrder === null) {
+      omittedIndices.push(idx);
+      continue;
+    }
+    if (
+      typeof rawOrder !== 'number' ||
+      !Number.isInteger(rawOrder) ||
+      rawOrder < 0
+    ) {
+      validationFail();
+    }
+    if (seenExplicit.has(rawOrder)) {
+      validationFail();
+    }
+    seenExplicit.add(rawOrder);
+    explicitEntries.push({ idx, order: rawOrder });
+  }
+
+  const hasZero = seenExplicit.has(0);
+  if (omittedIndices.length === 0) {
+    if (hasZero) {
+      for (const entry of explicitEntries) {
+        operations[entry.idx].sort_order = entry.order + 1;
+      }
+    }
+    return;
+  }
+
+  if (explicitEntries.length === 0) {
+    for (let idx = 0; idx < count; idx += 1) {
+      operations[idx].sort_order = idx + 1;
+    }
+    return;
+  }
+
+  const usedSlots = new Set<number>();
+  for (const entry of explicitEntries) {
+    const normalizedOrder = hasZero ? entry.order + 1 : entry.order;
+    if (normalizedOrder < 1 || normalizedOrder > count) {
+      validationFail();
+    }
+    operations[entry.idx].sort_order = normalizedOrder;
+    usedSlots.add(normalizedOrder);
+  }
+
+  const unusedSlots: number[] = [];
+  for (let slot = 1; slot <= count; slot += 1) {
+    if (!usedSlots.has(slot)) {
+      unusedSlots.push(slot);
+    }
+  }
+  if (unusedSlots.length !== omittedIndices.length) {
+    validationFail();
+  }
+  for (let i = 0; i < omittedIndices.length; i += 1) {
+    operations[omittedIndices[i]].sort_order = unusedSlots[i];
+  }
+}
+
 function validateMergeProposal(raw: Record<string, unknown>): void {
-  asNonEmptyString(raw.reason, 1_000);
+  raw.reason = asNonEmptyString(raw.reason, 1_000);
+  if (raw.target_level === undefined || raw.target_level === '') {
+    raw.target_level = null;
+  } else if (typeof raw.target_level === 'string') {
+    const normalizedLevel = raw.target_level.trim().toLowerCase();
+    raw.target_level = normalizedLevel || null;
+  }
   if (
     raw.target_level !== null &&
     !isEnumValue(CAREER_LEVELS, raw.target_level)
@@ -377,32 +464,101 @@ function validateMergeProposal(raw: Record<string, unknown>): void {
   if (!Array.isArray(raw.operations)) {
     validationFail();
   }
-  for (const rawOp of raw.operations) {
-    const op = asRecord(rawOp);
+  const opRecords = raw.operations.map((entry) => asRecord(entry));
+  assignUnambiguousMergeSortOrders(opRecords);
+  for (let idx = 0; idx < opRecords.length; idx += 1) {
+    const op = opRecords[idx];
     if (typeof op.sort_order !== 'number' || op.sort_order < 1) {
       validationFail();
+    }
+    if (typeof op.op === 'string') {
+      op.op = op.op.trim().toLowerCase();
     }
     if (!isEnumValue(MERGE_OPS, op.op)) {
       validationFail();
     }
+    if (op.title === undefined) {
+      op.title = null;
+    } else if (typeof op.title === 'string') {
+      const trimmedTitle = op.title.trim();
+      op.title = trimmedTitle || null;
+    } else if (op.title !== null) {
+      validationFail();
+    }
+
     if (op.op === 'add_topic') {
-      asNonEmptyString(op.topic_id, 128);
+      op.lineage_id = null;
+      if (typeof op.topic_id === 'string' && op.topic_id.trim().length > 0) {
+        op.topic_id = asNonEmptyString(op.topic_id, 128);
+      } else if (
+        (op.topic_id === null ||
+          op.topic_id === undefined ||
+          (typeof op.topic_id === 'string' && !op.topic_id.trim())) &&
+        typeof op.title === 'string' &&
+        op.title.length > 0
+      ) {
+        op.topic_id = deriveMergeTopicSlug(op.title, idx + 1);
+      } else {
+        validationFail();
+      }
     } else {
-      asNonEmptyString(op.lineage_id, 128);
+      op.lineage_id = asNonEmptyString(op.lineage_id, 128).toLowerCase();
+      if (op.topic_id === undefined) {
+        op.topic_id = null;
+      }
+    }
+
+    if (op.priority === undefined || op.priority === '') {
+      op.priority = null;
+    } else if (typeof op.priority === 'string') {
+      const normalizedPriority = op.priority.trim().toLowerCase();
+      op.priority = normalizedPriority || null;
     }
     if (op.priority !== null && !isEnumValue(ITEM_PRIORITIES, op.priority)) {
       validationFail();
     }
-    asNonEmptyString(op.reason, 1_000);
-    asRecord(op.payload);
+    op.reason = asNonEmptyString(op.reason, 1_000);
+    if (op.payload === undefined || op.payload === null) {
+      op.payload = {};
+    } else {
+      asRecord(op.payload);
+    }
   }
-  const impact = asRecord(raw.size_impact);
-  if (
-    typeof impact.active_topics_before !== 'number' ||
-    typeof impact.active_topics_after !== 'number' ||
-    typeof impact.materially_large !== 'boolean'
-  ) {
-    validationFail();
+
+  if (raw.size_impact === undefined || raw.size_impact === null) {
+    raw.size_impact = {
+      active_topics_before: 0,
+      active_topics_after: 0,
+      materially_large: false,
+      warning: null,
+    };
+  } else {
+    const impact = asRecord(raw.size_impact);
+    if (
+      impact.active_topics_before === undefined &&
+      typeof impact.before === 'number'
+    ) {
+      impact.active_topics_before = impact.before;
+    }
+    if (
+      impact.active_topics_after === undefined &&
+      typeof impact.after === 'number'
+    ) {
+      impact.active_topics_after = impact.after;
+    }
+    if (impact.materially_large === undefined) {
+      impact.materially_large = false;
+    }
+    if (impact.warning === undefined) {
+      impact.warning = null;
+    }
+    if (
+      typeof impact.active_topics_before !== 'number' ||
+      typeof impact.active_topics_after !== 'number' ||
+      typeof impact.materially_large !== 'boolean'
+    ) {
+      validationFail();
+    }
   }
 }
 

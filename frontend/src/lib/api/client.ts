@@ -1430,6 +1430,133 @@ export interface ArchiveRoadmapResponseDTO {
   new_focus_roadmap_id: string | null;
 }
 
+export type MergeOrigin = 'user_request' | 'level_change' | 'ai_proposal';
+export type UserMergeOrigin = 'user_request' | 'level_change';
+export type MergeStatus =
+  | 'proposed'
+  | 'accepted'
+  | 'rejected'
+  | 'undone'
+  | 'superseded';
+export type MergeOp =
+  | 'add_topic'
+  | 'update_topic'
+  | 'reprioritize'
+  | 'reclassify'
+  | 'retire_topic';
+
+export type CreateRoadmapMergeInputDTO = {
+  origin: UserMergeOrigin;
+  target_level?: CareerLevel;
+  instruction?: string;
+  base_version_no?: number;
+};
+
+export type ListRoadmapMergesParams = {
+  status?: MergeStatus;
+  cursor?: string;
+  limit?: number;
+};
+
+export type MergeOperationDTO = {
+  id: string;
+  sort_order: number;
+  op: MergeOp;
+  item_id: string | null;
+  lineage_id: string | null;
+  topic_id: string | null;
+  skill_id: string | null;
+  title: string | null;
+  priority: ItemPriority | null;
+  reason: string | null;
+  payload: Record<string, unknown>;
+};
+
+export type MergeSizeImpactDTO = {
+  active_topics_before: number;
+  active_topics_after: number;
+  before: number;
+  after: number;
+  delta: number;
+  soft_limit: number;
+  materially_large: boolean;
+  warning: string | null;
+};
+
+export type MergeDailyPlanImpactDTO = {
+  has_active_plan: boolean;
+  completed_days_unchanged: number;
+  future_days_affected: number;
+};
+
+export type MergeSummaryDTO = {
+  id: string;
+  roadmap_id: string;
+  origin: MergeOrigin;
+  status: MergeStatus;
+  base_version_no: number;
+  target_level: CareerLevel | null;
+  reason: string | null;
+  materially_large: boolean;
+  undo_available: boolean;
+  created_at: string;
+  accepted_at: string | null;
+  rejected_at: string | null;
+  undone_at: string | null;
+};
+
+export type PaginatedMergeListDTO = {
+  items: MergeSummaryDTO[];
+  meta: PageMetaDTO;
+};
+
+export type MergeProposalDTO = {
+  id: string;
+  roadmap_id: string;
+  origin: MergeOrigin;
+  status: MergeStatus;
+  base_version_id: string;
+  base_version_no: number;
+  result_version_id: string | null;
+  target_level: CareerLevel | null;
+  instruction: string | null;
+  reason: string | null;
+  operations: MergeOperationDTO[];
+  size_impact: MergeSizeImpactDTO;
+  daily_plan_impact: MergeDailyPlanImpactDTO;
+  undo_available: boolean;
+  created_at: string;
+  accepted_at: string | null;
+  rejected_at: string | null;
+  undone_at: string | null;
+  undo_window_closed_at: string | null;
+};
+
+export type AcceptRoadmapMergeInputDTO = {
+  base_version_no?: number;
+  acknowledge_large_expansion?: boolean;
+};
+
+export type AcceptRoadmapMergeResultDTO = {
+  roadmap_id: string;
+  merge_id: string;
+  new_version_no: number;
+  undo_available: boolean;
+  daily_plan_reconciled: boolean;
+};
+
+export type RejectRoadmapMergeResultDTO = {
+  merge_id: string;
+  status: 'rejected';
+  rejected_at: string;
+};
+
+export type UndoRoadmapMergeResultDTO = {
+  restored_version_no: number;
+  merge_id: string;
+  status: 'undone';
+};
+
 function normalizePaginatedEnvelope<T>(
   envelope: ApiEnvelopeResult<T[] | { items: T[]; meta?: PageMetaDTO }>,
   defaultLimit = 20,
@@ -1610,6 +1737,197 @@ export function getRoadmapVersion(
     `/roadmaps/${encodeURIComponent(roadmapId.trim())}/versions/${encodeURIComponent(String(versionNo).trim())}`,
     accessToken,
     {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/merges (EP-R08, 202 Accepted, H-IDEM)
+ */
+export function createRoadmapMerge(
+  accessToken: string,
+  roadmapId: string,
+  input: CreateRoadmapMergeInputDTO,
+  idempotencyKey: string,
+  ifMatchVersionNo?: number,
+  options?: AuthStateRequestOptions,
+): Promise<JobAcceptedDTO> {
+  const extraHeaders: Record<string, string> = {};
+  if (
+    typeof ifMatchVersionNo === 'number' &&
+    Number.isInteger(ifMatchVersionNo) &&
+    ifMatchVersionNo >= 1
+  ) {
+    extraHeaders['If-Match'] = String(ifMatchVersionNo);
+  }
+  return apiFetch<JobAcceptedDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey, extraHeaders),
+      body: JSON.stringify(input),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /roadmaps/:id/merges (EP-R09, Gate: none)
+ */
+export async function listRoadmapMerges(
+  accessToken: string,
+  roadmapId: string,
+  params?: ListRoadmapMergesParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedMergeListDTO> {
+  const search = new URLSearchParams();
+  if (params?.status) search.set('status', params.status);
+  if (params?.cursor) search.set('cursor', params.cursor);
+  const normalizedLimit =
+    typeof params?.limit === 'number' &&
+    Number.isFinite(params.limit) &&
+    Math.floor(params.limit) >= 1
+      ? Math.min(100, Math.floor(params.limit))
+      : undefined;
+  if (normalizedLimit !== undefined) {
+    search.set('limit', String(normalizedLimit));
+  }
+  const qs = search.toString();
+  const base = `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges`;
+  const envelope = await apiFetchEnvelope<
+    MergeSummaryDTO[] | { items: MergeSummaryDTO[]; meta?: PageMetaDTO }
+  >(qs ? `${base}?${qs}` : base, accessToken, {
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  const payload = envelope.data as unknown;
+  const isValidArray = Array.isArray(payload);
+  const isValidWrapped =
+    payload !== null &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    Array.isArray((payload as { items?: unknown }).items);
+  if (!isValidArray && !isValidWrapped) {
+    throw new ApiError(
+      502,
+      'Unexpected merge proposals response format.',
+      'INVALID_RESPONSE',
+      undefined,
+      [],
+      true,
+    );
+  }
+  return normalizePaginatedEnvelope(envelope, normalizedLimit ?? 20);
+}
+
+/**
+ * GET /roadmaps/:id/merges/:merge_id (EP-R10, Gate: none)
+ */
+export async function getRoadmapMerge(
+  accessToken: string,
+  roadmapId: string,
+  mergeId: string,
+  options?: AuthStateRequestOptions,
+): Promise<MergeProposalDTO> {
+  const detail = await apiFetch<MergeProposalDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges/${encodeURIComponent(mergeId.trim())}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (
+    !detail ||
+    typeof detail !== 'object' ||
+    typeof detail.id !== 'string' ||
+    detail.id.trim().length === 0 ||
+    !Array.isArray(detail.operations)
+  ) {
+    throw new ApiError(
+      502,
+      'Unexpected merge proposal detail format.',
+      'INVALID_RESPONSE',
+      undefined,
+      [],
+      true,
+    );
+  }
+  return detail;
+}
+
+/**
+ * POST /roadmaps/:id/merges/:merge_id/accept (EP-R11, 200 OK, H-IDEM)
+ */
+export function acceptRoadmapMerge(
+  accessToken: string,
+  roadmapId: string,
+  mergeId: string,
+  input: AcceptRoadmapMergeInputDTO,
+  idempotencyKey: string,
+  ifMatchVersionNo?: number,
+  options?: AuthStateRequestOptions,
+): Promise<AcceptRoadmapMergeResultDTO> {
+  const extraHeaders: Record<string, string> = {};
+  if (
+    typeof ifMatchVersionNo === 'number' &&
+    Number.isInteger(ifMatchVersionNo) &&
+    ifMatchVersionNo >= 1
+  ) {
+    extraHeaders['If-Match'] = String(ifMatchVersionNo);
+  }
+  return apiFetch<AcceptRoadmapMergeResultDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges/${encodeURIComponent(mergeId.trim())}/accept`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey, extraHeaders),
+      body: JSON.stringify(input),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/merges/:merge_id/reject (EP-R12, 200 OK, Gate: none)
+ */
+export function rejectRoadmapMerge(
+  accessToken: string,
+  roadmapId: string,
+  mergeId: string,
+  options?: AuthStateRequestOptions,
+): Promise<RejectRoadmapMergeResultDTO> {
+  return apiFetch<RejectRoadmapMergeResultDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges/${encodeURIComponent(mergeId.trim())}/reject`,
+    accessToken,
+    {
+      method: 'POST',
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /roadmaps/:id/merges/undo (EP-R13, 200 OK, H-IDEM, Gate: none)
+ */
+export function undoLastRoadmapMerge(
+  accessToken: string,
+  roadmapId: string,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<UndoRoadmapMergeResultDTO> {
+  return apiFetch<UndoRoadmapMergeResultDTO>(
+    `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges/undo`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey),
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options?.signal ? { signal: options.signal } : {}),
     },

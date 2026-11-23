@@ -133,7 +133,10 @@ describe('RoadmapsHubView', () => {
     expect(screen.getByText('QA Automation Engineer')).toBeInTheDocument();
     expect(screen.getByText('Focus Roadmap')).toBeInTheDocument();
     expect(screen.getByText('Stale Draft')).toBeInTheDocument();
-    expect(screen.getByText('Open Merge')).toBeInTheDocument();
+    const openMergeLink = screen.getByRole('link', {
+      name: 'Open Merge Proposal',
+    });
+    expect(openMergeLink).toHaveAttribute('href', '/roadmaps/rm-1?tab=merges');
 
     // Single-line hidden-scrollbar mobile tablist with live filter tab counts
     const tablist = screen.getByRole('tablist', { name: 'Filter roadmaps by status' });
@@ -235,7 +238,7 @@ describe('RoadmapsHubView', () => {
     expect(within(archivedCard).queryByRole('button', { name: /Archive/i })).not.toBeInTheDocument();
     expect(within(archivedCard).queryByRole('button', { name: /Set as Focus/i })).not.toBeInTheDocument();
     expect(within(archivedCard).queryByText('Stale Draft')).not.toBeInTheDocument();
-    expect(within(archivedCard).queryByText('Open Merge')).not.toBeInTheDocument();
+    expect(within(archivedCard).queryByText('Open Merge Proposal')).not.toBeInTheDocument();
     expect(archivedCard.querySelector('[data-icon="eye"]')).toBeInTheDocument();
     expect(archivedCard).toHaveTextContent('Read-only archive');
 
@@ -296,7 +299,10 @@ describe('RoadmapsHubView', () => {
 
     expect(await screen.findByText('Frontend Developer')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Set as Focus' }));
+    const setFocusBtn = screen.getByRole('button', { name: 'Set as Focus' });
+    expect(setFocusBtn).toHaveClass('inline-flex', 'items-center', 'justify-center', 'gap-1.5', 'leading-none');
+    expect(setFocusBtn.querySelector('svg')).toHaveClass('block', 'shrink-0');
+    fireEvent.click(setFocusBtn);
     expect(
       await screen.findByText(/daily learning hours needed/i),
     ).toBeInTheDocument();
@@ -630,7 +636,10 @@ describe('RoadmapsHubView', () => {
     );
 
     // Start Set as Focus on All tab, then switch to Draft tab before POST resolves
-    fireEvent.click(screen.getByRole('button', { name: 'Set as Focus' }));
+    const setFocusBtn = screen.getByRole('button', { name: 'Set as Focus' });
+    expect(setFocusBtn).toHaveClass('inline-flex', 'items-center', 'justify-center', 'gap-1.5', 'leading-none');
+    expect(setFocusBtn.querySelector('svg')).toHaveClass('block', 'shrink-0');
+    fireEvent.click(setFocusBtn);
     fireEvent.click(screen.getByRole('tab', { name: /^Draft/i }));
     expect(await screen.findByText('Draft Frontend')).toBeInTheDocument();
 

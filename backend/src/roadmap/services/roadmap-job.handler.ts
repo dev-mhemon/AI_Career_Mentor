@@ -126,7 +126,10 @@ function extractReturningRows<T>(raw: unknown): T[] {
   return raw as T[];
 }
 
-function buildValidTopicSlug(title: string, disambiguator?: string): string {
+export function buildValidTopicSlug(
+  title: string,
+  disambiguator?: string,
+): string {
   const ascii = title
     .normalize('NFKD')
     .toLowerCase()
@@ -141,9 +144,10 @@ function buildValidTopicSlug(title: string, disambiguator?: string): string {
   if (!candidate) {
     candidate = `topic-${hashSuffix}`;
   } else if (disambiguator) {
-    candidate = `${candidate.slice(0, 80)}-${hashSuffix}`.replace(/-+$/g, '');
+    const prefix = candidate.slice(0, 54).replace(/-+$/g, '');
+    candidate = prefix ? `${prefix}-${hashSuffix}` : `topic-${hashSuffix}`;
   } else {
-    candidate = candidate.slice(0, 96).replace(/-+$/g, '');
+    candidate = candidate.slice(0, 63).replace(/-+$/g, '');
   }
   if (!VALID_TOPIC_SLUG_PATTERN.test(candidate)) {
     return `topic-${hashSuffix}`;

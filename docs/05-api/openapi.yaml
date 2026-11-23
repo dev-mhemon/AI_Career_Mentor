@@ -1,18 +1,19 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps, Learning, Quizzes, Practice Review & Progress Contract (M08)
-  version: 0.4.0
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review & Progress Contract (M09)
+  version: 0.5.0
   description: >-
-    Synchronized through M08-01, 2026-11-23. Derived from adopted C05 v1.5.1. Source baseline:
+    Synchronized through M09-01, 2026-11-24. Derived from adopted C05 v1.5.1. Source baseline:
     f7fdb182201450779860406ede33f723c62c00fb. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
     Replay Controls with R14 Loss-Epoch Fail-Closed Barrier (IdempotencyService), durable Postgres FOR UPDATE SKIP
     LOCKED job producer/consumer/reaper (R12, R13, ADR-017), internal-only AI Gateway contracts (ADR-008, C08),
-    M06 Roadmap Lifecycle & Async Worker APIs (EP-R01..EP-R07, EP-R14, EP-R15), M07 Learning APIs (EP-L01..EP-L07),
-    and M08 Quiz, AI Practice Review, and Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that
-    EP-G04 EvidenceService.record is strictly internal-only with no HTTP route) are documented here.
+    M06/M09 Roadmap Lifecycle, Async Merge Proposals, Career Level Change, Future-Only Daily Plan Reconciliation &
+    One-Step Undo APIs (EP-R01..EP-R15), M07 Learning APIs (EP-L01..EP-L07), and M08 Quiz, AI Practice Review, and
+    Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that EP-G04 EvidenceService.record is
+    strictly internal-only with no HTTP route) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -23,11 +24,11 @@ tags:
   - name: Profile
     description: C05 14.3 Profile API (EP-P01..EP-P05); background, existing skills / explicit beginner None (R07), learning preferences, timezone/hours, and user-scoped skill alias interpretation (ADR-019).
   - name: Career Goals
-    description: C05 14.4 Career Goal API (EP-C01..EP-C07); free-text technology career goal submission, synchronous AI goal interpretation, up to 2 clarification rounds, canonical role & career level confirmation (R07, R29), and goal discontinuation with roadmap archival.
+    description: C05 14.4 Career Goal API (EP-C01..EP-C07); free-text technology career goal submission, synchronous AI goal interpretation, up to 2 clarification rounds, canonical role & career level confirmation (R07, R29), and goal discontinuation with roadmap archival and merge/undo cleanup.
   - name: Jobs
     description: C05 14.13 Jobs API (EP-J01 GET /api/v1/jobs/{id}); authenticated owner job status polling (Gate none).
   - name: Roadmaps
-    description: C05 14.5 Roadmaps API (EP-R01..EP-R07, EP-R14, EP-R15); roadmap draft generation/revision async jobs, review/lock, immutable version snapshots, focus switching, and archiving.
+    description: C05 14.5 Roadmaps API (EP-R01..EP-R15); roadmap draft generation/revision async jobs, review/lock, immutable version snapshots, async merge proposals and career level change (EP-R08..EP-R10), merge accept with future-only Daily Plan reconciliation (EP-R11), merge reject (EP-R12), one-step merge undo (EP-R13), focus switching (EP-R14), and archiving with merge/undo cleanup (EP-R15).
   - name: Learning
     description: C05 14.6 Daily Plan, Today & Shared Topic Content APIs (EP-L01..EP-L07).
   - name: Quizzes
@@ -2972,8 +2973,10 @@ paths:
       summary: Discontinue career goal and archive linked roadmap
       description: >-
         C05 EP-C07 (DELETE /api/v1/career/goals/{id}). Discontinues a career goal (Gate none), archives any
-        linked non-archived roadmap, safely clears is_focus=false before promoting a replacement locked
-        roadmap to Focus, and preserves all historical evidence and skill progress (PRD §22).
+        linked non-archived roadmap, supersedes any pending merge proposals and closes any open Undo window on
+        the archived roadmap (M09 parity with EP-R15 via closeRoadmapMergesOnArchiveInTx), safely clears
+        is_focus=false before promoting a replacement locked roadmap to Focus, and preserves all historical
+        evidence and skill progress (PRD §22).
       x-source: API-Specification.md sections 14.4, 15.4
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER
@@ -3839,8 +3842,9 @@ paths:
       summary: Archive a draft or locked roadmap without deleting learning history
       description: >-
         C05 EP-R15 (POST /api/v1/roadmaps/{id}/archive). Archives an owned draft or locked roadmap,
-        preserving all progress, shared skill evidence, and daily plans, and automatically reassigning Focus
-        to another active locked roadmap when applicable. Uses Gate none.
+        supersedes any pending merge proposals and closes any open Undo window on the archived roadmap
+        (M09 via closeRoadmapMergesOnArchiveInTx), preserves all progress, shared skill evidence, and daily
+        plans, and automatically reassigns Focus to another active locked roadmap when applicable. Uses Gate none.
       x-source: API-Specification.md sections 14.5, 15.5, 17.3; accepted R24
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER
@@ -3879,6 +3883,600 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '409':
           description: INVALID_STATE_TRANSITION
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/merges:
+    post:
+      operationId: EP-R08
+      tags:
+        - Roadmaps
+      summary: Request an async roadmap merge proposal or career level change
+      description: >-
+        C05 EP-R08 (POST /api/v1/roadmaps/{id}/merges). Enqueues an asynchronous merge_proposal background job
+        (prompts/merge-proposal.v1, output_schema merge_proposal.v1) for a locked roadmap. Supports origin
+        user_request (explicit roadmap update instruction) and level_change (junior|mid|senior upgrade/downgrade
+        preserving the roadmap lineage without archival and without copying lower-level Proficient mastery).
+        Enforces Idempotency-Key (H-IDEM), optional If-Match / base_version_no optimistic concurrency check,
+        and per-roadmap active merge_proposal job deduplication. Returns 202 Accepted with Location poll URL.
+      x-source: API-Specification.md sections 13.6, 14.5, 15.5, 17.3; PRD sections 20, 21, 22; DMS M09
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IfMatchVersion'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMergeProposalDTO'
+      responses:
+        '202':
+          description: C05 EP-R08 success; returns MergeJobAcceptedDTO envelope and Location poll URL.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Location:
+              description: Poll URL for GET /api/v1/jobs/{job_id}.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeJobAcceptedDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: INVALID_STATE_TRANSITION, STALE_VERSION, IDEMPOTENCY_KEY_REUSED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_STATE_TRANSITION
+            - STALE_VERSION
+            - IDEMPOTENCY_KEY_REUSED
+        '422':
+          description: INVALID_ENUM_VALUE, INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: RATE_LIMITED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: SERVICE_UNAVAILABLE (R14 Idempotency barrier)
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    get:
+      operationId: EP-R09
+      tags:
+        - Roadmaps
+      summary: List roadmap merge proposals with cursor pagination
+      description: >-
+        C05 EP-R09 (GET /api/v1/roadmaps/{id}/merges). Returns newest-first keyset-paginated merge proposal
+        summaries for an owned roadmap with optional status filter. Computes live undo_available per proposal
+        using the unified Undo eligibility predicate (latest accepted merge, active plan_revision unchanged,
+        and no post-merge quiz attempt started). Uses Gate none so existing proposals remain readable under
+        generation-off.
+      x-source: API-Specification.md sections 14.5, 15.5
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          description: Optional merge proposal status filter.
+          schema:
+            $ref: '#/components/schemas/MergeStatus'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque base64url keyset cursor from previous PageMetaDTO.next_cursor.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-R09 success; returns paginated MergeSummaryDTO array envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMergeListDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_ENUM_VALUE
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/merges/{merge_id}:
+    get:
+      operationId: EP-R10
+      tags:
+        - Roadmaps
+      summary: Inspect roadmap merge proposal diff, size guardrail, and Daily Plan impact
+      description: >-
+        C05 EP-R10 (GET /api/v1/roadmaps/{id}/merges/{merge_id}). Returns the full merge proposal payload
+        including ordered diff operations (roadmap_merge_items), 45-topic soft guardrail size_impact,
+        daily_plan_impact (completed_days_unchanged, future_days_affected), and live undo_available status.
+        Uses Gate none so existing proposals remain readable under generation-off.
+      x-source: API-Specification.md sections 14.5, 15.5; PRD sections 20, 21
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: merge_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-R10 success; returns MergeProposalDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeProposalDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/merges/{merge_id}/accept:
+    post:
+      operationId: EP-R11
+      tags:
+        - Roadmaps
+      summary: Accept a pending merge proposal, publish a new immutable roadmap version, and reconcile future Daily Plan days
+      description: >-
+        C05 EP-R11 (POST /api/v1/roadmaps/{id}/merges/{merge_id}/accept). Atomically locks user_career_goals
+        (on level_change), roadmaps, roadmap_merges, and active daily_plans in strict lock order; validates
+        required version precondition (If-Match and/or base_version_no -> 409 STALE_VERSION) and 45-topic
+        expansion acknowledgment (acknowledge_large_expansion -> 409 MERGE_EXPANSION_ACK_REQUIRED); writes a
+        new immutable locked roadmap_versions snapshot and roadmap_items; supersedes the displaced version and
+        any other pending proposals for the roadmap; closes any prior accepted merge Undo window; updates
+        target_level in-place on level_change without archiving or copying lower-level Proficient mastery;
+        reconciles future-only Daily Plan days preserving completed/current/started-quiz days and ordering
+        replacements by (phase_no, sequence_no); and stores an atomic undo_snapshot on the accepted merge.
+      x-source: API-Specification.md sections 14.5, 15.5, 17.3; PRD sections 20, 21, 22; DMS M09
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: roadmap_generator
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IfMatchVersion'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: merge_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptMergeProposalDTO'
+      responses:
+        '200':
+          description: C05 EP-R11 success; returns MergeAcceptResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeAcceptResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT, MISSING_REQUIRED_FIELD (version precondition required)
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - ACCOUNT_SUSPENDED
+            - FEATURE_DISABLED
+            - VERIFIED_CONTACT_REQUIRED
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: INVALID_STATE_TRANSITION, STALE_VERSION, MERGE_EXPANSION_ACK_REQUIRED, IDEMPOTENCY_KEY_REUSED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - INVALID_STATE_TRANSITION
+            - STALE_VERSION
+            - MERGE_EXPANSION_ACK_REQUIRED
+            - IDEMPOTENCY_KEY_REUSED
+        '503':
+          description: SERVICE_UNAVAILABLE (R14 Idempotency barrier)
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/merges/{merge_id}/reject:
+    post:
+      operationId: EP-R12
+      tags:
+        - Roadmaps
+      summary: Reject a pending merge proposal without mutating the roadmap or Daily Plan
+      description: >-
+        C05 EP-R12 (POST /api/v1/roadmaps/{id}/merges/{merge_id}/reject). Marks a proposed merge as rejected
+        and stamps rejected_at. No roadmap version, Daily Plan, or career level state is modified. Uses Gate none.
+      x-source: API-Specification.md sections 14.5, 15.5
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: merge_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-R12 success; returns MergeRejectResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeRejectResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: INVALID_STATE_TRANSITION
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /roadmaps/{id}/merges/undo:
+    post:
+      operationId: EP-R13
+      tags:
+        - Roadmaps
+      summary: Undo the latest accepted merge by publishing a restored immutable roadmap version
+      description: >-
+        C05 EP-R13 (POST /api/v1/roadmaps/{id}/merges/undo). Performs a one-step rollback of the most recent
+        accepted merge when its Undo window is open, active Daily Plan plan_revision has not changed since
+        merge acceptance, and no post-merge quiz attempt has been started on any future day. Honors optional
+        If-Match version header (included in the H-IDEM idempotency fingerprint and validated against current
+        version_no under roadmaps FOR UPDATE -> 409 STALE_VERSION). Publishes a new immutable roadmap_versions
+        row with status restored (incrementing version_no, never mutating prior versions), supersedes any
+        pending merge proposals for the displaced version, restores prior career level when undoing a
+        level_change merge, and restores future-only Daily Plan items from undo_snapshot. Uses Gate none so
+        learners can undo even when generation is disabled.
+      x-source: API-Specification.md sections 14.5, 15.5, 17.3; PRD section 20; DMS M09
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/IfMatchVersion'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-R13 success; returns MergeUndoResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeUndoResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: UNDO_WINDOW_EXPIRED, STALE_VERSION, INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_REUSED
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - UNDO_WINDOW_EXPIRED
+            - STALE_VERSION
+            - INVALID_STATE_TRANSITION
+            - IDEMPOTENCY_KEY_REUSED
+        '503':
+          description: SERVICE_UNAVAILABLE (R14 Idempotency barrier)
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -5232,7 +5830,8 @@ components:
       in: header
       required: true
       description: >-
-        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, EP-R05, and EP-L02 by IdempotencyService.
+        Mandatory H-IDEM idempotency key header (UUID) enforced on EP-R01, EP-R04, EP-R05, EP-R08, EP-R11,
+        EP-R13, and EP-L02 by IdempotencyService.
       schema:
         type: string
         format: uuid
@@ -5242,7 +5841,7 @@ components:
       required: false
       description: >-
         Optional optimistic concurrency version header accepting positive integer version strings (e.g. "1" or
-        W/"1") on EP-R04 and EP-R05.
+        W/"1") on EP-R04, EP-R05, EP-R08, EP-R11 (required via If-Match and/or base_version_no), and EP-R13.
       schema:
         type: string
   headers:
@@ -8259,3 +8858,384 @@ components:
             $ref: '#/components/schemas/ProgressHistoryItemDTO'
         meta:
           $ref: '#/components/schemas/PageMetaDTO'
+    MergeOrigin:
+      type: string
+      enum: [user_request, level_change, ai_proposal]
+    UserMergeOrigin:
+      type: string
+      enum: [user_request, level_change]
+    MergeStatus:
+      type: string
+      enum: [proposed, accepted, rejected, undone, superseded]
+    MergeOp:
+      type: string
+      enum: [add_topic, update_topic, reprioritize, reclassify, retire_topic]
+    CreateMergeProposalDTO:
+      type: object
+      required: [origin]
+      properties:
+        origin:
+          $ref: '#/components/schemas/UserMergeOrigin'
+        target_level:
+          type: string
+          enum: [junior, mid, senior]
+          description: Required when origin=level_change; must differ from the roadmap's current career level.
+        instruction:
+          type: string
+          minLength: 3
+          maxLength: 1000
+          description: Required when origin=user_request (3-1000 Unicode code points); optional when origin=level_change.
+        base_version_no:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Optional optimistic concurrency precondition checked alongside optional If-Match.
+    MergeJobAcceptedDTO:
+      type: object
+      required: [job_id, kind, status, poll_url, retry_after_seconds]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [merge_proposal]
+        status:
+          type: string
+          enum: [queued, preparing]
+        poll_url:
+          type: string
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+    MergeOperationDTO:
+      type: object
+      required: [id, sort_order, op, item_id, lineage_id, topic_id, skill_id, title, priority, reason, payload]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sort_order:
+          type: integer
+          minimum: 1
+        op:
+          $ref: '#/components/schemas/MergeOp'
+        item_id:
+          type: string
+          format: uuid
+          nullable: true
+        lineage_id:
+          type: string
+          format: uuid
+          nullable: true
+        topic_id:
+          type: string
+          format: uuid
+          nullable: true
+        skill_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        priority:
+          type: string
+          nullable: true
+          enum: [core, supporting, optional, null]
+        reason:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          additionalProperties: true
+    MergeSizeImpactDTO:
+      type: object
+      required: [active_topics_before, active_topics_after, before, after, delta, soft_limit, materially_large, warning]
+      properties:
+        active_topics_before:
+          type: integer
+          minimum: 0
+        active_topics_after:
+          type: integer
+          minimum: 0
+        before:
+          type: integer
+          minimum: 0
+        after:
+          type: integer
+          minimum: 0
+        delta:
+          type: integer
+        soft_limit:
+          type: integer
+          minimum: 1
+          description: Soft topic count guardrail (45 topics per PRD §20).
+        materially_large:
+          type: boolean
+        warning:
+          type: string
+          nullable: true
+    MergeDailyPlanImpactDTO:
+      type: object
+      required: [has_active_plan, completed_days_unchanged, future_days_affected]
+      properties:
+        has_active_plan:
+          type: boolean
+        completed_days_unchanged:
+          type: integer
+          minimum: 0
+        future_days_affected:
+          type: integer
+          minimum: 0
+    MergeSummaryDTO:
+      type: object
+      required:
+        - id
+        - roadmap_id
+        - origin
+        - status
+        - base_version_no
+        - target_level
+        - reason
+        - materially_large
+        - undo_available
+        - created_at
+        - accepted_at
+        - rejected_at
+        - undone_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        roadmap_id:
+          type: string
+          format: uuid
+        origin:
+          $ref: '#/components/schemas/MergeOrigin'
+        status:
+          $ref: '#/components/schemas/MergeStatus'
+        base_version_no:
+          type: integer
+          minimum: 1
+        target_level:
+          type: string
+          nullable: true
+          enum: [junior, mid, senior, null]
+        reason:
+          type: string
+          nullable: true
+        materially_large:
+          type: boolean
+        undo_available:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        undone_at:
+          type: string
+          format: date-time
+          nullable: true
+    MergeProposalDTO:
+      type: object
+      required:
+        - id
+        - roadmap_id
+        - origin
+        - status
+        - base_version_id
+        - base_version_no
+        - result_version_id
+        - target_level
+        - instruction
+        - reason
+        - operations
+        - size_impact
+        - daily_plan_impact
+        - undo_available
+        - created_at
+        - accepted_at
+        - rejected_at
+        - undone_at
+        - undo_window_closed_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        roadmap_id:
+          type: string
+          format: uuid
+        origin:
+          $ref: '#/components/schemas/MergeOrigin'
+        status:
+          $ref: '#/components/schemas/MergeStatus'
+        base_version_id:
+          type: string
+          format: uuid
+        base_version_no:
+          type: integer
+          minimum: 1
+        result_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        target_level:
+          type: string
+          nullable: true
+          enum: [junior, mid, senior, null]
+        instruction:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        operations:
+          type: array
+          items:
+            $ref: '#/components/schemas/MergeOperationDTO'
+        size_impact:
+          $ref: '#/components/schemas/MergeSizeImpactDTO'
+        daily_plan_impact:
+          $ref: '#/components/schemas/MergeDailyPlanImpactDTO'
+        undo_available:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        undone_at:
+          type: string
+          format: date-time
+          nullable: true
+        undo_window_closed_at:
+          type: string
+          format: date-time
+          nullable: true
+    AcceptMergeProposalDTO:
+      type: object
+      properties:
+        base_version_no:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Optimistic concurrency version precondition (required via body and/or If-Match header).
+        acknowledge_large_expansion:
+          type: boolean
+          description: Required to be true when size_impact.materially_large is true (exceeds 45-topic soft guardrail).
+    MergeAcceptResponseDTO:
+      type: object
+      required: [roadmap_id, merge_id, new_version_no, undo_available, daily_plan_reconciled]
+      properties:
+        roadmap_id:
+          type: string
+          format: uuid
+        merge_id:
+          type: string
+          format: uuid
+        new_version_no:
+          type: integer
+          minimum: 2
+        undo_available:
+          type: boolean
+          enum: [true]
+        daily_plan_reconciled:
+          type: boolean
+    MergeRejectResponseDTO:
+      type: object
+      required: [merge_id, status, rejected_at]
+      properties:
+        merge_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [rejected]
+        rejected_at:
+          type: string
+          format: date-time
+    MergeUndoResponseDTO:
+      type: object
+      required: [restored_version_no, merge_id, status]
+      properties:
+        restored_version_no:
+          type: integer
+          minimum: 3
+        merge_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [undone]
+    MergeJobAcceptedDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/MergeJobAcceptedDTO'
+    PaginatedMergeListDTOEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MergeSummaryDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    MergeProposalDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/MergeProposalDTO'
+    MergeAcceptResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/MergeAcceptResponseDTO'
+    MergeRejectResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/MergeRejectResponseDTO'
+    MergeUndoResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/MergeUndoResponseDTO'

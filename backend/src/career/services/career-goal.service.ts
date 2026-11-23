@@ -14,6 +14,7 @@ import {
   ProfileService,
   type TransactionalQueryExecutor,
 } from '../../profile/profile.service.js';
+import { closeRoadmapMergesOnArchiveInTx } from '../../roadmap/services/roadmap.service.js';
 import {
   CAREER_LEVEL_VALUES,
   GOAL_STATUS_VALUES,
@@ -2684,6 +2685,12 @@ export class CareerGoalService {
                 WHERE user_id = $1
                   AND id = $2`,
               [normalizedUserId, archivedRoadmapId],
+            );
+            // M09: supersede open proposals and close any open Undo window (history preserved).
+            await closeRoadmapMergesOnArchiveInTx(
+              db,
+              normalizedUserId,
+              archivedRoadmapId,
             );
           }
         }
