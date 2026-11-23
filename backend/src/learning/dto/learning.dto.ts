@@ -284,6 +284,7 @@ export interface TopicDetailDTO {
 export interface TodayPlanDayDTO {
   day_no: number;
   total_days: number;
+  plan_item_id?: string;
 }
 
 export interface TodayQuizSummaryDTO {

@@ -30,6 +30,7 @@ import {
   CloseIcon,
   CompassIcon,
   RefreshCwIcon,
+  TargetIcon,
 } from '@/components/ui/icons';
 import { DailyTaskCard } from './daily-task-card';
 import { HoursPromptModal } from './hours-prompt-modal';
@@ -461,7 +462,7 @@ export function DailyPlanView({
           )}
           <Link href="/today" className={primaryLinkClass}>
             <BookOpenIcon className="block h-4 w-4 shrink-0" />
-            <span>Open Today</span>
+            <span>Today&apos;s Learning</span>
           </Link>
         </div>
       </header>
@@ -790,6 +791,11 @@ export function DailyPlanView({
                         <Link href="/today" className={primaryLinkClass}>
                           <BookOpenIcon className="block h-4 w-4 shrink-0" />
                           <span>Study Day {day.day_no}</span>
+                        </Link>
+                      ) : day.status === 'completed' ? (
+                        <Link href="/progress" className={secondaryLinkClass}>
+                          <TargetIcon className="block h-4 w-4 shrink-0" />
+                          <span>View Mastery</span>
                         </Link>
                       ) : undefined
                     }

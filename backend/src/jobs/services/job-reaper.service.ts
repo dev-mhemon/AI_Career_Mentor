@@ -26,6 +26,47 @@ interface ExpiredQueuedRow {
   id: string;
 }
 
+interface ReapedTerminalJobRow {
+  id: string;
+  user_id?: string | null;
+  job_kind?: string | null;
+  subject_id?: string | null;
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function syncTerminalPracticeReviewInTx(
+  tx: JobQueryExecutor,
+  reapedRow: ReapedTerminalJobRow | undefined,
+): Promise<void> {
+  if (
+    !reapedRow ||
+    reapedRow.job_kind !== 'practice_review' ||
+    typeof reapedRow.subject_id !== 'string' ||
+    !UUID_PATTERN.test(reapedRow.subject_id.trim())
+  ) {
+    return;
+  }
+  const reviewId = reapedRow.subject_id.trim().toLowerCase();
+  const userId =
+    typeof reapedRow.user_id === 'string' &&
+    UUID_PATTERN.test(reapedRow.user_id.trim())
+      ? reapedRow.user_id.trim().toLowerCase()
+      : null;
+
+  await tx.query(
+    `UPDATE public.practice_reviews
+        SET review_status = 'failed'::public.review_status,
+            failure_code = 'WORKER_LEASE_EXPIRED',
+            reviewed_at = NULL
+      WHERE id = $1
+        AND ($2::uuid IS NULL OR user_id = $2)
+        AND review_status = 'pending'::public.review_status`,
+    [reviewId, userId],
+  );
+}
+
 /**
  * Unwraps TypeORM PostgreSQL `UPDATE ... RETURNING` tuple `[rows, rowCount]` into a plain row array.
  */
@@ -201,15 +242,18 @@ export class JobReaperService
           if (step2.length > 0) {
             requeued += 1;
           } else {
-            await tx.query(
+            const terminalRaw = await tx.query<unknown>(
               `UPDATE public.ai_requests
                   SET retryable = false,
                       input_payload = NULL
                 WHERE id = $1
                   AND status = 'failed'
-               RETURNING id`,
+               RETURNING id, user_id, job_kind::text AS job_kind, subject_id`,
               [row.id],
             );
+            const terminalRows =
+              extractReturningRows<ReapedTerminalJobRow>(terminalRaw);
+            await syncTerminalPracticeReviewInTx(tx, terminalRows[0]);
             failedTerminal += 1;
           }
         } else {
@@ -226,13 +270,13 @@ export class JobReaperService
                 AND status = 'preparing'
                 AND locked_by IS NOT DISTINCT FROM $2
                 AND attempt_count = $3
-             RETURNING id`,
+             RETURNING id, user_id, job_kind::text AS job_kind, subject_id`,
             [row.id, row.locked_by, attemptCount],
           );
-          const terminalRows = extractReturningRows<{ id: string }>(
-            terminalRaw,
-          );
+          const terminalRows =
+            extractReturningRows<ReapedTerminalJobRow>(terminalRaw);
           if (terminalRows.length > 0) {
+            await syncTerminalPracticeReviewInTx(tx, terminalRows[0]);
             failedTerminal += 1;
           }
         }
@@ -263,11 +307,13 @@ export class JobReaperService
                   input_payload = NULL
             WHERE id = $1
               AND status = 'queued'
-           RETURNING id`,
+           RETURNING id, user_id, job_kind::text AS job_kind, subject_id`,
           [row.id],
         );
-        const terminalRows = extractReturningRows<{ id: string }>(terminalRaw);
+        const terminalRows =
+          extractReturningRows<ReapedTerminalJobRow>(terminalRaw);
         if (terminalRows.length > 0) {
+          await syncTerminalPracticeReviewInTx(tx, terminalRows[0]);
           failedTerminal += 1;
         }
       }

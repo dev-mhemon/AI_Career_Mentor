@@ -1,10 +1,12 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
+  getProgress,
   getToday,
   listCareerGoals,
   listRoadmaps,
   type CareerGoalResponse,
+  type ProgressResponseDTO,
   type RoadmapSummaryDTO,
   type TodayResponseDTO,
 } from '@/lib/api/client';
@@ -40,6 +42,7 @@ interface DashboardAsyncData {
   today: TodayResponseDTO | null;
   todayLoadError: boolean;
   roadmaps: RoadmapSummaryDTO[];
+  progress: ProgressResponseDTO | null;
 }
 
 async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
@@ -52,6 +55,7 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
         today: null,
         todayLoadError: false,
         roadmaps: [],
+        progress: null,
       };
     }
     const {
@@ -65,6 +69,7 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
         today: null,
         todayLoadError: false,
         roadmaps: [],
+        progress: null,
       };
     }
 
@@ -123,10 +128,20 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
       return Array.from(byId.values());
     };
 
-    const [goals, todayOutcome, roadmapsRes] = await Promise.all([
+    const loadProgress = async (): Promise<ProgressResponseDTO | null> => {
+      try {
+        const res = await getProgress(accessToken, { limit: 50 });
+        return res.progress;
+      } catch {
+        return null;
+      }
+    };
+
+    const [goals, todayOutcome, roadmapsRes, progressRes] = await Promise.all([
       loadGoals(),
       loadToday(),
       loadActiveRoadmaps(),
+      loadProgress(),
     ]);
 
     return {
@@ -135,6 +150,7 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
       today: todayOutcome.today,
       todayLoadError: todayOutcome.failed,
       roadmaps: roadmapsRes,
+      progress: progressRes,
     };
   } catch {
     return {
@@ -143,6 +159,7 @@ async function loadDashboardAsyncData(): Promise<DashboardAsyncData> {
       today: null,
       todayLoadError: false,
       roadmaps: [],
+      progress: null,
     };
   }
 }
@@ -224,6 +241,7 @@ export default async function DashboardPage() {
           today: null,
           todayLoadError: false,
           roadmaps: [],
+          progress: null,
         })
       : loadDashboardAsyncData(),
   ]);
@@ -524,13 +542,14 @@ export default async function DashboardPage() {
           </article>
         </section>
 
-        {/* Screen 13 Learning Strip: Today Hero + Active Roadmaps */}
+        {/* Screen 13 Learning Strip: Today Hero + Active Roadmaps + Skill Mastery */}
         {asyncData.accessToken && (
           <DashboardLearningSection
             accessToken={asyncData.accessToken}
             initialToday={asyncData.today}
             initialTodayError={asyncData.todayLoadError}
             initialRoadmaps={asyncData.roadmaps}
+            initialProgress={asyncData.progress}
             dailyPlanEnabled={effective_access.daily_plan ?? true}
             preferredDailyHours={dailyHours}
           />

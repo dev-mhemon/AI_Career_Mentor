@@ -263,6 +263,7 @@ export class TodayService {
         const planDay = {
           day_no: Number(nextItem.day_no),
           total_days: totalDays,
+          plan_item_id: String(nextItem.id),
         };
 
         const approvedTopic =

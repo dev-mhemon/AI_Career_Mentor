@@ -16,6 +16,7 @@ const {
   mockGetToday,
   mockListRoadmaps,
   mockFocusRoadmap,
+  mockGetProgress,
   mockGetUser,
   mockGetSession,
 } = vi.hoisted(() => ({
@@ -30,6 +31,7 @@ const {
   mockGetToday: vi.fn(),
   mockListRoadmaps: vi.fn(),
   mockFocusRoadmap: vi.fn(),
+  mockGetProgress: vi.fn(),
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
 }));
@@ -59,6 +61,7 @@ vi.mock('@/lib/api/client', async (importOriginal) => {
     getToday: mockGetToday,
     listRoadmaps: mockListRoadmaps,
     focusRoadmap: mockFocusRoadmap,
+    getProgress: mockGetProgress,
   };
 });
 
@@ -98,6 +101,16 @@ describe('DashboardPage', () => {
     mockListRoadmaps.mockResolvedValue({
       items: [],
       meta: { limit: 10, next_cursor: null },
+    });
+    mockGetProgress.mockResolvedValue({
+      progress: {
+        roadmap_id: null,
+        career_level: 'mid',
+        roadmap_progress: { items_total: 0, items_completed: 0 },
+        skills: [],
+        weak_areas: [],
+      },
+      meta: { limit: 50, next_cursor: null },
     });
     mockLoadProfileForSetup.mockResolvedValue({
       profile: null,
@@ -880,6 +893,16 @@ describe('DashboardPage', () => {
     mockListRoadmaps.mockResolvedValue({
       items: [],
       meta: { limit: 10, next_cursor: null },
+    });
+    mockGetProgress.mockResolvedValue({
+      progress: {
+        roadmap_id: null,
+        career_level: 'mid',
+        roadmap_progress: { items_total: 0, items_completed: 0 },
+        skills: [],
+        weak_areas: [],
+      },
+      meta: { limit: 50, next_cursor: null },
     });
     mockGetAppSessionStateResult.mockResolvedValue({
       status: 'authenticated',

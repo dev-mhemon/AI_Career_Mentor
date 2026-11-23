@@ -450,6 +450,7 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
     const handler: JobHandler = {
       execute: vi.fn().mockRejectedValue(new Error('Final attempt failure')),
       persistArtifact: vi.fn(),
+      onTerminalFailure: vi.fn().mockResolvedValue(undefined),
     };
 
     const outcome = await consumer.processClaimedJob(
@@ -461,6 +462,12 @@ describe('PostgresJobQueueConsumer (R12/R13 SKIP LOCKED, Fence, Heartbeat & Comm
       jobId: JOB_ID,
       errorCode: 'AI_GENERATION_FAILED',
     });
+    expect(handler.onTerminalFailure).toHaveBeenCalledTimes(1);
+    expect(handler.onTerminalFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: JOB_ID, attempt_count: 5 }),
+      'AI_GENERATION_FAILED',
+    );
   });
 
   it('uses two-step preparing -> failed then failed -> queued when retryable error occurs before maxAttempts', async () => {

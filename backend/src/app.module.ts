@@ -11,6 +11,9 @@ import { AiModule } from './ai/ai.module.js';
 import { CareerModule } from './career/career.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { LearningModule } from './learning/learning.module.js';
+import { PracticeReviewModule } from './practice-review/practice-review.module.js';
+import { ProgressModule } from './progress/progress.module.js';
+import { QuizModule } from './quiz/quiz.module.js';
 import { RoadmapModule } from './roadmap/roadmap.module.js';
 
 @Module({
@@ -46,6 +49,9 @@ import { RoadmapModule } from './roadmap/roadmap.module.js';
     JobsModule,
     RoadmapModule,
     LearningModule,
+    ProgressModule,
+    QuizModule,
+    PracticeReviewModule,
   ],
   controllers: [AppController],
   providers: [AppService],

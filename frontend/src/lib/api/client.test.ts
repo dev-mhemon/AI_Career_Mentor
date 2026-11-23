@@ -49,6 +49,20 @@ import {
   listLearningTopics,
   getLearningTopic,
   listLearningResources,
+  generateQuiz,
+  getQuizAttempt,
+  startQuizAttempt,
+  patchQuizAnswers,
+  submitQuizAttempt,
+  getQuizResult,
+  retryQuizAttempt,
+  listPracticeReviews,
+  getPracticeReviewFeedback,
+  retryPracticeReview,
+  getProgress,
+  getSkillProgressDetail,
+  getProgressHistory,
+  isJobAcceptedDTO,
   type DailyPlanResponseDTO,
   type JobKind,
   type TodayResponseDTO,
@@ -1672,5 +1686,290 @@ describe('M07 Learning API client (EP-L01..EP-L07)', () => {
       `http://localhost:3000/api/v1/learning/resources?topic_id=${TOPIC_ID}&limit=10`,
       expect.any(Object),
     );
+  });
+});
+
+describe('M08 Quiz, Practice Review & Progress API client (EP-Q01..Q07, EP-PR01..PR03, EP-G01..G03)', () => {
+  const ITEM_ID = '11111111-1111-4111-8111-111111111111';
+  const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
+  const REVIEW_ID = '33333333-3333-4333-8333-333333333333';
+  const SKILL_ID = '44444444-4444-4444-8444-444444444444';
+  const IDEM_KEY = '55555555-5555-4555-8555-555555555555';
+
+  it('calls EP-Q01..EP-Q07 quiz endpoints and attaches Idempotency-Key on EP-Q01, EP-Q05, EP-Q07', async () => {
+    const attemptDto = {
+      attempt_id: ATTEMPT_ID,
+      status: 'generated' as const,
+      attempt_no: 1,
+      topic_id: ITEM_ID,
+      career_level: 'mid' as const,
+      questions: [],
+      saved_answers: [],
+      submitted_at: null,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ success: true, data: attemptDto }),
+    });
+    const genRes = await generateQuiz(
+      MOCK_TOKEN,
+      { daily_plan_item_id: ITEM_ID },
+      IDEM_KEY,
+    );
+    expect(isJobAcceptedDTO(genRes)).toBe(false);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api/v1/quiz/generate',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': IDEM_KEY }),
+      }),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: attemptDto }),
+    });
+    await expect(getQuizAttempt(MOCK_TOKEN, ATTEMPT_ID)).resolves.toEqual(
+      attemptDto,
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { ...attemptDto, status: 'started' },
+        }),
+    });
+    await expect(startQuizAttempt(MOCK_TOKEN, ATTEMPT_ID)).resolves.toMatchObject(
+      { status: 'started' },
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { saved: 1, saved_at: '2026-11-22T10:00:00.000Z' },
+        }),
+    });
+    await expect(
+      patchQuizAnswers(MOCK_TOKEN, ATTEMPT_ID, {
+        answers: [{ question_id: ITEM_ID, selected_option_id: 'a' }],
+      }),
+    ).resolves.toEqual({ saved: 1, saved_at: '2026-11-22T10:00:00.000Z' });
+
+    const submitPayload = {
+      attempt_id: ATTEMPT_ID,
+      status: 'submitted' as const,
+      mcq_score: { correct: 1, total: 1 },
+      plan_day_unlocked: true,
+      next_plan_day_no: 2,
+      review_job_id: null,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: submitPayload }),
+    });
+    await expect(
+      submitQuizAttempt(
+        MOCK_TOKEN,
+        ATTEMPT_ID,
+        { confirm_unanswered: true },
+        IDEM_KEY,
+      ),
+    ).resolves.toEqual(submitPayload);
+
+    const resultPayload = {
+      attempt_id: ATTEMPT_ID,
+      status: 'feedback_available' as const,
+      attempt_no: 1,
+      mcq_score: { correct: 1, total: 1 },
+      performance_level: 'good' as const,
+      questions: [],
+      improvement_recommendations: [],
+      progress_change: null,
+      retry_available: true,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: resultPayload }),
+    });
+    await expect(getQuizResult(MOCK_TOKEN, ATTEMPT_ID)).resolves.toEqual(
+      resultPayload,
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      `http://localhost:3000/api/v1/quiz/${ATTEMPT_ID}/result`,
+      expect.any(Object),
+    );
+
+    const jobPayload = {
+      job_id: '66666666-6666-4666-8666-666666666666',
+      kind: 'quiz_generate' as const,
+      status: 'queued' as const,
+      poll_url: '/api/v1/jobs/66666666-6666-4666-8666-666666666666',
+      retry_after_seconds: 3,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({ success: true, data: jobPayload }),
+    });
+    const retryRes = await retryQuizAttempt(MOCK_TOKEN, ATTEMPT_ID, IDEM_KEY);
+    expect(isJobAcceptedDTO(retryRes)).toBe(true);
+    expect(
+      isJobAcceptedDTO({
+        job_id: 'j1',
+        poll_url: '/api/v1/jobs/j1',
+        status: 'invalid_status',
+        retry_after_seconds: 3,
+      }),
+    ).toBe(false);
+    expect(
+      isJobAcceptedDTO({
+        job_id: 'j1',
+        poll_url: '/api/v1/jobs/j1',
+        status: 'queued',
+      }),
+    ).toBe(false);
+  });
+
+  it('calls EP-PR01..EP-PR03 practice review and EP-G01..EP-G03 progress endpoints cleanly', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: [] }),
+    });
+    await expect(
+      listPracticeReviews(MOCK_TOKEN, ATTEMPT_ID),
+    ).resolves.toEqual([]);
+
+    const feedbackDto = {
+      id: REVIEW_ID,
+      question_id: ITEM_ID,
+      review_status: 'reviewed' as const,
+      performance_level: 'good' as const,
+      dimensions: {
+        correctness: 'good' as const,
+        understanding: 'good' as const,
+        reasoning: 'good' as const,
+      },
+      strengths: ['Clear explanation'],
+      mistakes: [],
+      weaknesses: [],
+      improvement_recommendations: [],
+      evidence_eligible: true,
+      reportable: true,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: feedbackDto }),
+    });
+    await expect(
+      getPracticeReviewFeedback(MOCK_TOKEN, REVIEW_ID),
+    ).resolves.toEqual(feedbackDto);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: feedbackDto }),
+    });
+    await expect(retryPracticeReview(MOCK_TOKEN, REVIEW_ID)).resolves.toEqual(
+      feedbackDto,
+    );
+
+    const progressPayload = {
+      roadmap_id: ITEM_ID,
+      career_level: 'mid' as const,
+      roadmap_progress: { items_total: 5, items_completed: 2 },
+      skills: [],
+      weak_areas: [],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: progressPayload,
+          meta: { limit: 20, next_cursor: null },
+        }),
+    });
+    await expect(
+      getProgress(MOCK_TOKEN, {
+        roadmap_id: ITEM_ID,
+        career_level: 'mid',
+        learning_state: 'practicing',
+        limit: 20,
+      }),
+    ).resolves.toEqual({
+      progress: progressPayload,
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    const skillDetail = {
+      skill_id: SKILL_ID,
+      name: 'SQL',
+      levels: [],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: skillDetail }),
+    });
+    await expect(
+      getSkillProgressDetail(MOCK_TOKEN, SKILL_ID, { career_level: 'mid' }),
+    ).resolves.toEqual(skillDetail);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [],
+          meta: { limit: 20, next_cursor: null },
+        }),
+    });
+    await expect(
+      getProgressHistory(MOCK_TOKEN, { skill_id: SKILL_ID, limit: 20 }),
+    ).resolves.toEqual({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    // Normalized limit consistency between query string and fallback meta.limit
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: progressPayload }),
+    });
+    const flooredProgress = await getProgress(MOCK_TOKEN, { limit: 5.9 });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      'http://localhost:3000/api/v1/progress?limit=5',
+      expect.any(Object),
+    );
+    expect(flooredProgress.meta.limit).toBe(5);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: [] }),
+    });
+    const invalidLimitHistory = await getProgressHistory(MOCK_TOKEN, {
+      limit: -4,
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      'http://localhost:3000/api/v1/progress/history',
+      expect.any(Object),
+    );
+    expect(invalidLimitHistory.meta.limit).toBe(20);
   });
 });

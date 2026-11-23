@@ -10,12 +10,21 @@ import {
 import {
   ApiError,
   createDailyPlan,
+  generateQuiz,
   getJobStatus,
   getToday,
   listLearningResources,
   type TodayResponseDTO,
 } from '@/lib/api/client';
 import { TodayView } from './today-view';
+
+const mockPush = vi.fn();
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
+  }),
+}));
 
 vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>(
@@ -26,6 +35,7 @@ vi.mock('@/lib/api/client', async () => {
     getToday: vi.fn(),
     getJobStatus: vi.fn(),
     createDailyPlan: vi.fn(),
+    generateQuiz: vi.fn(),
     listLearningResources: vi.fn(),
   };
 });
@@ -38,6 +48,7 @@ function makeReadyToday(): TodayResponseDTO {
     plan_day: {
       day_no: 2,
       total_days: 10,
+      plan_item_id: 'item-1',
     },
     topic: {
       topic_id: 'top-1',
@@ -313,14 +324,43 @@ describe('TodayView', () => {
       );
     });
 
-    // Disabled M08 quiz button + zero "Mark Complete" button
-    const quizBtn = screen.getByRole('button', {
-      name: /Practice Quiz \(Coming in M08\)/i,
+    // 2-column responsive layout: left AIExplanationCard + right sticky rail with Daily Practice Quiz on top and Verified Learning Resources below
+    const readyGrid = screen.getByTestId('today-ready-grid');
+    expect(readyGrid.className).toContain('lg:grid-cols-12');
+    const rightRail = screen.getByRole('complementary', {
+      name: /Practice quiz and verified learning resources/i,
     });
-    expect(quizBtn).toBeDisabled();
+    expect(rightRail.className).toContain('lg:sticky');
+    expect(rightRail.className).toContain('lg:col-span-4');
+
+    // Live M08 Start Practice Quiz button + zero "Mark Complete" button
+    vi.mocked(generateQuiz).mockResolvedValueOnce({
+      attempt_id: 'att-99',
+      status: 'generated',
+      attempt_no: 1,
+      topic_id: 'top-1',
+      career_level: 'senior',
+      questions: [],
+      saved_answers: [],
+      submitted_at: null,
+    });
+    const quizBtn = screen.getByRole('button', {
+      name: /Start Practice Quiz/i,
+    });
+    expect(quizBtn).not.toBeDisabled();
     expect(
       screen.queryByRole('button', { name: /Mark Complete/i }),
     ).not.toBeInTheDocument();
+
+    fireEvent.click(quizBtn);
+    await waitFor(() => {
+      expect(generateQuiz).toHaveBeenCalledWith(
+        'token-1',
+        { daily_plan_item_id: 'item-1' },
+        expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      );
+      expect(mockPush).toHaveBeenCalledWith('/quiz/att-99');
+    });
   });
 
   it('renders calm info recovery when EP-L04 returns 403 FEATURE_DISABLED', async () => {
@@ -517,5 +557,49 @@ describe('TodayView', () => {
     expect(
       screen.getByRole('heading', { level: 5, name: 'Nested Point' }),
     ).toBeInTheDocument();
+  });
+
+  it('ignores late EP-Q01 generateQuiz resolution after unmount and never calls router.push', async () => {
+    let resolveQuiz!: (val: {
+      attempt_id: string;
+      status: 'generated';
+      attempt_no: number;
+      topic_id: string;
+      career_level: 'senior';
+      questions: [];
+      saved_answers: [];
+      submitted_at: null;
+    }) => void;
+    vi.mocked(generateQuiz).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveQuiz = resolve;
+      }),
+    );
+
+    const { unmount } = render(
+      <TodayView accessToken="token-1" initialToday={makeReadyToday()} />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Start Practice Quiz/i }),
+    );
+    unmount();
+
+    await act(async () => {
+      resolveQuiz({
+        attempt_id: 'att-late',
+        status: 'generated',
+        attempt_no: 1,
+        topic_id: 'top-1',
+        career_level: 'senior',
+        questions: [],
+        saved_answers: [],
+        submitted_at: null,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });

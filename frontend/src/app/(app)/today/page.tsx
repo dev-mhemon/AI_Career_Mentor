@@ -69,6 +69,7 @@ export default async function TodayPage() {
 
   const shellUser = await getAuthenticatedShellUser(state.user);
   const dailyPlanEnabled = state.effective_access.daily_plan ?? true;
+  const quizPracticeEnabled = state.effective_access.quiz_practice ?? true;
 
   return (
     <>
@@ -79,6 +80,7 @@ export default async function TodayPage() {
       <TodayView
         accessToken={accessToken}
         dailyPlanEnabled={dailyPlanEnabled}
+        quizPracticeEnabled={quizPracticeEnabled}
       />
     </>
   );

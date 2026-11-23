@@ -241,7 +241,11 @@ describe('TodayService (EP-L04 — all 5 today_status states, feature gate & R24
 
     const res = await service.getToday(USER_ID);
     expect(res.status).toBe('ready');
-    expect(res.plan_day).toEqual({ day_no: 4, total_days: 12 });
+    expect(res.plan_day).toEqual({
+      day_no: 4,
+      total_days: 12,
+      plan_item_id: ITEM_ID,
+    });
     expect(res.topic?.topic_id).toBe(APPROVED_TOPIC_ID);
     expect(res.topic?.content_version).toBe(2);
     expect(res.topic?.sources).toHaveLength(1);
