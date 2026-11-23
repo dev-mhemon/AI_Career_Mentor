@@ -848,4 +848,178 @@ describe('QuizService (EP-Q01–EP-Q07, answer-key protection, atomic day unlock
     expect(retryRes.statusCode).toBe(202);
     expect(aiRequestQueries[0]).toContain("variant_no')::int, 1) = 2");
   });
+
+  it('EP-Q04/EP-Q05 supports clear=true deletion, checks locked FOR SHARE status on EP-Q01, and aborts EP-Q05 when AbortSignal is aborted after locking', async () => {
+    // 1. EP-Q04 saveAnswers with clear: true deletes existing quiz_answers row
+    const deletedSql: string[] = [];
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('effective_feature_access')) {
+        return [{ allowed: true }];
+      }
+      if (sql.includes('FROM public.users')) {
+        return [{ status: 'active' }];
+      }
+      if (
+        sql.includes('FROM public.quiz_attempts') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return [
+          {
+            id: ATTEMPT_1_ID,
+            user_id: USER_ID,
+            daily_plan_item_id: ITEM_ID,
+            quiz_id: QUIZ_ID,
+            attempt_no: 1,
+            retry_of_attempt_id: null,
+            status: 'started',
+            question_ids: [Q_MCQ_ID, Q_FR_ID],
+            started_at: '2026-11-22T09:58:00.000Z',
+            submitted_at: null,
+            reviewed_at: null,
+            mcq_correct: null,
+            mcq_total: null,
+            performance_level: null,
+            improvement_recommendations: [],
+          },
+        ];
+      }
+      if (sql.includes('FROM public.quiz_questions')) {
+        return [
+          {
+            id: Q_FR_ID,
+            sort_order: 2,
+            question_type: 'free_response',
+            difficulty: 'analysis',
+            prompt: 'Explain LEFT JOIN.',
+            options: null,
+            response_hint: 'sql',
+            max_length: 2000,
+            allow_i_dont_know: true,
+          },
+        ];
+      }
+      if (sql.includes('DELETE FROM public.quiz_answers')) {
+        deletedSql.push(sql);
+        return [];
+      }
+      return [];
+    });
+
+    const savedClear = await service.saveAnswers(USER_ID, ATTEMPT_1_ID, {
+      answers: [{ question_id: Q_FR_ID, clear: true }],
+    });
+    expect(savedClear.saved).toBe(1);
+    expect(deletedSql).toHaveLength(1);
+
+    await expect(
+      service.saveAnswers(USER_ID, ATTEMPT_1_ID, {
+        answers: [{ question_id: Q_FR_ID, clear: true, text: 'conflict' }],
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
+
+    // 2. EP-Q01 checks post-lock status from roadmaps FOR SHARE
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('effective_feature_access')) {
+        return [{ allowed: true }];
+      }
+      if (sql.includes('FROM public.users')) {
+        return [{ status: 'active' }];
+      }
+      if (sql.includes('FROM public.daily_plan_items dpi')) {
+        return [
+          {
+            id: ITEM_ID,
+            plan_id: PLAN_ID,
+            day_no: 1,
+            sort_order: 1,
+            status: 'pending',
+            topic_id: TOPIC_ID,
+            roadmap_id: ROADMAP_ID,
+            roadmap_status: 'locked',
+            skill_id: SKILL_ID,
+            slug: 'sql-joins',
+            title: 'SQL Joins',
+            career_level: 'mid',
+          },
+        ];
+      }
+      if (sql.includes('FROM public.roadmaps') && sql.includes('FOR SHARE')) {
+        return [{ status: 'archived' }];
+      }
+      return [];
+    });
+    await expect(
+      service.generateOrFetchQuizAttempt(USER_ID, {
+        daily_plan_item_id: ITEM_ID,
+      }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 409, 'PLAN_ITEM_NOT_AVAILABLE');
+      return true;
+    });
+
+    // 3. EP-Q05 aborts transaction with 503 if AbortSignal aborted after acquiring locks
+    const abortController = new AbortController();
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('effective_feature_access')) {
+        return [{ allowed: true }];
+      }
+      if (sql.includes('FROM public.users')) {
+        return [{ status: 'active' }];
+      }
+      if (sql.includes('FROM public.quiz_attempts qa')) {
+        return [
+          {
+            id: ATTEMPT_1_ID,
+            daily_plan_item_id: ITEM_ID,
+            plan_id: PLAN_ID,
+            roadmap_id: ROADMAP_ID,
+            topic_id: TOPIC_ID,
+            skill_id: SKILL_ID,
+            title: 'SQL Joins',
+            career_level: 'mid',
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.quiz_attempts') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        abortController.abort();
+        return [
+          {
+            id: ATTEMPT_1_ID,
+            user_id: USER_ID,
+            daily_plan_item_id: ITEM_ID,
+            quiz_id: QUIZ_ID,
+            attempt_no: 1,
+            retry_of_attempt_id: null,
+            status: 'started',
+            question_ids: [Q_MCQ_ID],
+            started_at: '2026-11-22T09:58:00.000Z',
+            submitted_at: null,
+            reviewed_at: null,
+            mcq_correct: null,
+            mcq_total: null,
+            performance_level: null,
+            improvement_recommendations: [],
+          },
+        ];
+      }
+      return [];
+    });
+    await expect(
+      service.submitQuizAttempt(
+        USER_ID,
+        ATTEMPT_1_ID,
+        { confirm_unanswered: true },
+        { signal: abortController.signal },
+      ),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 503, 'SERVICE_UNAVAILABLE');
+      return true;
+    });
+  });
 });

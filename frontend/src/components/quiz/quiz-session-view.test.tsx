@@ -22,6 +22,7 @@ import {
   type QuizResultDTO,
 } from '@/lib/api/client';
 import { QuizSessionView } from './quiz-session-view';
+import { PracticeReviewCard } from './practice-review-card';
 
 const mockPush = vi.fn();
 
@@ -799,5 +800,118 @@ describe('QuizSessionView & QuizResultView (Screen 18 — EP-Q02..EP-Q07, EP-PR0
     expect(
       screen.getByText(/Recovered pending-status feedback strength/i),
     ).toBeInTheDocument();
+  });
+
+  it('persists clear=true via PATCH, prunes acknowledged sessionStorage entries, reconciles IDEMPOTENCY_KEY_REUSED, and renders retention/aria semantics', async () => {
+    vi.useFakeTimers();
+    const attemptWithFr = makeQuizAttempt('started');
+    attemptWithFr.saved_answers = [
+      {
+        question_id: 'q-fr-1',
+        selected_option_id: null,
+        text: 'Initial saved SQL',
+        i_dont_know: false,
+      },
+    ];
+    vi.mocked(patchQuizAnswers).mockResolvedValue({
+      saved: 1,
+      saved_at: '2026-11-22T10:02:00.000Z',
+    });
+
+    render(
+      <QuizSessionView
+        accessToken="tok-1"
+        attemptId="att-1"
+        initialAttempt={attemptWithFr}
+      />,
+    );
+
+    const textarea = screen.getByRole('textbox');
+    expect(textarea).toHaveAttribute('aria-labelledby');
+
+    // Clear saved FR text -> should persist { question_id: 'q-fr-1', clear: true } and clear sessionStorage once acknowledged
+    fireEvent.change(textarea, { target: { value: '' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(950);
+    });
+    expect(patchQuizAnswers).toHaveBeenCalledWith('tok-1', 'att-1', {
+      answers: [{ question_id: 'q-fr-1', clear: true }],
+    });
+    expect(window.sessionStorage.getItem('agy_quiz_draft_v1:att-1')).toBeNull();
+
+    // Verify 409 IDEMPOTENCY_KEY_REUSED triggers attempt reload
+    vi.useRealTimers();
+    const idkCheckboxes = screen.getAllByRole('checkbox', {
+      name: /I don't know/i,
+    });
+    fireEvent.click(idkCheckboxes[0]!);
+    vi.mocked(submitQuizAttempt).mockRejectedValueOnce(
+      new ApiError(
+        409,
+        'Idempotency key reused',
+        'IDEMPOTENCY_KEY_REUSED',
+      ),
+    );
+    vi.mocked(getQuizAttempt).mockResolvedValueOnce(
+      makeQuizAttempt('feedback_available'),
+    );
+    vi.mocked(getQuizResult).mockResolvedValueOnce({
+      ...makeQuizResult('reviewed'),
+      questions: [
+        {
+          question_id: 'q-fr-1',
+          type: 'free_response',
+          user_answer: 'Previously loaded raw text that expired',
+          explanation: 'Reference explanation',
+          practice_review_id: 'rev-1',
+          review_status: 'not_evidence',
+          reportable: true,
+        },
+      ],
+    });
+    vi.mocked(getPracticeReviewFeedback).mockResolvedValueOnce({
+      id: 'rev-1',
+      question_id: 'q-fr-1',
+      review_status: 'not_evidence',
+      performance_level: null,
+      dimensions: null,
+      strengths: [],
+      mistakes: [],
+      weaknesses: [],
+      improvement_recommendations: [],
+      evidence_eligible: false,
+      reportable: true,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Submit Quiz$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit Anyway/i }));
+
+    await waitFor(() => {
+      expect(getQuizAttempt).toHaveBeenCalledWith(
+        'tok-1',
+        'att-1',
+        expect.anything(),
+      );
+    });
+    expect(
+      await screen.findByText(/Not Counted as Evidence/i),
+    ).toBeInTheDocument();
+
+    render(
+      <PracticeReviewCard
+        questionNumber={1}
+        questionPrompt="Explain transactions."
+        userAnswer="Stale answer text that must stay hidden"
+        reviewId="rev-exp"
+        reviewStatus="not_evidence"
+        isRawTextExpired={true}
+      />,
+    );
+    expect(
+      screen.getByText(/Submitted answer expired after the 90-day retention period/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Stale answer text that must stay hidden/i),
+    ).not.toBeInTheDocument();
   });
 });

@@ -73,6 +73,13 @@ describe('QuizGradingService (deterministic MCQ grading & junk FR detection)', (
     expect(service.isJunkOrNonAttemptFreeResponse('???', false)).toBe(true);
     expect(service.isJunkOrNonAttemptFreeResponse('0', false)).toBe(false);
     expect(service.isJunkOrNonAttemptFreeResponse('O(1)', false)).toBe(false);
+    expect(service.isJunkOrNonAttemptFreeResponse('null', false)).toBe(false);
+    expect(service.isJunkOrNonAttemptFreeResponse('undefined', false)).toBe(
+      false,
+    );
+    expect(service.isJunkOrNonAttemptFreeResponse('none', false)).toBe(false);
+    expect(service.isJunkOrNonAttemptFreeResponse('pass', false)).toBe(false);
+    expect(service.isJunkOrNonAttemptFreeResponse('test', false)).toBe(false);
 
     expect(
       service.isJunkOrNonAttemptFreeResponse(

@@ -291,6 +291,7 @@ export function QuizCard({
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label
+              id={`${textareaId}-label`}
               htmlFor={textareaId}
               className="text-xs font-medium text-slate-600 dark:text-slate-300"
             >
@@ -310,6 +311,7 @@ export function QuizCard({
           </div>
           <textarea
             id={textareaId}
+            aria-labelledby={`${groupId}-prompt ${textareaId}-label`}
             rows={6}
             dir="auto"
             maxLength={maxChars}

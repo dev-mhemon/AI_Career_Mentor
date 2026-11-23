@@ -132,12 +132,11 @@ export class PracticeReviewController {
    * `EP-PR03` (`POST /api/v1/practice-review/:id/review`, `200`/`202`, `Gate: write (ai_practice_review)`).
    */
   @Post(':id/review')
-  @HttpCode(200)
   @Policy({ feature: 'ai_practice_review' })
   async triggerOrRetryReview(
     @Req() req: AuthenticatedPracticeReviewRequest,
     @Param('id') id: string,
-    @Res({ passthrough: true }) res?: Response,
+    @Res() res?: Response,
   ): Promise<PracticeFeedbackDTO | JobAcceptedDto> {
     const userId = assertAuthenticatedUserId(req);
     const reviewId = assertValidUuidParam(id, 'id', 'Practice review id');
@@ -154,6 +153,10 @@ export class PracticeReviewController {
     );
     if (res && typeof res.status === 'function') {
       res.status(outcome.statusCode);
+      if (typeof res.json === 'function') {
+        res.json({ success: true, data: outcome.body });
+        return undefined as unknown as PracticeFeedbackDTO | JobAcceptedDto;
+      }
     }
     return outcome.body;
   }

@@ -183,6 +183,7 @@ export function DashboardLearningSection({
             : preferredDailyHours,
         });
         void todayReload;
+        router.refresh();
       } else {
         setFocusNotice(
           `${roadmap.role_name} is now your Focus Roadmap and its existing Daily Plan is active.`,

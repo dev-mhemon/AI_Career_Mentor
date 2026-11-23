@@ -1,8 +1,10 @@
-import { HttpException } from '@nestjs/common';
+import { HttpException, ValidationPipe } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrivacyRetentionService } from '../account/services/privacy-retention.service.js';
 import type { DatabaseService } from '../auth/services/database.service.js';
 import type { JobProducerService } from '../jobs/services/job-producer.service.js';
+import { PracticeReviewController } from './controllers/practice-review.controller.js';
+import { ListPracticeReviewsQueryDTO } from './dto/practice-review.dto.js';
 import { PracticeReviewService } from './services/practice-review.service.js';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -212,5 +214,49 @@ describe('PracticeReviewService (EP-PR01, EP-PR02, EP-PR03 — idempotent 200, 4
     const retried = await service.triggerOrRetryReview(USER_ID, REVIEW_ID);
     expect(retried.statusCode).toBe(202);
     expect(jobProducerMock.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('EP-PR03 preserves 202 wire status via res.status().json() and EP-PR01 returns 400 INVALID_FORMAT for malformed quiz_attempt_id', async () => {
+    const pipe = new ValidationPipe({ whitelist: true, transform: true });
+    const transformed = (await pipe.transform(
+      { quiz_attempt_id: 'not-a-uuid' },
+      { type: 'query', metatype: ListPracticeReviewsQueryDTO },
+    )) as ListPracticeReviewsQueryDTO;
+
+    const controller = new PracticeReviewController({
+      listReviewsForAttempt: vi.fn(),
+      triggerOrRetryReview: vi.fn().mockResolvedValue({
+        statusCode: 202,
+        body: {
+          job_id: JOB_ID,
+          kind: 'practice_review',
+          status: 'queued',
+          poll_url: `/api/v1/jobs/${JOB_ID}`,
+          retry_after_seconds: 3,
+        },
+      }),
+    } as unknown as PracticeReviewService);
+
+    await expect(
+      controller.listReviewsForAttempt({ user: { sub: USER_ID } }, transformed),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 400, 'INVALID_FORMAT');
+      return true;
+    });
+
+    const jsonMock = vi.fn();
+    const statusMock = vi.fn(() => ({ json: jsonMock }));
+    await controller.triggerOrRetryReview(
+      { user: { sub: USER_ID } },
+      REVIEW_ID,
+      {
+        status: statusMock,
+        json: jsonMock,
+      } as unknown as import('express').Response,
+    );
+    expect(statusMock).toHaveBeenCalledWith(202);
+    expect(jsonMock).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true }),
+    );
   });
 });

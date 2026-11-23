@@ -316,48 +316,54 @@ export function QuizResultView({
       return;
     }
     let active = true;
+    let pollInFlight = false;
     const controller = new AbortController();
 
     const timer = setInterval(async () => {
-      if (!active || controller.signal.aborted) {
+      if (!active || controller.signal.aborted || pollInFlight) {
         return;
       }
+      pollInFlight = true;
       const pollEpoch = pollEpochRef.current;
-      const [reviewsOutcome, resultOutcome] = await Promise.allSettled([
-        listPracticeReviews(accessToken, attemptId, {
-          signal: controller.signal,
-        }),
-        getQuizResult(accessToken, attemptId, {
-          signal: controller.signal,
-        }),
-      ]);
-      if (
-        !active ||
-        controller.signal.aborted ||
-        pollEpoch !== pollEpochRef.current
-      ) {
-        return;
-      }
-      if (resultOutcome.status === 'fulfilled') {
-        setLiveResultOverride({
-          key: requestKey,
-          result: resultOutcome.value,
-        });
-      }
-      if (reviewsOutcome.status === 'fulfilled') {
-        const newlyReady = reviewsOutcome.value
-          .filter(
-            (rev) =>
-              rev.review_status === 'reviewed' ||
-              rev.review_status === 'not_evidence',
-          )
-          .map((rev) => rev.id);
-        if (newlyReady.length > 0) {
-          setPolledReadyReviewIds((prev) => {
-            const merged = new Set([...prev, ...newlyReady]);
-            return merged.size === prev.length ? prev : Array.from(merged);
+      try {
+        const [reviewsOutcome, resultOutcome] = await Promise.allSettled([
+          listPracticeReviews(accessToken, attemptId, {
+            signal: controller.signal,
+          }),
+          getQuizResult(accessToken, attemptId, {
+            signal: controller.signal,
+          }),
+        ]);
+        if (
+          !active ||
+          controller.signal.aborted ||
+          pollEpoch !== pollEpochRef.current
+        ) {
+          return;
+        }
+        if (resultOutcome.status === 'fulfilled') {
+          setLiveResultOverride({
+            key: requestKey,
+            result: resultOutcome.value,
           });
         }
+        if (reviewsOutcome.status === 'fulfilled') {
+          const newlyReady = reviewsOutcome.value
+            .filter(
+              (rev) =>
+                rev.review_status === 'reviewed' ||
+                rev.review_status === 'not_evidence',
+            )
+            .map((rev) => rev.id);
+          if (newlyReady.length > 0) {
+            setPolledReadyReviewIds((prev) => {
+              const merged = new Set([...prev, ...newlyReady]);
+              return merged.size === prev.length ? prev : Array.from(merged);
+            });
+          }
+        }
+      } finally {
+        pollInFlight = false;
       }
     }, 3_000);
 
@@ -373,6 +379,9 @@ export function QuizResultView({
       if (retryingReviewId || !aiPracticeReviewEnabled) {
         return;
       }
+      const capturedScope = currentScopeRef.current;
+      const capturedRequestKey = requestKey;
+      const seedBaseResult = activeResult;
       setRetryingReviewId(reviewId);
       setReviewErrorById((prev) => {
         const next = { ...prev };
@@ -382,6 +391,9 @@ export function QuizResultView({
 
       try {
         const outcome = await retryPracticeReview(accessToken, reviewId);
+        if (!mountedRef.current || currentScopeRef.current !== capturedScope) {
+          return;
+        }
         // Reject any in-flight poll snapshots started before this retry succeeded
         pollEpochRef.current += 1;
         if (isJobAcceptedDTO(outcome)) {
@@ -399,20 +411,27 @@ export function QuizResultView({
             prev.filter((id) => id !== reviewId),
           );
           // Mark review as pending in local result so the polling loop picks it up
-          if (activeResult) {
-            setLiveResultOverride({
-              key: requestKey,
+          setLiveResultOverride((prev) => {
+            const base =
+              prev && prev.key === capturedRequestKey
+                ? prev.result
+                : seedBaseResult;
+            if (!base) {
+              return prev;
+            }
+            return {
+              key: capturedRequestKey,
               result: {
-                ...activeResult,
-                questions: activeResult.questions.map((q) =>
+                ...base,
+                questions: base.questions.map((q) =>
                   q.type === 'free_response' &&
                   q.practice_review_id === reviewId
                     ? { ...q, review_status: 'pending' }
                     : q,
                 ),
               },
-            });
-          }
+            };
+          });
         } else {
           // 200 OK already reviewed
           loadedReviewIdsRef.current.add(reviewId);
@@ -426,22 +445,32 @@ export function QuizResultView({
             return next;
           });
           setFeedbackByReviewId((prev) => ({ ...prev, [reviewId]: outcome }));
-          if (activeResult) {
-            setLiveResultOverride({
-              key: requestKey,
+          setLiveResultOverride((prev) => {
+            const base =
+              prev && prev.key === capturedRequestKey
+                ? prev.result
+                : seedBaseResult;
+            if (!base) {
+              return prev;
+            }
+            return {
+              key: capturedRequestKey,
               result: {
-                ...activeResult,
-                questions: activeResult.questions.map((q) =>
+                ...base,
+                questions: base.questions.map((q) =>
                   q.type === 'free_response' &&
                   q.practice_review_id === reviewId
                     ? { ...q, review_status: outcome.review_status }
                     : q,
                 ),
               },
-            });
-          }
+            };
+          });
         }
       } catch (err) {
+        if (!mountedRef.current || currentScopeRef.current !== capturedScope) {
+          return;
+        }
         const mapped = mapApiError(err);
         if (
           (err instanceof ApiError && err.statusCode === 410) ||
@@ -454,7 +483,9 @@ export function QuizResultView({
           [reviewId]: mapped.message,
         }));
       } finally {
-        setRetryingReviewId(null);
+        if (mountedRef.current) {
+          setRetryingReviewId((prev) => (prev === reviewId ? null : prev));
+        }
       }
     },
     [
@@ -494,15 +525,22 @@ export function QuizResultView({
     }
     const idemKey = retryIdemKeyRef.current;
 
+    const capturedScope = currentScopeRef.current;
     try {
       const outcome = await retryQuizAttempt(accessToken, attemptId, idemKey);
       retryIdemKeyRef.current = null;
+      if (!mountedRef.current || currentScopeRef.current !== capturedScope) {
+        return;
+      }
       if (isJobAcceptedDTO(outcome)) {
         setRetryQuizJob(outcome);
       } else {
         navigateToNewAttempt(outcome.attempt_id);
       }
     } catch (err) {
+      if (!mountedRef.current || currentScopeRef.current !== capturedScope) {
+        return;
+      }
       const mapped = mapApiError(err);
       if (
         (err instanceof ApiError &&
@@ -521,7 +559,9 @@ export function QuizResultView({
       }
       setRetryQuizError(mapped);
     } finally {
-      setRetryingQuiz(false);
+      if (mountedRef.current && currentScopeRef.current === capturedScope) {
+        setRetryingQuiz(false);
+      }
     }
   };
 

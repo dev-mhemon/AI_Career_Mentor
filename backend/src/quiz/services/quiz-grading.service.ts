@@ -27,7 +27,7 @@ export interface McqGradingSummary {
 }
 
 const OBVIOUS_NON_ATTEMPT_PATTERN =
-  /^(?:n\/?a|none|null|undefined|idk|i\s*don'?t\s*know|dont\s*know|no\s*idea|nothing|pass|skip|skipped|test|testing|asdf+|qwerty+|\.+|-+|_+|\?+|!+)$/i;
+  /^(?:n\/?a|idk|i\s*don'?t\s*know|dont\s*know|no\s*idea|nothing|skip|skipped|testing|asdf+|qwerty+|\.+|-+|_+|\?+|!+)$/i;
 
 const REPEATED_SINGLE_CHAR_PATTERN = /^([^\s])\1{4,}$/u;
 const HAS_LETTER_OR_DIGIT_PATTERN = /[\p{L}\p{N}]/u;

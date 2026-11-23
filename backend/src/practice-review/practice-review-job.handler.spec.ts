@@ -285,4 +285,112 @@ describe('PracticeReviewJobHandler (persistArtifact, EvidenceService recording, 
     ).rejects.toThrow(/expired or been purged/i);
     expect(evidenceRecordMock).not.toHaveBeenCalled();
   });
+
+  it('redacts verbatim submitted answer_text from feedback strings before persisting to practice_reviews', async () => {
+    const submittedAnswer = 'SELECT id, name FROM users WHERE active = true;';
+    let persistedParams: unknown[] = [];
+
+    const txQuery = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM public.quiz_attempts qa')) {
+        return [
+          {
+            id: ATTEMPT_ID,
+            status: 'submitted',
+            attempt_no: 1,
+            performance_level: 'good',
+            improvement_recommendations: [],
+            topic_id: TOPIC_ID,
+            roadmap_id: ROADMAP_ID,
+            career_level: 'mid',
+            skill_id: SKILL_ID,
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.practice_reviews pr') &&
+        sql.includes('FOR UPDATE OF pr')
+      ) {
+        return [
+          {
+            id: REVIEW_ID,
+            question_id: QUESTION_ID,
+            review_status: 'pending',
+            difficulty: 'analysis',
+            answer_text: submittedAnswer,
+            raw_text_expires_at: '2027-02-20T10:00:00.000Z',
+            raw_text_purged_at: null,
+            answer_saved_at: '2026-11-22T09:59:00.000Z',
+            answer_created_at: '2026-11-22T09:59:00.000Z',
+          },
+        ];
+      }
+      if (sql.includes('UPDATE public.practice_reviews')) {
+        persistedParams = params ?? [];
+        return [];
+      }
+      if (sql.includes('WHERE pr.attempt_id = $1')) {
+        return [
+          {
+            review_status: 'reviewed',
+            performance_level: 'good',
+            improvement_recommendations: [],
+          },
+        ];
+      }
+      return [];
+    });
+
+    const handler = new PracticeReviewJobHandler(
+      {} as unknown as DatabaseService,
+      {} as unknown as AiGatewayService,
+      {
+        isRawTextExpired: vi.fn().mockReturnValue(false),
+      } as unknown as PrivacyRetentionService,
+      {
+        record: vi.fn().mockResolvedValue(undefined),
+      } as unknown as EvidenceService,
+    );
+
+    const txExecutor = {
+      query: txQuery,
+    } as unknown as import('../jobs/services/job-producer.service.js').JobQueryExecutor;
+    await handler.persistArtifact(txExecutor, makePracticeReviewJob(), {
+      resultType: 'practice_review',
+      resultId: REVIEW_ID,
+      providerKey: 'synthetic',
+      modelId: 'm1',
+      promptVersionId: 'p1',
+      outputSchemaId: 'practice_review.v1',
+      fallbackUsed: false,
+      language: 'en',
+      inputUnits: 50,
+      outputUnits: 120,
+      latencyMs: 20,
+      output: {
+        review_status: 'reviewed',
+        performance_level: 'good',
+        dimensions: {
+          correctness: 'good',
+          understanding: 'good',
+          reasoning: 'good',
+        },
+        strengths: [
+          `Using "${submittedAnswer.toLowerCase()}" avoids SELECT *.`,
+        ],
+        mistakes: [],
+        weaknesses: [],
+        improvement_recommendations: [
+          `Add an index after running ${submittedAnswer}`,
+        ],
+        evidence_eligible: true,
+      },
+    });
+
+    const storedStrengths = String(persistedParams[3] ?? '');
+    const storedRecs = String(persistedParams[6] ?? '');
+    expect(storedStrengths).toContain('[submitted response redacted]');
+    expect(storedStrengths).not.toContain('SELECT id, name FROM users');
+    expect(storedRecs).toContain('[submitted response redacted]');
+    expect(storedRecs).not.toContain(submittedAnswer);
+  });
 });

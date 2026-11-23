@@ -211,6 +211,7 @@ export function QuizSessionView({
 
   const requestGenRef = useRef(0);
   const autosaveGenRef = useRef(0);
+  const editableEpochRef = useRef(0);
   const autosaveInFlightRef = useRef(false);
   const mountedRef = useRef(true);
   const activeAttemptIdRef = useRef(activeAttemptId);
@@ -238,6 +239,7 @@ export function QuizSessionView({
 
   useEffect(() => {
     activeAttemptIdRef.current = activeAttemptId;
+    editableEpochRef.current += 1;
   }, [activeAttemptId]);
 
   // Cooldown ticker
@@ -341,10 +343,12 @@ export function QuizSessionView({
       }
       autosaveInFlightRef.current = true;
       let retryAfterFailureWithNewerEdits = false;
+      const startEpoch = editableEpochRef.current;
       try {
         while (
           mountedRef.current &&
           activeAttemptIdRef.current === targetAttemptId &&
+          editableEpochRef.current === startEpoch &&
           pendingPatchIdsRef.current.size > 0
         ) {
           if (autosaveTimerRef.current) {
@@ -364,18 +368,30 @@ export function QuizSessionView({
               payloadItems.push(toAnswerInputDTO(qId, draft));
               sentDraftById.set(qId, draft);
             } else {
-              pendingPatchIdsRef.current.delete(qId);
+              payloadItems.push({ question_id: qId, clear: true });
+              sentDraftById.set(
+                qId,
+                draft ?? {
+                  selected_option_id: null,
+                  text: null,
+                  i_dont_know: false,
+                },
+              );
             }
           }
           if (payloadItems.length === 0) {
             break;
           }
+          const patchEpoch = editableEpochRef.current;
           const gen = ++autosaveGenRef.current;
           setAutosaveStatus('saving');
           try {
             await patchQuizAnswers(accessToken, targetAttemptId, {
               answers: payloadItems,
             });
+            if (editableEpochRef.current !== patchEpoch) {
+              break;
+            }
             // Clear acknowledged dirty IDs only if they were not edited again while PATCH was in flight
             const latestAnswers =
               draftsRef.current.attemptId === targetAttemptId
@@ -392,14 +408,41 @@ export function QuizSessionView({
                 pendingPatchIdsRef.current.delete(qId);
               }
             }
+            // Retain only unacknowledged edits in sessionStorage backup
+            if (typeof window !== 'undefined') {
+              try {
+                const storageKey = `${STORAGE_KEY_PREFIX}${targetAttemptId}`;
+                const unacknowledged: Record<string, QuizDraftAnswer> = {};
+                for (const pendingId of pendingPatchIdsRef.current) {
+                  const pendingDraft = latestAnswers[pendingId];
+                  if (pendingDraft) {
+                    unacknowledged[pendingId] = pendingDraft;
+                  }
+                }
+                if (Object.keys(unacknowledged).length === 0) {
+                  window.sessionStorage.removeItem(storageKey);
+                } else {
+                  window.sessionStorage.setItem(
+                    storageKey,
+                    JSON.stringify(unacknowledged),
+                  );
+                }
+              } catch {
+                // Ignore storage errors
+              }
+            }
             if (
               mountedRef.current &&
               activeAttemptIdRef.current === targetAttemptId &&
+              editableEpochRef.current === patchEpoch &&
               gen === autosaveGenRef.current
             ) {
               setAutosaveStatus('saved');
             }
           } catch {
+            if (editableEpochRef.current !== patchEpoch) {
+              break;
+            }
             // Detect whether newer edits were queued while this failed PATCH was in flight
             const latestAnswers =
               draftsRef.current.attemptId === targetAttemptId
@@ -433,6 +476,7 @@ export function QuizSessionView({
             if (
               mountedRef.current &&
               activeAttemptIdRef.current === targetAttemptId &&
+              editableEpochRef.current === patchEpoch &&
               gen === autosaveGenRef.current
             ) {
               setAutosaveStatus(
@@ -448,6 +492,7 @@ export function QuizSessionView({
           retryAfterFailureWithNewerEdits &&
           mountedRef.current &&
           activeAttemptIdRef.current === targetAttemptId &&
+          editableEpochRef.current === startEpoch &&
           pendingPatchIdsRef.current.size > 0 &&
           !autosaveTimerRef.current
         ) {
@@ -577,14 +622,18 @@ export function QuizSessionView({
     }
 
     const answerList: QuizAnswerInputDTO[] = [];
+    let hasAnsweredQuestion = false;
     for (const q of questions) {
       const draft = currentAnswers[q.question_id];
       if (draft && isQuestionAnswered(draft)) {
         answerList.push(toAnswerInputDTO(q.question_id, draft));
+        hasAnsweredQuestion = true;
+      } else if (pendingPatchIdsRef.current.has(q.question_id)) {
+        answerList.push({ question_id: q.question_id, clear: true });
       }
     }
 
-    if (answerList.length === 0) {
+    if (!hasAnsweredQuestion) {
       setConfirmUnansweredOpen(false);
       setActionError({
         message:
@@ -629,6 +678,7 @@ export function QuizSessionView({
         },
         idemKey,
       );
+      editableEpochRef.current += 1;
       submitIdemKeyRef.current = null;
       pendingPatchIdsRef.current.clear();
       setConfirmUnansweredOpen(false);
@@ -672,6 +722,7 @@ export function QuizSessionView({
       if (mapped.code === 'UNANSWERED_CONFIRMATION_REQUIRED') {
         setConfirmUnansweredOpen(true);
       } else if (mapped.code === 'QUIZ_ALREADY_SUBMITTED') {
+        editableEpochRef.current += 1;
         setConfirmUnansweredOpen(false);
         pendingPatchIdsRef.current.clear();
         setAttemptState((prev) =>
@@ -685,6 +736,12 @@ export function QuizSessionView({
               }
             : prev,
         );
+      } else if (mapped.code === 'IDEMPOTENCY_KEY_REUSED') {
+        editableEpochRef.current += 1;
+        submitIdemKeyRef.current = null;
+        setConfirmUnansweredOpen(false);
+        setActionError(null);
+        setReloadTick((prev) => prev + 1);
       } else {
         setConfirmUnansweredOpen(false);
         if (mapped.retryAfterSeconds && mapped.retryAfterSeconds > 0) {

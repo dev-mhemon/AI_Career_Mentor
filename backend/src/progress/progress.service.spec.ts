@@ -1,6 +1,19 @@
+import { HttpException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseService } from '../auth/services/database.service.js';
 import { ProgressService } from './services/progress.service.js';
+
+function expectContractError(
+  error: unknown,
+  status: number,
+  code: string,
+): void {
+  expect(error).toBeInstanceOf(HttpException);
+  const httpErr = error as HttpException;
+  expect(httpErr.getStatus()).toBe(status);
+  const body = httpErr.getResponse() as { code?: string };
+  expect(body.code).toBe(code);
+}
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const ROADMAP_ID = '22222222-2222-4222-8222-222222222222';
@@ -374,5 +387,43 @@ describe('ProgressService (EP-G01, EP-G02, EP-G03 — level-scoped reads, weak_a
       career_level: 'mid',
     });
     expect(detail.levels[0]?.evidence_summary.retry_improved).toBeNull();
+  });
+
+  it('EP-G01 excludes retired lineages from items_completed and EP-G03 rejects non-ISO date bounds cleanly', async () => {
+    let countsSql = '';
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM public.roadmaps')) {
+        return [
+          {
+            id: ROADMAP_ID,
+            target_level: 'mid',
+            current_version_id: VERSION_ID,
+            status: 'locked',
+          },
+        ];
+      }
+      if (sql.includes('AS items_total')) {
+        countsSql = sql;
+        return [{ items_total: 2, items_completed: 1 }];
+      }
+      return [];
+    });
+
+    await service.getProgress(USER_ID);
+    expect(countsSql).toContain('JOIN public.roadmap_items cri');
+    expect(countsSql).toContain('cri.retired = false');
+
+    await expect(
+      service.getProgressHistory(USER_ID, { from: 'May 1, 2026' }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
+    await expect(
+      service.getProgressHistory(USER_ID, { to: '2026-02-30' }),
+    ).rejects.toSatisfy((err) => {
+      expectContractError(err, 422, 'VALIDATION_FAILED');
+      return true;
+    });
   });
 });

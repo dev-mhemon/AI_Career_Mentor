@@ -75,6 +75,13 @@ describe('QuizGenerateJobHandler (quiz_generate worker & uq_quiz_questions_order
     expect(() => normalizeAndReindexGeneratedQuiz(badRubric, 1)).toThrow(
       /Invalid free-response question/i,
     );
+
+    const emptyCriteriaRubric = makeSyntheticQuizOutput();
+    emptyCriteriaRubric.free_response_questions[0]!.rubric.correctness_criteria =
+      [];
+    expect(() =>
+      normalizeAndReindexGeneratedQuiz(emptyCriteriaRubric, 1),
+    ).toThrow(/Invalid free-response question/i);
   });
 
   it('persists shared quiz + 25 contiguously ordered questions + user quiz_attempt in persistArtifact', async () => {
@@ -140,6 +147,9 @@ describe('QuizGenerateJobHandler (quiz_generate worker & uq_quiz_questions_order
           ],
           1,
         ];
+      }
+      if (sql.includes('AS referenced')) {
+        return [{ referenced: true }];
       }
       if (sql.includes('FROM public.quiz_attempts')) {
         return [];
@@ -242,6 +252,9 @@ describe('QuizGenerateJobHandler (quiz_generate worker & uq_quiz_questions_order
           },
         ];
       }
+      if (sql.includes('AS referenced')) {
+        return [{ referenced: true }];
+      }
       if (sql.includes('FROM public.quiz_attempts')) {
         return [];
       }
@@ -321,5 +334,157 @@ describe('QuizGenerateJobHandler (quiz_generate worker & uq_quiz_questions_order
     expect(passedRequest.context?.explanation_guidance).toContain(
       '2-3 sentence conceptual explanation',
     );
+  });
+
+  it('rejects persistArtifact as STALE_JOB_INPUT when topicRevision drifted or existing quiz row is already referenced by attempts', async () => {
+    const handler = new QuizGenerateJobHandler(
+      {} as unknown as DatabaseService,
+      {} as unknown as AiGatewayService,
+    );
+    const job: ClaimedJobRow = {
+      id: JOB_ID,
+      user_id: USER_ID,
+      task: 'quiz_generate',
+      feature_key: 'quiz_practice',
+      job_kind: 'quiz_generate',
+      status: 'preparing',
+      attempt_count: 1,
+      locked_by: 'worker-1',
+      locked_at: new Date(),
+      created_at: new Date(),
+      language: 'en',
+      subject_type: 'daily_plan_item',
+      subject_id: ITEM_ID,
+      idempotency_key: null,
+      input_payload: {
+        v: 1,
+        args: {
+          daily_plan_item_id: ITEM_ID,
+          topic_id: TOPIC_ID,
+          content_version: 1,
+          variant_no: 1,
+        },
+        expected_refs: { content_version: 1 },
+      },
+    };
+
+    const driftQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM public.daily_plan_items dpi')) {
+        return [{ plan_id: PLAN_ID, roadmap_id: ROADMAP_ID }];
+      }
+      if (sql.includes('FROM public.roadmaps')) {
+        return [{ status: 'locked' }];
+      }
+      if (sql.includes('FROM public.daily_plan_items')) {
+        return [{ id: ITEM_ID, topic_id: TOPIC_ID }];
+      }
+      if (sql.includes('AS referenced')) {
+        return [{ referenced: true }];
+      }
+      if (sql.includes('FROM public.quiz_attempts')) {
+        return [];
+      }
+      if (sql.includes('WHERE id = $1')) {
+        return [{ skill_id: SKILL_ID, slug: 'sql-joins', career_level: 'mid' }];
+      }
+      if (sql.includes('FROM public.topics')) {
+        return [
+          {
+            id: TOPIC_ID,
+            content_version: 1,
+            updated_at: '2026-11-23T12:00:00.000Z',
+          },
+        ];
+      }
+      return [];
+    });
+
+    await expect(
+      handler.persistArtifact(
+        {
+          query: driftQuery,
+        } as unknown as import('../jobs/services/job-producer.service.js').JobQueryExecutor,
+        job,
+        {
+          resultType: 'quiz_attempt',
+          resultId: ITEM_ID,
+          providerKey: 'synthetic',
+          modelId: 'm1',
+          promptVersionId: 'p1',
+          outputSchemaId: 'quiz_generate.v1',
+          fallbackUsed: false,
+          language: 'en',
+          inputUnits: 10,
+          outputUnits: 20,
+          latencyMs: 5,
+          output: makeSyntheticQuizOutput(),
+          topicRevision: `${TOPIC_ID}:1:2026-11-23T10:00:00.000Z`,
+        },
+      ),
+    ).rejects.toThrow(/Topic content changed during quiz generation/i);
+
+    const referencedQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM public.daily_plan_items dpi')) {
+        return [{ plan_id: PLAN_ID, roadmap_id: ROADMAP_ID }];
+      }
+      if (sql.includes('FROM public.roadmaps')) {
+        return [{ status: 'locked' }];
+      }
+      if (sql.includes('FROM public.daily_plan_items')) {
+        return [{ id: ITEM_ID, topic_id: TOPIC_ID }];
+      }
+      if (sql.includes('AS referenced')) {
+        return [{ referenced: true }];
+      }
+      if (sql.includes('FROM public.quiz_attempts')) {
+        return [];
+      }
+      if (sql.includes('WHERE id = $1')) {
+        return [{ skill_id: SKILL_ID, slug: 'sql-joins', career_level: 'mid' }];
+      }
+      if (sql.includes('FROM public.topics')) {
+        return [
+          {
+            id: TOPIC_ID,
+            content_version: 1,
+            updated_at: '2026-11-23T10:00:00.000Z',
+          },
+        ];
+      }
+      if (
+        sql.includes('FROM public.quizzes') &&
+        sql.includes("status = 'approved'")
+      ) {
+        return [];
+      }
+      if (sql.includes('FROM public.quizzes')) {
+        return [{ id: QUIZ_ID }];
+      }
+      return [];
+    });
+
+    await expect(
+      handler.persistArtifact(
+        {
+          query: referencedQuery,
+        } as unknown as import('../jobs/services/job-producer.service.js').JobQueryExecutor,
+        job,
+        {
+          resultType: 'quiz_attempt',
+          resultId: ITEM_ID,
+          providerKey: 'synthetic',
+          modelId: 'm1',
+          promptVersionId: 'p1',
+          outputSchemaId: 'quiz_generate.v1',
+          fallbackUsed: false,
+          language: 'en',
+          inputUnits: 10,
+          outputUnits: 20,
+          latencyMs: 5,
+          output: makeSyntheticQuizOutput(),
+          topicRevision: `${TOPIC_ID}:1:2026-11-23T10:00:00.000Z`,
+        },
+      ),
+    ).rejects.toThrow(/already referenced by quiz attempts/i);
   });
 });

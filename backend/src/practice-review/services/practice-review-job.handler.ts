@@ -777,6 +777,26 @@ export class PracticeReviewJobHandler implements JobHandler {
     }
 
     const normalized = normalizeAndValidatePracticeReviewOutput(result.output);
+    const rawSubmittedAnswer =
+      typeof review.answer_text === 'string' ? review.answer_text.trim() : '';
+    const redactSubmittedAnswer = (entry: string): string => {
+      if (rawSubmittedAnswer.length < 8) {
+        return entry;
+      }
+      const escaped = rawSubmittedAnswer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return entry.replace(
+        new RegExp(escaped, 'gi'),
+        '[submitted response redacted]',
+      );
+    };
+    const sanitizedStrengths = normalized.strengths.map(redactSubmittedAnswer);
+    const sanitizedMistakes = normalized.mistakes.map(redactSubmittedAnswer);
+    const sanitizedWeaknesses = normalized.weaknesses.map(
+      redactSubmittedAnswer,
+    );
+    const sanitizedRecommendations = normalized.improvement_recommendations.map(
+      redactSubmittedAnswer,
+    );
 
     if (normalized.review_status === 'not_evidence') {
       await tx.query(
@@ -796,7 +816,7 @@ export class PracticeReviewJobHandler implements JobHandler {
             AND user_id = $4`,
         [
           parsed.reviewId,
-          JSON.stringify(normalized.improvement_recommendations),
+          JSON.stringify(sanitizedRecommendations),
           context?.aiGenerationId ?? null,
           job.user_id,
         ],
@@ -821,10 +841,10 @@ export class PracticeReviewJobHandler implements JobHandler {
           parsed.reviewId,
           normalized.performance_level,
           JSON.stringify(normalized.dimensions),
-          JSON.stringify(normalized.strengths),
-          JSON.stringify(normalized.mistakes),
-          JSON.stringify(normalized.weaknesses),
-          JSON.stringify(normalized.improvement_recommendations),
+          JSON.stringify(sanitizedStrengths),
+          JSON.stringify(sanitizedMistakes),
+          JSON.stringify(sanitizedWeaknesses),
+          JSON.stringify(sanitizedRecommendations),
           normalized.evidence_eligible,
           context?.aiGenerationId ?? null,
           job.user_id,

@@ -1996,6 +1996,7 @@ export interface QuizAnswerInputDTO {
   selected_option_id?: string | null;
   text?: string | null;
   i_dont_know?: boolean;
+  clear?: boolean;
 }
 
 export interface QuizAnswersPatchDTO {
@@ -2242,9 +2243,11 @@ const VALID_JOB_STATUSES: ReadonlySet<string> = new Set<JobStatus>([
 ]);
 
 function normalizePositiveLimit(limit?: number): number | undefined {
-  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0
-    ? Math.floor(limit)
-    : undefined;
+  if (typeof limit !== 'number' || !Number.isFinite(limit)) {
+    return undefined;
+  }
+  const floored = Math.floor(limit);
+  return floored >= 1 ? floored : undefined;
 }
 
 /**

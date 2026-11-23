@@ -60,6 +60,8 @@ export interface JobExecutionResult {
    * so the commit gate skips inserting a synthetic `public.ai_generations` row.
    */
   skipAiGeneration?: boolean;
+  /** Optional optimistic topic revision stamp carried from `execute` to `persistArtifact`. */
+  topicRevision?: string;
 }
 
 /** Commit-gate context supplied to `JobHandler.persistArtifact` inside the R13 atomic transaction. */

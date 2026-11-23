@@ -67,6 +67,7 @@ export interface QuizAnswerInputDTO {
   selected_option_id?: string | null;
   text?: string | null;
   i_dont_know?: boolean;
+  clear?: boolean;
 }
 
 /**

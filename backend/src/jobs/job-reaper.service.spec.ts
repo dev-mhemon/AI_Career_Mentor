@@ -330,4 +330,60 @@ describe('JobReaperService (R13 Two-Step Recovery & Terminal Deadlines)', () => 
       ),
     ).toBe(false);
   });
+
+  it('marks matching pending practice_reviews as failed when a practice_review job is reaped terminally', async () => {
+    const REVIEW_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const USER_ID = '11111111-1111-4111-8111-111111111111';
+    const practiceReviewUpdates: unknown[][] = [];
+
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (
+        sql.includes('FROM public.ai_requests') &&
+        sql.includes('is_async = true') &&
+        sql.includes("status = 'preparing'") &&
+        sql.includes('FOR UPDATE SKIP LOCKED')
+      ) {
+        return [
+          {
+            id: JOB_A,
+            locked_by: 'worker-1',
+            attempt_count: 5,
+            can_retry: false,
+          },
+        ];
+      }
+      if (
+        sql.includes('UPDATE public.ai_requests') &&
+        sql.includes("SET status = 'failed'") &&
+        sql.includes("AND status = 'preparing'")
+      ) {
+        return [
+          [
+            {
+              id: JOB_A,
+              user_id: USER_ID,
+              job_kind: 'practice_review',
+              subject_id: REVIEW_ID,
+            },
+          ],
+          1,
+        ];
+      }
+      if (sql.includes('UPDATE public.practice_reviews')) {
+        expect(sql).toContain("review_status = 'failed'::public.review_status");
+        expect(sql).toContain("failure_code = 'WORKER_LEASE_EXPIRED'");
+        practiceReviewUpdates.push(params ?? []);
+        return [];
+      }
+      return [];
+    });
+
+    const summary = await service.reapExpiredLeases(20);
+    expect(summary).toEqual({
+      inspected: 1,
+      requeued: 0,
+      failedTerminal: 1,
+    });
+    expect(practiceReviewUpdates).toEqual([[REVIEW_ID, USER_ID]]);
+  });
 });

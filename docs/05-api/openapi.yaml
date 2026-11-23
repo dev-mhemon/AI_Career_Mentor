@@ -7690,6 +7690,8 @@ components:
           nullable: true
         i_dont_know:
           type: boolean
+        clear:
+          type: boolean
     QuizAnswersPatchDTO:
       type: object
       additionalProperties: false
@@ -7918,8 +7920,8 @@ components:
         mcq_score:
           $ref: '#/components/schemas/QuizMcqScoreDTO'
         performance_level:
-          allOf:
-            - $ref: '#/components/schemas/PerformanceLevel'
+          type: string
+          enum: [good, needs_work]
           nullable: true
         questions:
           type: array
@@ -7948,8 +7950,8 @@ components:
         review_status:
           $ref: '#/components/schemas/ReviewStatus'
         performance_level:
-          allOf:
-            - $ref: '#/components/schemas/PerformanceLevel'
+          type: string
+          enum: [good, needs_work]
           nullable: true
     PracticeReviewDimensionsDTO:
       type: object
@@ -7975,8 +7977,8 @@ components:
         review_status:
           $ref: '#/components/schemas/ReviewStatus'
         performance_level:
-          allOf:
-            - $ref: '#/components/schemas/PerformanceLevel'
+          type: string
+          enum: [good, needs_work]
           nullable: true
         dimensions:
           $ref: '#/components/schemas/PracticeReviewDimensionsDTO'
@@ -8146,19 +8148,19 @@ components:
         event:
           $ref: '#/components/schemas/ProgressEventType'
         from_state:
-          allOf:
-            - $ref: '#/components/schemas/LearningState'
+          type: string
+          enum: [not_started, learning, practicing, proficient]
           nullable: true
         to_state:
-          allOf:
-            - $ref: '#/components/schemas/LearningState'
+          type: string
+          enum: [not_started, learning, practicing, proficient]
           nullable: true
         reason:
           type: string
           nullable: true
         source:
-          allOf:
-            - $ref: '#/components/schemas/EvidenceSource'
+          type: string
+          enum: [quiz_attempt, practice_review]
           nullable: true
         source_id:
           type: string

@@ -63,8 +63,23 @@ interface ApprovedTopicRow {
   title: string;
   career_level: CareerLevel;
   content_version: number | string;
+  updated_at?: Date | string | null;
   explanation_markdown: string | null;
   language: UiLanguage | null;
+}
+
+function buildTopicRevisionStamp(row: {
+  id: string;
+  content_version: number | string;
+  updated_at?: Date | string | null;
+}): string {
+  const updatedIso =
+    row.updated_at instanceof Date
+      ? row.updated_at.toISOString()
+      : typeof row.updated_at === 'string' && row.updated_at.trim().length > 0
+        ? row.updated_at.trim()
+        : '';
+  return `${String(row.id)}:${Number(row.content_version)}:${updatedIso}`;
 }
 
 interface NormalizedQuizQuestionForInsert {
@@ -363,6 +378,9 @@ export function normalizeAndReindexGeneratedQuiz(
         }
         parsed.push(entry.trim());
       }
+      if (parsed.length === 0) {
+        return null;
+      }
       return parsed;
     };
 
@@ -560,6 +578,7 @@ export class QuizGenerateJobHandler implements JobHandler {
                 title,
                 career_level::text AS career_level,
                 content_version,
+                updated_at,
                 explanation_markdown,
                 language::text AS language
            FROM public.topics
@@ -609,6 +628,8 @@ export class QuizGenerateJobHandler implements JobHandler {
       );
     }
 
+    const topicRevision = buildTopicRevisionStamp(snapshot.approvedTopic);
+
     if (snapshot.existingAttemptId || snapshot.reusableQuiz) {
       return {
         resultType: 'quiz_attempt',
@@ -624,6 +645,7 @@ export class QuizGenerateJobHandler implements JobHandler {
         latencyMs: 1,
         output: null,
         skipAiGeneration: true,
+        topicRevision,
       };
     }
 
@@ -686,6 +708,7 @@ export class QuizGenerateJobHandler implements JobHandler {
       outputUnits: aiResponse.usage_units.output,
       latencyMs: aiResponse.latency_ms,
       output: aiResponse.output,
+      topicRevision,
     };
   }
 
@@ -895,9 +918,13 @@ export class QuizGenerateJobHandler implements JobHandler {
     }
 
     const approvedTopicRows = await tx.query<
-      Array<{ id: string; content_version: number | string }>
+      Array<{
+        id: string;
+        content_version: number | string;
+        updated_at?: Date | string | null;
+      }>
     >(
-      `SELECT id, content_version
+      `SELECT id, content_version, updated_at
          FROM public.topics
         WHERE skill_id = $1
           AND slug = $2
@@ -916,6 +943,19 @@ export class QuizGenerateJobHandler implements JobHandler {
         409,
         'STALE_JOB_INPUT',
         'Approved canonical topic not found',
+        undefined,
+        false,
+      );
+    }
+
+    if (
+      typeof result.topicRevision === 'string' &&
+      buildTopicRevisionStamp(approvedTopic) !== result.topicRevision
+    ) {
+      fail(
+        409,
+        'STALE_JOB_INPUT',
+        'Topic content changed during quiz generation. Please refresh and try again.',
         undefined,
         false,
       );
@@ -952,6 +992,47 @@ export class QuizGenerateJobHandler implements JobHandler {
         parsed.variantNo,
       );
       const aiGenerationId = context?.aiGenerationId ?? null;
+
+      // Protect existing attempts/answers if a non-approved or hidden quiz row already exists for this slot
+      const existingQuizRows = await tx.query<Array<{ id: string }>>(
+        `SELECT id
+           FROM public.quizzes
+          WHERE topic_id = $1
+            AND content_version = $2
+            AND variant_no = $3
+          LIMIT 1`,
+        [effectiveTopicId, effectiveContentVersion, parsed.variantNo],
+      );
+      const existingQuizId = existingQuizRows?.[0]?.id
+        ? String(existingQuizRows[0].id)
+        : null;
+      if (existingQuizId) {
+        const refRows = await tx.query<Array<{ referenced: boolean }>>(
+          `SELECT (
+                    EXISTS (
+                      SELECT 1
+                        FROM public.quiz_attempts qa
+                       WHERE qa.quiz_id = $1
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                        FROM public.quiz_questions q
+                        JOIN public.quiz_answers a ON a.question_id = q.id
+                       WHERE q.quiz_id = $1
+                    )
+                  ) AS referenced`,
+          [existingQuizId],
+        );
+        if (refRows?.[0]?.referenced === true) {
+          fail(
+            409,
+            'STALE_JOB_INPUT',
+            'Existing shared quiz questions are already referenced by quiz attempts and cannot be replaced.',
+            undefined,
+            false,
+          );
+        }
+      }
 
       // Upsert public.quizzes on uq_quizzes_version (topic_id, content_version, variant_no)
       const upsertedQuizRaw = await tx.query<unknown>(
@@ -1007,13 +1088,10 @@ export class QuizGenerateJobHandler implements JobHandler {
       }
       const quizId = String(quizRow.id);
 
-      // Remove any prior unreferenced draft/hidden questions before inserting contiguously re-indexed questions
+      // Safe to clear unreferenced existing questions before inserting contiguously re-indexed questions
       await tx.query(
         `DELETE FROM public.quiz_questions q
-          WHERE q.quiz_id = $1
-            AND NOT EXISTS (
-              SELECT 1 FROM public.quiz_answers a WHERE a.question_id = q.id
-            )`,
+          WHERE q.quiz_id = $1`,
         [quizId],
       );
 

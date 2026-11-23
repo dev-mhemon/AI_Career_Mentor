@@ -165,6 +165,9 @@ function decodeHistoryCursor(raw: string): { occurredAt: string; id: string } {
   };
 }
 
+const STRICT_ISO_8601_PATTERN =
+  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+
 function parseOptionalIsoBound(
   raw: string | undefined,
   field: string,
@@ -176,8 +179,7 @@ function parseOptionalIsoBound(
   if (!trimmed) {
     return null;
   }
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
+  const invalidError = () =>
     fail(422, 'VALIDATION_FAILED', `${field} must be a valid ISO-8601 date`, [
       {
         field,
@@ -185,10 +187,23 @@ function parseOptionalIsoBound(
         message: `${field} must be a valid ISO-8601 date or timestamp`,
       },
     ]);
+  if (!STRICT_ISO_8601_PATTERN.test(trimmed)) {
+    invalidError();
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed) && field === 'to') {
-    const endOfDay = new Date(`${trimmed}T23:59:59.999Z`);
-    return endOfDay.toISOString();
+  const datePart = trimmed.slice(0, 10);
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    invalidError();
+  }
+  // Reject non-existent calendar dates (e.g. 2026-02-30) that V8 Date rolls forward
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    if (parsed.toISOString().slice(0, 10) !== datePart) {
+      invalidError();
+    }
+    if (field === 'to') {
+      const endOfDay = new Date(`${trimmed}T23:59:59.999Z`);
+      return endOfDay.toISOString();
+    }
   }
   return parsed.toISOString();
 }
@@ -403,6 +418,11 @@ export class ProgressService {
                         JOIN public.daily_plan_items dpi
                           ON dpi.plan_id = dp.id
                          AND dpi.user_id = $1
+                        JOIN public.roadmap_items cri
+                          ON cri.user_id = $1
+                         AND cri.version_id = $3
+                         AND cri.lineage_id = dpi.lineage_id
+                         AND cri.retired = false
                        WHERE dp.user_id = $1
                          AND dp.roadmap_id = $2
                          AND dpi.status = 'completed'::public.plan_item_status

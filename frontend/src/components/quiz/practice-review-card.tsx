@@ -50,7 +50,7 @@ const STATUS_BADGE: Record<
       'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/60 dark:text-emerald-200',
   },
   not_evidence: {
-    label: 'Skipped / Non-Attempt',
+    label: 'Not Counted as Evidence',
     className:
       'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
   },
@@ -123,7 +123,9 @@ export function PracticeReviewCard({
   const perfLevel = feedback?.performance_level ?? null;
   const perfMeta = perfLevel ? PERFORMANCE_LABELS[perfLevel] : null;
   const hasSubmittedAnswer =
-    typeof userAnswer === 'string' && userAnswer.trim().length > 0;
+    !isRawTextExpired &&
+    typeof userAnswer === 'string' &&
+    userAnswer.trim().length > 0;
   const hasExplanation =
     typeof explanation === 'string' && explanation.trim().length > 0;
 
@@ -183,12 +185,19 @@ export function PracticeReviewCard({
       </h4>
 
       {/* 1. Your Submitted Answer */}
-      {(hasSubmittedAnswer || userAnswer === null) && (
+      {(isRawTextExpired || hasSubmittedAnswer || userAnswer === null) && (
         <div className="flex flex-col gap-1.5">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Your Submitted Answer
           </p>
-          {hasSubmittedAnswer ? (
+          {isRawTextExpired ? (
+            <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/80 px-3.5 py-2.5 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
+              <InfoIcon className="block h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" />
+              <span>
+                Submitted answer expired after the 90-day retention period.
+              </span>
+            </div>
+          ) : hasSubmittedAnswer ? (
             <pre
               dir="auto"
               className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 font-mono text-xs leading-relaxed text-slate-800 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-200"
@@ -224,10 +233,7 @@ export function PracticeReviewCard({
         <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-body-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
           <div className="flex items-start gap-2">
             <InfoIcon className="mt-0.5 block h-4 w-4 shrink-0 text-slate-500" />
-            <p>
-              This question was skipped or recorded as a non-attempt, so it was
-              not counted toward skill mastery evidence.
-            </p>
+            <p>This answer was not counted toward skill mastery evidence.</p>
           </div>
           {feedback?.improvement_recommendations &&
             feedback.improvement_recommendations.length > 0 && (

@@ -172,12 +172,11 @@ export class QuizController {
    * `EP-Q01` (`POST /api/v1/quiz/generate`, `200`/`201`/`202`, `H-IDEM`, `Gate: write (quiz_practice)`).
    */
   @Post('generate')
-  @HttpCode(200)
   @Policy({ feature: 'quiz_practice' })
   async generateQuiz(
     @Req() req: AuthenticatedQuizRequest,
     @Body() dto: QuizGenerateDTO,
-    @Res({ passthrough: true }) res?: Response,
+    @Res() res?: Response,
   ): Promise<QuizAttemptDTO | JobAcceptedDto> {
     const userId = assertAuthenticatedUserId(req);
     const idempotencyKey = assertIdempotencyKeyHeader(req);
@@ -237,6 +236,10 @@ export class QuizController {
 
     if (res && typeof res.status === 'function') {
       res.status(executed.statusCode);
+      if (typeof res.json === 'function') {
+        res.json({ success: true, data: executed.responseBody });
+        return undefined as unknown as QuizAttemptDTO | JobAcceptedDto;
+      }
     }
     return executed.responseBody;
   }
@@ -291,16 +294,16 @@ export class QuizController {
    * `EP-Q05` (`POST /api/v1/quiz/:id/submit`, `200`/`202`, `H-IDEM`, `Gate: write (quiz_practice)`).
    */
   @Post(':id/submit')
-  @HttpCode(200)
   @Policy({ feature: 'quiz_practice' })
   async submitQuizAttempt(
     @Req() req: AuthenticatedQuizRequest,
     @Param('id') id: string,
     @Body() dto: QuizSubmissionDTO,
-    @Res({ passthrough: true }) res?: Response,
+    @Res() res?: Response,
   ): Promise<QuizSubmitResponseDTO> {
     const userId = assertAuthenticatedUserId(req);
     const attemptId = assertValidUuidParam(id, 'id', 'Quiz attempt id');
+    const normalizedRouteAttemptId = attemptId.toLowerCase();
     const idempotencyKey = assertIdempotencyKeyHeader(req);
     if (
       dto?.confirm_unanswered !== undefined &&
@@ -338,7 +341,7 @@ export class QuizController {
           userId,
           idempotencyKey,
           method: 'POST',
-          route: `/api/v1/quiz/${attemptId}/submit`,
+          route: `/api/v1/quiz/${normalizedRouteAttemptId}/submit`,
           body: dto ?? null,
         },
         async (execCtx) => {
@@ -360,6 +363,7 @@ export class QuizController {
             {
               httpRequestId,
               acceptLanguage,
+              signal: execCtx.signal,
             },
           );
           step = 'ep_q05.idempotency_complete';
@@ -376,6 +380,10 @@ export class QuizController {
 
     if (res && typeof res.status === 'function') {
       res.status(executed.statusCode);
+      if (typeof res.json === 'function') {
+        res.json({ success: true, data: executed.responseBody });
+        return undefined as unknown as QuizSubmitResponseDTO;
+      }
     }
     return executed.responseBody;
   }
@@ -400,15 +408,15 @@ export class QuizController {
    * `EP-Q07` (`POST /api/v1/quiz/:id/retry`, `201`/`202`, `H-IDEM`, `Gate: write (quiz_practice)`).
    */
   @Post(':id/retry')
-  @HttpCode(201)
   @Policy({ feature: 'quiz_practice' })
   async retryQuizAttempt(
     @Req() req: AuthenticatedQuizRequest,
     @Param('id') id: string,
-    @Res({ passthrough: true }) res?: Response,
+    @Res() res?: Response,
   ): Promise<QuizAttemptDTO | JobAcceptedDto> {
     const userId = assertAuthenticatedUserId(req);
     const attemptId = assertValidUuidParam(id, 'id', 'Quiz attempt id');
+    const normalizedRouteAttemptId = attemptId.toLowerCase();
     const idempotencyKey = assertIdempotencyKeyHeader(req);
     const httpRequestId = extractOptionalUuidHeader(req, 'x-request-id');
     const acceptLanguage = readOptionalHeader(req, 'accept-language');
@@ -423,7 +431,7 @@ export class QuizController {
           userId,
           idempotencyKey,
           method: 'POST',
-          route: `/api/v1/quiz/${attemptId}/retry`,
+          route: `/api/v1/quiz/${normalizedRouteAttemptId}/retry`,
           body: null,
         },
         async (execCtx) => {
@@ -460,6 +468,10 @@ export class QuizController {
 
     if (res && typeof res.status === 'function') {
       res.status(executed.statusCode);
+      if (typeof res.json === 'function') {
+        res.json({ success: true, data: executed.responseBody });
+        return undefined as unknown as QuizAttemptDTO | JobAcceptedDto;
+      }
     }
     return executed.responseBody;
   }

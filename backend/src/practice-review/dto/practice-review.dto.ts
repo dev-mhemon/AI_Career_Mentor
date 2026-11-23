@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsUUID } from 'class-validator';
+import { Allow } from 'class-validator';
 import type { JobAcceptedDto } from '../../jobs/dto/job-status.dto.js';
 import type { PerformanceLevel } from '../../progress/dto/progress.dto.js';
 import type { ReviewStatus } from '../../quiz/dto/quiz.dto.js';
@@ -20,7 +20,7 @@ const trimLower = ({ value }: { value: unknown }): unknown =>
  */
 export class ListPracticeReviewsQueryDTO {
   @Transform(trimLower)
-  @IsUUID()
+  @Allow()
   quiz_attempt_id!: string;
 }
 

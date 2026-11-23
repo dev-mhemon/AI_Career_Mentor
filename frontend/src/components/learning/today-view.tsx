@@ -666,6 +666,36 @@ export function TodayView({
                   title="Preparing your topic Practice Quiz"
                   variant="inline_banner"
                   accessToken={accessToken}
+                  pollJobStatus={async (jobId, signal) => {
+                    const status = await getJobStatus(accessToken, jobId, {
+                      signal,
+                    });
+                    if (
+                      status.status === 'failed' &&
+                      !status.retryable &&
+                      !status.error?.retryable &&
+                      mountedRef.current &&
+                      currentPlanItemIdRef.current === activePlanItemId
+                    ) {
+                      setQuizGenJobState((prev) =>
+                        prev?.planItemId === activePlanItemId ? null : prev,
+                      );
+                      setQuizGenErrorState({
+                        planItemId: activePlanItemId,
+                        error: mapApiError(
+                          new ApiError(
+                            422,
+                            '',
+                            status.error?.code ?? 'AI_GENERATION_FAILED',
+                            status.error?.message,
+                            [],
+                            false,
+                          ),
+                        ),
+                      });
+                    }
+                    return status;
+                  }}
                   onJobSucceeded={(resultRef) => {
                     const initiatedItemId = activePlanItemId;
                     setQuizGenJobState((prev) =>

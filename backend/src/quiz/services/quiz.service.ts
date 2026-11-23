@@ -124,6 +124,7 @@ interface PracticeReviewRow {
 export interface QuizRequestOptions {
   httpRequestId?: string;
   acceptLanguage?: string;
+  signal?: AbortSignal;
 }
 
 function toNullableIso(value: Date | string | null | undefined): string | null {
@@ -447,6 +448,7 @@ export class QuizService {
     allowEmptyArray = false,
   ): Array<{
     questionId: string;
+    clear?: boolean;
     selectedOptionId: string | null;
     answerText: string | null;
     iDontKnow: boolean;
@@ -493,6 +495,7 @@ export class QuizService {
       string,
       {
         questionId: string;
+        clear?: boolean;
         selectedOptionId: string | null;
         answerText: string | null;
         iDontKnow: boolean;
@@ -555,11 +558,44 @@ export class QuizService {
           `answers[${idx}].i_dont_know must be a boolean`,
         );
       }
+      if (raw.clear !== undefined && typeof raw.clear !== 'boolean') {
+        fail(
+          422,
+          'VALIDATION_FAILED',
+          `answers[${idx}].clear must be a boolean`,
+        );
+      }
       const iDontKnow = raw.i_dont_know === true;
+      const shouldClear = raw.clear === true;
 
       const hasSelectedOption =
         raw.selected_option_id !== undefined && raw.selected_option_id !== null;
       const hasText = raw.text !== undefined && raw.text !== null;
+
+      if (shouldClear) {
+        if (iDontKnow || hasSelectedOption || hasText) {
+          fail(
+            422,
+            'VALIDATION_FAILED',
+            'clear=true cannot be combined with selected_option_id, text, or i_dont_know',
+            [
+              {
+                field: `answers[${idx}].clear`,
+                code: 'VALIDATION_FAILED',
+                message: 'clear=true excludes answer values',
+              },
+            ],
+          );
+        }
+        byQuestionId.set(questionId, {
+          questionId,
+          clear: true,
+          selectedOptionId: null,
+          answerText: null,
+          iDontKnow: false,
+        });
+        continue;
+      }
 
       if (iDontKnow) {
         if (!question.allow_i_dont_know) {
@@ -707,6 +743,7 @@ export class QuizService {
     attemptId: string,
     normalizedAnswers: ReadonlyArray<{
       questionId: string;
+      clear?: boolean;
       selectedOptionId: string | null;
       answerText: string | null;
       iDontKnow: boolean;
@@ -720,6 +757,17 @@ export class QuizService {
     let latestSavedAtIso = new Date().toISOString();
 
     for (const ans of normalizedAnswers) {
+      if (ans.clear === true) {
+        await db.query(
+          `DELETE FROM public.quiz_answers
+            WHERE attempt_id = $1
+              AND user_id = $2
+              AND question_id = $3`,
+          [attemptId, userId, ans.questionId],
+        );
+        latestSavedAtIso = new Date().toISOString();
+        continue;
+      }
       const upsertedRaw = await db.query<unknown>(
         `INSERT INTO public.quiz_answers (
            attempt_id,
@@ -825,8 +873,8 @@ export class QuizService {
           `SELECT id FROM public.daily_plans WHERE id = $1 AND user_id = $2 FOR SHARE`,
           [item.plan_id, normalizedUserId],
         );
-        await db.query(
-          `SELECT id FROM public.roadmaps WHERE id = $1 AND user_id = $2 FOR SHARE`,
+        const lockedRoadmapRows = await db.query<Array<{ status: string }>>(
+          `SELECT status::text AS status FROM public.roadmaps WHERE id = $1 AND user_id = $2 FOR SHARE`,
           [item.roadmap_id, normalizedUserId],
         );
         await db.query(
@@ -834,7 +882,10 @@ export class QuizService {
           [item.id, normalizedUserId],
         );
 
-        if (item.roadmap_status !== 'locked') {
+        const lockedRoadmapStatus = Array.isArray(lockedRoadmapRows)
+          ? (lockedRoadmapRows[0]?.status ?? item.roadmap_status)
+          : item.roadmap_status;
+        if (lockedRoadmapStatus !== 'locked') {
           fail(
             409,
             'PLAN_ITEM_NOT_AVAILABLE',
@@ -1528,6 +1579,16 @@ export class QuizService {
           );
         }
 
+        if (options?.signal?.aborted) {
+          fail(
+            503,
+            'SERVICE_UNAVAILABLE',
+            'Idempotency reservation expired before quiz submission commit',
+            undefined,
+            true,
+          );
+        }
+
         const qRows = await db.query<GradingQuizQuestionRow[]>(
           `SELECT id,
                   sort_order,
@@ -1573,7 +1634,10 @@ export class QuizService {
                   answer_text,
                   i_dont_know,
                   is_correct,
-                  saved_at
+                  saved_at,
+                  raw_text_expires_at,
+                  raw_text_purged_at,
+                  created_at
              FROM public.quiz_answers
             WHERE attempt_id = $1
               AND user_id = $2`,
@@ -1583,7 +1647,19 @@ export class QuizService {
         for (const row of Array.isArray(savedAnswerRows)
           ? savedAnswerRows
           : []) {
-          answersByQuestionId.set(String(row.question_id), row);
+          const isExpired =
+            (row.raw_text_purged_at !== null &&
+              row.raw_text_purged_at !== undefined) ||
+            Boolean(
+              this.privacyRetentionService?.isRawTextExpired?.({
+                created_at: row.created_at ?? row.saved_at ?? new Date(0),
+                raw_text_expires_at: row.raw_text_expires_at ?? null,
+              }),
+            );
+          answersByQuestionId.set(
+            String(row.question_id),
+            isExpired ? { ...row, answer_text: null } : row,
+          );
         }
 
         let answeredCount = 0;
@@ -1883,6 +1959,16 @@ export class QuizService {
             occurred_at: submittedAtIso,
             evidence_eligible: true,
           });
+        }
+
+        if (options?.signal?.aborted) {
+          fail(
+            503,
+            'SERVICE_UNAVAILABLE',
+            'Idempotency reservation expired before quiz submission commit',
+            undefined,
+            true,
+          );
         }
 
         return {
