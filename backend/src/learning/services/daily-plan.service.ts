@@ -850,6 +850,26 @@ export class DailyPlanService {
               inProgressQuizItemIds.add(String(row.daily_plan_item_id));
             }
           }
+
+          const activeQuizJobRows = await db.query<
+            Array<{ subject_id: string | null }>
+          >(
+            `SELECT DISTINCT subject_id
+               FROM public.ai_requests
+              WHERE user_id = $1
+                AND is_async = true
+                AND job_kind = 'quiz_generate'::public.job_kind
+                AND status IN ('queued'::public.job_status, 'preparing'::public.job_status)
+                AND subject_id = ANY($2::uuid[])`,
+            [normalizedUserId, itemIds],
+          );
+          for (const row of Array.isArray(activeQuizJobRows)
+            ? activeQuizJobRows
+            : []) {
+            if (row.subject_id) {
+              inProgressQuizItemIds.add(String(row.subject_id));
+            }
+          }
         }
 
         const frozenDayNos = new Set<number>();
@@ -984,5 +1004,97 @@ export class DailyPlanService {
       true,
       true,
     );
+  }
+
+  /**
+   * Marks a `daily_plan_items` row `'completed'` inside an active quiz-submission transaction
+   * (preserving existing `completed_at` on retry) and transitions `daily_plans.status` to
+   * `'completed'` when all sequential items in the plan are completed (`PRD` §33).
+   */
+  async markPlanItemCompletedInTx(
+    db: TransactionalQueryExecutor,
+    userId: string,
+    planId: string,
+    planItemId: string,
+  ): Promise<{ planDayUnlocked: boolean; nextPlanDayNo: number | null }> {
+    const normalizedUserId = this.assertUuid(userId, 'user_id', 'User id');
+    const normalizedPlanId = this.assertUuid(planId, 'plan_id', 'Plan id');
+    const normalizedItemId = this.assertUuid(
+      planItemId,
+      'daily_plan_item_id',
+      'Daily Plan item id',
+    );
+
+    const beforeRows = await db.query<Array<{ day_no: number | string }>>(
+      `SELECT day_no
+         FROM public.daily_plan_items
+        WHERE plan_id = $1
+          AND user_id = $2
+          AND status <> 'completed'::public.plan_item_status
+        ORDER BY day_no ASC, sort_order ASC
+        LIMIT 1`,
+      [normalizedPlanId, normalizedUserId],
+    );
+    const beforeRow = Array.isArray(beforeRows) ? beforeRows[0] : undefined;
+    const earliestBefore =
+      beforeRow?.day_no !== undefined && beforeRow?.day_no !== null
+        ? Number(beforeRow.day_no)
+        : null;
+
+    const updatedRaw = await db.query<unknown>(
+      `UPDATE public.daily_plan_items
+          SET status = 'completed'::public.plan_item_status,
+              started_at = COALESCE(started_at, clock_timestamp()),
+              completed_at = COALESCE(completed_at, clock_timestamp())
+        WHERE id = $1
+          AND plan_id = $2
+          AND user_id = $3
+       RETURNING id, day_no`,
+      [normalizedItemId, normalizedPlanId, normalizedUserId],
+    );
+    const updated = extractReturningRows<{
+      id: string;
+      day_no: number | string;
+    }>(updatedRaw)[0];
+    if (!updated?.id) {
+      fail(404, 'RESOURCE_NOT_FOUND', 'Daily Plan item not found');
+    }
+
+    const nextRows = await db.query<Array<{ day_no: number | string }>>(
+      `SELECT day_no
+         FROM public.daily_plan_items
+        WHERE plan_id = $1
+          AND user_id = $2
+          AND status <> 'completed'::public.plan_item_status
+        ORDER BY day_no ASC, sort_order ASC
+        LIMIT 1`,
+      [normalizedPlanId, normalizedUserId],
+    );
+    const nextRow = Array.isArray(nextRows) ? nextRows[0] : undefined;
+    const nextPlanDayNo =
+      nextRow?.day_no !== undefined && nextRow?.day_no !== null
+        ? Number(nextRow.day_no)
+        : null;
+
+    if (nextPlanDayNo === null) {
+      await db.query(
+        `UPDATE public.daily_plans
+            SET status = 'completed'::public.plan_status
+          WHERE id = $1
+            AND user_id = $2
+            AND status <> 'completed'::public.plan_status`,
+        [normalizedPlanId, normalizedUserId],
+      );
+    }
+
+    const planDayUnlocked =
+      earliestBefore !== null &&
+      nextPlanDayNo !== null &&
+      nextPlanDayNo > earliestBefore;
+
+    return {
+      planDayUnlocked,
+      nextPlanDayNo,
+    };
   }
 }

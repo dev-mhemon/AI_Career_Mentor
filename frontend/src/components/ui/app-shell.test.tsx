@@ -76,6 +76,12 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(dailyPlanLink.className).toContain('mx-2');
     expect(dailyPlanLink.className).toContain('px-3');
 
+    const progressLink = within(sidebar).getByRole('link', {
+      name: 'Progress',
+    });
+    expect(progressLink).toHaveAttribute('href', '/progress');
+    expect(progressLink).not.toHaveAttribute('aria-current');
+
     const profileLink = within(sidebar).getByRole('link', { name: 'Profile' });
     expect(profileLink).toHaveAttribute('href', '/profile');
     expect(profileLink).not.toHaveAttribute('aria-current');
@@ -145,6 +151,28 @@ describe('AppShell, Sidebar, and Header', () => {
     );
     expect(
       within(sidebar).getByRole('link', { name: 'Daily Plan' }),
+    ).toHaveAttribute('aria-current', 'page');
+
+    mockPathname = '/quiz/att-1';
+    rerender(
+      <AppShell user={{ fullName: 'Mehedi Hasan' }}>
+        <div>Quiz body</div>
+      </AppShell>,
+    );
+    const quizDailyPlanLink = within(sidebar).getByRole('link', {
+      name: 'Daily Plan',
+    });
+    expect(quizDailyPlanLink).not.toHaveAttribute('aria-current');
+    expect(quizDailyPlanLink.className).toContain('bg-teal-50');
+
+    mockPathname = '/progress';
+    rerender(
+      <AppShell user={{ fullName: 'Mehedi Hasan' }}>
+        <div>Progress body</div>
+      </AppShell>,
+    );
+    expect(
+      within(sidebar).getByRole('link', { name: 'Progress' }),
     ).toHaveAttribute('aria-current', 'page');
   });
 

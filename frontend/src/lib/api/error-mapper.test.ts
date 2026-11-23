@@ -406,6 +406,91 @@ describe("mapApiError", () => {
       expect(mapped.message).not.toContain("stack trace");
     }
   });
+
+  it("maps all 10 M08 quiz and practice-review error codes cleanly with zero internal leaks", () => {
+    const rawInternalLeak = "google-gemini internal postgres detail stack trace";
+    const cases: Array<{
+      status: number;
+      code: string;
+      tone: "error" | "warning" | "info";
+      match: RegExp;
+    }> = [
+      {
+        status: 409,
+        code: "PLAN_ITEM_NOT_AVAILABLE",
+        tone: "warning",
+        match: /not ready for a practice quiz/i,
+      },
+      {
+        status: 409,
+        code: "QUIZ_NOT_STARTED",
+        tone: "warning",
+        match: /start the practice quiz before/i,
+      },
+      {
+        status: 409,
+        code: "QUIZ_NOT_SUBMITTED",
+        tone: "info",
+        match: /submit this practice quiz first/i,
+      },
+      {
+        status: 409,
+        code: "QUIZ_ALREADY_SUBMITTED",
+        tone: "info",
+        match: /already been submitted/i,
+      },
+      {
+        status: 422,
+        code: "NO_ANSWERS_SUBMITTED",
+        tone: "warning",
+        match: /answer at least one question/i,
+      },
+      {
+        status: 422,
+        code: "UNANSWERED_CONFIRMATION_REQUIRED",
+        tone: "warning",
+        match: /some questions are still unanswered/i,
+      },
+      {
+        status: 422,
+        code: "QUESTION_NOT_IN_QUIZ",
+        tone: "warning",
+        match: /did not match this quiz attempt/i,
+      },
+      {
+        status: 409,
+        code: "RETRY_LIMIT_REACHED",
+        tone: "info",
+        match: /single retry permitted/i,
+      },
+      {
+        status: 409,
+        code: "REVIEW_NOT_RETRYABLE",
+        tone: "info",
+        match: /non-attempt and cannot be retried/i,
+      },
+      {
+        status: 410,
+        code: "RAW_RESPONSE_EXPIRED",
+        tone: "info",
+        match: /90-day privacy retention policy/i,
+      },
+    ];
+
+    for (const c of cases) {
+      const mapped = mapApiError(
+        new ApiError(c.status, rawInternalLeak, c.code, "req-q-1"),
+      );
+      expect(mapped.code).toBe(c.code);
+      expect(mapped.status).toBe(c.status);
+      expect(mapped.tone).toBe(c.tone);
+      expect(mapped.retryable).toBe(false);
+      expect(mapped.message).toMatch(c.match);
+      expect(mapped.message).not.toContain("gemini");
+      expect(mapped.message).not.toContain("postgres");
+      expect(mapped.message).not.toContain("stack trace");
+    }
+  });
 });
 
 describe("mapActionResult", () => {

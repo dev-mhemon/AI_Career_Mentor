@@ -6,6 +6,7 @@ import { useRef, useState } from 'react';
 import {
   focusRoadmap,
   getToday,
+  type ProgressResponseDTO,
   type RoadmapSummaryDTO,
   type TodayResponseDTO,
 } from '@/lib/api/client';
@@ -32,6 +33,7 @@ export interface DashboardLearningSectionProps {
   initialToday: TodayResponseDTO | null;
   initialTodayError?: boolean;
   initialRoadmaps: RoadmapSummaryDTO[];
+  initialProgress?: ProgressResponseDTO | null;
   dailyPlanEnabled: boolean;
   preferredDailyHours: number | null;
 }
@@ -55,6 +57,7 @@ export function DashboardLearningSection({
   initialToday,
   initialTodayError = false,
   initialRoadmaps,
+  initialProgress = null,
   dailyPlanEnabled,
   preferredDailyHours,
 }: DashboardLearningSectionProps) {
@@ -195,10 +198,26 @@ export function DashboardLearningSection({
   };
 
   const showHeroCard = Boolean(today || todayLoadError);
+  const hasProgressSummary = Boolean(
+    initialProgress &&
+      (initialProgress.skills.length > 0 ||
+        initialProgress.roadmap_progress.items_total > 0),
+  );
 
-  if (!showHeroCard && activeRoadmaps.length === 0) {
+  if (!showHeroCard && activeRoadmaps.length === 0 && !hasProgressSummary) {
     return null;
   }
+
+  const proficientCount = (initialProgress?.skills ?? []).filter(
+    (s) => s.learning_state === 'proficient',
+  ).length;
+  const practicingCount = (initialProgress?.skills ?? []).filter(
+    (s) => s.learning_state === 'practicing',
+  ).length;
+  const learningCount = (initialProgress?.skills ?? []).filter(
+    (s) => s.learning_state === 'learning',
+  ).length;
+  const weakAreaCount = initialProgress?.weak_areas.length ?? 0;
 
   return (
     <section
@@ -538,6 +557,48 @@ export function DashboardLearningSection({
           </div>
         </article>
       </div>
+
+      {/* Skill Mastery Summary Strip (EP-G01) */}
+      {hasProgressSummary && initialProgress && (
+        <article
+          aria-label="Skill mastery summary"
+          className="flex flex-col gap-4 rounded-xl border border-slate-200/80 bg-white p-5 shadow-xs sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-900"
+        >
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider leading-none text-teal-700 dark:text-teal-300">
+                <TargetIcon className="block h-3.5 w-3.5 shrink-0" />
+                <span>Skill Mastery ({initialProgress.career_level})</span>
+              </span>
+              <span className="inline-flex items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 font-mono text-xs font-semibold leading-none tabular-nums text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/60 dark:text-emerald-200">
+                {proficientCount} Proficient
+              </span>
+              <span className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 font-mono text-xs font-semibold leading-none tabular-nums text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/60 dark:text-amber-200">
+                {practicingCount} Practicing
+              </span>
+              <span className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 font-mono text-xs font-semibold leading-none tabular-nums text-sky-800 dark:border-sky-800/70 dark:bg-sky-950/60 dark:text-sky-200">
+                {learningCount} Learning
+              </span>
+              {weakAreaCount > 0 && (
+                <span className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold leading-none text-rose-800 dark:border-rose-800/70 dark:bg-rose-950/60 dark:text-rose-200">
+                  {weakAreaCount}{' '}
+                  {weakAreaCount === 1 ? 'Weak Area' : 'Weak Areas'}
+                </span>
+              )}
+            </div>
+            <p className="text-body-sm text-slate-600 dark:text-slate-400">
+              {initialProgress.roadmap_progress.items_completed} of{' '}
+              {initialProgress.roadmap_progress.items_total} sequential roadmap
+              topics completed across your practice quizzes.
+            </p>
+          </div>
+
+          <Link href="/progress" className={secondaryLinkClass}>
+            <TargetIcon className="block h-4 w-4 shrink-0" />
+            <span>View Progress</span>
+          </Link>
+        </article>
+      )}
 
       {hoursModalTarget && (
         <HoursPromptModal

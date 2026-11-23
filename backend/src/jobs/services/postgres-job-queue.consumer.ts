@@ -86,6 +86,16 @@ export interface JobHandler {
     result: JobExecutionResult,
     context?: JobCommitContext,
   ): Promise<{ resultType?: string; resultId?: string } | void>;
+
+  /**
+   * Optional callback invoked inside the fenced terminal-failure transaction whenever
+   * a job transitions to terminal `failed` (`retryable = false`).
+   */
+  onTerminalFailure?(
+    tx: JobQueryExecutor,
+    job: ClaimedJobRow,
+    errorCode: string,
+  ): Promise<void>;
 }
 
 /** Alias exported for multi-module job handler registration. */
@@ -488,7 +498,12 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       if (fenceLost || abortController.signal.aborted) {
         return { outcome: 'fence_lost', jobId: job.id };
       }
-      return this.recordExecutionFailure(fence, classifyExecutionError(error));
+      return this.recordExecutionFailure(
+        fence,
+        classifyExecutionError(error),
+        job,
+        handler,
+      );
     } finally {
       stopHeartbeat();
     }
@@ -504,7 +519,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       this.logger.warn(
         `Commit gate aborted for job ${job.id} (${classified.errorCode})`,
       );
-      return this.recordExecutionFailure(fence, classified);
+      return this.recordExecutionFailure(fence, classified, job, handler);
     }
   }
 
@@ -576,6 +591,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             fence,
             'WORKER_LEASE_EXPIRED',
             SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+            job,
+            handler,
           );
           return {
             outcome: 'failed_terminal',
@@ -591,6 +608,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             fence,
             'ACCOUNT_SUSPENDED',
             SAFE_FAILURE_MESSAGES.ACCOUNT_SUSPENDED,
+            job,
+            handler,
           );
           return {
             outcome: 'failed_terminal',
@@ -604,6 +623,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             fence,
             'FEATURE_DISABLED',
             SAFE_FAILURE_MESSAGES.FEATURE_DISABLED,
+            job,
+            handler,
           );
           return {
             outcome: 'failed_terminal',
@@ -622,6 +643,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             fence,
             'STALE_JOB_INPUT',
             SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
+            job,
+            handler,
           );
           return {
             outcome: 'failed_terminal',
@@ -638,6 +661,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
               fence,
               'STALE_JOB_INPUT',
               SAFE_FAILURE_MESSAGES.STALE_JOB_INPUT,
+              job,
+              handler,
             );
             return {
               outcome: 'failed_terminal',
@@ -673,6 +698,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
               fence,
               'WORKER_LEASE_EXPIRED',
               SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+              job,
+              handler,
             );
             return {
               outcome: 'failed_terminal',
@@ -686,6 +713,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
               fence,
               'ACCOUNT_SUSPENDED',
               SAFE_FAILURE_MESSAGES.ACCOUNT_SUSPENDED,
+              job,
+              handler,
             );
             return {
               outcome: 'failed_terminal',
@@ -699,6 +728,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
               fence,
               'FEATURE_DISABLED',
               SAFE_FAILURE_MESSAGES.FEATURE_DISABLED,
+              job,
+              handler,
             );
             return {
               outcome: 'failed_terminal',
@@ -872,6 +903,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
             fence,
             'WORKER_LEASE_EXPIRED',
             SAFE_FAILURE_MESSAGES.WORKER_LEASE_EXPIRED,
+            job,
+            handler,
           ),
         );
         if (!updated) {
@@ -892,6 +925,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
     fence: JobAttemptFence,
     errorCode: string,
     safeMessage: string,
+    job?: ClaimedJobRow,
+    handler?: JobHandler,
   ): Promise<boolean> {
     const raw = await tx.query<unknown>(
       `UPDATE public.ai_requests
@@ -914,12 +949,18 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         safeMessage,
       ],
     );
-    return extractReturningRows<{ id: string }>(raw).length > 0;
+    const updated = extractReturningRows<{ id: string }>(raw).length > 0;
+    if (updated && job && typeof handler?.onTerminalFailure === 'function') {
+      await handler.onTerminalFailure(tx, job, errorCode);
+    }
+    return updated;
   }
 
   private async recordExecutionFailure(
     fence: JobAttemptFence,
     failure: { errorCode: string; safeMessage: string; retryable: boolean },
+    job?: ClaimedJobRow,
+    handler?: JobHandler,
   ): Promise<JobProcessOutcome> {
     return this.runTx(async (tx) => {
       const canRetry =
@@ -930,6 +971,8 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
           fence,
           failure.errorCode,
           failure.safeMessage,
+          job,
+          handler,
         );
         if (!updated) {
           return { outcome: 'fence_lost', jobId: fence.requestId };
@@ -986,7 +1029,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       );
       const requeuedRows = extractReturningRows<{ id: string }>(requeuedRaw);
       if (requeuedRows.length === 0) {
-        await tx.query(
+        const terminalRaw = await tx.query<unknown>(
           `UPDATE public.ai_requests
               SET retryable = false,
                   input_payload = NULL
@@ -995,6 +1038,15 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
            RETURNING id`,
           [fence.requestId],
         );
+        const terminalUpdated =
+          extractReturningRows<{ id: string }>(terminalRaw).length > 0;
+        if (
+          terminalUpdated &&
+          job &&
+          typeof handler?.onTerminalFailure === 'function'
+        ) {
+          await handler.onTerminalFailure(tx, job, failure.errorCode);
+        }
         return {
           outcome: 'failed_terminal',
           jobId: fence.requestId,

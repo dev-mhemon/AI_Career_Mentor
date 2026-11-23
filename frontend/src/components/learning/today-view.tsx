@@ -1,11 +1,17 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ApiError,
+  createIdempotencyKey,
+  generateQuiz,
   getJobStatus,
   getToday,
+  isJobAcceptedDTO,
   listLearningResources,
+  type JobAcceptedDTO,
   type JobStatusDTO,
   type LearningResourceDTO,
   type TodayResponseDTO,
@@ -31,6 +37,7 @@ import { LearningResourceCard } from './learning-resource-card';
 export interface TodayViewProps {
   accessToken: string;
   dailyPlanEnabled?: boolean;
+  quizPracticeEnabled?: boolean;
   initialToday?: TodayResponseDTO;
 }
 
@@ -63,8 +70,10 @@ const QUIZ_STATUS_LABELS: Record<string, string> = {
 export function TodayView({
   accessToken,
   dailyPlanEnabled = true,
+  quizPracticeEnabled = true,
   initialToday,
 }: TodayViewProps) {
+  const router = useRouter();
   const [reloadTick, setReloadTick] = useState(0);
   const [fetchState, setFetchState] = useState<FetchState | null>(null);
   const [resourcesState, setResourcesState] = useState<{
@@ -76,8 +85,31 @@ export function TodayView({
     jobId: string;
     hasBuiltInRetry: boolean;
   } | null>(null);
+  const [generatingQuizItemId, setGeneratingQuizItemId] = useState<
+    string | null
+  >(null);
+  const [quizGenJobState, setQuizGenJobState] = useState<{
+    planItemId: string;
+    job: JobAcceptedDTO;
+  } | null>(null);
+  const [quizGenErrorState, setQuizGenErrorState] = useState<{
+    planItemId: string;
+    error: MappedError;
+  } | null>(null);
 
   const requestGenRef = useRef(0);
+  const quizIdemKeyRef = useRef<{ planItemId: string; key: string } | null>(
+    null,
+  );
+  const mountedRef = useRef(true);
+  const currentPlanItemIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const requestKey = `${accessToken}:${reloadTick}`;
   const seededToday = initialToday && reloadTick === 0 ? initialToday : null;
@@ -126,6 +158,12 @@ export function TodayView({
 
   const activeTopicId =
     today?.status === 'ready' ? (today.topic?.topic_id ?? null) : null;
+  const activePlanItemId =
+    today?.status === 'ready' ? (today.plan_day?.plan_item_id ?? null) : null;
+
+  useEffect(() => {
+    currentPlanItemIdRef.current = activePlanItemId;
+  }, [activePlanItemId]);
 
   useEffect(() => {
     if (!activeTopicId) {
@@ -197,6 +235,81 @@ export function TodayView({
     triggerReload();
   };
 
+  const generatingQuiz =
+    activePlanItemId !== null && generatingQuizItemId === activePlanItemId;
+  const quizGenJob =
+    activePlanItemId !== null &&
+    quizGenJobState?.planItemId === activePlanItemId
+      ? quizGenJobState.job
+      : null;
+  const quizGenError =
+    activePlanItemId !== null &&
+    quizGenErrorState?.planItemId === activePlanItemId
+      ? quizGenErrorState.error
+      : null;
+
+  const handleLaunchQuiz = async () => {
+    const planItemId = today?.plan_day?.plan_item_id;
+    if (!planItemId || generatingQuiz || !quizPracticeEnabled) {
+      return;
+    }
+    setGeneratingQuizItemId(planItemId);
+    setQuizGenErrorState((prev) =>
+      prev?.planItemId === planItemId ? null : prev,
+    );
+    if (
+      !quizIdemKeyRef.current ||
+      quizIdemKeyRef.current.planItemId !== planItemId
+    ) {
+      quizIdemKeyRef.current = {
+        planItemId,
+        key: createIdempotencyKey(),
+      };
+    }
+    const idemKey = quizIdemKeyRef.current.key;
+
+    try {
+      const outcome = await generateQuiz(
+        accessToken,
+        { daily_plan_item_id: planItemId },
+        idemKey,
+      );
+      if (quizIdemKeyRef.current?.planItemId === planItemId) {
+        quizIdemKeyRef.current = null;
+      }
+      if (!mountedRef.current || currentPlanItemIdRef.current !== planItemId) {
+        return;
+      }
+      if (isJobAcceptedDTO(outcome)) {
+        setQuizGenJobState({ planItemId, job: outcome });
+      } else {
+        router.push(`/quiz/${encodeURIComponent(outcome.attempt_id)}`);
+      }
+    } catch (err) {
+      const mapped = mapApiError(err);
+      if (
+        err instanceof ApiError &&
+        (err.statusCode === 400 ||
+          err.statusCode === 403 ||
+          err.statusCode === 404 ||
+          err.statusCode === 409 ||
+          err.statusCode === 422 ||
+          err.statusCode === 429) &&
+        quizIdemKeyRef.current?.planItemId === planItemId
+      ) {
+        quizIdemKeyRef.current = null;
+      }
+      if (!mountedRef.current || currentPlanItemIdRef.current !== planItemId) {
+        return;
+      }
+      setQuizGenErrorState({ planItemId, error: mapped });
+    } finally {
+      if (mountedRef.current) {
+        setGeneratingQuizItemId((prev) => (prev === planItemId ? null : prev));
+      }
+    }
+  };
+
   const resolvedResources: LearningResourceDTO[] =
     activeTopicId && resourcesState?.topicId === activeTopicId
       ? resourcesState.items
@@ -210,7 +323,7 @@ export function TodayView({
         }));
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="flex flex-col gap-3 border-b border-slate-200/80 pb-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
         <div className="min-w-0">
           <nav
@@ -446,92 +559,172 @@ export function TodayView({
       )}
 
       {!isLoading && today?.status === 'ready' && today.topic && (
-        <div className="flex flex-col gap-6">
-          <AIExplanationCard
-            title={today.topic.title}
-            explanationMarkdown={today.topic.explanation_markdown}
-            importantQuestions={today.topic.important_questions}
-            contentVersion={today.topic.content_version}
-            requiredDepth={today.topic.required_depth}
-          />
+        <div
+          data-testid="today-ready-grid"
+          className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start"
+        >
+          {/* Left Main Column: AI Topic Study Guide & Key Questions */}
+          <div className="min-w-0 space-y-6 lg:col-span-8">
+            <AIExplanationCard
+              title={today.topic.title}
+              explanationMarkdown={today.topic.explanation_markdown}
+              importantQuestions={today.topic.important_questions}
+              contentVersion={today.topic.content_version}
+              requiredDepth={today.topic.required_depth}
+            />
+          </div>
 
-          {resolvedResources.length > 0 && (
-            <section
-              aria-labelledby="today-resources-heading"
-              className="flex flex-col gap-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2
-                  id="today-resources-heading"
-                  className="text-heading-sm font-semibold text-slate-900 dark:text-slate-100"
-                >
-                  Verified Learning Resources
-                </h2>
-                <span className="text-caption text-slate-500 dark:text-slate-400">
-                  External attribution links
-                </span>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {resolvedResources.map((res) => (
-                  <LearningResourceCard
-                    key={res.id}
-                    title={res.title}
-                    publisher={res.publisher}
-                    url={res.url}
-                    resourceType={res.resource_type}
-                    retrievedAt={res.retrieved_at}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Practice Quiz Readiness Footer — NEVER a "Mark Complete" button (`PRD §33`) */}
-          <section
-            aria-labelledby="today-practice-heading"
-            className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs sm:flex-row sm:items-center sm:justify-between sm:p-6 dark:border-slate-800 dark:bg-slate-900"
+          {/* Right Sticky Action Rail: Daily Practice Quiz (top) + Verified Learning Resources (below) */}
+          <aside
+            aria-label="Practice quiz and verified learning resources"
+            className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-20 lg:col-span-4"
           >
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800/70 dark:bg-indigo-950/60 dark:text-indigo-300">
-                <SparklesIcon className="block h-5 w-5 shrink-0" />
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
+            {/* Top Card — Daily Practice Quiz (NEVER a "Mark Complete" button per PRD §33) */}
+            <section
+              aria-labelledby="today-practice-heading"
+              className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs sm:p-6 dark:border-slate-800 dark:bg-slate-900"
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800/70 dark:bg-indigo-950/60 dark:text-indigo-300">
+                  <SparklesIcon className="block h-5 w-5 shrink-0" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2
+                      id="today-practice-heading"
+                      className="text-heading-sm font-semibold text-slate-900 dark:text-slate-100"
+                    >
+                      Daily Practice Quiz
+                    </h2>
+                    <span className="inline-flex items-center justify-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-medium leading-none text-teal-800 dark:border-teal-800/70 dark:bg-teal-950/60 dark:text-teal-200">
+                      {today.quiz.status
+                        ? (QUIZ_STATUS_LABELS[today.quiz.status] ??
+                          today.quiz.status)
+                        : 'Ready'}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-body-sm text-slate-600 dark:text-slate-400">
+                    {!quizPracticeEnabled && !today.quiz.attempt_id
+                      ? 'Practice Quiz generation is currently paused. Your study guide and resources remain available.'
+                      : 'Submitting the practice quiz unlocks your next sequential Daily Plan day, and eligible answers contribute to level-scoped mastery evidence.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex w-full flex-col items-stretch">
+                {today.quiz.attempt_id ? (
+                  <Link
+                    href={`/quiz/${encodeURIComponent(today.quiz.attempt_id)}`}
+                    className="inline-flex h-10 min-h-11 w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-action-primary-background px-5 text-label-lg font-medium leading-none text-action-primary-foreground shadow-xs transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active"
+                  >
+                    <BookOpenIcon className="block h-4 w-4 shrink-0" />
+                    <span>
+                      {today.quiz.status === 'generated' ||
+                      today.quiz.status === 'started'
+                        ? 'Continue Practice Quiz'
+                        : 'View Quiz Results'}
+                    </span>
+                  </Link>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    loading={generatingQuiz}
+                    loadingText="Preparing Quiz..."
+                    disabled={
+                      !quizPracticeEnabled ||
+                      generatingQuiz ||
+                      Boolean(quizGenJob) ||
+                      !today.plan_day?.plan_item_id
+                    }
+                    onClick={() => void handleLaunchQuiz()}
+                    className="w-full shrink-0 justify-center whitespace-nowrap"
+                  >
+                    <BookOpenIcon className="block h-4 w-4 shrink-0" />
+                    <span>Start Practice Quiz</span>
+                  </Button>
+                )}
+              </div>
+
+              {quizGenError && (
+                <Alert
+                  variant={
+                    quizGenError.tone === 'warning'
+                      ? 'warning'
+                      : 'error_retryable'
+                  }
+                  role="alert"
+                  retryAfterSeconds={quizGenError.retryAfterSeconds}
+                >
+                  {quizGenError.message}
+                </Alert>
+              )}
+
+              {quizGenJob && activePlanItemId && (
+                <AILoadingState
+                  job={quizGenJob}
+                  title="Preparing your topic Practice Quiz"
+                  variant="inline_banner"
+                  accessToken={accessToken}
+                  onJobSucceeded={(resultRef) => {
+                    const initiatedItemId = activePlanItemId;
+                    setQuizGenJobState((prev) =>
+                      prev?.planItemId === initiatedItemId ? null : prev,
+                    );
+                    if (
+                      !mountedRef.current ||
+                      currentPlanItemIdRef.current !== initiatedItemId
+                    ) {
+                      return;
+                    }
+                    if (resultRef?.id) {
+                      router.push(`/quiz/${encodeURIComponent(resultRef.id)}`);
+                    } else {
+                      triggerReload();
+                    }
+                  }}
+                  onRetryJob={() => {
+                    setQuizGenJobState((prev) =>
+                      prev?.planItemId === activePlanItemId ? null : prev,
+                    );
+                    void handleLaunchQuiz();
+                  }}
+                />
+              )}
+            </section>
+
+            {/* Second Card — Verified Learning Resources */}
+            {resolvedResources.length > 0 && (
+              <section
+                aria-labelledby="today-resources-heading"
+                className="flex flex-col gap-3 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs sm:p-6 dark:border-slate-800 dark:bg-slate-900"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2
-                    id="today-practice-heading"
+                    id="today-resources-heading"
                     className="text-heading-sm font-semibold text-slate-900 dark:text-slate-100"
                   >
-                    Daily Practice Quiz
+                    Verified Learning Resources
                   </h2>
-                  {today.quiz.status && (
-                    <span className="inline-flex items-center justify-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-medium leading-none text-teal-800 dark:border-teal-800/70 dark:bg-teal-950/60 dark:text-teal-200">
-                      {QUIZ_STATUS_LABELS[today.quiz.status] ??
-                        today.quiz.status}
-                    </span>
-                  )}
+                  <span className="text-caption text-slate-500 dark:text-slate-400">
+                    External attribution links
+                  </span>
                 </div>
-                <p className="mt-1 text-body-sm text-slate-600 dark:text-slate-400">
-                  Submitting the practice quiz is what unlocks the next
-                  sequential Daily Plan day. Interactive quizzes and AI Practice
-                  Review arrive in Milestone M08.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex w-full shrink-0 flex-col items-stretch gap-1.5 sm:w-auto sm:items-end">
-              <Button
-                type="button"
-                variant="primary"
-                disabled
-                aria-disabled="true"
-                title="Practice Quiz & AI Practice Review arrive in M08"
-                className="w-full justify-center sm:w-auto"
-              >
-                <BookOpenIcon className="block h-4 w-4 shrink-0" />
-                <span>Practice Quiz (Coming in M08)</span>
-              </Button>
-            </div>
-          </section>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                  {resolvedResources.map((res) => (
+                    <LearningResourceCard
+                      key={res.id}
+                      title={res.title}
+                      publisher={res.publisher}
+                      url={res.url}
+                      resourceType={res.resource_type}
+                      retrievedAt={res.retrieved_at}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+          </aside>
         </div>
       )}
 

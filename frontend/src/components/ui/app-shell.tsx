@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { cn } from './cn';
 import { Header } from './header';
 import { Sidebar } from './sidebar';
 import { useOptionalAppShellContext } from './app-shell-context';
@@ -192,7 +193,12 @@ export function AppShell({
         />
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className={cn(
+          'flex min-w-0 flex-1 flex-col transition-[padding-left] duration-200 ease-standard',
+          !hideChrome && (isCollapsed ? 'lg:pl-[72px]' : 'lg:pl-64'),
+        )}
+      >
         {!hideChrome && (
           <Header
             variant={effectiveVariant}

@@ -1753,6 +1753,7 @@ export interface TopicDetailDTO {
 export interface TodayPlanDayDTO {
   day_no: number;
   total_days: number;
+  plan_item_id?: string;
 }
 
 export interface TodayQuizSummaryDTO {
@@ -1965,4 +1966,613 @@ export async function listLearningResources(
     ...(options?.signal ? { signal: options.signal } : {}),
   });
   return normalizePaginatedEnvelope(envelope, params.limit ?? 20);
+}
+
+// ─── M08 Quiz, AI Practice Review & Progress API (C05 §14.7–§14.9 / §15.7–§15.9) ───
+
+export type QuestionType = 'mcq' | 'free_response';
+export type QuestionDifficulty = 'basic' | 'application' | 'analysis';
+export type PerformanceLevel = 'good' | 'needs_work';
+export type ReviewStatus = 'pending' | 'reviewed' | 'failed' | 'not_evidence';
+export type ResponseHint =
+  | 'sql'
+  | 'code'
+  | 'config'
+  | 'test_case'
+  | 'debug'
+  | 'command'
+  | 'design'
+  | 'text';
+export type ReviewDimensionScore = 'good' | 'partial' | 'weak';
+export type EvidenceSource = 'quiz_attempt' | 'practice_review';
+export type ProgressEventType = 'state_change' | 'evidence_added';
+
+export interface QuizGenerateDTO {
+  daily_plan_item_id: string;
+}
+
+export interface QuizAnswerInputDTO {
+  question_id: string;
+  selected_option_id?: string | null;
+  text?: string | null;
+  i_dont_know?: boolean;
+}
+
+export interface QuizAnswersPatchDTO {
+  answers: QuizAnswerInputDTO[];
+}
+
+export interface QuizSubmissionDTO {
+  answers?: QuizAnswerInputDTO[];
+  confirm_unanswered?: boolean;
+}
+
+export interface QuizQuestionOptionDTO {
+  option_id: string;
+  text: string;
+}
+
+export interface QuizQuestionDTO {
+  question_id: string;
+  type: QuestionType;
+  difficulty: QuestionDifficulty;
+  prompt: string;
+  options: QuizQuestionOptionDTO[] | null;
+  response_hint: string | null;
+  max_length: number | null;
+  allow_i_dont_know: boolean;
+}
+
+export interface SavedQuizAnswerDTO {
+  question_id: string;
+  selected_option_id: string | null;
+  text: string | null;
+  i_dont_know: boolean;
+}
+
+export interface QuizAttemptDTO {
+  attempt_id: string;
+  status: AttemptStatus;
+  attempt_no: number;
+  topic_id: string;
+  topic_title?: string;
+  career_level: CareerLevel;
+  questions: QuizQuestionDTO[];
+  saved_answers: SavedQuizAnswerDTO[];
+  submitted_at: string | null;
+}
+
+export interface QuizAnswersSavedResponseDTO {
+  saved: number;
+  saved_at: string;
+}
+
+export interface QuizMcqScoreDTO {
+  correct: number;
+  total: number;
+}
+
+export interface QuizSubmitResponseDTO {
+  attempt_id: string;
+  status: AttemptStatus;
+  mcq_score: QuizMcqScoreDTO;
+  plan_day_unlocked: boolean;
+  next_plan_day_no: number | null;
+  review_job_id: string | null;
+}
+
+export interface QuizResultMcqQuestionDTO {
+  question_id: string;
+  type: 'mcq';
+  your_answer: string | null;
+  correct_answer: string;
+  is_correct: boolean;
+  explanation: string | null;
+  reportable: boolean;
+}
+
+export interface QuizResultFreeResponseQuestionDTO {
+  question_id: string;
+  type: 'free_response';
+  user_answer?: string | null;
+  explanation?: string | null;
+  practice_review_id: string | null;
+  review_status: ReviewStatus;
+  reportable: boolean;
+}
+
+export type QuizResultQuestionDTO =
+  | QuizResultMcqQuestionDTO
+  | QuizResultFreeResponseQuestionDTO;
+
+export interface ProgressChangeSummaryDTO {
+  skill_id: string;
+  career_level: CareerLevel;
+  from: LearningState;
+  to: LearningState;
+  reason: string;
+}
+
+export interface QuizResultDTO {
+  attempt_id: string;
+  status: AttemptStatus;
+  attempt_no: number;
+  topic_title?: string;
+  mcq_score: QuizMcqScoreDTO;
+  performance_level: PerformanceLevel | null;
+  questions: QuizResultQuestionDTO[];
+  improvement_recommendations: string[];
+  progress_change: ProgressChangeSummaryDTO | null;
+  retry_available: boolean;
+}
+
+export interface PracticeReviewDimensionsDTO {
+  correctness: ReviewDimensionScore;
+  understanding: ReviewDimensionScore;
+  reasoning: ReviewDimensionScore;
+}
+
+export interface PracticeReviewSummaryDTO {
+  id: string;
+  question_id: string;
+  review_status: ReviewStatus;
+  performance_level: PerformanceLevel | null;
+}
+
+export interface PracticeFeedbackDTO {
+  id: string;
+  question_id: string;
+  review_status: ReviewStatus;
+  performance_level: PerformanceLevel | null;
+  dimensions: PracticeReviewDimensionsDTO | null;
+  strengths: string[];
+  mistakes: string[];
+  weaknesses: string[];
+  improvement_recommendations: string[];
+  evidence_eligible: boolean;
+  reportable: boolean;
+}
+
+export interface RoadmapProgressCountsDTO {
+  items_total: number;
+  items_completed: number;
+}
+
+export interface SkillProgressDTO {
+  skill_id: string;
+  name: string;
+  career_level: CareerLevel;
+  learning_state: LearningState;
+  shared_with_roadmap_ids: string[];
+  weak_area: boolean;
+  last_evidence_at: string | null;
+  state_reason: string | null;
+}
+
+export interface WeakAreaDTO {
+  skill_id: string;
+  name: string;
+  reason: string;
+}
+
+export interface ProgressResponseDTO {
+  roadmap_id: string | null;
+  career_level: CareerLevel;
+  roadmap_progress: RoadmapProgressCountsDTO;
+  skills: SkillProgressDTO[];
+  weak_areas: WeakAreaDTO[];
+}
+
+export interface PaginatedProgressResponseDTO {
+  progress: ProgressResponseDTO;
+  meta: PageMetaDTO;
+}
+
+export interface GetProgressParams {
+  roadmap_id?: string;
+  career_level?: CareerLevel;
+  learning_state?: LearningState;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface SkillEvidenceSummaryDTO {
+  count: number;
+  quiz_attempts: number;
+  practice_reviews: number;
+  retry_improved: boolean | null;
+}
+
+export interface SkillRoadmapRequirementDTO {
+  roadmap_id: string;
+  required_depth: string | null;
+}
+
+export interface SkillLevelProgressDetailDTO {
+  career_level: CareerLevel;
+  learning_state: LearningState;
+  state_reason: string | null;
+  last_evidence_at: string | null;
+  evidence_summary: SkillEvidenceSummaryDTO;
+  roadmap_requirements: SkillRoadmapRequirementDTO[];
+}
+
+export interface SkillProgressDetailDTO {
+  skill_id: string;
+  name: string;
+  levels: SkillLevelProgressDetailDTO[];
+}
+
+export interface GetSkillProgressDetailParams {
+  career_level?: CareerLevel;
+}
+
+export interface ProgressHistoryItemDTO {
+  id: string;
+  occurred_at: string;
+  skill_id: string;
+  career_level: CareerLevel;
+  event: ProgressEventType;
+  from_state: LearningState | null;
+  to_state: LearningState | null;
+  reason: string | null;
+  source: EvidenceSource | null;
+  source_id: string | null;
+  source_attempt_id: string | null;
+}
+
+export interface PaginatedProgressHistoryResponseDTO {
+  items: ProgressHistoryItemDTO[];
+  meta: PageMetaDTO;
+}
+
+export interface GetProgressHistoryParams {
+  skill_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+const VALID_JOB_STATUSES: ReadonlySet<string> = new Set<JobStatus>([
+  'queued',
+  'preparing',
+  'succeeded',
+  'failed',
+]);
+
+function normalizePositiveLimit(limit?: number): number | undefined {
+  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+    ? Math.floor(limit)
+    : undefined;
+}
+
+/**
+ * Type guard distinguishing `202 JobAcceptedDTO` responses from synchronous attempt/feedback payloads.
+ */
+export function isJobAcceptedDTO(value: unknown): value is JobAcceptedDTO {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.job_id === 'string' &&
+    typeof candidate.poll_url === 'string' &&
+    typeof candidate.status === 'string' &&
+    VALID_JOB_STATUSES.has(candidate.status) &&
+    typeof candidate.retry_after_seconds === 'number' &&
+    Number.isFinite(candidate.retry_after_seconds)
+  );
+}
+
+/**
+ * POST /quiz/generate (EP-Q01, 200/201/202, H-IDEM, Gate: write quiz_practice)
+ */
+export function generateQuiz(
+  accessToken: string,
+  body: QuizGenerateDTO,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<QuizAttemptDTO | JobAcceptedDTO> {
+  return apiFetch<QuizAttemptDTO | JobAcceptedDTO>(
+    '/quiz/generate',
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey),
+      body: JSON.stringify(body),
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /quiz/:id (EP-Q02, 200 OK, Gate: none)
+ */
+export function getQuizAttempt(
+  accessToken: string,
+  attemptId: string,
+  options?: AuthStateRequestOptions,
+): Promise<QuizAttemptDTO> {
+  return apiFetch<QuizAttemptDTO>(
+    `/quiz/${encodeURIComponent(attemptId.trim())}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /quiz/:id/start (EP-Q03, 200 OK, Gate: write quiz_practice)
+ */
+export function startQuizAttempt(
+  accessToken: string,
+  attemptId: string,
+  options?: AuthStateRequestOptions,
+): Promise<QuizAttemptDTO> {
+  return apiFetch<QuizAttemptDTO>(
+    `/quiz/${encodeURIComponent(attemptId.trim())}/start`,
+    accessToken,
+    {
+      method: 'POST',
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * PATCH /quiz/:id/answers (EP-Q04, 200 OK, Gate: write quiz_practice)
+ */
+export function patchQuizAnswers(
+  accessToken: string,
+  attemptId: string,
+  body: QuizAnswersPatchDTO,
+  options?: AuthStateRequestOptions,
+): Promise<QuizAnswersSavedResponseDTO> {
+  return apiFetch<QuizAnswersSavedResponseDTO>(
+    `/quiz/${encodeURIComponent(attemptId.trim())}/answers`,
+    accessToken,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /quiz/:id/submit (EP-Q05, 200/202, H-IDEM, Gate: write quiz_practice)
+ */
+export function submitQuizAttempt(
+  accessToken: string,
+  attemptId: string,
+  body: QuizSubmissionDTO,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<QuizSubmitResponseDTO> {
+  return apiFetch<QuizSubmitResponseDTO>(
+    `/quiz/${encodeURIComponent(attemptId.trim())}/submit`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey),
+      body: JSON.stringify(body),
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /quiz/:id/result (EP-Q06, 200 OK, Gate: none)
+ */
+export function getQuizResult(
+  accessToken: string,
+  attemptId: string,
+  options?: AuthStateRequestOptions,
+): Promise<QuizResultDTO> {
+  return apiFetch<QuizResultDTO>(
+    `/quiz/${encodeURIComponent(attemptId.trim())}/result`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /quiz/:id/retry (EP-Q07, 201/202, H-IDEM, Gate: write quiz_practice)
+ */
+export function retryQuizAttempt(
+  accessToken: string,
+  attemptId: string,
+  idempotencyKey: string,
+  options?: AuthStateRequestOptions,
+): Promise<QuizAttemptDTO | JobAcceptedDTO> {
+  return apiFetch<QuizAttemptDTO | JobAcceptedDTO>(
+    `/quiz/${encodeURIComponent(attemptId.trim())}/retry`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: withIdempotencyKey(idempotencyKey),
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /practice-review?quiz_attempt_id=<uuid> (EP-PR01, 200 OK, Gate: none)
+ */
+export function listPracticeReviews(
+  accessToken: string,
+  quizAttemptId: string,
+  options?: AuthStateRequestOptions,
+): Promise<PracticeReviewSummaryDTO[]> {
+  const search = new URLSearchParams();
+  search.set('quiz_attempt_id', quizAttemptId.trim());
+  return apiFetch<PracticeReviewSummaryDTO[]>(
+    `/practice-review?${search.toString()}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /practice-review/:id/feedback (EP-PR02, 200 OK, Gate: none)
+ */
+export function getPracticeReviewFeedback(
+  accessToken: string,
+  reviewId: string,
+  options?: AuthStateRequestOptions,
+): Promise<PracticeFeedbackDTO> {
+  return apiFetch<PracticeFeedbackDTO>(
+    `/practice-review/${encodeURIComponent(reviewId.trim())}/feedback`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * POST /practice-review/:id/review (EP-PR03, 200/202, Gate: write ai_practice_review)
+ */
+export function retryPracticeReview(
+  accessToken: string,
+  reviewId: string,
+  options?: AuthStateRequestOptions,
+): Promise<PracticeFeedbackDTO | JobAcceptedDTO> {
+  return apiFetch<PracticeFeedbackDTO | JobAcceptedDTO>(
+    `/practice-review/${encodeURIComponent(reviewId.trim())}/review`,
+    accessToken,
+    {
+      method: 'POST',
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /progress (EP-G01, 200 OK, Gate: none)
+ */
+export async function getProgress(
+  accessToken: string,
+  params?: GetProgressParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedProgressResponseDTO> {
+  const search = new URLSearchParams();
+  const normalizedLimit = normalizePositiveLimit(params?.limit);
+  if (params?.roadmap_id) search.set('roadmap_id', params.roadmap_id.trim());
+  if (params?.career_level) search.set('career_level', params.career_level);
+  if (params?.learning_state) {
+    search.set('learning_state', params.learning_state);
+  }
+  if (params?.cursor) search.set('cursor', params.cursor);
+  if (normalizedLimit !== undefined) {
+    search.set('limit', String(normalizedLimit));
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<ProgressResponseDTO>(
+    qs ? `/progress?${qs}` : '/progress',
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  return {
+    progress: envelope.data,
+    meta: envelope.meta ?? {
+      limit: normalizedLimit ?? 20,
+      next_cursor: null,
+    },
+  };
+}
+
+/**
+ * GET /progress/skills/:skill_id (EP-G02, 200 OK, Gate: none)
+ */
+export function getSkillProgressDetail(
+  accessToken: string,
+  skillId: string,
+  params?: GetSkillProgressDetailParams,
+  options?: AuthStateRequestOptions,
+): Promise<SkillProgressDetailDTO> {
+  const search = new URLSearchParams();
+  if (params?.career_level) search.set('career_level', params.career_level);
+  const qs = search.toString();
+  const base = `/progress/skills/${encodeURIComponent(skillId.trim())}`;
+  return apiFetch<SkillProgressDetailDTO>(
+    qs ? `${base}?${qs}` : base,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+}
+
+/**
+ * GET /progress/history (EP-G03, 200 OK, Gate: none)
+ */
+export async function getProgressHistory(
+  accessToken: string,
+  params?: GetProgressHistoryParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedProgressHistoryResponseDTO> {
+  const search = new URLSearchParams();
+  const normalizedLimit = normalizePositiveLimit(params?.limit);
+  if (params?.skill_id) search.set('skill_id', params.skill_id.trim());
+  if (params?.from) search.set('from', params.from.trim());
+  if (params?.to) search.set('to', params.to.trim());
+  if (params?.cursor) search.set('cursor', params.cursor);
+  if (normalizedLimit !== undefined) {
+    search.set('limit', String(normalizedLimit));
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<
+    ProgressHistoryItemDTO[] | { items: ProgressHistoryItemDTO[]; meta?: PageMetaDTO }
+  >(qs ? `/progress/history?${qs}` : '/progress/history', accessToken, {
+    ...(options?.timeoutMs !== undefined
+      ? { timeoutMs: options.timeoutMs }
+      : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  return normalizePaginatedEnvelope(envelope, normalizedLimit ?? 20);
 }

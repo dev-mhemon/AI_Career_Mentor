@@ -11,6 +11,7 @@ import {
   LockIcon,
   SettingsIcon,
   SidebarToggleIcon,
+  TargetIcon,
   UserCheckIcon,
 } from './icons';
 import { useSafePathname } from '@/lib/navigation/use-safe-pathname';
@@ -43,7 +44,13 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         label: 'Daily Plan',
         icon: CalendarDaysIcon,
         lockedWhenSuspended: true,
-        activePrefixes: ['/daily-plan', '/today'],
+        activePrefixes: ['/daily-plan', '/today', '/quiz'],
+      },
+      {
+        href: '/progress',
+        label: 'Progress',
+        icon: TargetIcon,
+        lockedWhenSuspended: true,
       },
       {
         href: '/roadmaps',
@@ -153,8 +160,8 @@ export function Sidebar({
         ref={sidebarRef}
         aria-label="Primary sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex h-screen flex-col border-r border-slate-200/80 bg-white text-slate-700 transition-all duration-200 ease-standard dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300',
-          'w-64 lg:sticky lg:top-0 lg:z-20 lg:shrink-0 lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex h-dvh flex-col border-r border-slate-200/80 bg-white text-slate-700 transition-[width,transform] duration-200 ease-standard dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300',
+          'w-64 lg:z-30 lg:translate-x-0',
           isCollapsed ? 'lg:w-[72px]' : 'lg:w-64',
           isMobileOpen
             ? 'visible translate-x-0 shadow-xl'

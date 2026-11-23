@@ -200,6 +200,66 @@ const SAFE_CODE_ERRORS: Readonly<
     tone: 'warning',
     retryable: false,
   },
+  PLAN_ITEM_NOT_AVAILABLE: {
+    message:
+      'This study unit is not ready for a practice quiz yet. Ensure the roadmap is locked and today’s study guide has finished preparing.',
+    tone: 'warning',
+    retryable: false,
+  },
+  QUIZ_NOT_STARTED: {
+    message:
+      'Start the practice quiz before saving or submitting answers.',
+    tone: 'warning',
+    retryable: false,
+  },
+  QUIZ_NOT_SUBMITTED: {
+    message:
+      'Submit this practice quiz first to view your graded results and feedback.',
+    tone: 'info',
+    retryable: false,
+  },
+  QUIZ_ALREADY_SUBMITTED: {
+    message:
+      'This quiz attempt has already been submitted. View your results below.',
+    tone: 'info',
+    retryable: false,
+  },
+  NO_ANSWERS_SUBMITTED: {
+    message:
+      'Answer at least one question—or select "I don’t know"—before submitting the quiz.',
+    tone: 'warning',
+    retryable: false,
+  },
+  UNANSWERED_CONFIRMATION_REQUIRED: {
+    message:
+      'Some questions are still unanswered. Confirm whether you want to submit anyway or go back to finish.',
+    tone: 'warning',
+    retryable: false,
+  },
+  QUESTION_NOT_IN_QUIZ: {
+    message:
+      'One or more answers did not match this quiz attempt. Refresh the quiz and try again.',
+    tone: 'warning',
+    retryable: false,
+  },
+  RETRY_LIMIT_REACHED: {
+    message:
+      'You have already completed the single retry permitted for this topic’s practice quiz.',
+    tone: 'info',
+    retryable: false,
+  },
+  REVIEW_NOT_RETRYABLE: {
+    message:
+      'This free-response answer was recorded as a non-attempt and cannot be retried for AI review.',
+    tone: 'info',
+    retryable: false,
+  },
+  RAW_RESPONSE_EXPIRED: {
+    message:
+      'The original free-response text has expired under the 90-day privacy retention policy and can no longer be re-evaluated.',
+    tone: 'info',
+    retryable: false,
+  },
 };
 
 /**

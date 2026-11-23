@@ -9,6 +9,7 @@ import {
   BookOpenIcon,
   CheckCircleIcon,
   ClockIcon,
+  LockIcon,
 } from '@/components/ui/icons';
 
 export interface DailyTaskCardProps {
@@ -194,11 +195,28 @@ export function DailyTaskCard({
           {children}
         </div>
 
-        {action && (
+        {action ? (
           <div className="flex w-full shrink-0 items-center sm:w-auto">
             {action}
           </div>
-        )}
+        ) : status === 'pending' && !isActiveDay ? (
+          <div className="flex shrink-0 flex-col items-start gap-1.5 sm:items-end">
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              className="inline-flex shrink-0 cursor-not-allowed items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-200 bg-slate-100 px-3.5 py-2 text-sm font-medium leading-none text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+            >
+              <LockIcon className="block h-3.5 w-3.5 shrink-0" />
+              <span>Locked</span>
+            </button>
+            {dayNo > 1 && (
+              <span className="text-xs text-slate-500 sm:text-right dark:text-slate-400">
+                Complete Day {dayNo - 1} to unlock
+              </span>
+            )}
+          </div>
+        ) : null}
       </div>
     </article>
   );

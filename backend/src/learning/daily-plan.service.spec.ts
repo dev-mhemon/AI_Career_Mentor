@@ -1,6 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseService } from '../auth/services/database.service.js';
+import type { TransactionalQueryExecutor } from '../profile/profile.service.js';
 import { assertValidLearningHours } from './dto/learning.dto.js';
 import {
   DailyPlanService,
@@ -522,6 +523,9 @@ describe('DailyPlanService (EP-L01, EP-L02, EP-L03)', () => {
           // Day 2 item has an unsubmitted quiz -> must stay frozen!
           return [{ daily_plan_item_id: ITEM_2 }];
         }
+        if (sql.includes('FROM public.ai_requests')) {
+          return [];
+        }
         if (sql.includes('DELETE FROM public.daily_plan_items')) {
           deletedIds = params?.[2];
           return [];
@@ -618,6 +622,47 @@ describe('DailyPlanService (EP-L01, EP-L02, EP-L03)', () => {
         expectContractError(err, 409, 'ROADMAP_ARCHIVED');
         return true;
       });
+    });
+  });
+
+  describe('markPlanItemCompletedInTx', () => {
+    it('sets planDayUnlocked=true only when earliest incomplete day advances (false on same-day progress, final day completion, or retry)', async () => {
+      const scenarios: Array<{
+        before: number | null;
+        after: number | null;
+        expectedUnlocked: boolean;
+      }> = [
+        { before: 1, after: 2, expectedUnlocked: true },
+        { before: 1, after: 1, expectedUnlocked: false },
+        { before: 2, after: null, expectedUnlocked: false },
+        { before: 2, after: 2, expectedUnlocked: false },
+      ];
+
+      for (const s of scenarios) {
+        let selectCalls = 0;
+        const txQuery = vi.fn(async (sql: string) => {
+          if (sql.includes('SELECT day_no')) {
+            selectCalls += 1;
+            const val = selectCalls === 1 ? s.before : s.after;
+            return val === null ? [] : [{ day_no: val }];
+          }
+          if (sql.includes('UPDATE public.daily_plan_items')) {
+            return [[{ id: ITEM_1, day_no: 1 }], 1];
+          }
+          return [];
+        });
+
+        const res = await service.markPlanItemCompletedInTx(
+          { query: txQuery } as unknown as TransactionalQueryExecutor,
+          USER_ID,
+          PLAN_ID,
+          ITEM_1,
+        );
+        expect(res).toEqual({
+          planDayUnlocked: s.expectedUnlocked,
+          nextPlanDayNo: s.after,
+        });
+      }
     });
   });
 });

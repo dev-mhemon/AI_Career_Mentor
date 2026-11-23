@@ -207,7 +207,7 @@ describe('DailyPlanView', () => {
       screen.getByRole('button', { name: /Rebuild Plan/i }),
     ).toHaveClass('whitespace-nowrap', 'shrink-0');
     expect(
-      screen.getByRole('link', { name: /Open Today/i }),
+      screen.getByRole('link', { name: /Today's Learning/i }),
     ).toHaveClass('whitespace-nowrap', 'shrink-0');
     expect(
       screen.getByRole('link', { name: /Study Day 2/i }),
@@ -216,12 +216,18 @@ describe('DailyPlanView', () => {
       screen.queryByRole('button', { name: /Mark Complete/i }),
     ).not.toBeInTheDocument();
 
-    // Load more days via cursor -> future Day 3 is unambiguously labeled Upcoming (never Pending/Up Next)
+    // Load more days via cursor -> future Day 3 is unambiguously labeled Upcoming (never Pending/Up Next) with Locked button + unlock hint
     fireEvent.click(screen.getByRole('button', { name: 'Load more days' }));
     expect(
       await screen.findByText('Distributed Tracing'),
     ).toBeInTheDocument();
     expect(within(timeline).getByText('Upcoming')).toBeInTheDocument();
+    expect(
+      within(timeline).getByRole('button', { name: /Locked/i }),
+    ).toBeDisabled();
+    expect(
+      within(timeline).getByText('Complete Day 2 to unlock'),
+    ).toBeInTheDocument();
     expect(within(timeline).queryByText('Pending')).not.toBeInTheDocument();
     expect(within(timeline).queryByText('Up Next')).not.toBeInTheDocument();
     expect(getDailyPlan).toHaveBeenCalledWith(
