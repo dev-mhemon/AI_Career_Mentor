@@ -8,7 +8,7 @@ import {
   RequestMethod,
 } from '@nestjs/common';
 import { PATH_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
-import { Reflector } from '@nestjs/core';
+import { APP_GUARD, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import type { Response } from 'express';
 import request from 'supertest';
@@ -186,6 +186,16 @@ describe('MentorController (EP-M01..EP-M04 & R15 SSE)', () => {
       ).toBe(false);
       expect(
         wantsEventStream({
+          headers: { accept: 'text/event-stream;q=0x1' },
+        }),
+      ).toBe(false);
+      expect(
+        wantsEventStream({
+          headers: { accept: 'text/event-stream;q=1.000' },
+        }),
+      ).toBe(true);
+      expect(
+        wantsEventStream({
           headers: {
             accept: 'application/json;profile="x,text/event-stream,y"',
           },
@@ -278,13 +288,12 @@ describe('MentorController (EP-M01..EP-M04 & R15 SSE)', () => {
 
       const moduleRef = await Test.createTestingModule({
         controllers: [MentorController],
-        providers: [{ provide: MentorService, useValue: mockMentorService }],
-      })
-        .overrideGuard(SupabaseAuthGuard)
-        .useValue(authGuard)
-        .overrideGuard(AccessGuard)
-        .useValue(accessGuard)
-        .compile();
+        providers: [
+          { provide: MentorService, useValue: mockMentorService },
+          { provide: APP_GUARD, useValue: authGuard },
+          { provide: APP_GUARD, useValue: accessGuard },
+        ],
+      }).compile();
 
       app = moduleRef.createNestApplication();
       configureHttp(app);
@@ -582,6 +591,11 @@ describe('MentorController (EP-M01..EP-M04 & R15 SSE)', () => {
           client_message_id: CLIENT_MSG_ID,
           system_prompt: 'injected',
         })
+        .expect(422);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/mentor/conversations')
+        .send({ context_type: 'general', topic_id: null })
         .expect(422);
 
       await request(app.getHttpServer())

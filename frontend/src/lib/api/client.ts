@@ -178,7 +178,29 @@ interface ApiEnvelopeResult<T> {
   serverDateMs?: number;
 }
 
+export type ServerTimeAnchor = {
+  serverMs: number;
+  monotonicMs: number;
+};
+
+function readMonotonicMs(): number {
+  return typeof performance !== 'undefined' &&
+    typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+let observedServerTimeAnchor: ServerTimeAnchor | null = null;
 let observedServerClockOffsetMs: number | null = null;
+
+/**
+ * Returns the latest observed server timestamp paired with the monotonic `performance.now()`
+ * reading captured when the HTTP `Date` response header was parsed, or `null` if none has been
+ * observed yet.
+ */
+export function getObservedServerTimeAnchor(): ServerTimeAnchor | null {
+  return observedServerTimeAnchor;
+}
 
 /**
  * Returns the latest observed `serverTime - clientTime` offset in milliseconds derived from
@@ -317,6 +339,10 @@ async function apiFetchEnvelope<T>(
     ? parsedServerDateMs
     : undefined;
   if (serverDateMs !== undefined) {
+    observedServerTimeAnchor = {
+      serverMs: serverDateMs,
+      monotonicMs: readMonotonicMs(),
+    };
     observedServerClockOffsetMs = serverDateMs - Date.now();
   }
   if (body?.success !== true || !('data' in body))

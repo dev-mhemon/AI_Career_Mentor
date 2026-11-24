@@ -5842,7 +5842,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, UNVERIFIED_ACCOUNT
           content:
             application/json:
               schema:
@@ -5920,7 +5920,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
           content:
             application/json:
               schema:
@@ -5959,15 +5959,6 @@ paths:
         - SupabaseBearer: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
-        - name: Accept
-          in: header
-          required: false
-          description: >-
-            Defaults to application/json (201 Created). Set to text/event-stream (with q > 0 outside
-            quoted parameters) to opt into R15 committed-chunk SSE (200 OK).
-          schema:
-            type: string
-            default: application/json
       requestBody:
         required: true
         content:
@@ -6016,7 +6007,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, UNVERIFIED_ACCOUNT
           content:
             application/json:
               schema:
@@ -6127,7 +6118,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '403':
-          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
           content:
             application/json:
               schema:
@@ -9684,8 +9675,7 @@ components:
         content:
           type: string
           minLength: 1
-          maxLength: 4000
-          description: 1..4000 well-formed Unicode code points (rejects NUL bytes and unpaired surrogates).
+          description: 1..4000 well-formed Unicode code points after trimming leading/trailing whitespace (rejects NUL bytes and unpaired surrogates).
         client_message_id:
           type: string
           format: uuid

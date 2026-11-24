@@ -359,9 +359,11 @@ export function TodayView({
             href={
               activeTopicId
                 ? `/mentor?context=topic&topicId=${encodeURIComponent(activeTopicId)}`
-                : today?.status === 'no_focus_roadmap'
-                  ? '/mentor?context=general'
-                  : '/mentor?context=focus_roadmap'
+                : today === null
+                  ? '/mentor'
+                  : today.status === 'no_focus_roadmap'
+                    ? '/mentor?context=general'
+                    : '/mentor?context=focus_roadmap'
             }
             className={secondaryLinkClass}
           >

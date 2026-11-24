@@ -72,7 +72,7 @@ export class ConversationCreateDTO {
   @IsNotEmpty()
   context_type!: ConversationContextType;
 
-  @ValidateIf((_obj, value) => value !== undefined && value !== null)
+  @ValidateIf((_obj, value) => value !== undefined)
   @Transform(trimLower)
   @IsUUID()
   topic_id?: string;

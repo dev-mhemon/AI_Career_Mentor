@@ -1102,6 +1102,22 @@ export function RoadmapDetailView({
     [displayedRoadmap],
   );
 
+  const currentActiveTopicIds = useMemo(() => {
+    if (!currentRoadmap || currentRoadmap.status === 'archived') {
+      return new Set<string>();
+    }
+    const { phases: currentPhases } = sortPhasesAndItems(currentRoadmap);
+    const ids = new Set<string>();
+    for (const phase of currentPhases) {
+      for (const item of phase.items) {
+        if (!item.retired && item.topic_id) {
+          ids.add(item.topic_id);
+        }
+      }
+    }
+    return ids;
+  }, [currentRoadmap]);
+
   const backdropDismiss = useBackdropDismiss(
     closeDrawer,
     loadingSnapshotVersion !== null,
@@ -1911,16 +1927,18 @@ export function RoadmapDetailView({
                             {item.estimated_effort_hours} hrs
                           </span>
                         )}
-                        {!item.retired && item.topic_id && (
-                          <Link
-                            href={`/mentor?context=topic&topicId=${encodeURIComponent(item.topic_id)}`}
-                            aria-label={`Ask Mentor about ${item.title}`}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-50/70 px-2.5 py-1 text-2xs font-medium leading-none text-teal-800 transition-colors hover:bg-teal-100/80 dark:border-teal-800/70 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-950/70"
-                          >
-                            <MessageSquareIcon className="block h-3 w-3 shrink-0" />
-                            <span>Ask Mentor</span>
-                          </Link>
-                        )}
+                        {!item.retired &&
+                          item.topic_id &&
+                          currentActiveTopicIds.has(item.topic_id) && (
+                            <Link
+                              href={`/mentor?context=topic&topicId=${encodeURIComponent(item.topic_id)}`}
+                              aria-label={`Ask Mentor about ${item.title}`}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-50/70 px-2.5 py-1 text-2xs font-medium leading-none text-teal-800 transition-colors hover:bg-teal-100/80 dark:border-teal-800/70 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-950/70"
+                            >
+                              <MessageSquareIcon className="block h-3 w-3 shrink-0" />
+                              <span>Ask Mentor</span>
+                            </Link>
+                          )}
                       </div>
                     </div>
 

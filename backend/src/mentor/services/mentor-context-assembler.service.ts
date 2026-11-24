@@ -155,8 +155,6 @@ export class MentorContextAssemblerService {
   async assembleContext(
     input: AssembleMentorContextInput,
   ): Promise<AssembledMentorContext> {
-    const now = input.now ?? new Date();
-    const messageCutoff = this.privacyRetention.getMentorMessageCutoffDate(now);
     const { userId, conversation, currentUserMessageId } = input;
 
     return this.runRead(async (db) => {
@@ -332,6 +330,11 @@ export class MentorContextAssemblerService {
           }))
         : [];
 
+      // Sample fresh retention timestamp right before retention-bounded summary & recent-turn reads.
+      const retentionNow = input.now ?? new Date();
+      const messageCutoff =
+        this.privacyRetention.getMentorMessageCutoffDate(retentionNow);
+
       const summaryRows = await db.query<SummaryContextRow[]>(
         `SELECT version_no,
                 summary_text,
@@ -339,13 +342,27 @@ export class MentorContextAssemblerService {
            FROM public.conversation_summaries
           WHERE conversation_id = $1
             AND user_id = $2
+            AND covers_until > $3
           ORDER BY version_no DESC
           LIMIT 1`,
-        [conversation.id, userId],
+        [conversation.id, userId, messageCutoff],
       );
-      const latestSummary = Array.isArray(summaryRows)
+      const rawLatestSummary = Array.isArray(summaryRows)
         ? summaryRows[0]
         : undefined;
+      const latestSummary =
+        rawLatestSummary &&
+        (() => {
+          const coversMs =
+            rawLatestSummary.covers_until instanceof Date
+              ? rawLatestSummary.covers_until.getTime()
+              : Date.parse(String(rawLatestSummary.covers_until));
+          return (
+            !Number.isFinite(coversMs) || coversMs > messageCutoff.getTime()
+          );
+        })()
+          ? rawLatestSummary
+          : undefined;
 
       const contextRecordRows = await db.query<AiContextRecordRow[]>(
         `SELECT context_type::text AS context_type,
@@ -361,7 +378,7 @@ export class MentorContextAssemblerService {
             )
           ORDER BY updated_at DESC
           LIMIT 5`,
-        [userId, now, conversation.id],
+        [userId, retentionNow, conversation.id],
       );
       const contextRecords = Array.isArray(contextRecordRows)
         ? contextRecordRows.map((rec) => ({
@@ -394,7 +411,7 @@ export class MentorContextAssemblerService {
           conversation.id,
           userId,
           currentUserMessageId,
-          now,
+          retentionNow,
           messageCutoff,
           MAX_RECENT_TURNS,
         ],

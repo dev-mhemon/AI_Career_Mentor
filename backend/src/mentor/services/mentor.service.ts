@@ -359,6 +359,10 @@ function mapAssistantResponse(
 @Injectable()
 export class MentorService {
   private readonly logger = new Logger(MentorService.name);
+  private readonly inFlightTurns = new Map<
+    string,
+    { content: string; promise: Promise<MessageResponseDTO> }
+  >();
 
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
@@ -451,9 +455,11 @@ export class MentorService {
     }
     const contextType = rawType as ConversationContextType;
 
+    const hasExplicitTopicId =
+      dto !== undefined && dto !== null && dto.topic_id !== undefined;
     const rawTopicId =
-      dto?.topic_id !== undefined && dto?.topic_id !== null
-        ? String(dto.topic_id).trim().toLowerCase()
+      typeof dto?.topic_id === 'string'
+        ? dto.topic_id.trim().toLowerCase()
         : undefined;
 
     if (contextType === 'topic') {
@@ -472,7 +478,7 @@ export class MentorService {
           ],
         );
       }
-    } else if (rawTopicId !== undefined) {
+    } else if (hasExplicitTopicId) {
       fail(
         422,
         'VALIDATION_FAILED',
@@ -796,6 +802,46 @@ export class MentorService {
       );
     }
     const trimmedContent = dto.content.trim();
+    const flightKey = `${userId}:${conversationId}:${clientMessageId}`;
+    const existingFlight = this.inFlightTurns.get(flightKey);
+    if (existingFlight) {
+      if (existingFlight.content !== trimmedContent) {
+        fail(
+          409,
+          'IDEMPOTENCY_KEY_REUSED',
+          'client_message_id was already used for a different message in this conversation',
+        );
+      }
+      return existingFlight.promise;
+    }
+
+    const turnPromise = this.executeSendMessageTurn(
+      userId,
+      conversationId,
+      clientMessageId,
+      trimmedContent,
+      options,
+    );
+    this.inFlightTurns.set(flightKey, {
+      content: trimmedContent,
+      promise: turnPromise,
+    });
+    try {
+      return await turnPromise;
+    } finally {
+      if (this.inFlightTurns.get(flightKey)?.promise === turnPromise) {
+        this.inFlightTurns.delete(flightKey);
+      }
+    }
+  }
+
+  private async executeSendMessageTurn(
+    userId: string,
+    conversationId: string,
+    clientMessageId: string,
+    trimmedContent: string,
+    options: { signal?: AbortSignal; now?: Date },
+  ): Promise<MessageResponseDTO> {
     const detectedLanguage = detectUiLanguage(trimmedContent);
 
     const retentionDays = this.privacyRetention.getMentorMessageRetentionDays();
@@ -962,7 +1008,7 @@ export class MentorService {
       return preflight.response;
     }
 
-    // Step B: Outside Tx — assemble bounded owner-only context & execute AI Gateway.
+    // Step B: Outside Tx — assemble bounded owner-only context (sampling fresh retention clock) & execute AI Gateway.
     const assembled = await this.contextAssembler.assembleContext({
       userId,
       conversation: {
@@ -973,7 +1019,7 @@ export class MentorService {
         title: preflight.conversation.title,
       },
       currentUserMessageId: preflight.userMessageId,
-      now: preflight.preflightNow,
+      ...(options.now ? { now: options.now } : {}),
     });
 
     const aiResponse = await this.aiGateway.execute<MentorChatOutput>(
@@ -1008,143 +1054,145 @@ export class MentorService {
 
     // Step C: Tx 2 — race-safe commit of validated assistant reply.
     // CRITICAL (PRD §37): NEVER write to learning_evidence, skill_progress, roadmap_items, or daily_plan_items.
-    const { response: committedResponse, commitNow } = await this.runWriteTx<{
-      response: MessageResponseDTO;
-      commitNow: Date;
-    }>(userId, false, async (tx) => {
-      const lockedConvRows = await tx.query<Array<{ id: string }>>(
-        `SELECT id
-           FROM public.conversations
-          WHERE id = $1
-            AND user_id = $2
-          FOR UPDATE`,
-        [conversationId, userId],
-      );
-      if (!Array.isArray(lockedConvRows) || lockedConvRows.length === 0) {
-        fail(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
-      }
-
-      // Sample post-lock timestamp so waiting on FOR UPDATE never commits against an expired source.
-      const tx2Now = options.now ?? new Date();
-      const tx2Cutoff =
-        this.privacyRetention.getMentorMessageCutoffDate(tx2Now);
-
-      // R08: Recheck source user message retention at write time inside Tx 2 before committing a fresh reply.
-      const activeSourceRows = await tx.query<Array<{ id: string }>>(
-        `SELECT id
-           FROM public.messages
-          WHERE id = $1
-            AND conversation_id = $2
-            AND user_id = $3
-            AND role = 'user'::public.message_role
-            AND expires_at > $4
-            AND created_at > $5
-          LIMIT 1`,
-        [preflight.userMessageId, conversationId, userId, tx2Now, tx2Cutoff],
-      );
-      if (!Array.isArray(activeSourceRows) || activeSourceRows.length === 0) {
-        fail(
-          409,
-          'IDEMPOTENCY_KEY_REUSED',
-          'Source message expired past retention window; resend with a new client_message_id',
+    const committedResponse = await this.runWriteTx<MessageResponseDTO>(
+      userId,
+      false,
+      async (tx) => {
+        const lockedConvRows = await tx.query<Array<{ id: string }>>(
+          `SELECT id
+             FROM public.conversations
+            WHERE id = $1
+              AND user_id = $2
+            FOR UPDATE`,
+          [conversationId, userId],
         );
-      }
+        if (!Array.isArray(lockedConvRows) || lockedConvRows.length === 0) {
+          fail(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
+        }
 
-      const concurrentReplyRows = await tx.query<AssistantMessageRow[]>(
-        `SELECT id,
-                role::text AS role,
-                content,
-                language::text AS language,
-                safety_mode,
-                learning_claim_recorded,
-                created_at
-           FROM public.messages
-          WHERE conversation_id = $1
-            AND user_id = $2
-            AND role = 'assistant'::public.message_role
-            AND reply_to_message_id = $3
-            AND expires_at > $4
-            AND created_at > $5
-          ORDER BY created_at DESC, id DESC
-          LIMIT 1`,
-        [conversationId, userId, preflight.userMessageId, tx2Now, tx2Cutoff],
-      );
-      const concurrentReply = Array.isArray(concurrentReplyRows)
-        ? concurrentReplyRows[0]
-        : undefined;
-      if (concurrentReply) {
-        return {
-          response: mapAssistantResponse(
+        // Sample post-lock timestamp so waiting on FOR UPDATE never commits against an expired source.
+        const tx2Now = options.now ?? new Date();
+        const tx2Cutoff =
+          this.privacyRetention.getMentorMessageCutoffDate(tx2Now);
+
+        // R08: Recheck source user message retention at write time inside Tx 2 before committing a fresh reply.
+        const activeSourceRows = await tx.query<Array<{ id: string }>>(
+          `SELECT id
+             FROM public.messages
+            WHERE id = $1
+              AND conversation_id = $2
+              AND user_id = $3
+              AND role = 'user'::public.message_role
+              AND expires_at > $4
+              AND created_at > $5
+            LIMIT 1`,
+          [preflight.userMessageId, conversationId, userId, tx2Now, tx2Cutoff],
+        );
+        if (!Array.isArray(activeSourceRows) || activeSourceRows.length === 0) {
+          fail(
+            409,
+            'IDEMPOTENCY_KEY_REUSED',
+            'Source message expired past retention window; resend with a new client_message_id',
+          );
+        }
+
+        const concurrentReplyRows = await tx.query<AssistantMessageRow[]>(
+          `SELECT id,
+                  role::text AS role,
+                  content,
+                  language::text AS language,
+                  safety_mode,
+                  learning_claim_recorded,
+                  created_at
+             FROM public.messages
+            WHERE conversation_id = $1
+              AND user_id = $2
+              AND role = 'assistant'::public.message_role
+              AND reply_to_message_id = $3
+              AND expires_at > $4
+              AND created_at > $5
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1`,
+          [conversationId, userId, preflight.userMessageId, tx2Now, tx2Cutoff],
+        );
+        const concurrentReply = Array.isArray(concurrentReplyRows)
+          ? concurrentReplyRows[0]
+          : undefined;
+        if (concurrentReply) {
+          return mapAssistantResponse(preflight.userMessageId, concurrentReply);
+        }
+
+        // Atomically revalidate source retention on the exact DB clock_timestamp() that sets expires_at.
+        const insertedAssistantRows = await tx.query<AssistantMessageRow[]>(
+          `INSERT INTO public.messages (
+             conversation_id,
+             user_id,
+             role,
+             content,
+             language,
+             reply_to_message_id,
+             safety_mode,
+             learning_claim_recorded,
+             ai_generation_id,
+             expires_at
+           )
+           SELECT $1::uuid,
+                  $2::uuid,
+                  'assistant'::public.message_role,
+                  $3::text,
+                  $4::public.ui_language,
+                  $5::uuid,
+                  $6::boolean,
+                  $7::boolean,
+                  $8::uuid,
+                  clock_timestamp() + make_interval(days => $9::int)
+             FROM public.messages src
+            WHERE src.id = $5::uuid
+              AND src.conversation_id = $1::uuid
+              AND src.user_id = $2::uuid
+              AND src.role = 'user'::public.message_role
+              AND src.expires_at > clock_timestamp()
+              AND src.created_at > clock_timestamp() - make_interval(days => $9::int)
+           RETURNING id,
+                     role::text AS role,
+                     content,
+                     language::text AS language,
+                     safety_mode,
+                     learning_claim_recorded,
+                     created_at`,
+          [
+            conversationId,
+            userId,
+            validatedOutput.content.trim(),
+            validatedOutput.language,
             preflight.userMessageId,
-            concurrentReply,
-          ),
-          commitNow: tx2Now,
-        };
-      }
+            Boolean(validatedOutput.safety_mode),
+            Boolean(validatedOutput.learning_claim_recorded),
+            aiResponse.generation_id ?? null,
+            retentionDays,
+          ],
+        );
+        const assistantRow = Array.isArray(insertedAssistantRows)
+          ? insertedAssistantRows[0]
+          : undefined;
+        if (!assistantRow) {
+          fail(
+            409,
+            'IDEMPOTENCY_KEY_REUSED',
+            'Source message expired past retention window; resend with a new client_message_id',
+          );
+        }
 
-      const insertedAssistantRows = await tx.query<AssistantMessageRow[]>(
-        `INSERT INTO public.messages (
-           conversation_id,
-           user_id,
-           role,
-           content,
-           language,
-           reply_to_message_id,
-           safety_mode,
-           learning_claim_recorded,
-           ai_generation_id,
-           expires_at
-         )
-         VALUES (
-           $1,
-           $2,
-           'assistant'::public.message_role,
-           $3,
-           $4::public.ui_language,
-           $5,
-           $6,
-           $7,
-           $8,
-           clock_timestamp() + make_interval(days => $9::int)
-         )
-         RETURNING id,
-                   role::text AS role,
-                   content,
-                   language::text AS language,
-                   safety_mode,
-                   learning_claim_recorded,
-                   created_at`,
-        [
-          conversationId,
-          userId,
-          validatedOutput.content.trim(),
-          validatedOutput.language,
-          preflight.userMessageId,
-          Boolean(validatedOutput.safety_mode),
-          Boolean(validatedOutput.learning_claim_recorded),
-          aiResponse.generation_id ?? null,
-          retentionDays,
-        ],
-      );
-      const assistantRow = Array.isArray(insertedAssistantRows)
-        ? insertedAssistantRows[0]
-        : undefined;
-      if (!assistantRow) {
-        fail(500, 'DATABASE_ERROR', 'Failed to persist assistant message');
-      }
+        return mapAssistantResponse(preflight.userMessageId, assistantRow);
+      },
+    );
 
-      return {
-        response: mapAssistantResponse(preflight.userMessageId, assistantRow),
-        commitNow: tx2Now,
-      };
-    });
-
-    // Step D: Non-blocking post-commit episodic compaction (R08: never blocks or fails EP-M03).
+    // Step D: Non-blocking post-commit episodic compaction (samples fresh retention clock; never blocks or fails EP-M03).
     try {
       const compactPromise = this.episodicSummary.maybeCompact(
         userId,
         conversationId,
-        commitNow,
+        options.now,
       );
       if (compactPromise && typeof compactPromise.catch === 'function') {
         void compactPromise.catch((error: unknown) => {
@@ -1173,7 +1221,7 @@ export class MentorService {
   async getHistory(
     rawUserId: string,
     query: ListHistoryQueryDTO,
-    now: Date = new Date(),
+    explicitNow?: Date,
   ): Promise<{ items: MessageDTO[]; meta: PageMetaDTO }> {
     const userId = this.assertValidUserId(rawUserId);
     const conversationId =
@@ -1195,7 +1243,6 @@ export class MentorService {
       typeof query?.cursor === 'string' && query.cursor.trim().length > 0
         ? decodeHistoryCursor(query.cursor)
         : null;
-    const messageCutoff = this.privacyRetention.getMentorMessageCutoffDate(now);
 
     return this.runRead(async (db) => {
       const convRows = await db.query<Array<{ id: string }>>(
@@ -1209,6 +1256,11 @@ export class MentorService {
       if (!Array.isArray(convRows) || convRows.length === 0) {
         fail(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
       }
+
+      // Sample fresh retention timestamp right before querying messages.
+      const now = explicitNow ?? new Date();
+      const messageCutoff =
+        this.privacyRetention.getMentorMessageCutoffDate(now);
 
       const messageRows = decodedCursor
         ? await db.query<HistoryMessageRow[]>(

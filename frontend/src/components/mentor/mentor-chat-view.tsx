@@ -12,12 +12,13 @@ import {
 import {
   createMentorConversation,
   getMentorHistory,
-  getObservedServerClockOffsetMs,
+  getObservedServerTimeAnchor,
   listMentorConversations,
   sendMentorMessage,
   type ConversationDTO,
   type MentorContextType,
   type MessageDTO,
+  type ServerTimeAnchor,
 } from '@/lib/api/client';
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import { Alert } from '@/components/ui/alert';
@@ -71,15 +72,44 @@ const RETENTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1_000;
 const RETENTION_SWEEP_INTERVAL_MS = 60_000;
 const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 
-function computeServerAlignedOffsetMs(
-  currentOffsetMs: number,
-  retainedTimestamps: readonly string[],
-  clientNowMs: number,
-): number {
-  const headerOffset = getObservedServerClockOffsetMs();
-  let nextOffset = headerOffset !== null ? headerOffset : currentOffsetMs;
+function getMonotonicNowMs(): number {
+  return typeof performance !== 'undefined' &&
+    typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
 
-  // Never let a fast browser clock advance the retention cutoff ahead of rows
+function estimateServerNowMs(
+  anchor: ServerTimeAnchor | null,
+  monotonicNowMs: number,
+): number | null {
+  if (!anchor) {
+    return null;
+  }
+  return anchor.serverMs + Math.max(0, monotonicNowMs - anchor.monotonicMs);
+}
+
+function computeServerTimeAnchor(
+  currentAnchor: ServerTimeAnchor | null,
+  retainedTimestamps: readonly string[],
+  monotonicNowMs: number,
+): ServerTimeAnchor | null {
+  const headerAnchor = getObservedServerTimeAnchor();
+  let candidateServerMs =
+    headerAnchor !== null
+      ? headerAnchor.serverMs +
+        Math.max(0, monotonicNowMs - headerAnchor.monotonicMs)
+      : currentAnchor !== null
+        ? currentAnchor.serverMs +
+          Math.max(0, monotonicNowMs - currentAnchor.monotonicMs)
+        : null;
+
+  // Never evict server-confirmed messages using browser wall clock when server time is unknown.
+  if (candidateServerMs === null) {
+    return null;
+  }
+
+  // Never let a stale server clock sample advance the retention cutoff ahead of rows
   // the server just confirmed as retained.
   for (const ts of retainedTimestamps) {
     const parsedMs = Date.parse(ts);
@@ -87,11 +117,14 @@ function computeServerAlignedOffsetMs(
       continue;
     }
     const maxSafeServerNowMs = parsedMs + RETENTION_WINDOW_MS - 1_000;
-    if (clientNowMs + nextOffset > maxSafeServerNowMs) {
-      nextOffset = Math.min(nextOffset, maxSafeServerNowMs - clientNowMs);
+    if (candidateServerMs > maxSafeServerNowMs) {
+      candidateServerMs = Math.min(candidateServerMs, maxSafeServerNowMs);
     }
   }
-  return nextOffset;
+  return {
+    serverMs: candidateServerMs,
+    monotonicMs: monotonicNowMs,
+  };
 }
 
 type ConversationGroup = {
@@ -242,8 +275,11 @@ function extractTokenSubject(token: string): string | null {
 
 function isWithinRetentionWindow(
   createdAt: string,
-  retentionCutoffMs: number,
+  retentionCutoffMs: number | null,
 ): boolean {
+  if (retentionCutoffMs === null) {
+    return true;
+  }
   const parsed = Date.parse(createdAt);
   if (!Number.isFinite(parsed)) {
     return true;
@@ -313,7 +349,7 @@ function sortChronologically(items: readonly ChatMessageItem[]): ChatMessageItem
 function mergeConversationMessages(
   serverMessages: readonly ChatMessageItem[],
   localMessages: readonly ChatMessageItem[],
-  retentionCutoffMs: number,
+  retentionCutoffMs: number | null,
 ): ChatMessageItem[] {
   const indexById = new Map<string, number>();
   const committed: ChatMessageItem[] = [];
@@ -406,7 +442,9 @@ export function MentorChatView({
   const [historyByKey, setHistoryByKey] = useState<
     Record<string, HistoryLoadState>
   >({});
-  const [historyReloadTick, setHistoryReloadTick] = useState(0);
+  const [historyReloadTickByConvId, setHistoryReloadTickByConvId] = useState<
+    Record<string, number>
+  >({});
   const [loadingOlderByKey, setLoadingOlderByKey] = useState<
     Record<string, boolean>
   >({});
@@ -432,9 +470,11 @@ export function MentorChatView({
     Record<string, number>
   >({});
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [serverClockOffsetMs, setServerClockOffsetMs] = useState<number>(
-    () => getObservedServerClockOffsetMs() ?? 0,
+  const [monotonicNowMs, setMonotonicNowMs] = useState(() =>
+    getMonotonicNowMs(),
   );
+  const [serverTimeAnchor, setServerTimeAnchor] =
+    useState<ServerTimeAnchor | null>(() => getObservedServerTimeAnchor());
 
   const convRequestKey = `${accessToken}:${convReloadTick}`;
 
@@ -444,7 +484,11 @@ export function MentorChatView({
   const accessTokenRef = useRef(accessToken);
   const sessionScopeKeyRef = useRef(sessionScopeKey);
   const convRequestKeyRef = useRef(convRequestKey);
-  const serverClockOffsetRef = useRef(serverClockOffsetMs);
+  const serverTimeAnchorRef = useRef<ServerTimeAnchor | null>(serverTimeAnchor);
+  const historyByKeyRef = useRef<Record<string, HistoryLoadState>>(historyByKey);
+  const historyReloadTickByConvIdRef = useRef<Record<string, number>>(
+    historyReloadTickByConvId,
+  );
   const draftsByScopeRef = useRef<Record<string, string>>({});
   const latestAttemptByClientIdRef = useRef<Map<string, number>>(new Map());
   const nextAttemptSeqRef = useRef(0);
@@ -465,8 +509,17 @@ export function MentorChatView({
     accessTokenRef.current = accessToken;
     sessionScopeKeyRef.current = sessionScopeKey;
     convRequestKeyRef.current = convRequestKey;
-    serverClockOffsetRef.current = serverClockOffsetMs;
-  }, [accessToken, sessionScopeKey, convRequestKey, serverClockOffsetMs]);
+    serverTimeAnchorRef.current = serverTimeAnchor;
+    historyByKeyRef.current = historyByKey;
+    historyReloadTickByConvIdRef.current = historyReloadTickByConvId;
+  }, [
+    accessToken,
+    sessionScopeKey,
+    convRequestKey,
+    serverTimeAnchor,
+    historyByKey,
+    historyReloadTickByConvId,
+  ]);
 
   useEffect(() => {
     draftsByScopeRef.current = draftsByScope;
@@ -596,14 +649,20 @@ export function MentorChatView({
     };
   }, [hasActiveCooldown]);
 
-  // Periodic server-aligned 90-day retention sweep (independent of retry cooldowns)
-  // so expired messages are evicted from both active and cached threads while mounted.
+  // Periodic monotonic server-anchored 90-day retention sweep (independent of browser wall-clock jumps)
+  // so expired messages are evicted from both active and cached threads while mounted once server time is known.
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const currentNow = Date.now();
-      setNowMs(currentNow);
-      const alignedCutoffMs =
-        currentNow + serverClockOffsetRef.current - RETENTION_WINDOW_MS;
+      const currentMonotonic = getMonotonicNowMs();
+      setMonotonicNowMs(currentMonotonic);
+      const estimatedServerNow = estimateServerNowMs(
+        serverTimeAnchorRef.current,
+        currentMonotonic,
+      );
+      if (estimatedServerNow === null) {
+        return;
+      }
+      const alignedCutoffMs = estimatedServerNow - RETENTION_WINDOW_MS;
       setHistoryByKey((prev) => {
         let changed = false;
         const next: Record<string, HistoryLoadState> = {};
@@ -781,8 +840,11 @@ export function MentorChatView({
   ]);
 
   const activeConversationId = activeConversation?.id ?? null;
+  const activeHistoryReloadTick = activeConversationId
+    ? (historyReloadTickByConvId[activeConversationId] ?? 0)
+    : 0;
   const activeHistoryKey = activeConversationId
-    ? `${accessToken}:${activeConversationId}:${historyReloadTick}`
+    ? `${accessToken}:${activeConversationId}:${activeHistoryReloadTick}`
     : null;
 
   const activeHistoryEntry = activeHistoryKey
@@ -816,21 +878,28 @@ export function MentorChatView({
         ) {
           return;
         }
-        const currentNow = Date.now();
-        const alignedOffset = computeServerAlignedOffsetMs(
-          serverClockOffsetRef.current,
+        const currentMonotonic = getMonotonicNowMs();
+        const nextAnchor = computeServerTimeAnchor(
+          serverTimeAnchorRef.current,
           res.items.map((m) => m.created_at),
-          currentNow,
+          currentMonotonic,
         );
-        serverClockOffsetRef.current = alignedOffset;
-        const cutoffMs = currentNow + alignedOffset - RETENTION_WINDOW_MS;
+        serverTimeAnchorRef.current = nextAnchor;
+        const estimatedServerNow = estimateServerNowMs(
+          nextAnchor,
+          currentMonotonic,
+        );
+        const cutoffMs =
+          estimatedServerNow !== null
+            ? estimatedServerNow - RETENTION_WINDOW_MS
+            : null;
         const chronological = sortChronologically(
           res.items
             .map(toChatItem)
             .filter((item) => isWithinRetentionWindow(item.created_at, cutoffMs)),
         );
-        setNowMs(currentNow);
-        setServerClockOffsetMs(alignedOffset);
+        setMonotonicNowMs(currentMonotonic);
+        setServerTimeAnchor(nextAnchor);
         setHistoryByKey((prev) => ({
           ...prev,
           [targetKey]: {
@@ -873,7 +942,14 @@ export function MentorChatView({
     if (!activeConversationId || !activeScopeConvKey) {
       return [];
     }
-    const retentionCutoffMs = nowMs + serverClockOffsetMs - RETENTION_WINDOW_MS;
+    const estimatedServerNow = estimateServerNowMs(
+      serverTimeAnchor,
+      monotonicNowMs,
+    );
+    const retentionCutoffMs =
+      estimatedServerNow !== null
+        ? estimatedServerNow - RETENTION_WINDOW_MS
+        : null;
     const serverMessages =
       activeHistoryEntry?.status === 'loaded'
         ? activeHistoryEntry.messages
@@ -929,7 +1005,8 @@ export function MentorChatView({
     localTurnsByScope,
     cooldownUntilByClientId,
     nowMs,
-    serverClockOffsetMs,
+    monotonicNowMs,
+    serverTimeAnchor,
   ]);
 
   const newestMessage =
@@ -1061,19 +1138,34 @@ export function MentorChatView({
       ) {
         return;
       }
-      const currentNow = Date.now();
-      const alignedOffset = computeServerAlignedOffsetMs(
-        serverClockOffsetRef.current,
+      const latestEntry = historyByKeyRef.current[targetKey];
+      if (
+        !latestEntry ||
+        latestEntry.status !== 'loaded' ||
+        latestEntry.nextCursor !== expectedCursor
+      ) {
+        return;
+      }
+      const currentMonotonic = getMonotonicNowMs();
+      const nextAnchor = computeServerTimeAnchor(
+        serverTimeAnchorRef.current,
         res.items.map((m) => m.created_at),
-        currentNow,
+        currentMonotonic,
       );
-      serverClockOffsetRef.current = alignedOffset;
-      const cutoffMs = currentNow + alignedOffset - RETENTION_WINDOW_MS;
+      serverTimeAnchorRef.current = nextAnchor;
+      const estimatedServerNow = estimateServerNowMs(
+        nextAnchor,
+        currentMonotonic,
+      );
+      const cutoffMs =
+        estimatedServerNow !== null
+          ? estimatedServerNow - RETENTION_WINDOW_MS
+          : null;
       const olderItems = res.items
         .map(toChatItem)
         .filter((item) => isWithinRetentionWindow(item.created_at, cutoffMs));
-      setNowMs(currentNow);
-      setServerClockOffsetMs(alignedOffset);
+      setMonotonicNowMs(currentMonotonic);
+      setServerTimeAnchor(nextAnchor);
       setHistoryByKey((prev) => {
         const current = prev[targetKey];
         if (
@@ -1137,6 +1229,7 @@ export function MentorChatView({
         return;
       }
       const requestToken = accessToken;
+      const requestSessionScope = sessionScopeKey;
       setCreatingContext(contextType);
       setCreateError(null);
 
@@ -1145,10 +1238,14 @@ export function MentorChatView({
           context_type: contextType,
           ...(contextType === 'topic' && topicId ? { topic_id: topicId } : {}),
         });
-        if (!mountedRef.current || accessTokenRef.current !== requestToken) {
+        if (
+          !mountedRef.current ||
+          sessionScopeKeyRef.current !== requestSessionScope
+        ) {
           return;
         }
         const currentKey = convRequestKeyRef.current;
+        const currentToken = accessTokenRef.current;
         const existingCreated =
           createdDuringLoadRef.current.get(currentKey) ?? [];
         createdDuringLoadRef.current.set(currentKey, [
@@ -1174,7 +1271,9 @@ export function MentorChatView({
             error: null,
           };
         });
-        const newKey = `${requestToken}:${created.id}:${historyReloadTick}`;
+        const createdReloadTick =
+          historyReloadTickByConvIdRef.current[created.id] ?? 0;
+        const newKey = `${currentToken}:${created.id}:${createdReloadTick}`;
         setHistoryByKey((prev) => ({
           ...prev,
           [newKey]: {
@@ -1186,7 +1285,10 @@ export function MentorChatView({
         setSelectedConvId(created.id);
         setMobileDrawerOpen(false);
       } catch (err) {
-        if (mountedRef.current && accessTokenRef.current === requestToken) {
+        if (
+          mountedRef.current &&
+          sessionScopeKeyRef.current === requestSessionScope
+        ) {
           setCreateError(mapApiError(err, { feature: 'mentor' }));
         }
       } finally {
@@ -1195,12 +1297,7 @@ export function MentorChatView({
         }
       }
     },
-    [
-      accessToken,
-      aiMentorEnabled,
-      creatingContext,
-      historyReloadTick,
-    ],
+    [accessToken, aiMentorEnabled, creatingContext, sessionScopeKey],
   );
 
   const dispatchMessageTurn = useCallback(
@@ -1228,18 +1325,18 @@ export function MentorChatView({
           return;
         }
 
-        // Clock-skew-safe turn ordering & server-aligned retention offset:
+        // Clock-skew-safe turn ordering & monotonic server-anchored retention:
         // anchor committed user message strictly before server-timestamped assistant reply
-        // and never let a fast browser clock evict the freshly committed turn.
-        const currentNow = Date.now();
-        const alignedOffset = computeServerAlignedOffsetMs(
-          serverClockOffsetRef.current,
+        // and never let browser wall-clock jumps evict the freshly committed turn.
+        const currentMonotonic = getMonotonicNowMs();
+        const nextAnchor = computeServerTimeAnchor(
+          serverTimeAnchorRef.current,
           [response.assistant_message.created_at],
-          currentNow,
+          currentMonotonic,
         );
-        serverClockOffsetRef.current = alignedOffset;
-        setNowMs(currentNow);
-        setServerClockOffsetMs(alignedOffset);
+        serverTimeAnchorRef.current = nextAnchor;
+        setMonotonicNowMs(currentMonotonic);
+        setServerTimeAnchor(nextAnchor);
 
         const assistantMs = Date.parse(response.assistant_message.created_at);
         const anchoredUserCreatedAt = Number.isFinite(assistantMs)
@@ -1957,6 +2054,8 @@ export function MentorChatView({
 
               <div
                 ref={messagesScrollRef}
+                role="log"
+                aria-label="Mentor conversation"
                 data-testid="mentor-messages-scroll"
                 className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
               >
@@ -2010,7 +2109,16 @@ export function MentorChatView({
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => setHistoryReloadTick((t) => t + 1)}
+                        onClick={() => {
+                          if (!activeConversationId) {
+                            return;
+                          }
+                          setHistoryReloadTickByConvId((prev) => ({
+                            ...prev,
+                            [activeConversationId]:
+                              (prev[activeConversationId] ?? 0) + 1,
+                          }));
+                        }}
                         className="inline-flex h-11 min-h-11 items-center justify-center gap-1.5 leading-tight"
                       >
                         <RefreshCwIcon className="block h-4 w-4 shrink-0 -translate-y-[0.5px]" />

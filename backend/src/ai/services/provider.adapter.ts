@@ -610,7 +610,7 @@ const MENTOR_BANGLA_SCRIPT_PATTERN = /[\u0980-\u09ff]/;
 const MENTOR_LATIN_LETTER_PATTERN = /[a-zA-Z]/;
 
 const MENTOR_DIRECT_DISTRESS_EN_PATTERN =
-  /\b(?:kill\s+myself|end\s+my\s+life|hurt\s+myself|harm\s+myself|want\s+to\s+die|don['\u2019]t\s+want\s+to\s+live|do\s+not\s+want\s+to\s+live|can['\u2019]t\s+go\s+on|cannot\s+go\s+on|(?:i\s+am|i['\u2019]m|feel(?:ing)?)\s+(?:suicidal|in\s+severe\s+distress)|(?:having|experiencing)\s+(?:a\s+)?panic\s+attack|thinking\s+(?:of|about)\s+(?:suicide|ending\s+my\s+life|self[\s-]?harm)|commit\s+suicide)\b/i;
+  /\b(?:kill\s+myself|end\s+my\s+life|hurt\s+myself|harm\s+myself|want\s+to\s+die|don['\u2019]t\s+want\s+to\s+live|do\s+not\s+want\s+to\s+live|can['\u2019]t\s+go\s+on|cannot\s+go\s+on|(?:i\s+am|i['\u2019]m|feel(?:ing)?)\s+(?:suicidal|in\s+severe\s+distress)|(?:having|experiencing)\s+(?:a\s+)?panic\s+attack|(?:having\s+)?thoughts?\s+(?:of|about)\s+(?:suicide|ending\s+my\s+life|self[\s-]?harm)|thinking\s+(?:of|about)\s+(?:suicide|ending\s+my\s+life|self[\s-]?harm)|commit\s+suicide)\b/i;
 
 const MENTOR_TOPIC_SENSITIVE_DISTRESS_EN_PATTERN =
   /\b(?:suicide|suicidal|self[\s-]?harm|severe\s+distress|panic\s+attack)\b/i;
@@ -618,8 +618,13 @@ const MENTOR_TOPIC_SENSITIVE_DISTRESS_EN_PATTERN =
 const MENTOR_TECHNICAL_TOPIC_FRAMING_EN_PATTERN =
   /\b(?:design|build|develop|architect|implement|create|code|program|schema|api|database|app|application|website|platform|bot|system|dataset|model|classifier|feature|project)\b/i;
 
-const MENTOR_DISTRESS_BN_PATTERN =
-  /(?:আত্মহত্যা|নিজেকে\s*শেষ|বাঁচতে\s*ইচ্ছা\s*করছে\s*না|নিজের\s*ক্ষতি|মানসিকভাবে\s*ভেঙে\s*পড়েছি|চরম\s*হতাশা)/u;
+const MENTOR_DIRECT_DISTRESS_BN_PATTERN =
+  /(?:নিজেকে\s*শেষ|বাঁচতে\s*ইচ্ছা\s*করছে\s*না|নিজের\s*ক্ষতি|মানসিকভাবে\s*ভেঙে\s*পড়েছি|চরম\s*হতাশা|আত্মহত্যা\s*(?:করতে\s*চাই|করব|করার\s*কথা\s*ভাবছি))/u;
+
+const MENTOR_TOPIC_SENSITIVE_DISTRESS_BN_PATTERN = /আত্মহত্যা/u;
+
+const MENTOR_TECHNICAL_TOPIC_FRAMING_BN_PATTERN =
+  /(?:ডেটাসেট|অ্যাপ|অ্যাপ্লিকেশন|সিস্টেম|মডেল|প্রজেক্ট|ওয়েবসাইট|ডিজাইন|তৈরি\s*করব|ক্লাসিফায়ার|প্রতিরোধ(?:ের)?\s*জন্য|dataset|app|system|model|project)/iu;
 
 const MENTOR_INJECTION_EN_PATTERN =
   /\b(?:ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above)\s+instructions?|reveal\s+(?:your\s+|the\s+)?(?:system|hidden|developer)\s+prompt|print\s+(?:your\s+|the\s+)?(?:system\s+)?prompt|disregard\s+(?:all\s+)?(?:system|previous)|override\s+(?:system|directives)|what\s+are\s+your\s+hidden\s+instructions)\b|\[ESCAPED_UNTRUSTED_TAG\]/i;
@@ -630,8 +635,8 @@ const MENTOR_INJECTION_BN_PATTERN =
 const MENTOR_STUDY_CLAIM_EN_PATTERN =
   /\b(?:i\s+(?:already\s+|have\s+)?studied(?:\s+this)?|finished\s+studying|i\s+(?:have\s+)?completed\s+(?:this|the)\s+topic|mark\s+(?:this|it)\s+(?:as\s+)?(?:done|complete|studied|proficient))\b/gi;
 
-const MENTOR_NEGATED_STUDY_PREFIX_PATTERN =
-  /\b(?:not|never|haven['\u2019]t|hasn['\u2019]t|didn['\u2019]t|did\s+not|have\s+not|don['\u2019]t|do\s+not|cannot|can['\u2019]t|won['\u2019]t)\s+(?:yet\s+)?$/i;
+const MENTOR_NEGATED_OR_CONDITIONAL_STUDY_PREFIX_PATTERN =
+  /\b(?:not|never|haven['\u2019]t|hasn['\u2019]t|didn['\u2019]t|did\s+not|have\s+not|don['\u2019]t|do\s+not|cannot|can['\u2019]t|won['\u2019]t|if|whether|suppose|assuming|what\s+if)\s+(?:yet\s+)?$/i;
 
 const MENTOR_STUDY_CLAIM_BN_PATTERN =
   /(?:আমি\s*(?:এই\s*টপিক(?:টি|টা)?\s*|এটা\s*|এটি\s*)?(?:পড়েছি|শিখেছি|শেষ\s*করেছি)|পড়া\s*শেষ\s*করেছি|শেষ\s*করেছি)/u;
@@ -643,13 +648,41 @@ const MENTOR_OUT_OF_SCOPE_BN_PATTERN =
   /(?:বিরিয়ানি\s*রান্না|রান্নার\s*রেসিপি|শেয়ার\s*বাজারের\s*টিপস|ওষুধের\s*প্রেসক্রিপশন|রাশিফল)/u;
 
 function isPersonalDistressEn(text: string): boolean {
-  if (MENTOR_DIRECT_DISTRESS_EN_PATTERN.test(text)) {
-    return true;
+  for (const clause of text.split(/[.!?;\n]+/)) {
+    const trimmed = clause.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (MENTOR_DIRECT_DISTRESS_EN_PATTERN.test(trimmed)) {
+      return true;
+    }
+    if (
+      MENTOR_TOPIC_SENSITIVE_DISTRESS_EN_PATTERN.test(trimmed) &&
+      !MENTOR_TECHNICAL_TOPIC_FRAMING_EN_PATTERN.test(trimmed)
+    ) {
+      return true;
+    }
   }
-  if (!MENTOR_TOPIC_SENSITIVE_DISTRESS_EN_PATTERN.test(text)) {
-    return false;
+  return false;
+}
+
+function isPersonalDistressBn(text: string): boolean {
+  for (const clause of text.split(/[.!?;\n।]+/)) {
+    const trimmed = clause.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (MENTOR_DIRECT_DISTRESS_BN_PATTERN.test(trimmed)) {
+      return true;
+    }
+    if (
+      MENTOR_TOPIC_SENSITIVE_DISTRESS_BN_PATTERN.test(trimmed) &&
+      !MENTOR_TECHNICAL_TOPIC_FRAMING_BN_PATTERN.test(trimmed)
+    ) {
+      return true;
+    }
   }
-  return !MENTOR_TECHNICAL_TOPIC_FRAMING_EN_PATTERN.test(text);
+  return false;
 }
 
 function isAffirmativeStudyClaimEn(text: string): boolean {
@@ -665,7 +698,7 @@ function isAffirmativeStudyClaimEn(text: string): boolean {
     );
     const clausePrefix =
       boundaryIdx >= 0 ? rawPrefix.slice(boundaryIdx + 1) : rawPrefix;
-    if (MENTOR_NEGATED_STUDY_PREFIX_PATTERN.test(clausePrefix)) {
+    if (MENTOR_NEGATED_OR_CONDITIONAL_STUDY_PREFIX_PATTERN.test(clausePrefix)) {
       continue;
     }
     return true;
@@ -721,10 +754,7 @@ export function buildSyntheticMentorChat(
   const language = detectMentorLanguage(latestNfc, requestedLanguage);
 
   // 1. Personal distress / crisis safety redirection (PRD §37)
-  if (
-    isPersonalDistressEn(latestNfc) ||
-    MENTOR_DISTRESS_BN_PATTERN.test(latestNfc)
-  ) {
+  if (isPersonalDistressEn(latestNfc) || isPersonalDistressBn(latestNfc)) {
     const content =
       language === 'bn'
         ? 'আপনি কঠিন সময়ের মধ্য দিয়ে যাচ্ছেন জেনে আমরা আন্তরিকভাবে উদ্বিগ্ন। আমি শুধু ক্যারিয়ার ও শেখার সহায়ক এবং পেশাদার মানসিক স্বাস্থ্যসেবা দিতে পারি না। অনুগ্রহ করে এখনই কোনো বিশ্বস্ত পরিবারের সদস্য, বন্ধু বা স্থানীয় জরুরি সহায়তা ও মানসিক স্বাস্থ্য বিশেষজ্ঞের সাথে যোগাযোগ করুন।'

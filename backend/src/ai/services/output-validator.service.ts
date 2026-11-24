@@ -51,7 +51,7 @@ const RELEASE_STATUSES = new Set([
 const RELEVANCE_LEVELS = new Set(['high', 'medium', 'low']);
 const ACTION_TIMINGS = new Set(['act_now', 'learn_later', 'awareness_only']);
 const JOB_GUARANTEE_EN_PATTERN =
-  /\b(?:job[\s-]?ready|(?:guarantee[ds]?|promising|promise[ds]?|assured?)\s+(?:you\s+)?(?:a\s+|an\s+)?(?:tech\s+|software\s+|engineering\s+)?(?:job|employment|placement|hiring|offer|salary)|(?:job|employment|placement|hiring)\s+is\s+guaranteed|100%\s*(?:job|placement|hiring|employment)(?:\s+guarantee[ds]?)?|you(?:\s+will|['\u2019]ll)\s+(?:definitely|certainly|surely|undoubtedly|100%)\s+(?:get\s+hired|be\s+hired|(?:land|get)\s+(?:a|an)\s+(?:tech\s+|software\s+|engineering\s+)?(?:job|offer|role))|you(?:\s+are|['\u2019]re)\s+(?:certain|sure|guaranteed|bound)\s+to\s+(?:get\s+hired|be\s+hired|(?:land|get)\s+(?:a|an)\s+(?:tech\s+|software\s+|engineering\s+)?(?:job|offer|role)))\b/gi;
+  /\b(?:job[\s-]?ready|(?:guarantee[ds]?|promising|promise[ds]?|assured?)\s+(?:you\s+)?(?:a\s+|an\s+|your\s+)?(?:tech\s+|software\s+|engineering\s+)?(?:job|employment|placement|hiring|offer|salary)|(?:job|employment|placement|hiring)\s+is\s+guaranteed|100%\s*(?:job|placement|hiring|employment)(?:\s+guarantee[ds]?)?|you(?:\s+will|['\u2019]ll)\s+(?:definitely|certainly|surely|undoubtedly|100%)\s+(?:get\s+hired|be\s+hired|(?:land|get)\s+(?:a|an)\s+(?:tech\s+|software\s+|engineering\s+)?(?:job|offer|role))|you(?:\s+are|['\u2019]re)\s+(?:certain|sure|guaranteed|bound)\s+to\s+(?:get\s+hired|be\s+hired|(?:land|get)\s+(?:a|an)\s+(?:tech\s+|software\s+|engineering\s+)?(?:job|offer|role)))\b/gi;
 
 const NEGATED_JOB_PROMISE_PREFIX_PATTERN =
   /\b(?:can(?:not|['\u2019]t|\s+not)|won['\u2019]t|will\s+not|do(?:n['\u2019]t|\s+not)|never|unable\s+to|not\s+able\s+to)\s+(?:ever\s+)?$/i;
@@ -73,7 +73,10 @@ const NEGATED_CLINICAL_BN_SUFFIX_PATTERN =
   /^\s*(?:করতে\s+পারি\s*না|করতে\s+পারব\s*না|করতে\s+সক্ষম\s+নই|করি\s*না|করছি\s*না|দিতে\s+পারি\s*না|সম্ভব\s+নয়)/u;
 
 const SAFETY_MODE_RX_EN_PATTERN =
-  /\b(?:(?:take|prescribe|prescribing|start\s+taking)\s+\d+\s*(?:mg|milligrams?)|(?:prescribe|prescribing)\s+(?:you\s+)?(?:antidepressants?|ssris?|benzodiazepines?|sertraline|fluoxetine|alprazolam|xanax|prozac|zoloft|lexapro|clonazepam))\b/i;
+  /\b(?:(?:take|prescribe|prescribing|start\s+taking)\s+\d+\s*(?:mg|milligrams?)|(?:prescribe|prescribing)\s+(?:you\s+)?(?:antidepressants?|ssris?|benzodiazepines?|sertraline|fluoxetine|alprazolam|xanax|prozac|zoloft|lexapro|clonazepam))\b/gi;
+
+const NEGATED_CLINICAL_RX_PREFIX_PATTERN =
+  /\b(?:can(?:not|['\u2019]t|\s+not)|won['\u2019]t|will\s+not|do(?:n['\u2019]t|\s+not)|never|unable\s+to|not\s+able\s+to|should(?:n['\u2019]t|\s+not))\s+$/i;
 
 const SAFETY_MODE_DIRECT_DIAGNOSIS_EN_PATTERN =
   /\byou\s+(?:have|suffer\s+from|are\s+suffering\s+from)\s+(?:(?:clinical|major)\s+)?(?:depression|depressive\s+disorder|bipolar(?:\s+(?:i|ii|1|2))?(?:\s+disorder)?|adhd|attention[\s-]deficit(?:\s+hyperactivity)?\s+disorder|anxiety\s+disorder|generalized\s+anxiety\s+disorder|panic\s+disorder|ptsd|post[\s-]traumatic\s+stress\s+disorder|ocd|obsessive[\s-]compulsive\s+disorder|schizophrenia|borderline\s+personality\s+disorder|eating\s+disorder|autism(?:\s+spectrum\s+disorder)?)\b/gi;
@@ -130,7 +133,22 @@ function hasProhibitedJobGuaranteeEn(text: string): boolean {
   return false;
 }
 
+function hasProhibitedDirectDiagnosisEn(text: string): boolean {
+  for (const match of text.matchAll(SAFETY_MODE_DIRECT_DIAGNOSIS_EN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const prefix = clausePrefixBefore(text, idx);
+    if (NON_DIAGNOSTIC_HYPOTHETICAL_PREFIX_PATTERN.test(prefix)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 function hasOvertClinicalDiagnosis(text: string): boolean {
+  if (hasProhibitedDirectDiagnosisEn(text)) {
+    return true;
+  }
   for (const match of text.matchAll(OVERT_CLINICAL_DIAGNOSIS_EN_PATTERN)) {
     const idx = match.index ?? 0;
     const matched = match[0] ?? '';
@@ -155,13 +173,10 @@ function hasOvertClinicalDiagnosis(text: string): boolean {
 }
 
 function hasProhibitedSafetyClinicalEn(text: string): boolean {
-  if (SAFETY_MODE_RX_EN_PATTERN.test(text)) {
-    return true;
-  }
-  for (const match of text.matchAll(SAFETY_MODE_DIRECT_DIAGNOSIS_EN_PATTERN)) {
+  for (const match of text.matchAll(SAFETY_MODE_RX_EN_PATTERN)) {
     const idx = match.index ?? 0;
     const prefix = clausePrefixBefore(text, idx);
-    if (NON_DIAGNOSTIC_HYPOTHETICAL_PREFIX_PATTERN.test(prefix)) {
+    if (NEGATED_CLINICAL_RX_PREFIX_PATTERN.test(prefix)) {
       continue;
     }
     return true;

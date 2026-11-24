@@ -186,6 +186,26 @@ describe('MentorService & MentorContextAssemblerService (EP-M01..EP-M04)', () =>
         return true;
       });
 
+      await expect(
+        service.createConversation(USER_A, {
+          context_type: 'general',
+          topic_id: null as unknown as string,
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'VALIDATION_FAILED');
+        return true;
+      });
+
+      await expect(
+        service.createConversation(USER_A, {
+          context_type: 'focus_roadmap',
+          topic_id: null as unknown as string,
+        }),
+      ).rejects.toSatisfy((err) => {
+        expectContractError(err, 422, 'VALIDATION_FAILED');
+        return true;
+      });
+
       // Foreign/unowned topic -> 404 RESOURCE_NOT_FOUND
       await expect(
         service.createConversation(USER_A, {
@@ -404,7 +424,8 @@ describe('MentorService & MentorContextAssemblerService (EP-M01..EP-M04)', () =>
 
         if (
           sql.includes('INSERT INTO public.messages') &&
-          sql.includes("'user'::public.message_role")
+          sql.includes("'user'::public.message_role") &&
+          !sql.includes("'assistant'::public.message_role")
         ) {
           const [convId, ownerId, content, lang, clientId] = params as [
             string,
@@ -515,12 +536,29 @@ describe('MentorService & MentorContextAssemblerService (EP-M01..EP-M04)', () =>
         }),
       } as unknown as MentorContextAssemblerService;
 
+      const compactControl: {
+        resolve:
+          | ((value: {
+              compacted: boolean;
+              versionNo: number | null;
+              compactedCount: number;
+            }) => void)
+          | null;
+      } = { resolve: null };
+      let pendingCompactSettled = false;
       const episodicSummary = {
         maybeCompact: vi
           .fn()
           .mockRejectedValueOnce(new Error('Simulated summarizer DB fault'))
-          // Pending promise proves sendMessage does not block waiting on compaction
-          .mockImplementationOnce(() => new Promise(() => undefined)),
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                compactControl.resolve = (val) => {
+                  pendingCompactSettled = true;
+                  resolve(val);
+                };
+              }),
+          ),
       } as unknown as EpisodicSummaryService;
 
       const service = new MentorService(
@@ -600,6 +638,157 @@ describe('MentorService & MentorContextAssemblerService (EP-M01..EP-M04)', () =>
       expect(replayed).toEqual(recovered);
       expect(aiGateway.execute).toHaveBeenCalledTimes(2);
       expect(contextAssembler.assembleContext).toHaveBeenCalledTimes(2);
+
+      // 6. Fresh turn with a controllable pending compaction promise resolves BEFORE compaction settles!
+      const freshClient2 = '77777777-8888-4999-8aaa-bbbbbbbbbbbb';
+      const nonBlockingRes = await service.sendMessage(USER_A, {
+        conversation_id: CONV_ID,
+        content: 'Second fresh question while compaction is pending',
+        client_message_id: freshClient2,
+      });
+      expect(nonBlockingRes.assistant_message.id).toBe(ASSISTANT_MSG_1);
+      expect(pendingCompactSettled).toBe(false);
+      expect(compactControl.resolve).not.toBeNull();
+      compactControl.resolve?.({
+        compacted: false,
+        versionNo: null,
+        compactedCount: 3,
+      });
+    });
+
+    it('coalesces simultaneous in-flight sendMessage calls for the same client_message_id into a single AI Gateway call', async () => {
+      let resolveGateway!: (value: AIResponseDTO<MentorChatOutput>) => void;
+      const storedUserIds = new Set<string>();
+
+      const db = {
+        transaction: vi.fn(
+          async (_uid: string | null, fn: (tx: unknown) => Promise<unknown>) =>
+            fn({
+              query: vi.fn(async (sql: string) => {
+                if (sql.includes('FROM public.conversations')) {
+                  return [
+                    {
+                      id: CONV_ID,
+                      context_type: 'general',
+                      roadmap_id: null,
+                      topic_id: null,
+                      title: 'General',
+                      created_at: '2026-11-24T10:00:00.000Z',
+                    },
+                  ];
+                }
+                if (
+                  sql.includes('INSERT INTO public.messages') &&
+                  sql.includes("'user'::public.message_role") &&
+                  !sql.includes("'assistant'::public.message_role")
+                ) {
+                  storedUserIds.add(USER_MSG_1);
+                  return [
+                    {
+                      id: USER_MSG_1,
+                      content: 'Concurrent retry test',
+                      language: 'en',
+                      created_at: '2026-11-24T10:01:00.000Z',
+                    },
+                  ];
+                }
+                if (
+                  sql.includes('FROM public.messages') &&
+                  sql.includes("role = 'user'::public.message_role") &&
+                  sql.includes('WHERE id = $1')
+                ) {
+                  return storedUserIds.has(USER_MSG_1)
+                    ? [{ id: USER_MSG_1 }]
+                    : [];
+                }
+                if (
+                  sql.includes('INSERT INTO public.messages') &&
+                  sql.includes("'assistant'::public.message_role")
+                ) {
+                  return [
+                    {
+                      id: ASSISTANT_MSG_1,
+                      role: 'assistant',
+                      content: 'Single-flight reply',
+                      language: 'en',
+                      safety_mode: false,
+                      learning_claim_recorded: false,
+                      created_at: '2026-11-24T10:01:05.000Z',
+                    },
+                  ];
+                }
+                return [];
+              }),
+            }),
+        ),
+      } as unknown as DatabaseService;
+
+      const aiGateway = {
+        execute: vi.fn(
+          () =>
+            new Promise<AIResponseDTO<MentorChatOutput>>((resolve) => {
+              resolveGateway = resolve;
+            }),
+        ),
+      } as unknown as AiGatewayService;
+
+      const service = new MentorService(
+        db,
+        aiGateway,
+        createRetentionStub(90),
+        {
+          assembleContext: vi.fn().mockResolvedValue({ context: {} }),
+        } as unknown as MentorContextAssemblerService,
+        {
+          maybeCompact: vi.fn().mockResolvedValue({
+            compacted: false,
+            versionNo: null,
+            compactedCount: 0,
+          }),
+        } as unknown as EpisodicSummaryService,
+      );
+
+      const p1 = service.sendMessage(USER_A, {
+        conversation_id: CONV_ID,
+        content: 'Concurrent retry test',
+        client_message_id: CLIENT_MSG_1,
+      });
+      const p2 = service.sendMessage(USER_A, {
+        conversation_id: CONV_ID,
+        content: 'Concurrent retry test',
+        client_message_id: CLIENT_MSG_1,
+      });
+
+      // Wait until the single AI gateway call is in flight
+      await vi.waitFor(() => {
+        expect(aiGateway.execute).toHaveBeenCalledTimes(1);
+      });
+
+      resolveGateway({
+        request_id: 'aaaaaaaa-1111-4111-8111-111111111111',
+        generation_id: AI_GEN_1,
+        status: 'ok',
+        output: {
+          content: 'Single-flight reply',
+          language: 'en',
+          safety_mode: false,
+          learning_claim_recorded: false,
+        },
+        provider_id: 'synthetic',
+        model_id: 'synthetic-offline-v1',
+        fallback_used: false,
+        prompt_version_id: 'bbbbbbbb-1111-4111-8111-111111111111',
+        usage_units: { input: 20, output: 15 },
+        cost: 0,
+        latency_ms: 10,
+        validation_status: 'passed',
+        sources: [],
+      });
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(aiGateway.execute).toHaveBeenCalledTimes(1);
+      expect(r1).toEqual(r2);
+      expect(r1.assistant_message.id).toBe(ASSISTANT_MSG_1);
     });
 
     it('rejects expired unpurged dedup rows with 409 IDEMPOTENCY_KEY_REUSED without reading expired content, and rechecks post-lock source retention when clock advances past expiry mid-generation', async () => {
@@ -1177,6 +1366,58 @@ describe('MentorService & MentorContextAssemblerService (EP-M01..EP-M04)', () =>
 
       const bytes = Buffer.byteLength(JSON.stringify(result.context), 'utf8');
       expect(bytes).toBeLessThanOrEqual(20_000);
+    });
+
+    it('excludes expired conversation_summaries (covers_until <= cutoff) from assembled episodic_summary context', async () => {
+      const referenceNow = new Date('2026-11-24T12:00:00.000Z');
+      const retention = createRetentionStub(90);
+      const exactCutoff = retention.getMentorMessageCutoffDate(referenceNow);
+      const capturedQueries: Array<{ sql: string; params: unknown[] }> = [];
+
+      const db = {
+        transaction: vi.fn(
+          async (_uid: string | null, fn: (tx: unknown) => Promise<unknown>) =>
+            fn({
+              query: vi.fn(async (sql: string, params: unknown[] = []) => {
+                capturedQueries.push({ sql, params });
+                if (sql.includes('FROM public.conversation_summaries')) {
+                  return [
+                    {
+                      version_no: 2,
+                      summary_text: 'EXPIRED_IDLE_SUMMARY_MUST_NOT_LEAK',
+                      covers_until: exactCutoff.toISOString(),
+                    },
+                  ];
+                }
+                return [];
+              }),
+            }),
+        ),
+      } as unknown as DatabaseService;
+
+      const assembler = new MentorContextAssemblerService(db, retention);
+      const result = await assembler.assembleContext({
+        userId: USER_A,
+        conversation: {
+          id: CONV_ID,
+          context_type: 'general',
+          roadmap_id: null,
+          topic_id: null,
+          title: 'Resumed idle chat',
+        },
+        currentUserMessageId: USER_MSG_1,
+        now: referenceNow,
+      });
+
+      const summaryQuery = capturedQueries.find((q) =>
+        q.sql.includes('FROM public.conversation_summaries'),
+      );
+      expect(summaryQuery?.sql).toContain('covers_until > $3');
+      expect(summaryQuery?.params[2]).toEqual(exactCutoff);
+      expect(result.context.episodic_summary).toBeNull();
+      expect(JSON.stringify(result.context)).not.toContain(
+        'EXPIRED_IDLE_SUMMARY_MUST_NOT_LEAK',
+      );
     });
   });
 });

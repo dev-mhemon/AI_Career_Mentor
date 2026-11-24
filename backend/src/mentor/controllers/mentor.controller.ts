@@ -8,11 +8,8 @@ import {
   Query,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { AccessGuard } from '../../auth/guards/access.guard.js';
-import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard.js';
 import { Policy } from '../../auth/policy.js';
 import { fail } from '../../common/http.js';
 import {
@@ -112,9 +109,11 @@ function splitHeaderOutsideQuotes(
   return parts;
 }
 
+const RFC9110_QVALUE_PATTERN = /^(?:0(?:\.\d{1,3})?|1(?:\.0{1,3})?)$/;
+
 /**
  * Checks whether the incoming request explicitly opts into `ADR-018` / `R15` SSE streaming
- * via `Accept: text/event-stream` with non-zero quality weight (`q > 0`), safely ignoring
+ * via `Accept: text/event-stream` with valid RFC 9110 `qvalue` (`q > 0`), safely ignoring
  * commas/semicolons inside quoted media-type parameter values.
  */
 export function wantsEventStream(req?: AuthenticatedMentorRequest): boolean {
@@ -141,12 +140,11 @@ export function wantsEventStream(req?: AuthenticatedMentorRequest): boolean {
         continue;
       }
       const rawVal = param.slice(eqIdx + 1).trim();
-      const parsed = Number(rawVal);
-      if (!rawVal || !Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      if (!RFC9110_QVALUE_PATTERN.test(rawVal)) {
         validQuality = false;
         break;
       }
-      quality = parsed;
+      quality = Number(rawVal);
     }
     if (validQuality && quality > 0) {
       return true;
@@ -236,7 +234,7 @@ function attachPaginationMeta<T>(
 /**
  * Controller exposing `C05` §14.10 AI Mentor API (`EP-M01`–`EP-M04` under `/api/v1/mentor`).
  *
- * - Explicitly binds `@UseGuards(SupabaseAuthGuard, AccessGuard)`:
+ * - Relies on `AuthModule`'s global `APP_GUARD` pipeline (`SupabaseAuthGuard` -> `AccessGuard`):
  *   - `EP-M01` & `EP-M03` enforce `@Policy({ feature: 'ai_mentor' })` (`Gate: write`).
  *   - `EP-M02` & `EP-M04` declare `@Policy({})` (`Gate: none`) so existing conversations and
  *     90-day history remain readable when `ai_mentor` is disabled (`PRD` §7 / §52).
@@ -245,7 +243,6 @@ function attachPaginationMeta<T>(
  *   already-validated, DB-committed reply chunks (`message.delta` `seq: 0..N` -> `message.completed`).
  */
 @Controller('mentor')
-@UseGuards(SupabaseAuthGuard, AccessGuard)
 @Policy({})
 export class MentorController {
   constructor(

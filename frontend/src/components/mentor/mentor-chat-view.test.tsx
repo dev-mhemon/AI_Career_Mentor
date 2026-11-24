@@ -21,6 +21,7 @@ const mockListMentorConversations = vi.fn();
 const mockCreateMentorConversation = vi.fn();
 const mockGetMentorHistory = vi.fn();
 const mockSendMentorMessage = vi.fn();
+const mockGetObservedServerTimeAnchor = vi.fn();
 
 vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>(
@@ -34,6 +35,7 @@ vi.mock('@/lib/api/client', async () => {
       mockCreateMentorConversation(...args),
     getMentorHistory: (...args: unknown[]) => mockGetMentorHistory(...args),
     sendMentorMessage: (...args: unknown[]) => mockSendMentorMessage(...args),
+    getObservedServerTimeAnchor: () => mockGetObservedServerTimeAnchor(),
   };
 });
 
@@ -85,6 +87,8 @@ beforeEach(() => {
   mockCreateMentorConversation.mockReset();
   mockGetMentorHistory.mockReset();
   mockSendMentorMessage.mockReset();
+  mockGetObservedServerTimeAnchor.mockReset();
+  mockGetObservedServerTimeAnchor.mockReturnValue(null);
 });
 
 afterEach(() => {
@@ -252,9 +256,10 @@ describe('MentorChatView (Screen 20 /mentor)', () => {
     expect(
       screen.queryByRole('navigation', { name: /Breadcrumb/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId('mentor-messages-scroll')).toHaveClass(
-      'overflow-y-auto',
-    );
+    const scrollLog = screen.getByTestId('mentor-messages-scroll');
+    expect(scrollLog).toHaveClass('overflow-y-auto');
+    expect(scrollLog).toHaveAttribute('role', 'log');
+    expect(scrollLog).toHaveAttribute('aria-label', 'Mentor conversation');
   });
 
   it('loads paginated history, loads older messages, sends a turn, and reuses exact client_message_id on 504 retry', async () => {
@@ -782,9 +787,14 @@ describe('MentorChatView (Screen 20 /mentor)', () => {
     }
   });
 
-  it('keeps server-returned retained messages visible under a fast browser clock and evicts aged messages on periodic retention tick', async () => {
-    // Simulate a browser clock 1 year ahead of the server's retained messages
+  it('ignores wall-clock jumps when server time is unknown or anchored, and evicts aged messages only on monotonic elapsed server time', async () => {
+    // Browser wall clock is 1 year ahead of retained messages
     vi.setSystemTime(new Date('2027-11-24T12:00:00.000Z'));
+
+    let monotonicClock = 1_000;
+    const perfSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => monotonicClock);
 
     const intervalCallbacks: Array<() => void> = [];
     const setIntervalSpy = vi
@@ -800,6 +810,14 @@ describe('MentorChatView (Screen 20 /mentor)', () => {
       .mockImplementation(() => undefined);
 
     try {
+      const ninetyDaysMs = 90 * 24 * 60 * 60 * 1_000;
+      const msgMs = Date.parse(MSG_NEW.created_at);
+      // Anchor server time to 1 second before the 90-day boundary at monotonicClock = 1_000
+      mockGetObservedServerTimeAnchor.mockReturnValue({
+        serverMs: msgMs + ninetyDaysMs - 1_000,
+        monotonicMs: 1_000,
+      });
+
       mockListMentorConversations.mockResolvedValueOnce({
         items: [CONV_1],
         meta: { limit: 20, next_cursor: null },
@@ -811,13 +829,22 @@ describe('MentorChatView (Screen 20 /mentor)', () => {
 
       render(<MentorChatView accessToken={TOKEN} aiMentorEnabled={true} />);
 
-      // Fast browser clock must NOT evict server-confirmed retained message
+      // Fast browser wall clock must NOT evict server-confirmed retained message
       expect(
         await screen.findByText('Newest reply in thread'),
       ).toBeInTheDocument();
 
-      // Advance clock by 2 seconds past the aligned 90-day boundary and trigger periodic retention sweep
-      vi.setSystemTime(new Date('2027-11-24T12:00:05.000Z'));
+      // Browser wall clock jumping forward by 100 days while monotonic time stands still MUST NOT evict
+      vi.setSystemTime(new Date('2028-03-10T12:00:00.000Z'));
+      act(() => {
+        for (const cb of intervalCallbacks) {
+          cb();
+        }
+      });
+      expect(screen.getByText('Newest reply in thread')).toBeInTheDocument();
+
+      // Advance monotonic elapsed time by 2 seconds past the 90-day boundary -> periodic sweep evicts aged row
+      monotonicClock = 3_000;
       act(() => {
         for (const cb of intervalCallbacks) {
           cb();
@@ -830,8 +857,130 @@ describe('MentorChatView (Screen 20 /mentor)', () => {
         ).not.toBeInTheDocument();
       });
     } finally {
+      perfSpy.mockRestore();
       setIntervalSpy.mockRestore();
       clearIntervalSpy.mockRestore();
     }
+  });
+
+  it('scopes history retry ticks per conversation and preserves newly created conversation across same-account JWT refresh', async () => {
+    const jwtUserA1 = `eyJhbGciOiJIUzI1NiJ9.${btoa(JSON.stringify({ sub: 'user-same-1' }))}.sig1`;
+    const jwtUserA2 = `eyJhbGciOiJIUzI1NiJ9.${btoa(JSON.stringify({ sub: 'user-same-1' }))}.sig2`;
+
+    mockListMentorConversations
+      .mockResolvedValueOnce({
+        items: [CONV_1, CONV_2],
+        meta: { limit: 20, next_cursor: null },
+      } satisfies PaginatedConversationsResponseDTO)
+      .mockResolvedValueOnce({
+        items: [CONV_1, CONV_2],
+        meta: { limit: 20, next_cursor: null },
+      } satisfies PaginatedConversationsResponseDTO);
+
+    let conv2Calls = 0;
+    mockGetMentorHistory.mockImplementation(
+      async (_token: string, params: { conversation_id: string; cursor?: string }) => {
+        if (params.conversation_id === CONV_1.id) {
+          if (params.cursor === 'older-c1') {
+            return {
+              items: [MSG_OLD],
+              meta: { limit: 20, next_cursor: null },
+            };
+          }
+          return {
+            items: [MSG_NEW],
+            meta: { limit: 20, next_cursor: 'older-c1' },
+          };
+        }
+        conv2Calls += 1;
+        if (conv2Calls === 1) {
+          throw new ApiError(503, 'Temporary error', 'SERVICE_UNAVAILABLE', 'req-h2', [], true);
+        }
+        return {
+          items: [
+            {
+              id: 'm-c2-ok',
+              role: 'assistant',
+              content: 'Recovered Conv 2 history',
+              language: 'en',
+              created_at: '2026-11-24T09:00:00.000Z',
+            },
+          ],
+          meta: { limit: 20, next_cursor: null },
+        };
+      },
+    );
+
+    let resolveCreate!: (conv: ConversationDTO) => void;
+    mockCreateMentorConversation.mockImplementationOnce(
+      () =>
+        new Promise<ConversationDTO>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    const { rerender } = render(
+      <MentorChatView accessToken={jwtUserA1} aiMentorEnabled={true} />,
+    );
+
+    // 1. Load CONV_1 + older page
+    expect(await screen.findByText('Newest reply in thread')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Load older messages/i }));
+    expect(
+      await screen.findByText('Older question from yesterday'),
+    ).toBeInTheDocument();
+    const conv1FetchCountBefore = mockGetMentorHistory.mock.calls.filter(
+      (call) => (call[1] as { conversation_id: string }).conversation_id === CONV_1.id,
+    ).length;
+
+    // 2. Switch to CONV_2 -> fails -> Retry loading history -> recovers CONV_2
+    const sidebar = screen.getByRole('complementary', {
+      name: /Mentor conversations sidebar/i,
+    });
+    fireEvent.click(within(sidebar).getByRole('button', { name: /Career Switch Q&A/i }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Retry loading history/i }),
+    );
+    expect(
+      await screen.findByText('Recovered Conv 2 history'),
+    ).toBeInTheDocument();
+
+    // 3. Switch back to CONV_1 -> cached older page still intact, ZERO extra fetch
+    fireEvent.click(
+      within(sidebar).getByRole('button', { name: /Backend Focus Plan/i }),
+    );
+    expect(
+      await screen.findByText('Older question from yesterday'),
+    ).toBeInTheDocument();
+    const conv1FetchCountAfter = mockGetMentorHistory.mock.calls.filter(
+      (call) => (call[1] as { conversation_id: string }).conversation_id === CONV_1.id,
+    ).length;
+    expect(conv1FetchCountAfter).toBe(conv1FetchCountBefore);
+
+    // 4. Start creating a new conversation, refresh JWT for the SAME account mid-flight -> still selects created thread
+    fireEvent.click(
+      within(sidebar).getByRole('button', { name: /General Career Chat/i }),
+    );
+    rerender(<MentorChatView accessToken={jwtUserA2} aiMentorEnabled={true} />);
+
+    const createdFresh: ConversationDTO = {
+      id: '99999999-9999-4999-8999-999999999999',
+      context_type: 'general',
+      roadmap_id: null,
+      topic_id: null,
+      title: 'Refreshed Session Thread',
+      created_at: '2026-11-24T12:00:00.000Z',
+    };
+    await act(async () => {
+      resolveCreate(createdFresh);
+      await Promise.resolve();
+    });
+
+    expect(
+      await within(sidebar).findByText('Refreshed Session Thread'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Refreshed Session Thread' }),
+    ).toBeInTheDocument();
   });
 });

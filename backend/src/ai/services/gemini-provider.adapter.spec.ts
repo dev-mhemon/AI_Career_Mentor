@@ -280,7 +280,7 @@ describe('GeminiProviderAdapter', () => {
     // Study-claim handling behavioral instruction
     expect(instruction).toContain('"learning_claim_recorded": true');
     expect(instruction).toContain(
-      'completing a topic practice quiz verifies skill mastery (never claim progress or evidence was updated)',
+      'completing a topic practice quiz is one step toward skill mastery, which requires repeated practice results (never claim progress or evidence was updated)',
     );
     // Crisis / safety redirection behavioral instruction
     expect(instruction).toContain('"safety_mode": true');

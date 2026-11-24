@@ -125,6 +125,9 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
         sql.includes('AS used_count') &&
         sql.includes('FROM public.ai_requests')
       ) {
+        expect(sql).toContain(
+          "created_at > clock_timestamp() - interval '24 hours'",
+        );
         const userId = String(params[0]);
         const windowStartMs = currentClock().getTime() - 24 * 60 * 60 * 1_000;
         const count = activeAiRequests.filter(
@@ -197,6 +200,7 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
       }
 
       if (sql.includes('FROM public.conversations')) {
+        expect(sql).toMatch(/\buser_id\s*=\s*\$\d+/i);
         const [convId, ownerId] = params as [string, string];
         if (convId === CONV_ID && ownerId === USER_A) {
           return [
@@ -290,7 +294,8 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
 
       if (
         sql.includes('INSERT INTO public.messages') &&
-        sql.includes("'user'::public.message_role")
+        sql.includes("'user'::public.message_role") &&
+        !sql.includes("'assistant'::public.message_role")
       ) {
         const [convId, ownerId, content, language, clientId, retentionDays] =
           params as [
@@ -403,7 +408,18 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
         async (
           _uid: string | null,
           fn: (tx: { query: typeof queryFn }) => Promise<unknown>,
-        ) => fn({ query: queryFn }),
+        ) => {
+          const messagesSnapshot = [...storedMessages];
+          const aiRequestsSnapshot = activeAiRequests.map((r) => ({ ...r }));
+          try {
+            return await fn({ query: queryFn });
+          } catch (error) {
+            // Rollback uncommitted writes from the failed transaction while preserving prior committed Tx 1 rows
+            storedMessages = messagesSnapshot;
+            activeAiRequests = aiRequestsSnapshot;
+            throw error;
+          }
+        },
       ),
     } as unknown as DatabaseService;
 
@@ -537,6 +553,18 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
     expect(negatedClaim.learning_claim_recorded).toBe(false);
     expect(negatedClaim.safety_mode).toBe(false);
 
+    const conditionalClaim = await mentorService.sendMessage(
+      USER_A,
+      {
+        conversation_id: CONV_ID,
+        content: 'If I studied this, would I still need to take the quiz?',
+        client_message_id: randomUUID(),
+      },
+      { now: currentClock() },
+    );
+    expect(conditionalClaim.learning_claim_recorded).toBe(false);
+    expect(conditionalClaim.safety_mode).toBe(false);
+
     const bnClaim = await mentorService.sendMessage(
       USER_A,
       {
@@ -555,12 +583,12 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
     );
     for (const sql of writeSql) {
       expect(sql).not.toMatch(
-        /\b(learning_evidence|skill_progress|achievement_history|roadmap_items|daily_plan_items)\b/i,
+        /\b(learning_evidence|skill_progress|achievement_history|roadmaps|roadmap_items|daily_plans|daily_plan_items)\b/i,
       );
     }
   });
 
-  it('activates safety_mode on personal distress (English, curly apostrophe, Bangla) while keeping technical crisis-topic questions in career guidance', async () => {
+  it('activates safety_mode on personal distress (English, curly apostrophe, multi-clause, Bangla) while keeping technical crisis-topic questions in career guidance', async () => {
     const enDistress = await mentorService.sendMessage(
       USER_A,
       {
@@ -588,6 +616,18 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
     expect(curlyApostropheDistress.safety_mode).toBe(true);
     expect(curlyApostropheDistress.learning_claim_recorded).toBe(false);
 
+    const multiClauseDistress = await mentorService.sendMessage(
+      USER_A,
+      {
+        conversation_id: CONV_ID,
+        content:
+          "My capstone project is overwhelming. I'm having thoughts of suicide.",
+        client_message_id: randomUUID(),
+      },
+      { now: currentClock() },
+    );
+    expect(multiClauseDistress.safety_mode).toBe(true);
+
     const technicalCrisisTopic = await mentorService.sendMessage(
       USER_A,
       {
@@ -599,6 +639,18 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
     );
     expect(technicalCrisisTopic.safety_mode).toBe(false);
     expect(technicalCrisisTopic.learning_claim_recorded).toBe(false);
+
+    const technicalCrisisTopicBn = await mentorService.sendMessage(
+      USER_A,
+      {
+        conversation_id: CONV_ID,
+        content: 'আত্মহত্যা প্রতিরোধের জন্য একটি ডেটাসেট কীভাবে তৈরি করব?',
+        client_message_id: randomUUID(),
+      },
+      { now: currentClock() },
+    );
+    expect(technicalCrisisTopicBn.safety_mode).toBe(false);
+    expect(technicalCrisisTopicBn.assistant_message.language).toBe('bn');
 
     const bnDistress = await mentorService.sendMessage(
       USER_A,
@@ -643,6 +695,9 @@ describe('M10-B End-to-End Synthetic Mentor + AI Gateway Adversarial & Multiling
       { now: currentClock() },
     );
     expect(outOfScopeRes.safety_mode).toBe(false);
+    expect(outOfScopeRes.assistant_message.content).toMatch(
+      /focus exclusively on/i,
+    );
     expect(outOfScopeRes.assistant_message.content).toMatch(
       /technology-career|roadmap|career/i,
     );

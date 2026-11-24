@@ -254,12 +254,9 @@ export class EpisodicSummaryService {
   async maybeCompact(
     userId: string,
     conversationId: string,
-    now: Date = new Date(),
+    explicitNow?: Date,
   ): Promise<EpisodicCompactionResult> {
     try {
-      const messageCutoff =
-        this.privacyRetention.getMentorMessageCutoffDate(now);
-
       return await this.runTx(userId, async (tx) => {
         const convRows = await tx.query<LockedConversationRow[]>(
           `SELECT id,
@@ -275,6 +272,10 @@ export class EpisodicSummaryService {
         if (!conversation) {
           return { compacted: false, versionNo: null, compactedCount: 0 };
         }
+
+        const now = explicitNow ?? new Date();
+        const messageCutoff =
+          this.privacyRetention.getMentorMessageCutoffDate(now);
 
         const unsummarizedRows = await tx.query<UnsummarizedMessageRow[]>(
           `SELECT id,

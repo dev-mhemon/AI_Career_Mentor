@@ -70,6 +70,7 @@ describe('OutputValidatorService.validateMentorChat (C08 §6.2.7 & PRD §26/§36
     // Negated job-promise refusals (straight & curly apostrophes) and qualified guidance must be accepted
     for (const refusal of [
       'I cannot promise you a job, but I can help you build strong backend skills.',
+      'I cannot guarantee your employment, so let us focus on building solid projects.',
       "I can't guarantee you a job, so let's focus on verifiable projects and quizzes.",
       'I can\u2019t guarantee you a job, so let\u2019s focus on verifiable projects and quizzes.',
       'Practice can improve your chances of getting hired.',
@@ -90,6 +91,7 @@ describe('OutputValidatorService.validateMentorChat (C08 §6.2.7 & PRD §26/§36
     // Explicit clinical-role refusals & non-diagnostic referrals under safety_mode === true must be accepted
     for (const clinicalRefusal of [
       'I cannot act as your therapist. Please contact a qualified professional.',
+      'I cannot prescribe antidepressants or offer medical treatment. Please speak with a licensed doctor.',
       'I can\u2019t act as your therapist. Please reach out to a local crisis helpline.',
       'I am not your therapist, and I encourage you to reach out to a trusted person or crisis helpline.',
       'A licensed clinician can evaluate whether you have depression and guide safe support.',
@@ -153,6 +155,8 @@ describe('OutputValidatorService.validateMentorChat (C08 §6.2.7 & PRD §26/§36
       'Finish this module and you will be Job Ready in 2 weeks!',
       'We promise you a job once you complete this track.',
       'We guarantee you a software job after this roadmap.',
+      'We guarantee your employment after this roadmap.',
+      'I cannot promise you a job here, yet we guarantee your employment after phase 2.',
       'I cannot promise you a job here, yet we guarantee you a software job after phase 2.',
       'You will definitely get hired after this roadmap.',
       'You will definitely get a job after this roadmap.',
@@ -205,6 +209,7 @@ describe('OutputValidatorService.validateMentorChat (C08 §6.2.7 & PRD §26/§36
       'It sounds like you have depression.',
       'You have ADHD and should start treatment right away.',
       'Take 20 mg of fluoxetine every morning to feel calmer.',
+      'I cannot prescribe antidepressants, but take 20 mg of fluoxetine tonight.',
       'As your therapist, I recommend starting antidepressants immediately.',
       'আপনি ক্লিনিক্যাল ডিপ্রেশনে ভুগছেন এবং আপনার ১০ মি.গ্রা. ওষুধ খাওয়া উচিত।',
     ];
@@ -220,16 +225,20 @@ describe('OutputValidatorService.validateMentorChat (C08 §6.2.7 & PRD §26/§36
       );
     }
 
-    // Even when safety_mode is misflagged false, overt clinical diagnosis must be rejected.
-    expectValidationFailed(() =>
-      validator.validate('mentor_chat', 'mentor_chat.v1', {
-        content:
-          'Based on your symptoms, I diagnose you with generalized anxiety disorder.',
-        language: 'en',
-        safety_mode: false,
-        learning_claim_recorded: false,
-      }),
-    );
+    // Even when safety_mode is misflagged false, overt AND direct clinical diagnoses must be rejected.
+    for (const unflaggedDiagnosis of [
+      'Based on your symptoms, I diagnose you with generalized anxiety disorder.',
+      'You have bipolar disorder based on what you shared.',
+    ]) {
+      expectValidationFailed(() =>
+        validator.validate('mentor_chat', 'mentor_chat.v1', {
+          content: unflaggedDiagnosis,
+          language: 'en',
+          safety_mode: false,
+          learning_claim_recorded: false,
+        }),
+      );
+    }
   });
 
   it('rejects empty/oversized strings (including >16000 emoji code points), NUL bytes, unpaired surrogates, bad language enums, and non-boolean flags', () => {
