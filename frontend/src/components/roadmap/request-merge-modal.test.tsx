@@ -461,9 +461,11 @@ describe('RequestMergeModal', () => {
     const levelTab = screen.getByRole('tab', { name: 'Change Career Level' });
     expect(requestTab).toHaveAttribute('tabindex', '0');
     expect(levelTab).toHaveAttribute('tabindex', '-1');
+    requestTab.focus();
     fireEvent.keyDown(requestTab, { key: 'ArrowRight' });
     expect(levelTab).toHaveAttribute('aria-selected', 'true');
     expect(levelTab).toHaveAttribute('tabindex', '0');
+    expect(document.activeElement).toBe(levelTab);
 
     // Current level "Mid-Level" is excluded from selectable target buttons
     expect(

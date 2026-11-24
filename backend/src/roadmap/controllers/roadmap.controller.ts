@@ -46,7 +46,10 @@ import {
   type MergeUndoResponseDTO,
 } from '../dto/roadmap-merge.dto.js';
 import { RoadmapMergeService } from '../services/roadmap-merge.service.js';
-import { RoadmapService } from '../services/roadmap.service.js';
+import {
+  resolvePreferredLanguage,
+  RoadmapService,
+} from '../services/roadmap.service.js';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -670,6 +673,7 @@ export class RoadmapController {
           body: {
             payload: dto ?? null,
             if_match: ifMatch ?? null,
+            language: resolvePreferredLanguage(acceptLanguage),
           },
         },
         async (execCtx) => {

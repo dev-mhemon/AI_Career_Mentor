@@ -110,7 +110,6 @@ export class CreateMergeProposalDTO {
   instruction?: string;
 
   @ValidateIf((_object, value) => value !== undefined && value !== null)
-  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(PG_INT4_MAX)

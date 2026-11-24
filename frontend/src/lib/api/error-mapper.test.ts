@@ -516,7 +516,7 @@ describe("mapApiError", () => {
         status: 409,
         code: "MERGE_EXPANSION_ACK_REQUIRED",
         tone: "warning",
-        match: /materially expands.*acknowledgement/i,
+        match: /above the recommended topic limit.*acknowledgement/i,
       },
       {
         status: 422,

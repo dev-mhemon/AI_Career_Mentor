@@ -214,7 +214,7 @@ const SAFE_CODE_ERRORS: Readonly<
   },
   MERGE_EXPANSION_ACK_REQUIRED: {
     message:
-      'This merge materially expands your roadmap beyond the recommended topic limit. Confirm the acknowledgement checkbox before accepting.',
+      'The resulting roadmap is above the recommended topic limit. Confirm the acknowledgement checkbox before accepting this merge.',
     tone: 'warning',
     retryable: false,
   },

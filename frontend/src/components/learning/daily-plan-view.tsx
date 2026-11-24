@@ -472,6 +472,7 @@ export function DailyPlanView({
       return;
     }
     const gen = requestGenRef.current;
+    const startFocusSeq = focusMutationSeqRef.current;
     const captureKey = requestKey;
     loadMoreAbortRef.current?.abort();
     const controller = new AbortController();
@@ -491,6 +492,46 @@ export function DailyPlanView({
       );
       if (gen !== requestGenRef.current || controller.signal.aborted) {
         return;
+      }
+      if (startFocusSeq === focusMutationSeqRef.current) {
+        setFocusOverride((prev) => {
+          if (!prev || prev.token !== accessToken || prev.seq > startFocusSeq) {
+            return prev;
+          }
+          if (
+            page.plan.is_focus &&
+            prev.focusRoadmapId !== page.plan.roadmap_id
+          ) {
+            return {
+              token: accessToken,
+              focusRoadmapId: page.plan.roadmap_id,
+              seq: startFocusSeq,
+            };
+          }
+          if (
+            !page.plan.is_focus &&
+            prev.focusRoadmapId === page.plan.roadmap_id
+          ) {
+            return null;
+          }
+          return prev;
+        });
+        setLockedRoadmapsState((prev) => {
+          if (!prev || prev.token !== accessToken) {
+            return prev;
+          }
+          return {
+            token: prev.token,
+            items: prev.items.map((rm) => {
+              if (page.plan.is_focus) {
+                return { ...rm, is_focus: rm.id === page.plan.roadmap_id };
+              }
+              return rm.id === page.plan.roadmap_id
+                ? { ...rm, is_focus: false }
+                : rm;
+            }),
+          };
+        });
       }
       setFetchState((prev) => {
         const currentDays =

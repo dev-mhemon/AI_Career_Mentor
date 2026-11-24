@@ -1557,6 +1557,19 @@ export type UndoRoadmapMergeResultDTO = {
   status: 'undone';
 };
 
+function isValidPageMeta(raw: unknown): raw is PageMetaDTO {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return false;
+  }
+  const meta = raw as Record<string, unknown>;
+  return (
+    typeof meta.limit === 'number' &&
+    Number.isInteger(meta.limit) &&
+    meta.limit >= 1 &&
+    (meta.next_cursor === null || typeof meta.next_cursor === 'string')
+  );
+}
+
 function normalizePaginatedEnvelope<T>(
   envelope: ApiEnvelopeResult<T[] | { items: T[]; meta?: PageMetaDTO }>,
   defaultLimit = 20,
@@ -1565,20 +1578,26 @@ function normalizePaginatedEnvelope<T>(
   if (Array.isArray(payload)) {
     return {
       items: payload,
-      meta: envelope.meta ?? {
-        limit: defaultLimit,
-        next_cursor: null,
-      },
+      meta: isValidPageMeta(envelope.meta)
+        ? envelope.meta
+        : {
+            limit: defaultLimit,
+            next_cursor: null,
+          },
     };
   }
   if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
+    const resolvedMeta = isValidPageMeta(payload.meta)
+      ? payload.meta
+      : isValidPageMeta(envelope.meta)
+        ? envelope.meta
+        : {
+            limit: defaultLimit,
+            next_cursor: null,
+          };
     return {
       items: payload.items,
-      meta: payload.meta ??
-        envelope.meta ?? {
-          limit: defaultLimit,
-          next_cursor: null,
-        },
+      meta: resolvedMeta,
     };
   }
   return {
@@ -1846,7 +1865,13 @@ export async function getRoadmapMerge(
     typeof detail !== 'object' ||
     typeof detail.id !== 'string' ||
     detail.id.trim().length === 0 ||
-    !Array.isArray(detail.operations)
+    !Array.isArray(detail.operations) ||
+    !detail.size_impact ||
+    typeof detail.size_impact !== 'object' ||
+    Array.isArray(detail.size_impact) ||
+    !detail.daily_plan_impact ||
+    typeof detail.daily_plan_impact !== 'object' ||
+    Array.isArray(detail.daily_plan_impact)
   ) {
     throw new ApiError(
       502,

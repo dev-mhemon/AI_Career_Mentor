@@ -2054,6 +2054,21 @@ describe('M08 Quiz, Practice Review & Progress API client (EP-Q01..Q07, EP-PR01.
             roadmap_id: RM_ID,
             status: 'proposed',
             operations: [],
+            size_impact: {
+              active_topics_before: 10,
+              active_topics_after: 11,
+              before: 10,
+              after: 11,
+              delta: 1,
+              soft_limit: 45,
+              materially_large: false,
+              warning: null,
+            },
+            daily_plan_impact: {
+              has_active_plan: true,
+              completed_days_unchanged: 2,
+              future_days_affected: 3,
+            },
           },
         }),
     });

@@ -31,12 +31,9 @@ import {
   type MergeOrigin,
   type MergeSizeImpactDTO,
 } from '../dto/roadmap-merge.dto.js';
-import {
-  buildLegacyTopicSlug,
-  buildValidTopicSlug,
-} from './roadmap-job.handler.js';
+import { buildValidTopicSlug } from './roadmap-job.handler.js';
 
-export { buildLegacyTopicSlug, buildValidTopicSlug };
+export { buildValidTopicSlug };
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1135,9 +1132,10 @@ export class MergeProposalJobHandler implements JobHandler {
     const instructionOnlySkills = prioritizedSkills
       .filter((s) => !usedSkillIds.has(s.id))
       .slice(0, 30);
+    const trimmedApprovedSkills = [...usedSkills, ...instructionOnlySkills];
     nextContext = {
       ...nextContext,
-      approved_skills: [...usedSkills, ...instructionOnlySkills],
+      approved_skills: trimmedApprovedSkills,
     };
     if (
       this.estimateEnvelopeBytes(nextContext, language, untrustedInputs) <=
@@ -1148,7 +1146,7 @@ export class MergeProposalJobHandler implements JobHandler {
 
     // Final trimming pass: strip optional active_item metadata while preserving
     // required lineage_id, topic_id, skill_id, phase_no, sequence_no, priority,
-    // gap_type, and depends_on_lineage_ids.
+    // gap_type, depends_on_lineage_ids, and instruction-relevant approved_skills.
     const compactItems = context.roadmap.active_items.map((item) => ({
       ...item,
       phase_title: null,
@@ -1159,7 +1157,7 @@ export class MergeProposalJobHandler implements JobHandler {
     nextContext = {
       ...nextContext,
       evidence_summary: [],
-      approved_skills: usedSkills,
+      approved_skills: trimmedApprovedSkills,
       roadmap: {
         ...context.roadmap,
         active_items: compactItems,
@@ -1174,7 +1172,7 @@ export class MergeProposalJobHandler implements JobHandler {
 
     nextContext = {
       ...nextContext,
-      approved_skills: [],
+      approved_skills: trimmedApprovedSkills,
       roadmap: {
         ...context.roadmap,
         active_items: compactItems.map((item) => ({
@@ -1552,6 +1550,15 @@ export class MergeProposalJobHandler implements JobHandler {
           existing.career_level === effectiveLevel
         ) {
           const existingSkillId = String(existing.skill_id).toLowerCase();
+          if (suppliedSkillId && suppliedSkillId !== existingSkillId) {
+            fail(
+              502,
+              'AI_VALIDATION_FAILED',
+              'add_topic merge operation specifies a skill_id that conflicts with the referenced topic',
+              undefined,
+              true,
+            );
+          }
           const fastSkillRows = await tx.query<Array<{ id: string }>>(
             `SELECT id
                FROM public.skills
@@ -1607,11 +1614,13 @@ export class MergeProposalJobHandler implements JobHandler {
     const resolvedSkillId = String(skillRows[0].id).toLowerCase();
 
     // 3. If a non-UUID topic_id slug was supplied, look up that canonical slug first
+    const queriedSlugs = new Set<string>();
     const suppliedSlug =
       rawTopicId && !UUID_PATTERN.test(rawTopicId)
         ? buildValidTopicSlug(rawTopicId)
         : null;
     if (suppliedSlug) {
+      queriedSlugs.add(suppliedSlug);
       const bySuppliedSlugRows = await tx.query<
         Array<{ id: string; title?: string }>
       >(
@@ -1660,22 +1669,19 @@ export class MergeProposalJobHandler implements JobHandler {
     }
 
     let slug = buildValidTopicSlug(title);
-    const legacySlug = buildLegacyTopicSlug(title);
     let topicId: string | undefined;
-    if (slug !== suppliedSlug) {
-      const lookupSlugs = legacySlug === slug ? [slug] : [slug, legacySlug];
+    if (!queriedSlugs.has(slug)) {
+      queriedSlugs.add(slug);
       const bySlugRows = await tx.query<Array<{ id: string }>>(
         `SELECT id
            FROM public.topics
           WHERE skill_id = $1
-            AND slug = ANY($2::text[])
+            AND slug = $2
             AND career_level = $3::public.career_level
             AND deleted_at IS NULL
-          ORDER BY CASE WHEN slug = $4 THEN 0 ELSE 1 END,
-                   CASE status WHEN 'approved' THEN 0 ELSE 1 END,
-                   content_version DESC
+          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END, content_version DESC
           LIMIT 1`,
-        [resolvedSkillId, lookupSlugs, effectiveLevel, slug],
+        [resolvedSkillId, slug, effectiveLevel],
       );
       topicId =
         Array.isArray(bySlugRows) && bySlugRows[0]?.id
@@ -1990,11 +1996,15 @@ export class MergeProposalJobHandler implements JobHandler {
           op.payload.phase_no !== undefined && op.payload.phase_no !== null
             ? parseNumericScalar(op.payload.phase_no)
             : 1;
-        if (!Number.isInteger(rawPhaseNo) || rawPhaseNo < 1) {
+        if (
+          !Number.isInteger(rawPhaseNo) ||
+          rawPhaseNo < 1 ||
+          rawPhaseNo > 32_767
+        ) {
           fail(
             502,
             'AI_VALIDATION_FAILED',
-            'add_topic payload.phase_no must be a positive integer',
+            'add_topic payload.phase_no must be an integer between 1 and 32767',
             undefined,
             true,
           );

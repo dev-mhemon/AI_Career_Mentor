@@ -949,14 +949,16 @@ describe('MergeProposalJobHandler', () => {
 
   it('trims trailing hyphens after truncation in buildValidTopicSlug and deriveMergeTopicSlug', () => {
     const slugPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-    // 62 'a's + space + 'b' => hyphen lands at index 62 (63rd char) when sliced to 63
-    const titleBoundary = `${'a'.repeat(62)} b`;
-    const slug = buildValidTopicSlug(titleBoundary);
-    expect(slug.length).toBeLessThanOrEqual(63);
+    // 95 'a's + space + 'b' => hyphen lands at index 95 (96th char) when sliced to 96
+    const titleBoundary96 = `${'a'.repeat(95)} b`;
+    const slug = buildValidTopicSlug(titleBoundary96);
+    expect(slug.length).toBeLessThanOrEqual(96);
     expect(slug).toMatch(slugPattern);
     expect(slug.endsWith('-')).toBe(false);
 
-    const validatorSlug = deriveMergeTopicSlug(titleBoundary, 1);
+    // 62 'a's + space + 'b' => hyphen lands at index 62 (63rd char) when sliced to 63
+    const titleBoundary63 = `${'a'.repeat(62)} b`;
+    const validatorSlug = deriveMergeTopicSlug(titleBoundary63, 1);
     expect(validatorSlug.length).toBeLessThanOrEqual(63);
     expect(validatorSlug).toMatch(slugPattern);
     expect(validatorSlug.endsWith('-')).toBe(false);
@@ -964,10 +966,10 @@ describe('MergeProposalJobHandler', () => {
     // Non-ASCII fallback preserved
     expect(deriveMergeTopicSlug('বাংলা!!!', 3)).toBe('new-topic-3');
 
-    // 53 'a's + space + 'b' => hyphen lands at index 53 when sliced to 54 with disambiguator
-    const disambigBoundary = `${'a'.repeat(53)} b`;
+    // 79 'a's + space + 'b' => hyphen lands at index 79 when sliced to 80 with disambiguator
+    const disambigBoundary = `${'a'.repeat(79)} b`;
     const disambigSlug = buildValidTopicSlug(disambigBoundary, 'slot-2');
-    expect(disambigSlug.length).toBeLessThanOrEqual(63);
+    expect(disambigSlug.length).toBeLessThanOrEqual(89);
     expect(disambigSlug).toMatch(slugPattern);
     expect(disambigSlug.endsWith('-')).toBe(false);
   });
@@ -1683,8 +1685,9 @@ describe('MergeProposalJobHandler', () => {
     expect(insertedTopicParams[0]?.[3]).toBe('mid');
   });
 
-  it('strips reprioritize depends_on_lineage_ids, excludes earliest incomplete day from preview, rejects unapproved fast-path skills, and truncates surrogate-pair titles safely', async () => {
+  it('strips reprioritize depends_on_lineage_ids, excludes earliest incomplete day from preview, rejects unapproved or conflicting fast-path skills, and truncates surrogate-pair titles safely', async () => {
     const insertedItemPayloads: unknown[] = [];
+    const insertedItemTitles: unknown[] = [];
     const insertedMergeImpacts: unknown[] = [];
     const tx = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
@@ -1722,6 +1725,7 @@ describe('MergeProposalJobHandler', () => {
           return [[{ id: MERGE_ID }], 1];
         }
         if (sql.includes('INSERT INTO public.roadmap_merge_items')) {
+          insertedItemTitles.push(params?.[6]);
           insertedItemPayloads.push(JSON.parse(String(params?.[9] ?? '{}')));
           return [];
         }
@@ -1735,7 +1739,8 @@ describe('MergeProposalJobHandler', () => {
     );
 
     // 1. reprioritize with cyclic depends_on_lineage_ids is ignored/stripped (matching Accept),
-    //    and daily_plan_impact excludes earliest incomplete day (Day 2) so future_days_affected = 1.
+    //    daily_plan_impact excludes earliest incomplete day (Day 2) so future_days_affected = 1,
+    //    and surrogate-pair title truncates cleanly at 240 Unicode code points.
     const emojiTitle = `${'A'.repeat(239)}🚀tail`;
     await handler.persistArtifact(
       tx as unknown as JobQueryExecutor,
@@ -1763,11 +1768,82 @@ describe('MergeProposalJobHandler', () => {
         },
       }),
     );
+    expect(insertedItemTitles[0]).toBe(`${'A'.repeat(239)}🚀`);
     expect(insertedItemPayloads[0]).toEqual({});
     expect(insertedMergeImpacts[0]).toEqual({
       has_active_plan: true,
       completed_days_unchanged: 1,
       future_days_affected: 1,
+    });
+
+    // 2. Fast-path UUID topic with conflicting explicit payload.skill_id fails 502 AI_VALIDATION_FAILED
+    const DIRECT_TOPIC = '77777777-7777-4777-8777-777777777788';
+    const CONFLICT_SKILL = '88888888-8888-4888-8888-888888888877';
+    const txConflictSkill = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM public.users')) return [{ status: 'active' }];
+        if (sql.includes('FROM public.roadmaps')) {
+          return [
+            {
+              id: ROADMAP_ID,
+              status: 'locked',
+              target_level: 'mid',
+              current_version_id: VERSION_ID,
+            },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_versions')) {
+          return [{ id: VERSION_ID, version_no: 2 }];
+        }
+        if (sql.includes('FROM public.roadmap_merges')) return [];
+        if (sql.includes('FROM public.roadmap_items')) return makeBaseItems();
+        if (
+          sql.includes('FROM public.topics') &&
+          sql.includes('WHERE id = $1')
+        ) {
+          return [
+            {
+              id: DIRECT_TOPIC,
+              skill_id: SKILL_ID,
+              title: 'Distributed Locks',
+              career_level: 'mid',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.skills')) return [{ id: SKILL_ID }];
+        return [];
+      }),
+    };
+    await expect(
+      handler.persistArtifact(
+        txConflictSkill as unknown as JobQueryExecutor,
+        makeClaimedMergeJob(),
+        makeExecResult({
+          reason: 'Conflicting skill_id on direct topic reuse',
+          target_level: null,
+          operations: [
+            {
+              sort_order: 1,
+              op: 'add_topic',
+              lineage_id: null,
+              topic_id: DIRECT_TOPIC,
+              title: 'Distributed Locks',
+              priority: 'supporting',
+              reason: 'Should reject conflicting skill_id',
+              payload: { skill_id: CONFLICT_SKILL },
+            },
+          ],
+          size_impact: {
+            active_topics_before: 2,
+            active_topics_after: 3,
+            materially_large: false,
+            warning: null,
+          },
+        }),
+      ),
+    ).rejects.toSatisfy((err: unknown) => {
+      expectContractError(err, 502, 'AI_VALIDATION_FAILED');
+      return true;
     });
 
     // 2. Fast-path UUID topic with unapproved skill fails 502 AI_VALIDATION_FAILED

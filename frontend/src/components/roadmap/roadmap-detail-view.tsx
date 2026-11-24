@@ -743,11 +743,16 @@ export function RoadmapDetailView({
     null,
   );
   const undoModalOpen = undoModalVersionNo !== null;
-  const [undoing, setUndoing] = useState(false);
-
-  const [switchingFocus, setSwitchingFocus] = useState(false);
+  const scopeKey = `${accessToken}:${roadmapId}`;
+  const [undoingScope, setUndoingScope] = useState<string | null>(null);
+  const [switchingFocusScope, setSwitchingFocusScope] = useState<string | null>(
+    null,
+  );
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
-  const [archiving, setArchiving] = useState(false);
+  const [archivingScope, setArchivingScope] = useState<string | null>(null);
+  const undoing = undoingScope === scopeKey;
+  const switchingFocus = switchingFocusScope === scopeKey;
+  const archiving = archivingScope === scopeKey;
   const [actionError, setActionError] = useState<MappedError | null>(null);
   const [feedback, setFeedback] = useState<DetailFeedback>(null);
   const [archiveToast, setArchiveToast] = useState<ArchiveToast>(null);
@@ -1264,7 +1269,7 @@ export function RoadmapDetailView({
     const startScope = `${accessToken}:${roadmapId}`;
     const startRequestKey = requestKey;
     const startRoadmap = currentRoadmap;
-    setSwitchingFocus(true);
+    setSwitchingFocusScope(startScope);
     setActionError(null);
     setFeedback(null);
     try {
@@ -1312,8 +1317,8 @@ export function RoadmapDetailView({
       }
       setActionError(mapApiError(err));
     } finally {
-      if (mountedRef.current && scopeKeyRef.current === startScope) {
-        setSwitchingFocus(false);
+      if (mountedRef.current) {
+        setSwitchingFocusScope((prev) => (prev === startScope ? null : prev));
       }
     }
   };
@@ -1596,7 +1601,7 @@ export function RoadmapDetailView({
     }
     const startScope = `${accessToken}:${roadmapId}`;
     const expectedVersionNo = undoModalVersionNo ?? currentRoadmap.version_no;
-    setUndoing(true);
+    setUndoingScope(startScope);
     setActionError(null);
     setFeedback(null);
     try {
@@ -1620,12 +1625,17 @@ export function RoadmapDetailView({
       if (!mountedRef.current || scopeKeyRef.current !== startScope) {
         return;
       }
+      const mapped = mapApiError(err);
       setUndoModalVersionNo(null);
-      setActionError(mapApiError(err));
-      setMergesReloadTick((prev) => prev + 1);
+      setActionError(mapped);
+      if (mapped.code === 'STALE_VERSION') {
+        refreshAllAfterMergeMutation();
+      } else {
+        setMergesReloadTick((prev) => prev + 1);
+      }
     } finally {
-      if (mountedRef.current && scopeKeyRef.current === startScope) {
-        setUndoing(false);
+      if (mountedRef.current) {
+        setUndoingScope((prev) => (prev === startScope ? null : prev));
       }
     }
   };
@@ -1637,7 +1647,7 @@ export function RoadmapDetailView({
     const startScope = `${accessToken}:${roadmapId}`;
     const startRequestKey = requestKey;
     const startRoadmap = currentRoadmap;
-    setArchiving(true);
+    setArchivingScope(startScope);
     setActionError(null);
     setFeedback(null);
     setArchiveToast(null);
@@ -1692,8 +1702,8 @@ export function RoadmapDetailView({
       setActionError(mapApiError(err));
       setArchiveModalOpen(false);
     } finally {
-      if (mountedRef.current && scopeKeyRef.current === startScope) {
-        setArchiving(false);
+      if (mountedRef.current) {
+        setArchivingScope((prev) => (prev === startScope ? null : prev));
       }
     }
   };

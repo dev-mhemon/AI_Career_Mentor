@@ -3994,7 +3994,7 @@ paths:
             - STALE_VERSION
             - IDEMPOTENCY_KEY_REUSED
         '422':
-          description: INVALID_ENUM_VALUE, INVALID_FORMAT
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE, INVALID_FORMAT
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -4002,6 +4002,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes:
+            - VALIDATION_FAILED
+            - INVALID_ENUM_VALUE
+            - INVALID_FORMAT
         '429':
           description: RATE_LIMITED
           headers:
@@ -4192,11 +4196,12 @@ paths:
         C05 EP-R11 (POST /api/v1/roadmaps/{id}/merges/{merge_id}/accept). Atomically locks active daily_plans,
         roadmaps, roadmap_merges, and daily_plan_items in strict lock order (daily_plans -> roadmaps ->
         roadmap_merges -> daily_plan_items); validates required version precondition (If-Match and/or
-        base_version_no -> 409 STALE_VERSION) and unacknowledged large-expansion protection
-        (acknowledge_large_expansion: true -> 409 MERGE_EXPANSION_ACK_REQUIRED); writes a new immutable locked
-        roadmap_versions snapshot and chunked roadmap_items; supersedes the displaced version; closes any prior
-        accepted merge Undo window; updates target_level in-place on level_change without archiving or copying
-        lower-level Proficient mastery; reconciles future-only Daily Plan days preserving completed, in-progress,
+        base_version_no -> 409 STALE_VERSION; never bypassed by acknowledge_large_expansion) and unacknowledged
+        large-expansion protection (409 MERGE_EXPANSION_ACK_REQUIRED when materially large and
+        acknowledge_large_expansion is missing or false); writes a new immutable locked roadmap_versions
+        snapshot and chunked roadmap_items; supersedes the displaced version; closes any prior accepted merge
+        Undo window; updates target_level in-place on level_change without archiving or copying lower-level
+        Proficient mastery; reconciles future-only Daily Plan days preserving completed, in-progress,
         started-quiz, and earliest-incomplete (Today) days and ordering replacements by (phase_no, sequence_no);
         and stores an atomic undo_snapshot on the accepted merge.
       x-source: API-Specification.md sections 14.5, 15.5, 17.3; PRD sections 20, 21, 22; DMS M09
@@ -5017,8 +5022,9 @@ paths:
       summary: EP-Q03 Start Quiz Attempt (C05 §14.7, implemented M08-01)
       description: >
         Transitions an unsubmitted generated attempt to started (idempotent if already started),
-        sets daily_plan_items.status=in_progress, and closes any open roadmap-merge Undo window via
-        trg_quiz_attempts_close_undo. Gate: write (quiz_practice).
+        sets daily_plan_items.status=in_progress, and closes the open Undo window only for the roadmap
+        merge referenced by daily_plan_items.reconciled_by_merge_id via trg_quiz_attempts_close_undo
+        (leaving other merges unchanged). Gate: write (quiz_practice).
       tags:
         - Quizzes
       security:
@@ -8885,6 +8891,11 @@ components:
             origin:
               type: string
               enum: [user_request]
+            target_level:
+              type: string
+              enum: [junior, mid, senior, null]
+              nullable: true
+              description: Optional for user_request (ignored for level changes; must be a valid career level or null if provided).
             instruction:
               type: string
               minLength: 3

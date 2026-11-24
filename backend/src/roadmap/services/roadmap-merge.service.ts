@@ -71,6 +71,7 @@ interface MergeListRow {
   result_version_id?: string | null;
   target_level: CareerLevel | null;
   reason: string | null;
+  size_after?: number | string | null;
   materially_large: boolean;
   undo_snapshot?: unknown;
   undo_window_closed_at: Date | string | null;
@@ -881,6 +882,7 @@ export class RoadmapMergeService {
                   rm.result_version_id,
                   rm.target_level::text AS target_level,
                   rm.reason,
+                  rm.size_after,
                   rm.materially_large,
                   rm.undo_snapshot,
                   rm.undo_window_closed_at,
@@ -902,6 +904,16 @@ export class RoadmapMergeService {
         const rowList = Array.isArray(rows) ? rows : [];
         const hasMore = rowList.length > limit;
         const pageRows = hasMore ? rowList.slice(0, limit) : rowList;
+        const hasProposedRow = pageRows.some(
+          (row) => row.status === 'proposed',
+        );
+        const currentSoftLimit = hasProposedRow
+          ? await this.readBoundedConfigInteger(
+              db,
+              'roadmap.soft_size_max_topics',
+              DEFAULT_SOFT_SIZE_MAX_TOPICS,
+            )
+          : DEFAULT_SOFT_SIZE_MAX_TOPICS;
         const hasUndoCandidate =
           roadmap.status === 'locked' &&
           pageRows.some(
@@ -943,6 +955,16 @@ export class RoadmapMergeService {
               undoAvailable = false;
             }
           }
+          const rowSizeAfter =
+            row.size_after !== null && row.size_after !== undefined
+              ? Number(row.size_after)
+              : null;
+          const isMateriallyLarge =
+            Boolean(row.materially_large) ||
+            (row.status === 'proposed' &&
+              rowSizeAfter !== null &&
+              Number.isFinite(rowSizeAfter) &&
+              rowSizeAfter > currentSoftLimit);
           items.push({
             id: String(row.id),
             roadmap_id: String(row.roadmap_id),
@@ -951,7 +973,7 @@ export class RoadmapMergeService {
             base_version_no: Number(row.base_version_no),
             target_level: row.target_level ?? null,
             reason: row.reason ?? null,
-            materially_large: Boolean(row.materially_large),
+            materially_large: isMateriallyLarge,
             undo_available: undoAvailable,
             created_at: toIsoTimestamp(row.created_at),
             accepted_at: toNullableIsoTimestamp(row.accepted_at),
