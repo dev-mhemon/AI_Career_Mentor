@@ -600,6 +600,33 @@ describe("mapApiError", () => {
     expect(mentorDisabled.message).toMatch(/AI Mentor.*90-day/i);
     expect(mentorDisabled.message).not.toMatch(/roadmaps and progress/i);
   });
+
+  it("maps M11 technology_update FEATURE_DISABLED and RESOURCE_NOT_FOUND cleanly without roadmap/mentor copy", () => {
+    const rawInternalLeak = "google-gemini internal postgres detail stack trace";
+
+    const techDisabled = mapApiError(
+      new ApiError(403, rawInternalLeak, "FEATURE_DISABLED", "req-m11-1"),
+      { feature: "technology_update" },
+    );
+    expect(techDisabled.code).toBe("FEATURE_DISABLED");
+    expect(techDisabled.status).toBe(403);
+    expect(techDisabled.tone).toBe("info");
+    expect(techDisabled.retryable).toBe(false);
+    expect(techDisabled.message).toMatch(
+      /Daily Technology Updates are currently turned off/i,
+    );
+    expect(techDisabled.message).not.toMatch(/roadmap|mentor/i);
+
+    const techNotFound = mapApiError(
+      new ApiError(404, rawInternalLeak, "RESOURCE_NOT_FOUND", "req-m11-2"),
+      { feature: "technology_update" },
+    );
+    expect(techNotFound.code).toBe("RESOURCE_NOT_FOUND");
+    expect(techNotFound.status).toBe(404);
+    expect(techNotFound.tone).toBe("warning");
+    expect(techNotFound.retryable).toBe(false);
+    expect(techNotFound.message).toMatch(/technology update could not be found/i);
+  });
 });
 
 describe("mapActionResult", () => {

@@ -26,6 +26,7 @@ const PROTECTED_ROUTES = [
   "/profile",
   "/career-profile",
   "/mentor",
+  "/tech-updates",
   "/onboarding",
   "/settings",
 ];

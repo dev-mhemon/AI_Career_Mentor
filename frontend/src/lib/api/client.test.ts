@@ -72,6 +72,9 @@ import {
   listMentorConversations,
   sendMentorMessage,
   getMentorHistory,
+  listTechnologyUpdates,
+  getTechnologyUpdate,
+  markTechnologyUpdateViewed,
   isJobAcceptedDTO,
   type DailyPlanResponseDTO,
   type JobKind,
@@ -2508,6 +2511,177 @@ describe('M10 Mentor API Client (EP-M01 through EP-M04)', () => {
     expect(convFallback).toEqual({
       items: [MOCK_CONVERSATION],
       meta: { limit: 12, next_cursor: null },
+    });
+  });
+});
+
+describe('M11 Technology Intelligence API client (EP-T01..EP-T03)', () => {
+  const MOCK_TOKEN = 'test-access-token';
+  const UPDATE_ID = '11111111-1111-4111-8111-111111111111';
+  const MOCK_UPDATE = {
+    id: UPDATE_ID,
+    local_date: '2026-11-24',
+    title: 'PostgreSQL 17.2 Vacuum Memory Improvements',
+    what_changed: 'Added TidStore for vacuum memory efficiency.',
+    why_it_matters: 'Improves high-churn Backend table maintenance.',
+    publisher: 'PostgreSQL Global Development Group',
+    source_url: 'https://www.postgresql.org/docs/release/17.2/',
+    fetched_at: '2026-11-24T06:15:00.000Z',
+    release_status: 'released' as const,
+    relevance: 'high' as const,
+    action_timing: 'learn_later' as const,
+    roadmap_relation: 'Relates to Backend Database Operations.',
+    viewed: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls EP-T01 listTechnologyUpdates, EP-T02 getTechnologyUpdate, and EP-T03 markTechnologyUpdateViewed with exact URLs and methods', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            today_state: 'available',
+            generation_pending: false,
+            message: null,
+            items: [MOCK_UPDATE],
+          },
+          meta: { limit: 10, next_cursor: 'tech-cur-2' },
+        }),
+    });
+
+    const listRes = await listTechnologyUpdates(MOCK_TOKEN, {
+      limit: 10,
+      cursor: 'tech-cur-1',
+    });
+    expect(listRes).toEqual({
+      data: {
+        today_state: 'available',
+        generation_pending: false,
+        message: null,
+        items: [MOCK_UPDATE],
+      },
+      meta: { limit: 10, next_cursor: 'tech-cur-2' },
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      'http://localhost:3000/api/v1/technology-updates?limit=10&cursor=tech-cur-1',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: MOCK_UPDATE,
+        }),
+    });
+
+    const detailRes = await getTechnologyUpdate(MOCK_TOKEN, UPDATE_ID);
+    expect(detailRes).toEqual(MOCK_UPDATE);
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/technology-updates/${UPDATE_ID}`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            id: UPDATE_ID,
+            viewed: true,
+            viewed_at: '2026-11-24T09:00:00.000Z',
+          },
+        }),
+    });
+
+    const viewRes = await markTechnologyUpdateViewed(MOCK_TOKEN, UPDATE_ID);
+    expect(viewRes).toEqual({
+      id: UPDATE_ID,
+      viewed: true,
+      viewed_at: '2026-11-24T09:00:00.000Z',
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/technology-updates/${UPDATE_ID}/view`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+  });
+
+  it('rejects malformed EP-T01..EP-T03 payloads with ApiError(502, INVALID_RESPONSE)', async () => {
+    // Malformed EP-T01 invalid today_state
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            today_state: 'unknown_state',
+            generation_pending: false,
+            message: null,
+            items: [],
+          },
+        }),
+    });
+    await expect(listTechnologyUpdates(MOCK_TOKEN)).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+
+    // Malformed EP-T02 missing required fields
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { id: UPDATE_ID, title: 'Incomplete' },
+        }),
+    });
+    await expect(
+      getTechnologyUpdate(MOCK_TOKEN, UPDATE_ID),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+
+    // Malformed EP-T03 viewed !== true
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { id: UPDATE_ID, viewed: false, viewed_at: '' },
+        }),
+    });
+    await expect(
+      markTechnologyUpdateViewed(MOCK_TOKEN, UPDATE_ID),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
     });
   });
 });

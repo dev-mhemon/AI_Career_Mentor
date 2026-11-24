@@ -1,18 +1,31 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import type { TopicImportantQuestionDTO } from '@/lib/api/client';
+import type {
+  TechnologyUpdateDTO,
+  TopicImportantQuestionDTO,
+} from '@/lib/api/client';
+import { TechUpdateCard } from '@/components/tech-updates/tech-update-card';
 import { cn } from '@/components/ui/cn';
 import { BookOpenIcon, ChevronDownIcon } from '@/components/ui/icons';
 
-export interface AIExplanationCardProps {
-  title: string;
-  explanationMarkdown: string | null;
-  importantQuestions: readonly TopicImportantQuestionDTO[];
+export type AIExplanationCardProps = {
+  variant?: 'topic_explanation' | 'technology_update';
+  title?: string;
+  explanationMarkdown?: string | null;
+  importantQuestions?: readonly TopicImportantQuestionDTO[];
   contentVersion?: number;
   requiredDepth?: string;
+  update?: TechnologyUpdateDTO;
+  isTodayHighlight?: boolean;
+  isMarkingViewed?: boolean;
+  onInspectDetail?: (
+    update: TechnologyUpdateDTO,
+    triggerEl: HTMLButtonElement | null,
+  ) => void;
+  onMarkViewed?: (update: TechnologyUpdateDTO) => void;
   className?: string;
-}
+};
 
 type MarkdownBlock =
   | { type: 'heading'; level: 1 | 2 | 3; text: string }
@@ -246,16 +259,35 @@ function MarkdownContent({
  * plus collapsible self-check Q&A (`important_questions`). Never displays internal provider/model info.
  */
 export function AIExplanationCard({
-  title,
-  explanationMarkdown,
-  importantQuestions,
+  variant = 'topic_explanation',
+  title = '',
+  explanationMarkdown = null,
+  importantQuestions = [],
   contentVersion,
   requiredDepth,
+  update,
+  isTodayHighlight,
+  isMarkingViewed,
+  onInspectDetail,
+  onMarkViewed,
   className,
 }: AIExplanationCardProps) {
   const [expandedIndices, setExpandedIndices] = useState<ReadonlySet<number>>(
     () => new Set(),
   );
+
+  if (variant === 'technology_update' && update) {
+    return (
+      <TechUpdateCard
+        update={update}
+        isTodayHighlight={isTodayHighlight}
+        isMarkingViewed={isMarkingViewed}
+        onInspectDetail={onInspectDetail}
+        onMarkViewed={onMarkViewed}
+        className={className}
+      />
+    );
+  }
 
   const toggleQuestion = (index: number) => {
     setExpandedIndices((prev) => {

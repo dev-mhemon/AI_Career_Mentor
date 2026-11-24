@@ -17,6 +17,7 @@ const {
   mockListRoadmaps,
   mockFocusRoadmap,
   mockGetProgress,
+  mockListTechnologyUpdates,
   mockGetUser,
   mockGetSession,
 } = vi.hoisted(() => ({
@@ -32,6 +33,7 @@ const {
   mockListRoadmaps: vi.fn(),
   mockFocusRoadmap: vi.fn(),
   mockGetProgress: vi.fn(),
+  mockListTechnologyUpdates: vi.fn(),
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
 }));
@@ -62,6 +64,7 @@ vi.mock('@/lib/api/client', async (importOriginal) => {
     listRoadmaps: mockListRoadmaps,
     focusRoadmap: mockFocusRoadmap,
     getProgress: mockGetProgress,
+    listTechnologyUpdates: mockListTechnologyUpdates,
   };
 });
 
@@ -971,5 +974,138 @@ describe('DashboardPage', () => {
         within(heroCard).getByText(/Choose a Focus Roadmap/i),
       ).toBeInTheDocument();
     });
+  });
+
+  it('N01: omits technology update preview card and makes ZERO listTechnologyUpdates calls when effective_access.technology_update === false', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-tech-off' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [{ id: 'g-1', status: 'confirmed' }],
+      meta: { limit: 100, next_cursor: null },
+    });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          id: 'user-1',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          verified_contact: true,
+          linked_providers: ['email'],
+        },
+        profile_complete: true,
+        effective_access: {
+          roadmap_generator: true,
+          daily_plan: true,
+          ai_mentor: true,
+          technology_update: false,
+        },
+        focus_roadmap_id: null,
+        can_delete_account: true,
+      },
+    });
+
+    const page = await DashboardPage();
+    render(
+      <AppShellProvider>
+        <AppShell>{page}</AppShell>
+      </AppShellProvider>,
+    );
+
+    expect(
+      screen.queryByRole('article', {
+        name: /Daily technology update preview/i,
+      }),
+    ).not.toBeInTheDocument();
+    expect(mockListTechnologyUpdates).not.toHaveBeenCalled();
+  });
+
+  it('N01: renders card-local technology update preview when effective_access.technology_update === true without blocking Dashboard', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'tok-tech-on' } },
+    });
+    mockListCareerGoals.mockResolvedValue({
+      items: [{ id: 'g-1', status: 'confirmed' }],
+      meta: { limit: 100, next_cursor: null },
+    });
+    mockListTechnologyUpdates.mockResolvedValueOnce({
+      data: {
+        today_state: 'available',
+        generation_pending: false,
+        message: null,
+        items: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            local_date: '2026-11-24',
+            title: 'PostgreSQL 17.2 Vacuum Memory Improvements',
+            what_changed: 'Added TidStore for vacuum memory efficiency.',
+            why_it_matters: 'Improves high-churn Backend table maintenance.',
+            publisher: 'PostgreSQL Global Development Group',
+            source_url: 'https://www.postgresql.org/docs/release/17.2/',
+            fetched_at: '2026-11-24T06:15:00.000Z',
+            release_status: 'released',
+            relevance: 'high',
+            action_timing: 'learn_later',
+            roadmap_relation: 'Relates to Backend Database Operations.',
+            viewed: false,
+          },
+        ],
+      },
+      meta: { limit: 1, next_cursor: null },
+    });
+    mockGetAppSessionStateResult.mockResolvedValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          id: 'user-1',
+          email: 'mehedi@example.com',
+          phone: null,
+          role: 'USER',
+          status: 'active',
+          verified_contact: true,
+          linked_providers: ['email'],
+        },
+        profile_complete: true,
+        effective_access: {
+          roadmap_generator: true,
+          daily_plan: true,
+          ai_mentor: true,
+          technology_update: true,
+        },
+        focus_roadmap_id: null,
+        can_delete_account: true,
+      },
+    });
+
+    const page = await DashboardPage();
+    render(
+      <AppShellProvider>
+        <AppShell>{page}</AppShell>
+      </AppShellProvider>,
+    );
+
+    const previewCard = screen.getByRole('article', {
+      name: /Daily technology update preview/i,
+    });
+    expect(
+      await within(previewCard).findByText(
+        'PostgreSQL 17.2 Vacuum Memory Improvements',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(previewCard).getByText(
+        'Improves high-churn Backend table maintenance.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(previewCard).getByRole('link', { name: /Open Tech Updates/i }),
+    ).toHaveAttribute('href', '/tech-updates');
+    expect(mockListTechnologyUpdates).toHaveBeenCalledWith(
+      'tok-tech-on',
+      expect.objectContaining({ limit: 1 }),
+    );
   });
 });

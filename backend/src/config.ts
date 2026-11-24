@@ -184,6 +184,15 @@ export interface GeminiProviderConfiguration {
   timeoutMs: number;
 }
 
+export type TechnologyUpdateSourceMode = 'synthetic' | 'live';
+
+export interface TechnologyUpdateConfiguration {
+  schedulerEnabled: boolean;
+  concurrency: number;
+  externalTimeoutMs: number;
+  sourceMode: TechnologyUpdateSourceMode;
+}
+
 type ConfigLookup =
   | Record<string, unknown>
   | { get<T = unknown>(propertyPath: string): T | undefined };
@@ -340,6 +349,74 @@ export function readGeminiProviderConfiguration(
   };
 }
 
+/**
+ * Reads and validates Technology Update hourly scheduler operating defaults (`R25`).
+ * Defaults: `schedulerEnabled = false`, `concurrency = 2` (`1..2` max pinned connections per instance),
+ * `externalTimeoutMs = 60_000` (`60s` external deadline), `sourceMode = 'synthetic'`.
+ */
+export function readTechnologyUpdateConfiguration(
+  source: ConfigLookup,
+): TechnologyUpdateConfiguration {
+  const rawEnabled = getConfigValue(source, 'TECH_UPDATE_SCHEDULER_ENABLED');
+  let schedulerEnabled = false;
+  if (rawEnabled !== undefined && rawEnabled !== null) {
+    if (typeof rawEnabled === 'boolean') {
+      schedulerEnabled = rawEnabled;
+    } else if (typeof rawEnabled === 'string') {
+      const trimmed = rawEnabled.trim().toLowerCase();
+      if (trimmed !== '') {
+        if (trimmed === 'true') {
+          schedulerEnabled = true;
+        } else if (trimmed === 'false') {
+          schedulerEnabled = false;
+        } else {
+          throw new Error('Invalid TECH_UPDATE_SCHEDULER_ENABLED');
+        }
+      }
+    } else {
+      throw new Error('Invalid TECH_UPDATE_SCHEDULER_ENABLED');
+    }
+  }
+
+  const concurrency = readBoundedPositiveInteger(
+    getConfigValue(source, 'TECH_UPDATE_CONCURRENCY'),
+    'TECH_UPDATE_CONCURRENCY',
+    2,
+    1,
+    2,
+  );
+
+  const externalTimeoutMs = readBoundedPositiveInteger(
+    getConfigValue(source, 'TECH_UPDATE_EXTERNAL_TIMEOUT_MS'),
+    'TECH_UPDATE_EXTERNAL_TIMEOUT_MS',
+    60_000,
+    1_000,
+    120_000,
+  );
+
+  const rawSourceMode = getConfigValue(source, 'TECH_UPDATE_SOURCE_MODE');
+  let sourceMode: TechnologyUpdateSourceMode = 'synthetic';
+  if (rawSourceMode !== undefined && rawSourceMode !== null) {
+    if (typeof rawSourceMode !== 'string') {
+      throw new Error('Invalid TECH_UPDATE_SOURCE_MODE');
+    }
+    const trimmed = rawSourceMode.trim();
+    if (trimmed !== '') {
+      if (trimmed !== 'synthetic' && trimmed !== 'live') {
+        throw new Error('Invalid TECH_UPDATE_SOURCE_MODE');
+      }
+      sourceMode = trimmed;
+    }
+  }
+
+  return {
+    schedulerEnabled,
+    concurrency,
+    externalTimeoutMs,
+    sourceMode,
+  };
+}
+
 /** Startup validation for the current foundation configuration; no secret is echoed. */
 export function validateConfiguration(raw: Record<string, unknown>) {
   const required = [
@@ -471,6 +548,7 @@ export function validateConfiguration(raw: Record<string, unknown>) {
   readJobWorkerConfiguration(raw);
   readAiGatewayConfiguration(raw);
   readGeminiProviderConfiguration(raw);
+  readTechnologyUpdateConfiguration(raw);
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;
 }

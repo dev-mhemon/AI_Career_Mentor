@@ -1,6 +1,7 @@
 import {
   readAiGatewayConfiguration,
   readJobWorkerConfiguration,
+  readTechnologyUpdateConfiguration,
   validateConfiguration,
 } from './config.js';
 import { readIdempotencyConfiguration } from './jobs/services/idempotency.service.js';
@@ -591,5 +592,56 @@ describe('Public runtime key boundary', () => {
         AI_EXECUTION_MODE: 'free_tier',
       }),
     ).toThrow('Invalid AI_EXECUTION_MODE');
+  });
+
+  it('validates R25 technology update scheduler configuration keys and defaults', () => {
+    expect(readTechnologyUpdateConfiguration({})).toEqual({
+      schedulerEnabled: false,
+      concurrency: 2,
+      externalTimeoutMs: 60_000,
+      sourceMode: 'synthetic',
+    });
+
+    expect(
+      readTechnologyUpdateConfiguration({
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        TECH_UPDATE_CONCURRENCY: '1',
+        TECH_UPDATE_EXTERNAL_TIMEOUT_MS: '45000',
+        TECH_UPDATE_SOURCE_MODE: 'live',
+      }),
+    ).toEqual({
+      schedulerEnabled: true,
+      concurrency: 1,
+      externalTimeoutMs: 45_000,
+      sourceMode: 'live',
+    });
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_SCHEDULER_ENABLED: 'maybe',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_SCHEDULER_ENABLED');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_CONCURRENCY: '3',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_CONCURRENCY');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_EXTERNAL_TIMEOUT_MS: '500',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_EXTERNAL_TIMEOUT_MS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_SOURCE_MODE: 'stale_model',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_SOURCE_MODE');
   });
 });

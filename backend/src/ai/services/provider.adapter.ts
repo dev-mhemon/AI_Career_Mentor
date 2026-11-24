@@ -841,7 +841,47 @@ export function buildSyntheticMentorChat(
   };
 }
 
-function buildSyntheticTechnologyUpdate(): TechnologyUpdateOutput {
+function buildSyntheticTechnologyUpdate(
+  language: UiLanguage = 'en',
+  userEnvelope = '',
+): TechnologyUpdateOutput {
+  if (
+    /\b(?:no_important_changes|no_meaningful_update|empty_feed)\b/i.test(
+      userEnvelope,
+    )
+  ) {
+    return {
+      has_meaningful_update: false,
+      title: null,
+      what_changed: null,
+      why_it_matters: null,
+      publisher: null,
+      source_url: null,
+      release_status: null,
+      relevance: null,
+      action_timing: null,
+      roadmap_relation: null,
+      propose_roadmap_merge: false,
+    };
+  }
+  if (language === 'bn') {
+    return {
+      has_meaningful_update: true,
+      title: 'PostgreSQL 17 পারফরম্যান্স ও ভ্যাকুয়াম মেমরি উন্নয়ন',
+      what_changed:
+        'PostgreSQL 17 রিলিজে নতুন মেমরি-সাশ্রয়ী ভ্যাকুয়াম স্ট্রাকচার এবং উন্নত ক্যোয়ারী প্ল্যানিং যুক্ত হয়েছে।',
+      why_it_matters:
+        'উচ্চ-ট্রাফিক ব্যাকএন্ড ডাটাবেস টেবিলে ইনডেক্স ব্লোট কমাতে এবং ক্যোয়ারী ল্যাটেন্সি উন্নত করতে এটি সরাসরি সহায়ক।',
+      publisher: 'PostgreSQL Release Team',
+      source_url: 'https://www.postgresql.org/docs/release/',
+      release_status: 'released',
+      relevance: 'high',
+      action_timing: 'learn_later',
+      roadmap_relation:
+        'আপনার ফোকাস রোডম্যাপের Backend Database Operations টপিকের সাথে সম্পর্কিত।',
+      propose_roadmap_merge: false,
+    };
+  }
   return {
     has_meaningful_update: true,
     title: 'PostgreSQL 17 Performance Improvements',
@@ -879,7 +919,7 @@ export function buildSyntheticTaskOutput(
     case 'mentor_chat':
       return buildSyntheticMentorChat(language, userEnvelope);
     case 'technology_update':
-      return buildSyntheticTechnologyUpdate();
+      return buildSyntheticTechnologyUpdate(language, userEnvelope);
   }
 }
 

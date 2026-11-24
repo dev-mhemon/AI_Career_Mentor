@@ -10,6 +10,7 @@ import {
   CompassIcon,
   LayoutDashboardIcon,
   LockIcon,
+  RadioIcon,
   SettingsIcon,
   SidebarToggleIcon,
   TargetIcon,
@@ -63,6 +64,12 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         href: '/mentor',
         label: 'AI Mentor',
         icon: BotIcon,
+        lockedWhenSuspended: true,
+      },
+      {
+        href: '/tech-updates',
+        label: 'Tech Updates',
+        icon: RadioIcon,
         lockedWhenSuspended: true,
       },
       {
