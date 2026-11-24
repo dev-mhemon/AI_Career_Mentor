@@ -1461,6 +1461,42 @@ describe('RoadmapService (EP-R01–EP-R07, EP-R14, EP-R15)', () => {
       });
     });
 
+    it('EP-R15 supersedes open merge proposals and closes open Undo windows without deleting history', async () => {
+      const executed: string[] = [];
+      queryMock.mockImplementation(async (sql: string) => {
+        executed.push(sql);
+        if (
+          sql.includes('FROM public.roadmaps') &&
+          sql.includes('id = $2') &&
+          sql.includes('FOR UPDATE')
+        ) {
+          return [
+            {
+              id: ROADMAP_ID,
+              career_goal_id: GOAL_ID,
+              status: 'locked',
+              is_focus: false,
+            },
+          ];
+        }
+        return [];
+      });
+      await service.archiveRoadmap(USER_ID, ROADMAP_ID);
+      const archiveIdx = executed.findIndex((s) =>
+        s.includes("status = 'archived'"),
+      );
+      const supersedeIdx = executed.findIndex((s) =>
+        s.includes("SET status = 'superseded'::public.merge_status"),
+      );
+      const closeIdx = executed.findIndex((s) =>
+        s.includes('SET undo_window_closed_at = clock_timestamp()'),
+      );
+      expect(archiveIdx).toBeGreaterThanOrEqual(0);
+      expect(supersedeIdx).toBeGreaterThan(archiveIdx);
+      expect(closeIdx).toBeGreaterThan(archiveIdx);
+      expect(executed.some((s) => s.includes('DELETE FROM'))).toBe(false);
+    });
+
     it('EP-R15 archives target (is_focus = false first) before deterministic promotion and preserves history', async () => {
       const mutationOrder: string[] = [];
 

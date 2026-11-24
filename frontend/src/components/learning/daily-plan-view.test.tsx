@@ -11,6 +11,7 @@ import {
 import {
   ApiError,
   createDailyPlan,
+  focusRoadmap,
   getDailyPlan,
   listRoadmaps,
   rebuildDailyPlan,
@@ -29,6 +30,7 @@ vi.mock('@/lib/api/client', async () => {
     listRoadmaps: vi.fn(),
     createDailyPlan: vi.fn(),
     rebuildDailyPlan: vi.fn(),
+    focusRoadmap: vi.fn(),
   };
 });
 
@@ -108,6 +110,7 @@ describe('DailyPlanView', () => {
     vi.mocked(listRoadmaps).mockReset();
     vi.mocked(createDailyPlan).mockReset();
     vi.mocked(rebuildDailyPlan).mockReset();
+    vi.mocked(focusRoadmap).mockReset();
   });
 
   afterEach(() => {
@@ -588,5 +591,110 @@ describe('DailyPlanView', () => {
     expect(
       await screen.findByRole('button', { name: /Retry Refresh/i }),
     ).toBeInTheDocument();
+  });
+
+  it('sorts the Focus roadmap tab first and switches Focus via "Set as Focus to Study" (EP-R14) on non-Focus Day 1', async () => {
+    // API returns non-Focus roadmaps before Focus roadmap
+    vi.mocked(listRoadmaps).mockResolvedValueOnce({
+      items: [
+        makeRoadmapSummary({
+          id: 'rm-non-focus',
+          role_name: 'Platform Engineer',
+          is_focus: false,
+        }),
+        makeRoadmapSummary({
+          id: 'rm-focus',
+          role_name: 'Backend Engineer',
+          is_focus: true,
+        }),
+        makeRoadmapSummary({
+          id: 'rm-third',
+          role_name: 'Data Engineer',
+          is_focus: false,
+        }),
+      ],
+      meta: { limit: 50, next_cursor: null },
+    });
+
+    vi.mocked(getDailyPlan)
+      .mockResolvedValueOnce({
+        plan: makePlan({ roadmap_id: 'rm-focus', is_focus: true }),
+        meta: { limit: 20, next_cursor: null },
+      })
+      .mockResolvedValueOnce({
+        plan: makePlan({
+          plan_id: 'plan-non-focus',
+          roadmap_id: 'rm-non-focus',
+          is_focus: false,
+          total_days: 2,
+          completed_days: 0,
+          next_incomplete_day_no: 1,
+          days: [
+            {
+              day_no: 1,
+              status: 'pending',
+              completed_at: null,
+              topics: [
+                {
+                  plan_item_id: 'pi-k8s',
+                  topic_id: 'top-k8s',
+                  title: 'Kubernetes Control Plane',
+                },
+              ],
+            },
+          ],
+        }),
+        meta: { limit: 20, next_cursor: null },
+      });
+
+    vi.mocked(focusRoadmap).mockResolvedValueOnce({
+      focus_roadmap_id: 'rm-non-focus',
+      daily_plan: {
+        state: 'existing',
+        plan_id: 'plan-non-focus',
+        requires_learning_hours: false,
+      },
+    });
+
+    render(<DailyPlanView accessToken="token-1" />);
+
+    expect(
+      await screen.findByText('Transactional Outbox Pattern'),
+    ).toBeInTheDocument();
+
+    // Focus roadmap MUST render as the 1st tab on the left; non-Focus preserve relative order
+    expect(screen.getByText('Roadmaps')).toBeInTheDocument();
+    expect(screen.getByTestId('segmented-tabs-indicator')).toBeInTheDocument();
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      'Backend EngineerFocus',
+      'Platform Engineer',
+      'Data Engineer',
+    ]);
+
+    // Switch to non-Focus roadmap -> Day 1 renders Primary "Set as Focus to Study" CTA
+    fireEvent.click(tabs[1]);
+    expect(
+      await screen.findByText('Kubernetes Control Plane'),
+    ).toBeInTheDocument();
+    const setFocusBtn = screen.getByRole('button', {
+      name: 'Set as Focus to Study',
+    });
+    expect(setFocusBtn).toBeInTheDocument();
+    expect(setFocusBtn).toHaveClass('bg-teal-600', 'text-white', 'shadow-sm');
+    expect(setFocusBtn.querySelector('svg')).toHaveClass('block', 'shrink-0');
+
+    fireEvent.click(setFocusBtn);
+
+    await waitFor(() => {
+      expect(focusRoadmap).toHaveBeenCalledWith('token-1', 'rm-non-focus');
+    });
+
+    // After switching Focus, Platform Engineer moves to 1st tab with Focus pill and Day 1 becomes "Study Day 1" -> /today
+    const updatedTabs = screen.getAllByRole('tab');
+    expect(updatedTabs[0].textContent).toBe('Platform EngineerFocus');
+    expect(
+      screen.getByRole('link', { name: /Study Day 1/i }),
+    ).toHaveAttribute('href', '/today');
   });
 });

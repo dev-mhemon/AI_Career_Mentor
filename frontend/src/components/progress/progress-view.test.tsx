@@ -200,6 +200,8 @@ describe('ProgressView (Screen 19 — EP-G01, EP-G02, EP-G03, tabs, filters & Sk
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
 
     // Keyboard arrow navigation across tabs: Overview -> Shared Skills -> Weak Areas -> History
+    expect(screen.getByText('Progress Views')).toBeInTheDocument();
+    expect(screen.getByTestId('segmented-tabs-indicator')).toBeInTheDocument();
     const overviewTab = screen.getByRole('tab', { name: /Overview/i });
     fireEvent.keyDown(overviewTab, { key: 'ArrowRight' });
     expect(

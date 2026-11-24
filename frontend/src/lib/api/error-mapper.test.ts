@@ -491,6 +491,79 @@ describe("mapApiError", () => {
       expect(mapped.message).not.toContain("stack trace");
     }
   });
+
+  it("maps M09 merge, level-change, and undo error codes cleanly with zero internal leaks", () => {
+    const rawInternalLeak = "google-gemini internal postgres detail stack trace";
+    const cases: Array<{
+      status: number;
+      code: string;
+      tone: "error" | "warning" | "info";
+      match: RegExp;
+    }> = [
+      {
+        status: 409,
+        code: "MERGE_ALREADY_PROPOSED",
+        tone: "warning",
+        match: /merge proposal is already open/i,
+      },
+      {
+        status: 409,
+        code: "MERGE_NOT_PENDING",
+        tone: "warning",
+        match: /no longer pending/i,
+      },
+      {
+        status: 409,
+        code: "MERGE_EXPANSION_ACK_REQUIRED",
+        tone: "warning",
+        match: /above the recommended topic limit.*acknowledgement/i,
+      },
+      {
+        status: 422,
+        code: "LEVEL_UNCHANGED",
+        tone: "warning",
+        match: /different.*target level/i,
+      },
+      {
+        status: 409,
+        code: "UNDO_NOT_AVAILABLE",
+        tone: "info",
+        match: /undo is no longer available/i,
+      },
+      {
+        status: 409,
+        code: "STALE_VERSION",
+        tone: "warning",
+        match: /newer version/i,
+      },
+      {
+        status: 409,
+        code: "ROADMAP_NOT_LOCKED",
+        tone: "warning",
+        match: /roadmap must be locked/i,
+      },
+      {
+        status: 409,
+        code: "ROADMAP_ARCHIVED",
+        tone: "warning",
+        match: /archived.*read-only/i,
+      },
+    ];
+
+    for (const c of cases) {
+      const mapped = mapApiError(
+        new ApiError(c.status, rawInternalLeak, c.code, "req-m9-1"),
+      );
+      expect(mapped.code).toBe(c.code);
+      expect(mapped.status).toBe(c.status);
+      expect(mapped.tone).toBe(c.tone);
+      expect(mapped.retryable).toBe(false);
+      expect(mapped.message).toMatch(c.match);
+      expect(mapped.message).not.toContain("gemini");
+      expect(mapped.message).not.toContain("postgres");
+      expect(mapped.message).not.toContain("stack trace");
+    }
+  });
 });
 
 describe("mapActionResult", () => {

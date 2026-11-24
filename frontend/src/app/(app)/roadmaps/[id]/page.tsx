@@ -4,7 +4,10 @@ import { logoutAction } from '@/lib/auth/actions';
 import { getAuthenticatedShellUser } from '@/lib/auth/shell-user';
 import { getAppSessionStateResult } from '@/lib/auth/user';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { RoadmapDetailView } from '@/components/roadmap/roadmap-detail-view';
+import {
+  RoadmapDetailView,
+  type RoadmapDetailTab,
+} from '@/components/roadmap/roadmap-detail-view';
 import { Alert } from '@/components/ui/alert';
 import { AppShellSync } from '@/components/ui/app-shell-context';
 import { Button } from '@/components/ui/button';
@@ -12,16 +15,33 @@ import { Button } from '@/components/ui/button';
 const primaryLinkClass =
   'inline-flex h-10 min-h-11 items-center justify-center rounded-md bg-action-primary-background px-5 text-label-lg font-medium text-action-primary-foreground transition-colors duration-(--duration-fast) ease-standard hover:bg-action-primary-background-hover active:bg-action-primary-background-active';
 
+function resolveInitialTab(raw?: string | string[]): RoadmapDetailTab {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (
+    value === 'active' ||
+    value === 'outline' ||
+    value === 'merges' ||
+    value === 'versions'
+  ) {
+    return value;
+  }
+  return 'active';
+}
+
 /**
- * Screen 15 (`/roadmaps/[id]`): Locked / Archived Roadmap viewer, Version History Drawer,
- * Focus Switcher (`EP-R14`), and Archive flow (`EP-R15`).
+ * Screen 15 (`/roadmaps/[id]`): Locked / Archived Roadmap viewer, Merge Proposals / Diff / Undo,
+ * Version History, Focus Switcher (`EP-R14`), and Archive flow (`EP-R15`).
  */
 export default async function RoadmapDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ tab?: string | string[] }>;
 }) {
   const { id } = await params;
+  const resolvedSearch = searchParams ? await searchParams : undefined;
+  const initialTab = resolveInitialTab(resolvedSearch?.tab);
   const result = await getAppSessionStateResult();
 
   if (result.status === 'unauthenticated') {
@@ -81,7 +101,14 @@ export default async function RoadmapDetailPage({
         variant={state.user.role === 'ADMIN' ? 'admin' : 'authenticated'}
         user={shellUser}
       />
-      <RoadmapDetailView accessToken={accessToken} roadmapId={id} />
+      <RoadmapDetailView
+        accessToken={accessToken}
+        roadmapId={id}
+        initialTab={initialTab}
+        roadmapGeneratorEnabled={
+          state.effective_access.roadmap_generator !== false
+        }
+      />
     </>
   );
 }

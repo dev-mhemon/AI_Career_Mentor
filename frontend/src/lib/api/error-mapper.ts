@@ -190,14 +190,44 @@ const SAFE_CODE_ERRORS: Readonly<
   },
   ROADMAP_NOT_LOCKED: {
     message:
-      'This roadmap must be locked before creating or rebuilding a Daily Plan.',
+      'This roadmap must be locked before creating or rebuilding a Daily Plan or requesting roadmap merge changes.',
     tone: 'warning',
     retryable: false,
   },
   ROADMAP_ARCHIVED: {
     message:
-      'This roadmap is archived and read-only. Select an active locked roadmap to create or rebuild a Daily Plan.',
+      'This roadmap is archived and read-only. Select an active locked roadmap instead.',
     tone: 'warning',
+    retryable: false,
+  },
+  MERGE_ALREADY_PROPOSED: {
+    message:
+      'A merge proposal is already open or being generated for this roadmap. Wait for generation to finish, or review, accept, or reject the existing proposal before requesting another change.',
+    tone: 'warning',
+    retryable: false,
+  },
+  MERGE_NOT_PENDING: {
+    message:
+      'This merge proposal is no longer pending. Refresh to inspect its latest status.',
+    tone: 'warning',
+    retryable: false,
+  },
+  MERGE_EXPANSION_ACK_REQUIRED: {
+    message:
+      'The resulting roadmap is above the recommended topic limit. Confirm the acknowledgement checkbox before accepting this merge.',
+    tone: 'warning',
+    retryable: false,
+  },
+  LEVEL_UNCHANGED: {
+    message:
+      'Choose a Career Level different from your roadmap’s current target level before requesting a level change.',
+    tone: 'warning',
+    retryable: false,
+  },
+  UNDO_NOT_AVAILABLE: {
+    message:
+      'Undo is no longer available because no recent merge can be undone or post-merge learning has already started. Request a new merge proposal for further changes.',
+    tone: 'info',
     retryable: false,
   },
   PLAN_ITEM_NOT_AVAILABLE: {
