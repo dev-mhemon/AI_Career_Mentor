@@ -382,7 +382,12 @@ export function mapApiError(
   error: unknown,
   options?: {
     channel?: 'email' | 'phone';
-    feature?: 'mentor' | 'roadmap' | 'learning' | 'quiz';
+    feature?:
+      | 'mentor'
+      | 'roadmap'
+      | 'learning'
+      | 'quiz'
+      | 'technology_update';
   },
 ): MappedError {
   const base: MappedError = {
@@ -421,6 +426,31 @@ export function mapApiError(
       message:
         'AI Mentor is currently disabled for your account. Your existing conversations and 90-day chat history remain readable.',
       tone: 'info',
+      retryable: false,
+    };
+  }
+
+  if (
+    error.code === 'FEATURE_DISABLED' &&
+    options?.feature === 'technology_update'
+  ) {
+    return {
+      ...m,
+      message:
+        'Daily Technology Updates are currently turned off for your account.',
+      tone: 'info',
+      retryable: false,
+    };
+  }
+
+  if (
+    error.code === 'RESOURCE_NOT_FOUND' &&
+    options?.feature === 'technology_update'
+  ) {
+    return {
+      ...m,
+      message: 'The requested technology update could not be found.',
+      tone: 'warning',
       retryable: false,
     };
   }

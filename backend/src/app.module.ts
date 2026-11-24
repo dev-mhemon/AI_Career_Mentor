@@ -16,6 +16,7 @@ import { PracticeReviewModule } from './practice-review/practice-review.module.j
 import { ProgressModule } from './progress/progress.module.js';
 import { QuizModule } from './quiz/quiz.module.js';
 import { RoadmapModule } from './roadmap/roadmap.module.js';
+import { TechnologyUpdateModule } from './technology-update/technology-update.module.js';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { RoadmapModule } from './roadmap/roadmap.module.js';
     QuizModule,
     PracticeReviewModule,
     MentorModule,
+    TechnologyUpdateModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -925,29 +925,118 @@ function validateMentorChat(raw: Record<string, unknown>): void {
   }
 }
 
-function validateTechnologyUpdate(raw: Record<string, unknown>): void {
+const TECH_UPDATE_HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
+function isValidTechUpdateHttpUrl(rawUrl: string): boolean {
+  if (!TECH_UPDATE_HTTP_URL_PATTERN.test(rawUrl)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    return (
+      (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+      parsed.hostname.trim().length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+const TECH_UPDATE_RUMOR_AS_FACT_PATTERN =
+  /\b(?:unverified\s+rumou?rs?\s+(?:confirm(?:ed|s)?|prove[ds]?|establish(?:ed|es)?)|rumou?red\s+to\s+be\s+officially\s+confirmed|confirmed\s+fact\s+based\s+on\s+rumou?rs?|anonymous\s+leaks?\s+officially\s+confirm)\b/i;
+
+function assertValidTechUpdateText(
+  value: unknown,
+  maxCodePoints: number,
+): string {
+  if (typeof value !== 'string' || hasInvalidUnicodeText(value)) {
+    validationFail();
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    validationFail();
+  }
+  const codePointLen = Array.from(trimmed).length;
+  if (codePointLen < 1 || codePointLen > maxCodePoints) {
+    validationFail();
+  }
+  const normalizedNfc = trimmed.normalize('NFC');
   if (
-    typeof raw.has_meaningful_update !== 'boolean' ||
-    typeof raw.propose_roadmap_merge !== 'boolean'
+    MENTOR_PROMPT_LEAK_PATTERN.test(normalizedNfc) ||
+    hasProhibitedJobGuaranteeEn(normalizedNfc) ||
+    JOB_GUARANTEE_BN_PATTERN.test(normalizedNfc) ||
+    TECH_UPDATE_RUMOR_AS_FACT_PATTERN.test(normalizedNfc)
   ) {
     validationFail();
   }
-  if (raw.has_meaningful_update) {
-    asNonEmptyString(raw.title, 300);
-    asNonEmptyString(raw.what_changed, 4_000);
-    asNonEmptyString(raw.why_it_matters, 4_000);
-    asNonEmptyString(raw.publisher, 200);
-    const sourceUrl = asNonEmptyString(raw.source_url, 2_000);
-    if (!HTTP_URL_PATTERN.test(sourceUrl)) {
+  return trimmed;
+}
+
+function validateTechnologyUpdate(raw: Record<string, unknown>): void {
+  if (typeof raw.has_meaningful_update !== 'boolean') {
+    validationFail();
+  }
+  if (!raw.has_meaningful_update && raw.propose_roadmap_merge === undefined) {
+    raw.propose_roadmap_merge = false;
+  }
+  if (typeof raw.propose_roadmap_merge !== 'boolean') {
+    validationFail();
+  }
+  if (!raw.has_meaningful_update) {
+    if (raw.propose_roadmap_merge !== false) {
       validationFail();
     }
-    if (
-      !isEnumValue(RELEASE_STATUSES, raw.release_status) ||
-      !isEnumValue(RELEVANCE_LEVELS, raw.relevance) ||
-      !isEnumValue(ACTION_TIMINGS, raw.action_timing)
-    ) {
+    const nullableKeys = [
+      'title',
+      'what_changed',
+      'why_it_matters',
+      'publisher',
+      'source_url',
+      'release_status',
+      'relevance',
+      'action_timing',
+      'roadmap_relation',
+    ] as const;
+    for (const key of nullableKeys) {
+      if (raw[key] === undefined) {
+        raw[key] = null;
+      } else if (raw[key] !== null) {
+        validationFail();
+      }
+    }
+    return;
+  }
+
+  raw.title = assertValidTechUpdateText(raw.title, 300);
+  raw.what_changed = assertValidTechUpdateText(raw.what_changed, 4_000);
+  raw.why_it_matters = assertValidTechUpdateText(raw.why_it_matters, 4_000);
+  raw.publisher = assertValidTechUpdateText(raw.publisher, 200);
+
+  const sourceUrl = assertValidTechUpdateText(raw.source_url, 2_000);
+  if (!isValidTechUpdateHttpUrl(sourceUrl)) {
+    validationFail();
+  }
+  raw.source_url = sourceUrl;
+
+  if (
+    !isEnumValue(RELEASE_STATUSES, raw.release_status) ||
+    !isEnumValue(RELEVANCE_LEVELS, raw.relevance) ||
+    !isEnumValue(ACTION_TIMINGS, raw.action_timing)
+  ) {
+    validationFail();
+  }
+
+  if (raw.roadmap_relation === undefined || raw.roadmap_relation === null) {
+    raw.roadmap_relation = null;
+  } else if (typeof raw.roadmap_relation === 'string') {
+    if (hasInvalidUnicodeText(raw.roadmap_relation)) {
       validationFail();
     }
+    const trimmedRelation = raw.roadmap_relation.trim();
+    raw.roadmap_relation =
+      trimmedRelation.length === 0
+        ? null
+        : assertValidTechUpdateText(trimmedRelation, 1_000);
+  } else {
+    validationFail();
   }
 }
 

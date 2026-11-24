@@ -3254,3 +3254,291 @@ export async function getMentorHistory(
     'mentor history',
   );
 }
+
+// ─── M11 Technology Intelligence API (C05 §14.11 / §15.11) ───────────────────
+
+export type TechnologyReleaseStatus =
+  | 'released'
+  | 'announced'
+  | 'planned'
+  | 'experimental';
+
+export type TechnologyRelevanceLevel = 'high' | 'medium' | 'low';
+
+export type TechnologyActionTiming =
+  | 'act_now'
+  | 'learn_later'
+  | 'awareness_only';
+
+export type TechnologyUpdateState =
+  | 'available'
+  | 'no_important_changes'
+  | 'temporarily_unavailable';
+
+export type TechnologyUpdateDTO = {
+  id: string;
+  local_date: string;
+  title: string;
+  what_changed: string;
+  why_it_matters: string;
+  publisher: string;
+  source_url: string;
+  fetched_at: string;
+  release_status: TechnologyReleaseStatus;
+  relevance: TechnologyRelevanceLevel;
+  action_timing: TechnologyActionTiming;
+  roadmap_relation: string | null;
+  viewed: boolean;
+};
+
+export type TechnologyUpdateListDTO = {
+  today_state: TechnologyUpdateState | null;
+  generation_pending: boolean;
+  message: string | null;
+  items: TechnologyUpdateDTO[];
+};
+
+export type PaginatedTechnologyUpdatesResponseDTO = {
+  data: TechnologyUpdateListDTO;
+  meta: PageMetaDTO;
+};
+
+export type TechnologyUpdateViewedDTO = {
+  id: string;
+  viewed: true;
+  viewed_at: string;
+};
+
+export type ListTechnologyUpdatesParams = {
+  limit?: number;
+  cursor?: string;
+};
+
+const VALID_TECH_RELEASE_STATUSES: ReadonlySet<string> = new Set([
+  'released',
+  'announced',
+  'planned',
+  'experimental',
+]);
+const VALID_TECH_RELEVANCE_LEVELS: ReadonlySet<string> = new Set([
+  'high',
+  'medium',
+  'low',
+]);
+const VALID_TECH_ACTION_TIMINGS: ReadonlySet<string> = new Set([
+  'act_now',
+  'learn_later',
+  'awareness_only',
+]);
+const VALID_TECH_UPDATE_STATES: ReadonlySet<string> = new Set([
+  'available',
+  'no_important_changes',
+  'temporarily_unavailable',
+]);
+
+function throwInvalidTechUpdateResponse(message: string): never {
+  throw new ApiError(502, message, 'INVALID_RESPONSE', undefined, [], true);
+}
+
+function isValidTechnologyUpdateDTO(
+  value: unknown,
+): value is TechnologyUpdateDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.id === 'string' &&
+    rec.id.trim().length > 0 &&
+    typeof rec.local_date === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(rec.local_date) &&
+    typeof rec.title === 'string' &&
+    rec.title.trim().length > 0 &&
+    typeof rec.what_changed === 'string' &&
+    rec.what_changed.trim().length > 0 &&
+    typeof rec.why_it_matters === 'string' &&
+    rec.why_it_matters.trim().length > 0 &&
+    typeof rec.publisher === 'string' &&
+    rec.publisher.trim().length > 0 &&
+    typeof rec.source_url === 'string' &&
+    rec.source_url.trim().length > 0 &&
+    typeof rec.fetched_at === 'string' &&
+    rec.fetched_at.trim().length > 0 &&
+    typeof rec.release_status === 'string' &&
+    VALID_TECH_RELEASE_STATUSES.has(rec.release_status) &&
+    typeof rec.relevance === 'string' &&
+    VALID_TECH_RELEVANCE_LEVELS.has(rec.relevance) &&
+    typeof rec.action_timing === 'string' &&
+    VALID_TECH_ACTION_TIMINGS.has(rec.action_timing) &&
+    (rec.roadmap_relation === null || typeof rec.roadmap_relation === 'string') &&
+    typeof rec.viewed === 'boolean'
+  );
+}
+
+function isValidTechnologyUpdateListDTO(
+  value: unknown,
+): value is TechnologyUpdateListDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  if (
+    rec.today_state !== null &&
+    (typeof rec.today_state !== 'string' ||
+      !VALID_TECH_UPDATE_STATES.has(rec.today_state))
+  ) {
+    return false;
+  }
+  if (typeof rec.generation_pending !== 'boolean') {
+    return false;
+  }
+  if (rec.message !== null && typeof rec.message !== 'string') {
+    return false;
+  }
+  if (!Array.isArray(rec.items) || !rec.items.every(isValidTechnologyUpdateDTO)) {
+    return false;
+  }
+  return true;
+}
+
+function isValidTechnologyUpdateViewedDTO(
+  value: unknown,
+): value is TechnologyUpdateViewedDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.id === 'string' &&
+    rec.id.trim().length > 0 &&
+    rec.viewed === true &&
+    typeof rec.viewed_at === 'string' &&
+    rec.viewed_at.trim().length > 0
+  );
+}
+
+/**
+ * GET /technology-updates (EP-T01, 200 OK, Gate: read technology_update)
+ */
+export async function listTechnologyUpdates(
+  accessToken: string,
+  params?: ListTechnologyUpdatesParams & AuthStateRequestOptions,
+): Promise<PaginatedTechnologyUpdatesResponseDTO> {
+  const search = new URLSearchParams();
+  const normalizedLimit = normalizePositiveLimit(params?.limit);
+  if (normalizedLimit !== undefined) {
+    search.set('limit', String(normalizedLimit));
+  }
+  if (params?.cursor) {
+    search.set('cursor', params.cursor);
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<unknown>(
+    qs ? `/technology-updates?${qs}` : '/technology-updates',
+    accessToken,
+    {
+      ...(params?.timeoutMs !== undefined
+        ? { timeoutMs: params.timeoutMs }
+        : {}),
+      ...(params?.signal ? { signal: params.signal } : {}),
+    },
+  );
+  const payload = envelope.data;
+  let listCandidate: unknown = payload;
+  let embeddedMeta: unknown;
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    'data' in payload &&
+    !(
+      'today_state' in payload &&
+      'generation_pending' in payload &&
+      'items' in payload
+    )
+  ) {
+    listCandidate = (payload as { data?: unknown }).data;
+    embeddedMeta = (payload as { meta?: unknown }).meta;
+  } else if (
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    'meta' in payload
+  ) {
+    embeddedMeta = (payload as { meta?: unknown }).meta;
+  }
+
+  if (!isValidTechnologyUpdateListDTO(listCandidate)) {
+    throwInvalidTechUpdateResponse(
+      'Unexpected technology updates list response format.',
+    );
+  }
+
+  return {
+    data: {
+      today_state: listCandidate.today_state,
+      generation_pending: listCandidate.generation_pending,
+      message: listCandidate.message,
+      items: listCandidate.items,
+    },
+    meta:
+      parsePageMeta(envelope.meta) ??
+      parsePageMeta(embeddedMeta) ?? {
+        limit: normalizedLimit ?? 20,
+        next_cursor: null,
+      },
+  };
+}
+
+/**
+ * GET /technology-updates/:id (EP-T02, 200 OK, Gate: read technology_update)
+ */
+export async function getTechnologyUpdate(
+  accessToken: string,
+  id: string,
+  options?: AuthStateRequestOptions,
+): Promise<TechnologyUpdateDTO> {
+  const data = await apiFetch<unknown>(
+    `/technology-updates/${encodeURIComponent(id.trim())}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (!isValidTechnologyUpdateDTO(data)) {
+    throwInvalidTechUpdateResponse(
+      'Unexpected technology update detail response format.',
+    );
+  }
+  return data;
+}
+
+/**
+ * POST /technology-updates/:id/view (EP-T03, 200 OK, Gate: read technology_update)
+ */
+export async function markTechnologyUpdateViewed(
+  accessToken: string,
+  id: string,
+  options?: AuthStateRequestOptions,
+): Promise<TechnologyUpdateViewedDTO> {
+  const data = await apiFetch<unknown>(
+    `/technology-updates/${encodeURIComponent(id.trim())}/view`,
+    accessToken,
+    {
+      method: 'POST',
+      ...(options?.timeoutMs !== undefined
+        ? { timeoutMs: options.timeoutMs }
+        : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (!isValidTechnologyUpdateViewedDTO(data)) {
+    throwInvalidTechUpdateResponse(
+      'Unexpected technology update view response format.',
+    );
+  }
+  return data;
+}

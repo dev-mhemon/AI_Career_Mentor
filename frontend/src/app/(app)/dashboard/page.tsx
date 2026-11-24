@@ -18,6 +18,7 @@ import { computeProfileCompletion } from '@/lib/onboarding/completion';
 import { EXPERIENCE_LEVEL_LABELS } from '@/lib/profile/metadata';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { DashboardLearningSection } from '@/components/learning/dashboard-learning-section';
+import { DashboardTechUpdatesPreview } from '@/components/tech-updates/dashboard-tech-updates-preview';
 import { Alert } from '@/components/ui/alert';
 import { AppShellSync } from '@/components/ui/app-shell-context';
 import { Button } from '@/components/ui/button';
@@ -554,6 +555,15 @@ export default async function DashboardPage() {
             preferredDailyHours={dailyHours}
           />
         )}
+
+        {/* Screen 13 N01 Optional Daily Technology Update Preview (ONLY when effective_access.technology_update === true) */}
+        {Boolean(effective_access.technology_update) &&
+          asyncData.accessToken && (
+            <DashboardTechUpdatesPreview
+              accessToken={asyncData.accessToken}
+              enabled={Boolean(effective_access.technology_update)}
+            />
+          )}
 
         {/* Row 2: Career Intelligence & Learning Modules */}
         <section aria-label="Career intelligence and learning modules">

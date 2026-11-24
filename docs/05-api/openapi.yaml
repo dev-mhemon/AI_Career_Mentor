@@ -1,19 +1,20 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review & Progress Contract (M09)
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor & Technology Intelligence Contract (M11)
   version: 0.5.0
   description: >-
-    Synchronized through M09-01, 2026-11-24. Derived from adopted C05 v1.5.1. Source baseline:
-    f7fdb182201450779860406ede33f723c62c00fb. Canonical auth operations (EP-A01..EP-A13), account deletion and
+    Synchronized through M11-01, 2026-11-24. Derived from adopted C05 v1.5.1. Source baseline:
+    8d43f1b6cb927dfc2b2e3c5dd7f73d8444dc1090. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
     Replay Controls with R14 Loss-Epoch Fail-Closed Barrier (IdempotencyService), durable Postgres FOR UPDATE SKIP
     LOCKED job producer/consumer/reaper (R12, R13, ADR-017), internal-only AI Gateway contracts (ADR-008, C08),
     M06/M09 Roadmap Lifecycle, Async Merge Proposals, Career Level Change, Future-Only Daily Plan Reconciliation &
-    One-Step Undo APIs (EP-R01..EP-R15), M07 Learning APIs (EP-L01..EP-L07), and M08 Quiz, AI Practice Review, and
+    One-Step Undo APIs (EP-R01..EP-R15), M07 Learning APIs (EP-L01..EP-L07), M08 Quiz, AI Practice Review, and
     Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that EP-G04 EvidenceService.record is
-    strictly internal-only with no HTTP route) are documented here.
+    strictly internal-only with no HTTP route), M10 Contextual AI Mentor APIs (EP-M01..EP-M04, R08, R11, R15, N02),
+    and M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -37,7 +38,11 @@ tags:
     description: C05 14.8 AI Practice Review API (EP-PR01..EP-PR03); asynchronous free-response rubric evaluation, feedback retrieval, and 90-day retention retry enforcement.
   - name: Progress
     description: C05 14.9 Level-Scoped Progress API (EP-G01..EP-G03); EP-G04 EvidenceService.record is strictly internal-only with no HTTP route.
-x-source: API-Specification.md sections 13, 13.5-6, 14.1-9, 14.13, 15.1-9, 15.12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R12/R13/R14/R17/R18/R24/R26/R28/R29/R31/R35
+  - name: AI Mentor
+    description: C05 14.10 Contextual AI Career Mentor API (EP-M01..EP-M04); owner-only conversations, default 201 JSON / opt-in R15 SSE, and 90-day history.
+  - name: Technology Intelligence
+    description: C05 14.11 Personalized Daily Technology Intelligence API (EP-T01..EP-T03); default-OFF read gate (technology_update), R25 local-date today_state resolution, and R24 foreground view tracking.
+x-source: API-Specification.md sections 13, 13.5-6, 14.1-11, 14.13, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R11/R12/R13/R14/R15/R17/R18/R24/R25/R26/R28/R29/R31/R35/N01/N02
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -6135,6 +6140,207 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /technology-updates:
+    get:
+      operationId: EP-T01
+      tags:
+        - Technology Intelligence
+      summary: List personalized daily technology updates and today's local-date state
+      description: >-
+        C05 EP-T01 (GET /api/v1/technology-updates). Gate: read (technology_update; default OFF per PRD §7 / §39).
+        R24 foreground = false (passive listing / dashboard preview never stamps users.last_active_at). Resolves
+        caller's effective local_date in user_profiles.timezone (default Asia/Dhaka), looks up
+        update_delivery_history for (user_id, local_date) to set today_state (available | no_important_changes |
+        temporarily_unavailable | null), generation_pending, and message, and returns paginated delivered items
+        (state = 'available') ordered by (local_date DESC, delivered_at DESC, id DESC). Rejects malformed or
+        impossible calendar-date cursors (e.g. 2026-02-31) with 422 INVALID_FORMAT.
+      x-source: API-Specification.md sections 13.2, 14.11, 15.11; PRD §7 / §38–46; R24, R25, N01
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: technology_update
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-T01 success; returns TechnologyUpdateListDTO envelope with top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTechnologyUpdatesResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT, FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED, INVALID_FORMAT (malformed or impossible calendar cursor date; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /technology-updates/{id}:
+    get:
+      operationId: EP-T02
+      tags:
+        - Technology Intelligence
+      summary: Get a single delivered technology update by ID
+      description: >-
+        C05 EP-T02 (GET /api/v1/technology-updates/{id}). Gate: read (technology_update; default OFF).
+        R24 foreground = true (explicit detail inspection records meaningful foreground activity).
+        Scoped strictly to updates delivered to the authenticated caller via update_delivery_history
+        (state = 'available'); undelivered or foreign update IDs return 404 RESOURCE_NOT_FOUND.
+      x-source: API-Specification.md sections 13.2, 14.11, 15.11; R24, R25
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: technology_update
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-T02 success; returns TechnologyUpdateDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechnologyUpdateDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT, FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_FORMAT (malformed id UUID; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /technology-updates/{id}/view:
+    post:
+      operationId: EP-T03
+      tags:
+        - Technology Intelligence
+      summary: Record that the authenticated user viewed a delivered technology update
+      description: >-
+        C05 EP-T03 (POST /api/v1/technology-updates/{id}/view). Gate: read (technology_update; default OFF).
+        R24 foreground = true. Idempotently stamps viewed_at = COALESCE(viewed_at, clock_timestamp()) on the
+        caller's delivered update_delivery_history row (state = 'available', update_id = {id}) and returns
+        TechnologyUpdateViewedDTO ({ id, viewed: true, viewed_at }). Returns 404 RESOURCE_NOT_FOUND if the
+        update was not delivered to the caller.
+      x-source: API-Specification.md sections 13.2, 14.11, 15.11; R24, R25
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: technology_update
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-T03 success; returns TechnologyUpdateViewedDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechnologyUpdateViewedDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT, FEATURE_DISABLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_FORMAT (malformed id UUID; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -9800,3 +10006,139 @@ components:
             $ref: '#/components/schemas/MessageDTO'
         meta:
           $ref: '#/components/schemas/PageMetaDTO'
+    TechnologyReleaseStatus:
+      type: string
+      enum: [released, announced, planned, experimental]
+    TechnologyRelevanceLevel:
+      type: string
+      enum: [high, medium, low]
+    TechnologyActionTiming:
+      type: string
+      enum: [act_now, learn_later, awareness_only]
+    TechnologyUpdateState:
+      type: string
+      enum: [available, no_important_changes, temporarily_unavailable]
+    TechnologyUpdateDTO:
+      type: object
+      additionalProperties: false
+      description: >-
+        C05 §15.11 TechnologyUpdateDTO returned by EP-T01 (items[]) and EP-T02 (data). Combines shared
+        language-scoped technology_updates facts (title, what_changed, publisher, source_url, fetched_at,
+        release_status) with caller-specific user_update_relevance (why_it_matters, relevance, action_timing,
+        roadmap_relation) and update_delivery_history (local_date, viewed).
+      required:
+        - id
+        - local_date
+        - title
+        - what_changed
+        - why_it_matters
+        - publisher
+        - source_url
+        - fetched_at
+        - release_status
+        - relevance
+        - action_timing
+        - roadmap_relation
+        - viewed
+      properties:
+        id:
+          type: string
+          format: uuid
+        local_date:
+          type: string
+          format: date
+        title:
+          type: string
+          maxLength: 300
+        what_changed:
+          type: string
+          maxLength: 4000
+        why_it_matters:
+          type: string
+          maxLength: 4000
+        publisher:
+          type: string
+          maxLength: 200
+        source_url:
+          type: string
+          format: uri
+          maxLength: 2000
+        fetched_at:
+          type: string
+          format: date-time
+        release_status:
+          $ref: '#/components/schemas/TechnologyReleaseStatus'
+        relevance:
+          $ref: '#/components/schemas/TechnologyRelevanceLevel'
+        action_timing:
+          $ref: '#/components/schemas/TechnologyActionTiming'
+        roadmap_relation:
+          type: string
+          maxLength: 1000
+          nullable: true
+        viewed:
+          type: boolean
+    TechnologyUpdateListDTO:
+      type: object
+      additionalProperties: false
+      description: >-
+        C05 §14.11 / §15.11 TechnologyUpdateListDTO returned inside the EP-T01 data envelope alongside
+        top-level PageMetaDTO meta.
+      required: [today_state, generation_pending, message, items]
+      properties:
+        today_state:
+          type: string
+          nullable: true
+          enum: [available, no_important_changes, temporarily_unavailable, null]
+        generation_pending:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TechnologyUpdateDTO'
+    TechnologyUpdateViewedDTO:
+      type: object
+      additionalProperties: false
+      required: [id, viewed, viewed_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        viewed:
+          type: boolean
+          enum: [true]
+        viewed_at:
+          type: string
+          format: date-time
+    PaginatedTechnologyUpdatesResponseDTOEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/TechnologyUpdateListDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    TechnologyUpdateDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/TechnologyUpdateDTO'
+    TechnologyUpdateViewedDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/TechnologyUpdateViewedDTO'

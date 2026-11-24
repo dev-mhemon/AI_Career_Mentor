@@ -315,4 +315,163 @@ describe('OutputValidatorService.validateMentorChat (C08 §6.2.7 & PRD §26/§36
       }),
     );
   });
+
+  it('validates technology_update outputs and rejects prompt leaks, job guarantees, rumors, and schema drift', () => {
+    const validAvailable = validator.validate(
+      'technology_update',
+      'technology_update.v1',
+      {
+        has_meaningful_update: true,
+        propose_roadmap_merge: false,
+        title: 'PostgreSQL 17 Vacuum Memory Improvements',
+        what_changed: 'Added TidStore for vacuum memory efficiency.',
+        why_it_matters:
+          'Improves high-churn table maintenance on your Backend roadmap.',
+        publisher: 'PostgreSQL Global Development Group',
+        source_url: 'https://www.postgresql.org/docs/release/17.0/',
+        release_status: 'released',
+        relevance: 'high',
+        action_timing: 'learn_later',
+        roadmap_relation: 'Relates to Backend Database Operations topic.',
+      },
+    );
+    expect(validAvailable).toMatchObject({
+      has_meaningful_update: true,
+      release_status: 'released',
+      relevance: 'high',
+      action_timing: 'learn_later',
+    });
+
+    const validNoChanges = validator.validate(
+      'technology_update',
+      'technology_update.v1',
+      {
+        has_meaningful_update: false,
+        propose_roadmap_merge: false,
+        title: null,
+        what_changed: null,
+        why_it_matters: null,
+        publisher: null,
+        source_url: null,
+        release_status: null,
+        relevance: null,
+        action_timing: null,
+        roadmap_relation: null,
+      },
+    );
+    expect(validNoChanges).toMatchObject({
+      has_meaningful_update: false,
+      title: null,
+      propose_roadmap_merge: false,
+    });
+
+    // Rejects non-null fields when has_meaningful_update is false
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: false,
+        propose_roadmap_merge: false,
+        title: 'Should be null',
+        what_changed: null,
+        why_it_matters: null,
+        publisher: null,
+        source_url: null,
+        release_status: null,
+        relevance: null,
+        action_timing: null,
+        roadmap_relation: null,
+      }),
+    );
+
+    // Rejects propose_roadmap_merge: true when has_meaningful_update is false
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: false,
+        propose_roadmap_merge: true,
+      }),
+    );
+
+    // Rejects prompt leakage markers (<untrusted_data>, prompts/technology-update.v1, SYSTEM PROMPT:)
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: true,
+        propose_roadmap_merge: false,
+        title: 'Update from <untrusted_data>',
+        what_changed: 'Changed internals.',
+        why_it_matters: 'Matters for backend.',
+        publisher: 'Official Docs',
+        source_url: 'https://example.com/release',
+        release_status: 'released',
+        relevance: 'medium',
+        action_timing: 'awareness_only',
+        roadmap_relation: null,
+      }),
+    );
+
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: true,
+        propose_roadmap_merge: false,
+        title: 'Valid title',
+        what_changed: 'Leaked prompts/technology-update.v1 reference.',
+        why_it_matters: 'Matters for backend.',
+        publisher: 'Official Docs',
+        source_url: 'https://example.com/release',
+        release_status: 'released',
+        relevance: 'medium',
+        action_timing: 'awareness_only',
+        roadmap_relation: null,
+      }),
+    );
+
+    // Rejects job-guarantee claims
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: true,
+        propose_roadmap_merge: false,
+        title: 'Valid title',
+        what_changed: 'Changed internals.',
+        why_it_matters: 'Reading this makes you Job Ready with 100% placement.',
+        publisher: 'Official Docs',
+        source_url: 'https://example.com/release',
+        release_status: 'released',
+        relevance: 'high',
+        action_timing: 'act_now',
+        roadmap_relation: null,
+      }),
+    );
+
+    // Rejects hostless URL like "https://#"
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: true,
+        propose_roadmap_merge: false,
+        title: 'Valid title',
+        what_changed: 'Changed internals.',
+        why_it_matters: 'Matters for backend.',
+        publisher: 'Official Docs',
+        source_url: 'https://#',
+        release_status: 'released',
+        relevance: 'medium',
+        action_timing: 'awareness_only',
+        roadmap_relation: null,
+      }),
+    );
+
+    // Rejects unverified rumors presented as confirmed facts (PRD §41)
+    expectValidationFailed(() =>
+      validator.validate('technology_update', 'technology_update.v1', {
+        has_meaningful_update: true,
+        propose_roadmap_merge: false,
+        title: 'Valid title',
+        what_changed: 'Unverified rumors confirm that Node.js is deprecated.',
+        why_it_matters: 'Matters for backend.',
+        publisher: 'Official Docs',
+        source_url: 'https://example.com/release',
+        release_status: 'announced',
+        relevance: 'high',
+        action_timing: 'act_now',
+        roadmap_relation: null,
+      }),
+    );
+  });
 });

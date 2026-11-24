@@ -1,6 +1,7 @@
 import {
   readAiGatewayConfiguration,
   readJobWorkerConfiguration,
+  readTechnologyUpdateConfiguration,
   validateConfiguration,
 } from './config.js';
 import { readIdempotencyConfiguration } from './jobs/services/idempotency.service.js';
@@ -591,5 +592,133 @@ describe('Public runtime key boundary', () => {
         AI_EXECUTION_MODE: 'free_tier',
       }),
     ).toThrow('Invalid AI_EXECUTION_MODE');
+  });
+
+  it('validates R25 technology update scheduler configuration keys and defaults', () => {
+    expect(readTechnologyUpdateConfiguration({})).toEqual({
+      schedulerEnabled: false,
+      concurrency: 2,
+      externalTimeoutMs: 60_000,
+      sourceMode: 'synthetic',
+    });
+
+    expect(
+      readTechnologyUpdateConfiguration({
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        TECH_UPDATE_CONCURRENCY: '1',
+        TECH_UPDATE_EXTERNAL_TIMEOUT_MS: '45000',
+        TECH_UPDATE_SOURCE_MODE: 'live',
+        TECH_UPDATE_DIRECT_DATABASE_URL:
+          'postgresql://postgres:secret@127.0.0.1:5432/postgres',
+      }),
+    ).toEqual({
+      schedulerEnabled: true,
+      concurrency: 1,
+      externalTimeoutMs: 45_000,
+      sourceMode: 'live',
+      directDatabaseUrl: 'postgresql://postgres:secret@127.0.0.1:5432/postgres',
+    });
+
+    expect(
+      readTechnologyUpdateConfiguration({
+        DATABASE_DIRECT_URL:
+          'postgres://postgres:secret@127.0.0.1:5432/postgres',
+      }).directDatabaseUrl,
+    ).toBe('postgres://postgres:secret@127.0.0.1:5432/postgres');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_SCHEDULER_ENABLED: 'maybe',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_SCHEDULER_ENABLED');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_CONCURRENCY: '3',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_CONCURRENCY');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_EXTERNAL_TIMEOUT_MS: '500',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_EXTERNAL_TIMEOUT_MS');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_SOURCE_MODE: 'stale_model',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_SOURCE_MODE');
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_DIRECT_DATABASE_URL: 'http://127.0.0.1:5432/postgres',
+      }),
+    ).toThrow('Invalid TECH_UPDATE_DIRECT_DATABASE_URL');
+
+    // Rejects scheduler enabled with real_user AI when TECH_UPDATE_SOURCE_MODE is not live
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        AI_EXECUTION_MODE: 'real_user',
+        TECH_UPDATE_SOURCE_MODE: 'synthetic',
+      }),
+    ).toThrow(
+      'TECH_UPDATE_SOURCE_MODE must be live when TECH_UPDATE_SCHEDULER_ENABLED=true and AI_EXECUTION_MODE=real_user',
+    );
+
+    // Allows synthetic source mode when AI_EXECUTION_MODE=synthetic on local non-pooled DB
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        AI_EXECUTION_MODE: 'synthetic',
+        TECH_UPDATE_SOURCE_MODE: 'synthetic',
+      }),
+    ).not.toThrow();
+
+    // Rejects scheduler enabled in pooled or production mode without direct/session DB URL (R25)
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        NODE_ENV: 'production',
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        AI_EXECUTION_MODE: 'real_user',
+        TECH_UPDATE_SOURCE_MODE: 'live',
+      }),
+    ).toThrow(
+      'TECH_UPDATE_DIRECT_DATABASE_URL (or DATABASE_DIRECT_URL) is required when TECH_UPDATE_SCHEDULER_ENABLED=true in pooled or production environments (R25)',
+    );
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        DB_PORT: '6543',
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        AI_EXECUTION_MODE: 'real_user',
+        TECH_UPDATE_SOURCE_MODE: 'live',
+      }),
+    ).toThrow(
+      'TECH_UPDATE_DIRECT_DATABASE_URL (or DATABASE_DIRECT_URL) is required when TECH_UPDATE_SCHEDULER_ENABLED=true in pooled or production environments (R25)',
+    );
+
+    expect(() =>
+      validateConfiguration({
+        ...base,
+        NODE_ENV: 'production',
+        DB_PORT: '6543',
+        TECH_UPDATE_SCHEDULER_ENABLED: 'true',
+        AI_EXECUTION_MODE: 'real_user',
+        TECH_UPDATE_SOURCE_MODE: 'live',
+        TECH_UPDATE_DIRECT_DATABASE_URL:
+          'postgresql://postgres:secret@db.example.supabase.co:5432/postgres',
+      }),
+    ).not.toThrow();
   });
 });
