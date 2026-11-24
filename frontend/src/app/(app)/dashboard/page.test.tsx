@@ -308,9 +308,9 @@ describe('DashboardPage', () => {
       'href',
       '/career-profile',
     );
-    expect(screen.getByRole('link', { name: 'Edit Career Profile' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Open AI Mentor' })).toHaveAttribute(
       'href',
-      '/career-profile',
+      '/mentor',
     );
     expect(screen.getByText('4 hrs / day')).toBeInTheDocument();
     expect(screen.getByText('28 hrs / week')).toBeInTheDocument();

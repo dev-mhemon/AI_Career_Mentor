@@ -139,6 +139,10 @@ describe('TodayView', () => {
       'href',
       '/roadmaps',
     );
+    expect(screen.getByRole('link', { name: /Ask Mentor/i })).toHaveAttribute(
+      'href',
+      '/mentor?context=general',
+    );
   });
 
   it('renders no_daily_plan state, opens HoursPromptModal, creates plan via EP-L02, and reloads EP-L04', async () => {
@@ -378,6 +382,10 @@ describe('TodayView', () => {
     expect(
       screen.getByRole('link', { name: /Open Daily Plan/i }),
     ).toHaveAttribute('href', '/daily-plan');
+    expect(screen.getByRole('link', { name: /Ask Mentor/i })).toHaveAttribute(
+      'href',
+      '/mentor',
+    );
   });
 
   it('hides preparing subtext and renders Try Again button when topic_content job fails with retryable=false, re-invoking EP-L04', async () => {

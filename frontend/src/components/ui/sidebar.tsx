@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ComponentType, RefObject, SVGProps } from 'react';
 import { cn } from './cn';
 import {
+  BotIcon,
   CalendarDaysIcon,
   CloseIcon,
   CompassIcon,
@@ -56,6 +57,12 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
         href: '/roadmaps',
         label: 'Roadmaps',
         icon: CompassIcon,
+        lockedWhenSuspended: true,
+      },
+      {
+        href: '/mentor',
+        label: 'AI Mentor',
+        icon: BotIcon,
         lockedWhenSuspended: true,
       },
       {

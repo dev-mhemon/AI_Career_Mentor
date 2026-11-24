@@ -215,3 +215,34 @@ export const TargetIcon = (p: P) => (
     <circle cx="12" cy="12" r="2" />
   </svg>
 );
+export const MessageSquareIcon = (p: P) => (
+  <svg {...iconProps(p)}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </svg>
+);
+export const MessageCircleIcon = (p: P) => (
+  <svg {...iconProps(p)} strokeWidth={p.strokeWidth ?? 1.75}>
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+  </svg>
+);
+export const SendIcon = (p: P) => (
+  <svg {...iconProps(p)}>
+    <path d="m22 2-7 20-4-9-9-4Z" />
+    <path d="M22 2 11 13" />
+  </svg>
+);
+export const PlusIcon = (p: P) => (
+  <svg {...iconProps(p)}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+export const BotIcon = (p: P) => (
+  <svg {...iconProps(p)} strokeWidth={p.strokeWidth ?? 1.75}>
+    <path d="M12 8V4H8" />
+    <rect width="16" height="12" x="4" y="8" rx="2" />
+    <path d="M2 14h2" />
+    <path d="M20 14h2" />
+    <path d="M15 13v2" />
+    <path d="M9 13v2" />
+  </svg>
+);

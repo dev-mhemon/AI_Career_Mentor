@@ -149,6 +149,24 @@ describe('RoadmapDetailView (Screen 15)', () => {
         ...currentV2.summary,
         current_situation: 'Historical v1 snapshot baseline situation.',
       },
+      phases: [
+        {
+          ...currentV2.phases[0],
+          items: [
+            ...currentV2.phases[0].items,
+            {
+              ...currentV2.phases[0].items[0],
+              id: 'item-legacy',
+              item_id: 'item-legacy',
+              lineage_id: 'lin-legacy',
+              topic_id: 'top-legacy-removed',
+              title: 'Legacy SOAP Adapter',
+              sequence_no: 2,
+              retired: false,
+            },
+          ],
+        },
+      ],
     });
 
     vi.mocked(getRoadmap).mockResolvedValueOnce(currentV2);
@@ -191,6 +209,11 @@ describe('RoadmapDetailView (Screen 15)', () => {
       await screen.findByRole('heading', { level: 1, name: 'Backend Engineer' }),
     ).toBeInTheDocument();
     expect(screen.getByText('v2')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', {
+        name: 'Ask Mentor about Transactional Outbox Pattern',
+      }),
+    ).toHaveAttribute('href', '/mentor?context=topic&topicId=top-a');
 
     // Closed drawer shell must NOT expose dialog role to assistive tech or Testing Library
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -226,6 +249,17 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(
       screen.getByText('Historical v1 snapshot baseline situation.'),
     ).toBeInTheDocument();
+    // Topic still active in current v2 keeps Ask Mentor link; topic removed in current v2 hides it
+    expect(
+      screen.getByRole('link', {
+        name: 'Ask Mentor about Transactional Outbox Pattern',
+      }),
+    ).toHaveAttribute('href', '/mentor?context=topic&topicId=top-a');
+    expect(
+      screen.queryByRole('link', {
+        name: 'Ask Mentor about Legacy SOAP Adapter',
+      }),
+    ).not.toBeInTheDocument();
     expect(vi.mocked(getRoadmapVersion)).toHaveBeenCalledWith(
       'token-1',
       'rm-locked-1',
