@@ -10020,6 +10020,12 @@ components:
       enum: [available, no_important_changes, temporarily_unavailable]
     TechnologyUpdateDTO:
       type: object
+      additionalProperties: false
+      description: >-
+        C05 §15.11 TechnologyUpdateDTO returned by EP-T01 (items[]) and EP-T02 (data). Combines shared
+        language-scoped technology_updates facts (title, what_changed, publisher, source_url, fetched_at,
+        release_status) with caller-specific user_update_relevance (why_it_matters, relevance, action_timing,
+        roadmap_relation) and update_delivery_history (local_date, viewed).
       required:
         - id
         - local_date
@@ -10074,6 +10080,10 @@ components:
           type: boolean
     TechnologyUpdateListDTO:
       type: object
+      additionalProperties: false
+      description: >-
+        C05 §14.11 / §15.11 TechnologyUpdateListDTO returned inside the EP-T01 data envelope alongside
+        top-level PageMetaDTO meta.
       required: [today_state, generation_pending, message, items]
       properties:
         today_state:
@@ -10091,6 +10101,7 @@ components:
             $ref: '#/components/schemas/TechnologyUpdateDTO'
     TechnologyUpdateViewedDTO:
       type: object
+      additionalProperties: false
       required: [id, viewed, viewed_at]
       properties:
         id:

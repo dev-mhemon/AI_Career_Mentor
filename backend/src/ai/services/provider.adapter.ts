@@ -882,6 +882,24 @@ function buildSyntheticTechnologyUpdate(
       propose_roadmap_merge: false,
     };
   }
+  if (language === 'mixed') {
+    return {
+      has_meaningful_update: true,
+      title: 'PostgreSQL 17 Performance ও Vacuum Memory উন্নয়ন',
+      what_changed:
+        'PostgreSQL 17 release-এ নতুন memory-efficient vacuum structure এবং উন্নত query planning যুক্ত হয়েছে।',
+      why_it_matters:
+        'High-churn database table-এ index bloat কমাতে এবং query latency উন্নত করতে এটি সহায়ক।',
+      publisher: 'PostgreSQL Release Team',
+      source_url: 'https://www.postgresql.org/docs/release/',
+      release_status: 'released',
+      relevance: 'high',
+      action_timing: 'learn_later',
+      roadmap_relation:
+        'আপনার Focus Roadmap-এর Backend Database Operations topic-এর সাথে সম্পর্কিত।',
+      propose_roadmap_merge: false,
+    };
+  }
   return {
     has_meaningful_update: true,
     title: 'PostgreSQL 17 Performance Improvements',

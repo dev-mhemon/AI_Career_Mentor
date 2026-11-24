@@ -1,7 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import type { DataSource, QueryRunner } from 'typeorm';
 import type { AiGatewayService } from '../ai/services/ai-gateway.service.js';
-import { TechnologyUpdateSchedulerService } from './services/technology-update-scheduler.service.js';
+import {
+  projectLearnerNeutralSharedField,
+  TechnologyUpdateSchedulerService,
+} from './services/technology-update-scheduler.service.js';
 import {
   computeLanguageScopedTechnologyUpdateHash,
   computeTechnologyUpdateContentHash,
@@ -1011,6 +1014,36 @@ describe('TechnologyUpdateSchedulerService (R25 Pinned-Session Advisory Lock Pro
       }),
     ).toBe(bnHash);
 
+    // 2b. projectLearnerNeutralSharedField strips learner-specific roadmap/role leakage from shared title/what_changed
+    expect(
+      projectLearnerNeutralSharedField(
+        'PostgreSQL 17 vacuum changes tailored for your Focus Roadmap',
+        sampleCandidate.summary,
+        {
+          focusRoadmap: {
+            id: ROADMAP_1,
+            roleName: 'Backend Development',
+            targetLevel: 'mid',
+            activeTopics: ['Database Indexing & Vacuum'],
+          },
+        },
+      ),
+    ).toBe(sampleCandidate.summary);
+    expect(
+      projectLearnerNeutralSharedField(
+        'PostgreSQL 17.2 रिलीज নোটস ও ভ্যাকুয়াম মেমরি উন্নয়ন',
+        sampleCandidate.title,
+        {
+          focusRoadmap: {
+            id: ROADMAP_1,
+            roleName: 'Backend Development',
+            targetLevel: 'mid',
+            activeTopics: ['Database Indexing & Vacuum'],
+          },
+        },
+      ),
+    ).toBe('PostgreSQL 17.2 रिलीज নোটস ও ভ্যাকুয়াম মেমরি উন্নয়ন');
+
     // 3. Schema-contract SQL check on executed queries:
     // - Focus Roadmap items query uses r.current_version_id, ri.version_id, ri.retired = false, ORDER BY ri.phase_no ASC, ri.sequence_no ASC
     // - Language query uses public.messages / public.ai_requests (NEVER user_preferences.preferred_ui_language)
@@ -1091,6 +1124,76 @@ describe('TechnologyUpdateSchedulerService (R25 Pinned-Session Advisory Lock Pro
     expect(qr.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO public.technology_updates'),
       expect.arrayContaining([enHash]),
+    );
+
+    // 3b. Bangla ('bn') learner evaluating the same source candidate persists a distinct language-scoped
+    //     content_hash in technology_updates, keeps shared title/what_changed learner-neutral even if the LLM
+    //     leaks "for your Focus Roadmap", and stores personalized why_it_matters/roadmap_relation in user_update_relevance
+    const qrBn = createMockQueryRunner();
+    const origQueryBn = qrBn.query;
+    qrBn.query = vi.fn(async (sql: string) => {
+      if (
+        sql.includes('FROM public.messages m') &&
+        sql.includes('FROM public.ai_requests ar')
+      ) {
+        return [{ language: 'bn' }];
+      }
+      return origQueryBn(sql);
+    });
+    const dataSourceBn = {
+      createQueryRunner: vi.fn(() => qrBn as unknown as QueryRunner),
+    } as unknown as DataSource;
+    const aiGatewayBn = {
+      execute: vi.fn(async () => ({
+        generation_id: GEN_1,
+        output: {
+          has_meaningful_update: true,
+          propose_roadmap_merge: false,
+          title: 'PostgreSQL 17.2 ভ্যাকুয়াম মেমরি উন্নয়ন',
+          what_changed:
+            'TidStore ভ্যাকুয়াম মেমরি ওভারহেড কমায় আপনার ফোকাস রোডম্যাপ এর জন্য।',
+          why_it_matters:
+            'আপনার ব্যাকএন্ড ডাটাবেস ইনডেক্সিংয়ের জন্য গুরুত্বপূর্ণ।',
+          publisher: sampleCandidate.publisher,
+          source_url: sampleCandidate.sourceUrl,
+          release_status: 'released',
+          relevance: 'high',
+          action_timing: 'learn_later',
+          roadmap_relation: 'Database Indexing & Vacuum টপিকের সাথে সম্পর্কিত।',
+        },
+      })),
+    } as unknown as AiGatewayService;
+
+    const schedulerBn = new TechnologyUpdateSchedulerService(
+      dataSourceBn,
+      aiGatewayBn,
+      sourceService,
+    );
+
+    const resBn = await schedulerBn.processCandidate({
+      user_id: USER_2,
+      timezone: 'Asia/Dhaka',
+      user_local_date: '2026-11-24',
+    });
+    expect(resBn.status).toBe('committed_available');
+    expect(qrBn.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO public.technology_updates'),
+      expect.arrayContaining([
+        'PostgreSQL 17.2 ভ্যাকুয়াম মেমরি উন্নয়ন',
+        sampleCandidate.summary, // projected to neutral source summary when AI leaked "আপনার ফোকাস রোডম্যাপ"
+        bnHash,
+      ]),
+    );
+    expect(qrBn.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO public.user_update_relevance'),
+      expect.arrayContaining([
+        USER_2,
+        UPDATE_1,
+        'high',
+        'learn_later',
+        'আপনার ব্যাকএন্ড ডাটাবেস ইনডেক্সিংয়ের জন্য গুরুত্বপূর্ণ।',
+        'Database Indexing & Vacuum টপিকের সাথে সম্পর্কিত।',
+      ]),
     );
 
     // 4. Streaming byte cap (MAX_LIVE_FEED_BYTES) cancels oversized stream and falls back;

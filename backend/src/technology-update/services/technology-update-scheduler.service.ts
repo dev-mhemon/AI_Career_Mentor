@@ -152,6 +152,50 @@ type DesiredDeliveryOutcome =
       aiGenerationId: string | null;
     };
 
+const LEARNER_PERSONALIZATION_LEAK_PATTERN =
+  /\b(?:your\s+(?:focus\s+)?roadmap|your\s+career\s+goal|your\s+target\s+role|your\s+current\s+level|your\s+learning\s+path|your\s+skills?|for\s+your\s+roadmap)\b|আপনার\s+(?:ফোকাস\s+)?রোডম্যাপ|আপনার\s+ক্যারিয়ার\s+লক্ষ্য|আপনার\s+টার্গেট\s+রোল|আপনার\s+শেখার\s+পথ/i;
+
+/**
+ * Projects a shared `public.technology_updates` text field (`title` or `what_changed`) so it
+ * contains only learner-neutral source facts for the target language, keeping learner-specific
+ * personalization strictly in `public.user_update_relevance` (`why_it_matters`, `roadmap_relation`).
+ */
+export function projectLearnerNeutralSharedField(
+  aiValue: string | null | undefined,
+  sourceFallback: string,
+  context: Pick<TechnologyUpdateLearnerContext, 'focusRoadmap'>,
+): string {
+  const trimmedAi = typeof aiValue === 'string' ? aiValue.trim() : '';
+  if (!trimmedAi) {
+    return sourceFallback;
+  }
+  if (LEARNER_PERSONALIZATION_LEAK_PATTERN.test(trimmedAi)) {
+    return sourceFallback;
+  }
+  const sourceLower = sourceFallback.toLowerCase();
+  const aiLower = trimmedAi.toLowerCase();
+  const roleName = context.focusRoadmap?.roleName?.trim();
+  if (
+    roleName &&
+    roleName.length >= 3 &&
+    !sourceLower.includes(roleName.toLowerCase()) &&
+    aiLower.includes(roleName.toLowerCase())
+  ) {
+    return sourceFallback;
+  }
+  for (const topicTitle of context.focusRoadmap?.activeTopics ?? []) {
+    const trimmedTopic = topicTitle.trim();
+    if (
+      trimmedTopic.length >= 4 &&
+      !sourceLower.includes(trimmedTopic.toLowerCase()) &&
+      aiLower.includes(trimmedTopic.toLowerCase())
+    ) {
+      return sourceFallback;
+    }
+  }
+  return trimmedAi;
+}
+
 /**
  * Unwraps TypeORM PostgreSQL `INSERT/UPDATE ... RETURNING` tuple `[rows, rowCount]` into a plain row array.
  */
@@ -929,11 +973,20 @@ export class TechnologyUpdateSchedulerService
             continue;
           }
 
-          // PRD §41 & §45: Keep citation metadata strictly tied to the fetched candidate and scope content_hash by language
+          // PRD §41 & §45: Keep citation metadata strictly tied to the fetched candidate, project shared
+          // title/what_changed as learner-neutral facts, and scope content_hash by language
           const finalSourceUrl = candidate.sourceUrl;
           const finalPublisher = candidate.publisher;
-          const finalTitle = output.title ?? candidate.title;
-          const finalWhatChanged = output.what_changed ?? candidate.summary;
+          const finalTitle = projectLearnerNeutralSharedField(
+            output.title,
+            candidate.title,
+            context,
+          );
+          const finalWhatChanged = projectLearnerNeutralSharedField(
+            output.what_changed,
+            candidate.summary,
+            context,
+          );
           const baseSourceHash =
             candidate.contentHash ||
             computeTechnologyUpdateContentHash({
