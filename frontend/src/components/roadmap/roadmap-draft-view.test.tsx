@@ -14,6 +14,8 @@ import {
   getRoadmap,
   lockRoadmap,
   reviseRoadmap,
+  submitRating,
+  submitReport,
   type JobStatusDTO,
   type RoadmapDetailDTO,
 } from '@/lib/api/client';
@@ -41,6 +43,8 @@ vi.mock('@/lib/api/client', async () => {
     getRoadmap: vi.fn(),
     reviseRoadmap: vi.fn(),
     lockRoadmap: vi.fn(),
+    submitRating: vi.fn(),
+    submitReport: vi.fn(),
   };
 });
 
@@ -828,6 +832,51 @@ describe('RoadmapDraftView (Screen 12)', () => {
     );
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith('/today');
+    });
+  });
+
+  it('wires R34 Screen 12 feedback: roadmap_draft rating uses draft.version_id and roadmap_content report uses draft.id', async () => {
+    vi.mocked(submitRating).mockResolvedValueOnce({
+      target_type: 'roadmap_draft',
+      target_id: 'ver-1',
+      score: 5,
+    });
+    vi.mocked(submitReport).mockResolvedValueOnce({
+      report_id: 'rep-draft-1',
+      status: 'received',
+    });
+
+    render(
+      <RoadmapDraftView
+        accessToken="token-1"
+        roadmapId="rm-draft-1"
+        initialDraft={makeDraft({ id: 'rm-draft-1', version_id: 'ver-1' })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+    await waitFor(() => {
+      expect(submitRating).toHaveBeenCalledWith('token-1', {
+        target_type: 'roadmap_draft',
+        target_id: 'ver-1',
+        score: 5,
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /report issue/i }));
+    const reportDialog = await screen.findByRole('dialog', {
+      name: /Report content issue/i,
+    });
+    fireEvent.click(
+      within(reportDialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(submitReport).toHaveBeenCalledWith('token-1', {
+        target_type: 'roadmap_content',
+        target_id: 'rm-draft-1',
+        reason: 'incorrect',
+      });
     });
   });
 });

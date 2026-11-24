@@ -6,6 +6,7 @@ import type {
   ReviewDimensionScore,
   ReviewStatus,
 } from '@/lib/api/client';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
 import {
@@ -30,6 +31,10 @@ export interface PracticeReviewCardProps {
   retryErrorMessage?: string | null;
   feedbackLoadError?: string | null;
   isRawTextExpired?: boolean;
+  accessToken?: string;
+  questionId?: string;
+  questionReportable?: boolean;
+  reviewReportable?: boolean;
   onRetryReview?: (reviewId: string) => void;
   onRetryFeedbackLoad?: (reviewId: string) => void;
   className?: string;
@@ -114,6 +119,10 @@ export function PracticeReviewCard({
   retryErrorMessage = null,
   feedbackLoadError = null,
   isRawTextExpired = false,
+  accessToken,
+  questionId,
+  questionReportable,
+  reviewReportable,
   onRetryReview,
   onRetryFeedbackLoad,
   className,
@@ -412,6 +421,36 @@ export function PracticeReviewCard({
           </div>
         </div>
       )}
+
+      {/* R34 Screen 18: PracticeReviewCard (reviewed / not_evidence) supports practice_review report ONLY */}
+      {accessToken &&
+        ((reviewId &&
+          (effectiveStatus === 'reviewed' ||
+            effectiveStatus === 'not_evidence')) ||
+          (!reviewId && questionId)) && (
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            {reviewId ? (
+              <AIFeedbackComponent
+                accessToken={accessToken}
+                reportTarget={{ type: 'practice_review', id: reviewId }}
+                defaultReportReason="unfair_scoring"
+                alreadyReported={
+                  feedback
+                    ? !feedback.reportable
+                    : reviewReportable === false
+                }
+                compact
+              />
+            ) : questionId ? (
+              <AIFeedbackComponent
+                accessToken={accessToken}
+                reportTarget={{ type: 'quiz_question', id: questionId }}
+                alreadyReported={questionReportable === false}
+                compact
+              />
+            ) : null}
+          </div>
+        )}
     </article>
   );
 }

@@ -20,6 +20,8 @@ import {
   listRoadmapMerges,
   listRoadmapVersions,
   rejectRoadmapMerge,
+  submitRating,
+  submitReport,
   undoLastRoadmapMerge,
   type MergeProposalDTO,
   type RoadmapDetailDTO,
@@ -52,6 +54,8 @@ vi.mock('@/lib/api/client', async () => {
     focusRoadmap: vi.fn(),
     archiveRoadmap: vi.fn(),
     createDailyPlan: vi.fn(),
+    submitRating: vi.fn(),
+    submitReport: vi.fn(),
   };
 });
 
@@ -339,7 +343,7 @@ describe('RoadmapDetailView (Screen 15)', () => {
       'leading-none',
     );
     expect(nonFocusBadge.querySelector('svg')).toHaveClass('block', 'shrink-0');
-    expect(screen.queryByText('Focus Roadmap')).not.toBeInTheDocument();
+    expect(screen.queryByText('Focused Roadmap')).not.toBeInTheDocument();
     expect(screen.getByText('Roadmap Sections')).toBeInTheDocument();
     expect(screen.getByTestId('segmented-tabs-indicator')).toBeInTheDocument();
 
@@ -357,7 +361,7 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(
       screen.getByRole('button', { name: 'Create Daily Plan' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Focus Roadmap')).toBeInTheDocument();
+    expect(screen.getByText('Focused Roadmap')).toBeInTheDocument();
     expect(screen.queryByText('Non-Focus')).not.toBeInTheDocument();
 
     // Re-opening via alert action creates plan and navigates to /today
@@ -1298,5 +1302,158 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(createRoadmapMerge).not.toHaveBeenCalled();
     expect(acceptRoadmapMerge).not.toHaveBeenCalled();
     expect(rejectRoadmapMerge).not.toHaveBeenCalled();
+  });
+
+  it('enforces R34 Screen 15 capabilities: Active Roadmap exposes roadmap_content report (roadmaps.id, zero draft rating) and Merge Proposals exposes roadmap_merge rating ONLY', async () => {
+    const locked = makeDetail({ id: 'rm-locked-1', version_id: 'ver-2' });
+    const sampleMerge: MergeProposalDTO = {
+      id: 'merge-prop-99',
+      roadmap_id: 'rm-locked-1',
+      origin: 'user_request',
+      status: 'proposed',
+      base_version_id: 'ver-2',
+      base_version_no: 2,
+      result_version_id: null,
+      target_level: null,
+      instruction: 'Add caching',
+      reason: 'Improves read scalability',
+      operations: [],
+      size_impact: {
+        before: 10,
+        after: 11,
+        delta: 1,
+        soft_limit: 45,
+        materially_large: false,
+        warning: null,
+      },
+      daily_plan_impact: {
+        has_active_plan: false,
+        completed_days_unchanged: 0,
+        future_days_affected: 0,
+      },
+      created_at: '2026-11-24T10:00:00.000Z',
+      accepted_at: null,
+      rejected_at: null,
+      undone_at: null,
+    };
+
+    vi.mocked(listRoadmapMerges).mockResolvedValue({
+      items: [
+        {
+          id: 'merge-prop-99',
+          roadmap_id: 'rm-locked-1',
+          origin: 'user_request',
+          status: 'proposed',
+          base_version_no: 2,
+          target_level: null,
+          reason: 'Improves read scalability',
+          materially_large: false,
+          undo_available: false,
+          created_at: '2026-11-24T10:00:00.000Z',
+          accepted_at: null,
+          rejected_at: null,
+          undone_at: null,
+        },
+      ],
+      meta: { limit: 20, next_cursor: null },
+    });
+    vi.mocked(getRoadmapMerge).mockResolvedValue(sampleMerge);
+    vi.mocked(submitReport).mockResolvedValueOnce({
+      report_id: 'rep-rm-1',
+      status: 'received',
+    });
+    vi.mocked(submitRating).mockResolvedValueOnce({
+      target_type: 'roadmap_merge',
+      target_id: 'merge-prop-99',
+      score: 4,
+    });
+
+    render(
+      <RoadmapDetailView
+        accessToken="token-1"
+        roadmapId="rm-locked-1"
+        initialRoadmap={locked}
+      />,
+    );
+
+    // Active tab: NO star rating, ONLY roadmap_content report using roadmaps.id ('rm-locked-1')
+    expect(
+      screen.queryByRole('radiogroup', { name: 'Rate this content' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /report issue/i }));
+    const reportDialog = await screen.findByRole('dialog', {
+      name: /Report content issue/i,
+    });
+    fireEvent.click(
+      within(reportDialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(submitReport).toHaveBeenCalledWith('token-1', {
+        target_type: 'roadmap_content',
+        target_id: 'rm-locked-1',
+        reason: 'incorrect',
+      });
+    });
+
+    // Switch to Merge Proposals tab and expand proposal -> rating_1_5 on merge.id ONLY (no report button)
+    fireEvent.click(screen.getByRole('tab', { name: /Merge Proposals/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Review Changes/i }));
+    const mergeRadioGroup = await screen.findByRole('radiogroup', {
+      name: 'Rate this content',
+    });
+    expect(
+      screen.queryByRole('button', { name: /report issue/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(within(mergeRadioGroup).getByRole('radio', { name: '4 stars' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+    await waitFor(() => {
+      expect(submitRating).toHaveBeenCalledWith('token-1', {
+        target_type: 'roadmap_merge',
+        target_id: 'merge-prop-99',
+        score: 4,
+      });
+    });
+  });
+
+  it('renders Focused Roadmap badge, Daily Plan link (/today) with icon, and places Ask Mentor last on the right in header actions', () => {
+    const focused = makeDetail({
+      id: 'rm-focused-header',
+      status: 'locked',
+      is_focus: true,
+    });
+
+    render(
+      <RoadmapDetailView
+        accessToken="token-1"
+        roadmapId="rm-focused-header"
+        initialRoadmap={focused}
+      />,
+    );
+
+    const header = screen.getByRole('banner');
+    expect(within(header).getByText('Focused Roadmap')).toBeInTheDocument();
+
+    const dailyPlanLink = within(header).getByRole('link', {
+      name: 'Daily Plan',
+    });
+    expect(dailyPlanLink).toHaveAttribute('href', '/today');
+    expect(dailyPlanLink).toHaveClass('inline-flex', 'items-center', 'gap-1.5');
+    expect(dailyPlanLink.querySelector('svg')).toHaveClass('block', 'shrink-0');
+
+    const askMentorLink = within(header).getByRole('link', {
+      name: 'Ask Mentor',
+    });
+    expect(askMentorLink).toHaveAttribute(
+      'href',
+      '/mentor?context=focus_roadmap',
+    );
+
+    const actionBar = dailyPlanLink.parentElement as HTMLElement;
+    const actionLabels = Array.from(actionBar.children).map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(actionLabels[0]).toBe('Daily Plan');
+    expect(actionLabels[actionLabels.length - 1]).toBe('Ask Mentor');
   });
 });

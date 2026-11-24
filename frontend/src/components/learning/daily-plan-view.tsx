@@ -885,7 +885,7 @@ export function DailyPlanView({
                   {(activeFocusOverrideId !== null
                     ? loadedPlan.roadmap_id === activeFocusOverrideId
                     : loadedPlan.is_focus)
-                    ? ' · Focus Roadmap'
+                    ? ' · Focused Roadmap'
                     : ''}
                 </span>
               </div>

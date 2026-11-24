@@ -112,8 +112,23 @@ export function TodayView({
     };
   }, []);
 
+  const [seedTracker, setSeedTracker] = useState<{
+    today: TodayResponseDTO | null | undefined;
+    ownerToken: string;
+  }>(() => ({
+    today: initialToday,
+    ownerToken: accessToken,
+  }));
+  if (seedTracker.today !== initialToday) {
+    setSeedTracker({ today: initialToday, ownerToken: accessToken });
+  }
+  const isSeedValidForToken =
+    Boolean(initialToday) &&
+    seedTracker.today === initialToday &&
+    seedTracker.ownerToken === accessToken;
   const requestKey = `${accessToken}:${reloadTick}`;
-  const seededToday = initialToday && reloadTick === 0 ? initialToday : null;
+  const seededToday =
+    reloadTick === 0 && isSeedValidForToken ? initialToday : null;
 
   useEffect(() => {
     if (seededToday) {
@@ -587,6 +602,10 @@ export function TodayView({
               importantQuestions={today.topic.important_questions}
               contentVersion={today.topic.content_version}
               requiredDepth={today.topic.required_depth}
+              accessToken={accessToken}
+              topicId={today.topic.topic_id}
+              ratingAllowed={today.topic.rating_allowed}
+              reportAllowed={today.topic.report_allowed}
             />
           </div>
 

@@ -216,6 +216,10 @@ describe('QuizSessionView & QuizResultView (Screen 18 — EP-Q02..EP-Q07, EP-PR0
     expect(navBtn2Before.className).toContain('rounded-full');
     expect(navBtn2Before.className).toContain('bg-indigo-50/60');
 
+    const legendRow = screen.getByText('MCQ Answered').closest('div') as HTMLElement;
+    expect(legendRow).toHaveClass('mt-6', 'mb-4', 'justify-start');
+    expect(legendRow).not.toHaveClass('justify-center');
+
     const radioA = screen.getByRole('radio', { name: /LEFT JOIN/i });
     fireEvent.click(radioA);
 

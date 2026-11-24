@@ -1210,27 +1210,27 @@ export function QuizSessionView({
                 </div>
 
                 {/* Compact Legend */}
-                <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
-                  <span className="inline-flex items-center gap-1.5 leading-none">
+                <div className="mt-6 mb-4 flex flex-wrap items-center justify-start gap-x-4 gap-y-2 text-slate-500 dark:text-slate-400">
+                  <span className="inline-flex items-center gap-1.5 text-xs leading-none">
                     <span
                       aria-hidden="true"
-                      className="h-2.5 w-2.5 shrink-0 rounded-full bg-teal-600 dark:bg-teal-500"
+                      className="block h-2.5 w-2.5 shrink-0 rounded-full bg-teal-600 dark:bg-teal-500"
                     />
                     <span>MCQ Answered</span>
                   </span>
                   {frCount > 0 && (
-                    <span className="inline-flex items-center gap-1.5 leading-none">
+                    <span className="inline-flex items-center gap-1.5 text-xs leading-none">
                       <span
                         aria-hidden="true"
-                        className="h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-600 dark:bg-indigo-500"
+                        className="block h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-600 dark:bg-indigo-500"
                       />
                       <span>FR Answered</span>
                     </span>
                   )}
-                  <span className="inline-flex items-center gap-1.5 leading-none">
+                  <span className="inline-flex items-center gap-1.5 text-xs leading-none">
                     <span
                       aria-hidden="true"
-                      className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900"
+                      className="block h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900"
                     />
                     <span>Unanswered</span>
                   </span>

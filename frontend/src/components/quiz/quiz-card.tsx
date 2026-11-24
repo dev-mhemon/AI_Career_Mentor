@@ -6,6 +6,7 @@ import type {
   QuizQuestionDTO,
   QuizResultMcqQuestionDTO,
 } from '@/lib/api/client';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { cn } from '@/components/ui/cn';
 import {
   CheckCircleIcon,
@@ -35,6 +36,10 @@ export interface QuizCardProps {
   /** Read-only free-response text for post-submission review. */
   submittedFreeResponseText?: string | null;
   submittedIDontKnow?: boolean;
+  /** Optional auth token to enable R34 post-submission quiz_question reporting (report-only). */
+  accessToken?: string;
+  /** Explicit reportability flag for post-submission review mode (`!already_reported`). */
+  questionReportable?: boolean;
   className?: string;
 }
 
@@ -89,6 +94,8 @@ export function QuizCard({
   gradedMcqResult,
   submittedFreeResponseText,
   submittedIDontKnow = false,
+  accessToken,
+  questionReportable,
   className,
 }: QuizCardProps) {
   const groupId = useId();
@@ -350,7 +357,7 @@ export function QuizCard({
                 }
                 onToggleIDontKnow?.(e.target.checked);
               }}
-              className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 accent-teal-600 text-teal-600 focus:ring-2 focus:ring-teal-500/30 focus:ring-offset-0 dark:border-slate-600 dark:bg-slate-800 dark:accent-teal-500"
+              className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 accent-teal-600 text-teal-600 outline-none ring-0 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-0 dark:border-slate-600 dark:bg-slate-800 dark:accent-teal-500"
             />
             <span>I don&apos;t know this yet (skip without guessing)</span>
           </label>
@@ -391,6 +398,24 @@ export function QuizCard({
             </div>
           </div>
         )}
+
+      {/* R34 Screen 18: Graded question cards (MCQ & FR) support quiz_question report ONLY (no rating) */}
+      {isReviewMode && accessToken && (
+        <div className="border-t border-slate-100 dark:border-slate-800">
+          <AIFeedbackComponent
+            accessToken={accessToken}
+            reportTarget={{ type: 'quiz_question', id: question.question_id }}
+            alreadyReported={
+              questionReportable !== undefined
+                ? !questionReportable
+                : gradedMcqResult
+                  ? !gradedMcqResult.reportable
+                  : false
+            }
+            compact
+          />
+        </div>
+      )}
     </article>
   );
 }

@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor & Technology Intelligence Contract (M11)
-  version: 0.5.0
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence & Quality Feedback Contract (M12)
+  version: 0.6.0
   description: >-
-    Synchronized through M11-01, 2026-11-24. Derived from adopted C05 v1.5.1. Source baseline:
-    8d43f1b6cb927dfc2b2e3c5dd7f73d8444dc1090. Canonical auth operations (EP-A01..EP-A13), account deletion and
+    Synchronized through M12-01, 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
+    6e5e108671bf24c1ed6466f4df64670875c3d2c3. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
@@ -14,7 +14,8 @@ info:
     One-Step Undo APIs (EP-R01..EP-R15), M07 Learning APIs (EP-L01..EP-L07), M08 Quiz, AI Practice Review, and
     Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that EP-G04 EvidenceService.record is
     strictly internal-only with no HTTP route), M10 Contextual AI Mentor APIs (EP-M01..EP-M04, R08, R11, R15, N02),
-    and M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01) are documented here.
+    M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01), and M12 Quality Feedback &
+    Shared-Content Safety APIs (EP-F01..EP-F02, R11, R24, R26, R27, R34) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -42,7 +43,9 @@ tags:
     description: C05 14.10 Contextual AI Career Mentor API (EP-M01..EP-M04); owner-only conversations, default 201 JSON / opt-in R15 SSE, and 90-day history.
   - name: Technology Intelligence
     description: C05 14.11 Personalized Daily Technology Intelligence API (EP-T01..EP-T03); default-OFF read gate (technology_update), R25 local-date today_state resolution, and R24 foreground view tracking.
-x-source: API-Specification.md sections 13, 13.5-6, 14.1-11, 14.13, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R11/R12/R13/R14/R15/R17/R18/R24/R25/R26/R28/R29/R31/R35/N01/N02
+  - name: Feedback
+    description: C05 14.12 Quality Feedback & Shared-Content Safety API (EP-F01..EP-F02); R34 target-specific rating upsert and append-only report submission with R27 READ COMMITTED lock-before-insert threshold concurrency.
+x-source: API-Specification.md sections 13, 13.5-6, 14.1-13, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R11/R12/R13/R14/R15/R17/R18/R24/R25/R26/R27/R28/R29/R31/R34/R35/N01/N02
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -6341,6 +6344,136 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /ratings:
+    post:
+      tags:
+        - Feedback
+      operationId: submitRating
+      x-endpoint-id: EP-F01
+      x-implementation-status: implemented
+      x-authorization: AZ-USER
+      x-feature-gate: none
+      summary: Submit or update 1..5 quality rating (C05 EP-F01)
+      description: >-
+        Upserts a 1..5 rating for an authorized ratable target (roadmap_draft -> roadmap_versions.id,
+        roadmap_merge -> roadmap_merges.id, topic_content -> approved topics.id with prior exposure,
+        technology_update -> delivered technology_updates.id). Explicitly rejects non-ratable domain
+        targets (quiz_question, practice_review, roadmap_content, mentor, mentor_message, conversation)
+        with 422 TARGET_NOT_RATABLE (C05 §14.12 / R34). Records coalesced R24 foreground activity and
+        never logs raw comment text (R11).
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-F01 success; returns RatingResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RatingResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: TARGET_NOT_FOUND (missing, foreign, undelivered, or non-approved ratable target; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: TARGET_NOT_RATABLE (non-ratable domain target), VALIDATION_FAILED (score outside 1..5 or comment > 500 Unicode code points / NUL / unpaired surrogates), or INVALID_FORMAT (malformed target_id UUID; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /reports:
+    post:
+      tags:
+        - Feedback
+      operationId: submitReport
+      x-endpoint-id: EP-F02
+      x-implementation-status: implemented
+      x-authorization: AZ-USER
+      x-feature-gate: none
+      summary: Submit content quality report (C05 EP-F02)
+      description: >-
+        Inserts an append-only user report for an authorized reportable target (roadmap_content -> roadmaps.id,
+        topic_content -> non-draft topics.id with prior exposure including hidden/superseded lineage,
+        quiz_question -> quiz_questions.id from learner's attempt including hidden questions,
+        practice_review -> owned practice_reviews.id). Acquires R27 target advisory lock in a preceding
+        READ COMMITTED statement before INSERT so trg_content_reports_threshold evaluates independent-user
+        auto-hide thresholds atomically without leaking threshold or hidden status in client responses.
+        Uses ON CONFLICT DO NOTHING RETURNING id to map duplicate reports to 409 REPORT_ALREADY_SUBMITTED
+        without logging raw comment parameters (R11). Records coalesced R24 foreground activity.
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequestDTO'
+      responses:
+        '201':
+          description: C05 EP-F02 success; returns ReportResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: TARGET_NOT_FOUND (missing, foreign, or unexposed target; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: REPORT_ALREADY_SUBMITTED (caller already reported this target; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED (invalid target_type/reason or comment > 1000 Unicode code points / NUL / unpaired surrogates) or INVALID_FORMAT (malformed target_id UUID; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -10142,3 +10275,106 @@ components:
           enum: [true]
         data:
           $ref: '#/components/schemas/TechnologyUpdateViewedDTO'
+    RatingTarget:
+      type: string
+      description: C05 §15.11 / R34 ratable target types (never interchangeable with ReportTarget).
+      enum:
+        - roadmap_draft
+        - roadmap_merge
+        - topic_content
+        - technology_update
+    ReportTarget:
+      type: string
+      description: C05 §15.11 / R34 reportable target types (never interchangeable with RatingTarget).
+      enum:
+        - roadmap_content
+        - topic_content
+        - quiz_question
+        - practice_review
+    ReportReason:
+      type: string
+      description: C05 §15.11 / DMS public.report_reason enum.
+      enum:
+        - incorrect
+        - unclear
+        - unfair_scoring
+        - outdated
+        - inappropriate
+        - other
+    RatingRequestDTO:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id, score]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/RatingTarget'
+        target_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          maxLength: 500
+          description: Optional trimmed learner comment (<= 500 Unicode code points; NUL bytes and unpaired surrogates rejected).
+    RatingResponseDTO:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id, score]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/RatingTarget'
+        target_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+    ReportRequestDTO:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id, reason]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/ReportTarget'
+        target_id:
+          type: string
+          format: uuid
+        reason:
+          $ref: '#/components/schemas/ReportReason'
+        comment:
+          type: string
+          maxLength: 1000
+          description: Optional trimmed learner report details (<= 1000 Unicode code points; NUL bytes and unpaired surrogates rejected).
+    ReportResponseDTO:
+      type: object
+      additionalProperties: false
+      required: [report_id, status]
+      properties:
+        report_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [received]
+    RatingResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/RatingResponseDTO'
+    ReportResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/ReportResponseDTO'

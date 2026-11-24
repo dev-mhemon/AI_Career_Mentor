@@ -839,6 +839,10 @@ export function QuizResultView({
                   isRawTextExpired={
                     revId ? Boolean(expiredReviewIds[revId]) : false
                   }
+                  accessToken={accessToken}
+                  questionId={fr.question_id}
+                  questionReportable={fr.reportable}
+                  reviewReportable={fr.reportable}
                   onRetryReview={handleRetryPracticeReview}
                   onRetryFeedbackLoad={handleRetryFeedbackLoad}
                 />
@@ -886,6 +890,7 @@ export function QuizResultView({
                   totalQuestions={mcqResults.length}
                   gradedMcqResult={mcq}
                   submittedIDontKnow={Boolean(saved?.i_dont_know)}
+                  accessToken={accessToken}
                 />
               );
             })}

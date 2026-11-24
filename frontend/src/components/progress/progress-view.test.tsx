@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -251,6 +252,26 @@ describe('ProgressView (Screen 19 — EP-G01, EP-G02, EP-G03, tabs, filters & Sk
       />,
     );
 
+    // Clear Filters is always rendered in filter bar, disabled at default filters, with Focused Roadmap (Default) copy
+    const filterBar = screen.getByRole('region', {
+      name: 'Filter skill progress',
+    });
+    expect(
+      within(filterBar).getByRole('option', {
+        name: 'Focused Roadmap (Default)',
+      }),
+    ).toBeInTheDocument();
+    const initialClearBtn = within(filterBar).getByRole('button', {
+      name: 'Clear Filters',
+    });
+    expect(initialClearBtn).toBeDisabled();
+    expect(initialClearBtn).toHaveClass(
+      'h-11',
+      'min-h-11',
+      'self-end',
+      'rounded-xl',
+    );
+
     fireEvent.change(screen.getByLabelText(/Filter by mastery state/i), {
       target: { value: 'proficient' },
     });
@@ -268,10 +289,168 @@ describe('ProgressView (Screen 19 — EP-G01, EP-G02, EP-G03, tabs, filters & Sk
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(
-      screen.getAllByRole('button', { name: /Clear Filters/i })[0]!,
-    );
+    const clearFiltersBtn = within(filterBar).getByRole('button', {
+      name: /Clear Filters/i,
+    });
+    expect(clearFiltersBtn).not.toBeDisabled();
+    fireEvent.click(clearFiltersBtn);
     expect(screen.getByText('PostgreSQL Indexing')).toBeInTheDocument();
+    expect(clearFiltersBtn).toBeDisabled();
+  });
+
+  it('renders a single unified filter-bar skeleton on unseeded refresh until BOTH roadmaps and initial progress resolve, and supports Retry roadmaps on metadata failure', async () => {
+    let resolveRoadmaps!: (value: {
+      items: Array<{
+        id: string;
+        career_goal_id: string;
+        canonical_role_id: string;
+        role_name: string;
+        target_level: 'mid';
+        status: 'locked';
+        is_focus: boolean;
+        current_version_id: string;
+        current_version_no: number;
+        draft_version_no: null;
+        has_open_draft: false;
+        has_open_merge: false;
+        has_daily_plan: true;
+        stale: false;
+        stale_draft: false;
+        locked_at: string;
+        archived_at: null;
+        created_at: string;
+        updated_at: string;
+      }>;
+      meta: { limit: number; next_cursor: null };
+    }) => void;
+    let resolveProgress!: (value: {
+      progress: ProgressResponseDTO;
+      meta: { limit: number; next_cursor: null };
+    }) => void;
+    vi.mocked(listRoadmaps).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRoadmaps = resolve;
+      }),
+    );
+    vi.mocked(getProgress).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveProgress = resolve;
+      }),
+    );
+
+    const { unmount } = render(<ProgressView accessToken="tok-refresh" />);
+
+    // Unified skeleton shown while both roadmaps and progress are pending
+    expect(
+      screen.getByLabelText('Loading progress filters'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Filter by career level/i),
+    ).not.toBeInTheDocument();
+
+    // Resolve roadmaps FIRST inside act(...) -> skeleton MUST remain visible while initial progress is still pending
+    await act(async () => {
+      resolveRoadmaps({
+        items: [
+          {
+            id: 'rm-1',
+            career_goal_id: 'g-1',
+            canonical_role_id: 'r-1',
+            role_name: 'Backend Engineer',
+            target_level: 'mid',
+            status: 'locked',
+            is_focus: true,
+            current_version_id: 'v-1',
+            current_version_no: 1,
+            draft_version_no: null,
+            has_open_draft: false,
+            has_open_merge: false,
+            has_daily_plan: true,
+            stale: false,
+            stale_draft: false,
+            locked_at: '2026-11-20T00:00:00.000Z',
+            archived_at: null,
+            created_at: '2026-11-20T00:00:00.000Z',
+            updated_at: '2026-11-20T00:00:00.000Z',
+          },
+        ],
+        meta: { limit: 20, next_cursor: null },
+      });
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByLabelText('Loading progress filters'),
+    ).toBeInTheDocument();
+
+    // Now resolve progress -> all 3 filter dropdowns + disabled Clear Filters appear together
+    resolveProgress({
+      progress: SAMPLE_PROGRESS,
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    expect(
+      await screen.findByLabelText(/Filter by roadmap/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Filter by career level/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Filter by mastery state/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Clear Filters' }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByLabelText('Loading progress filters'),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    // When listRoadmaps fails, Career Level & Mastery State remain usable and Retry roadmaps recovers
+    vi.mocked(listRoadmaps)
+      .mockRejectedValueOnce(new Error('Roadmaps unavailable'))
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'rm-2',
+            career_goal_id: 'g-2',
+            canonical_role_id: 'r-2',
+            role_name: 'Data Engineer',
+            target_level: 'mid',
+            status: 'locked',
+            is_focus: false,
+            current_version_id: 'v-2',
+            current_version_no: 1,
+            draft_version_no: null,
+            has_open_draft: false,
+            has_open_merge: false,
+            has_daily_plan: true,
+            stale: false,
+            stale_draft: false,
+            locked_at: '2026-11-20T00:00:00.000Z',
+            archived_at: null,
+            created_at: '2026-11-20T00:00:00.000Z',
+            updated_at: '2026-11-20T00:00:00.000Z',
+          },
+        ],
+        meta: { limit: 20, next_cursor: null },
+      });
+
+    render(<ProgressView accessToken="tok-rm-retry" />);
+
+    const retryBtn = await screen.findByRole('button', {
+      name: /Retry roadmaps/i,
+    });
+    expect(
+      screen.getByLabelText(/Filter by career level/i),
+    ).not.toBeDisabled();
+    fireEvent.click(retryBtn);
+
+    expect(
+      await screen.findByRole('option', { name: 'Data Engineer' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Retry roadmaps/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('shows Weak Areas error + Try Again, History retry & Load More preservation, and Shared Skills Load More when nextCursor exists', async () => {

@@ -195,4 +195,34 @@ describe('Toast (#11) with countdown progress bar', () => {
     });
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
+
+  it('positions close button at top-right with aligned icon/title row and tight title-to-subtitle spacing', () => {
+    const onDismiss = vi.fn();
+
+    render(
+      <Toast
+        variant="success"
+        title="Rating saved"
+        autoDismissMs={5000}
+        onDismiss={onDismiss}
+      >
+        Your rating (5/5) has been recorded.
+      </Toast>,
+    );
+
+    const dismissBtn = screen.getByRole('button', {
+      name: 'Dismiss notification',
+    });
+    expect(dismissBtn).toHaveClass('absolute', 'top-2', 'right-2');
+    expect(dismissBtn).not.toHaveClass('top-1/2', '-translate-y-1/2');
+
+    const titleEl = screen.getByText('Rating saved');
+    expect(titleEl).toHaveClass('leading-5');
+    expect(titleEl.parentElement).toHaveClass('gap-0.5');
+
+    const alertBox = titleEl.closest('.rounded-lg.border') as HTMLElement;
+    expect(alertBox).toHaveClass('items-start', 'pr-10');
+    const iconWrapper = alertBox.firstElementChild as HTMLElement;
+    expect(iconWrapper).toHaveClass('h-5', 'items-center', 'justify-center');
+  });
 });
