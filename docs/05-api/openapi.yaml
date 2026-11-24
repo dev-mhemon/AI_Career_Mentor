@@ -6386,25 +6386,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '403':
           description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '404':
           description: TARGET_NOT_FOUND (missing, foreign, undelivered, or non-approved ratable target; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '422':
-          description: TARGET_NOT_RATABLE (non-ratable domain target), VALIDATION_FAILED (score outside 1..5 or comment > 500 Unicode code points / NUL / unpaired surrogates), or INVALID_FORMAT (malformed target_id UUID; error.retryAfterSeconds is null)
+          description: TARGET_NOT_RATABLE (non-ratable domain target) or VALIDATION_FAILED (malformed target_id UUID, score outside 1..5, or comment > 500 Unicode code points / NUL / unpaired surrogates; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
   /reports:
     post:
       tags:
@@ -6449,31 +6449,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '403':
           description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '404':
           description: TARGET_NOT_FOUND (missing, foreign, or unexposed target; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '409':
           description: REPORT_ALREADY_SUBMITTED (caller already reported this target; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '422':
-          description: VALIDATION_FAILED (invalid target_type/reason or comment > 1000 Unicode code points / NUL / unpaired surrogates) or INVALID_FORMAT (malformed target_id UUID; error.retryAfterSeconds is null)
+          description: VALIDATION_FAILED (invalid target_type/reason, malformed target_id UUID, or comment > 1000 Unicode code points / NUL / unpaired surrogates; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -10317,8 +10317,7 @@ components:
           maximum: 5
         comment:
           type: string
-          maxLength: 500
-          description: Optional trimmed learner comment (<= 500 Unicode code points; NUL bytes and unpaired surrogates rejected).
+          description: Optional learner comment. The server trims leading and trailing whitespace and enforces a maximum of 500 Unicode code points after trimming (NUL bytes and unpaired surrogates rejected).
     RatingResponseDTO:
       type: object
       additionalProperties: false
@@ -10347,8 +10346,7 @@ components:
           $ref: '#/components/schemas/ReportReason'
         comment:
           type: string
-          maxLength: 1000
-          description: Optional trimmed learner report details (<= 1000 Unicode code points; NUL bytes and unpaired surrogates rejected).
+          description: Optional learner report details. The server trims leading and trailing whitespace and enforces a maximum of 1,000 Unicode code points after trimming (NUL bytes and unpaired surrogates rejected).
     ReportResponseDTO:
       type: object
       additionalProperties: false

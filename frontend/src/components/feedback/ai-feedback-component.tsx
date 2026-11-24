@@ -76,6 +76,7 @@ type FeedbackToastState = {
 
 const MAX_RATING_COMMENT_CODEPOINTS = 500;
 const MAX_REPORT_COMMENT_CODEPOINTS = 1_000;
+const FEEDBACK_REQUEST_TIMEOUT_MS = 15_000;
 
 const REPORT_REASON_OPTIONS: ReadonlyArray<{
   value: ReportReason;
@@ -364,8 +365,14 @@ function AIFeedbackInner({
     }
     setRatingState((prev) => ({
       ...prev,
-      draftScore: resolvedSavedScore ?? resolvedSelectedScore,
-      comment: resolvedSavedComment ?? '',
+      draftScore:
+        prev.commentPanelOpen === true
+          ? (prev.draftScore ?? resolvedSavedScore ?? resolvedSelectedScore)
+          : (resolvedSavedScore ?? resolvedSelectedScore),
+      comment:
+        prev.commentPanelOpen === true
+          ? prev.comment
+          : (resolvedSavedComment ?? ''),
       commentPanelOpen: true,
       error: null,
     }));
@@ -400,15 +407,19 @@ function AIFeedbackInner({
     }));
 
     try {
-      const res = await submitRating(requestToken, {
-        target_type: targetType,
-        target_id: targetId,
-        score: scoreToSubmit,
-        ...(trimmedComment.length > 0 ? { comment: trimmedComment } : {}),
-      });
+      const res = await submitRating(
+        requestToken,
+        {
+          target_type: targetType,
+          target_id: targetId,
+          score: scoreToSubmit,
+          ...(trimmedComment.length > 0 ? { comment: trimmedComment } : {}),
+        },
+        { timeoutMs: FEEDBACK_REQUEST_TIMEOUT_MS },
+      );
 
       // Persist accepted rating with monotonic sequence guard (watermark advances only on 200 OK).
-      saveStoredRating(
+      const saveResult = saveStoredRating(
         requestToken,
         targetType,
         targetId,
@@ -420,6 +431,24 @@ function AIFeedbackInner({
       );
 
       if (!mountedRef.current || ratingRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      if (saveResult.status === 'superseded') {
+        setRatingState((prev) => {
+          if (prev.pendingRequestId !== requestId) {
+            return prev;
+          }
+          return {
+            ...prev,
+            draftScore: null,
+            comment: '',
+            submitting: false,
+            pendingRequestId: null,
+            commentPanelOpen: false,
+            error: null,
+          };
+        });
         return;
       }
 
@@ -500,12 +529,16 @@ function AIFeedbackInner({
     }));
 
     try {
-      const res = await submitReport(requestToken, {
-        target_type: targetType,
-        target_id: targetId,
-        reason: reasonToSubmit,
-        ...(trimmedComment.length > 0 ? { comment: trimmedComment } : {}),
-      });
+      const res = await submitReport(
+        requestToken,
+        {
+          target_type: targetType,
+          target_id: targetId,
+          reason: reasonToSubmit,
+          ...(trimmedComment.length > 0 ? { comment: trimmedComment } : {}),
+        },
+        { timeoutMs: FEEDBACK_REQUEST_TIMEOUT_MS },
+      );
 
       const submittedComment =
         trimmedComment.length > 0 ? trimmedComment : null;
@@ -783,6 +816,7 @@ function AIFeedbackInner({
                 setRatingState((prev) => ({
                   ...prev,
                   comment: val,
+                  commentPanelOpen: true,
                   error: null,
                 }));
               }}

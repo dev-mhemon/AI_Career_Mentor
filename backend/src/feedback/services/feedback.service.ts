@@ -126,6 +126,10 @@ export class FeedbackService {
             WHERE rv.id = $2
               AND r.user_id = $1
               AND rv.user_id = $1
+              AND (
+                rv.state = 'draft'::public.roadmap_version_state
+                OR rv.created_by <> 'merge'::public.roadmap_version_origin
+              )
             LIMIT 1`,
           [userId, targetId],
         );
@@ -428,6 +432,18 @@ export class FeedbackService {
         await db.query(
           `SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0))`,
           [targetType, targetId],
+        );
+
+        // Self-heal valid non-canonical whole-number JSONB values (e.g. 2.0) to canonical JSONB
+        // integer before INSERT so frozen trigger trg_content_reports_threshold's ::integer cast
+        // never fails; matches 0 rows (zero row locks) when already canonical.
+        await db.query(
+          `UPDATE public.system_configurations
+              SET config_value = to_jsonb((config_value #>> '{}')::numeric::integer)
+            WHERE config_key = 'quality.report_auto_hide_threshold'
+              AND jsonb_typeof(config_value) = 'number'
+              AND (config_value #>> '{}') ~ '^[0-9]+\\.[0-9]+$'
+              AND ((config_value #>> '{}')::numeric = trunc((config_value #>> '{}')::numeric))`,
         );
 
         let raw: unknown;

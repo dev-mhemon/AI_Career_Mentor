@@ -90,9 +90,9 @@ export function StarRating({
       return;
     }
     let nextStar: number | null = null;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
       nextStar = star < 5 ? star + 1 : 1;
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
       nextStar = star > 1 ? star - 1 : 5;
     }
     if (nextStar !== null) {

@@ -675,11 +675,15 @@ describe('TechUpdatesView (Screen 21 /tech-updates)', () => {
     );
 
     await waitFor(() => {
-      expect(mockSubmitRating).toHaveBeenCalledWith('tok-ok', {
-        target_type: 'technology_update',
-        target_id: UPDATE_1.id,
-        score: 5,
-      });
+      expect(mockSubmitRating).toHaveBeenCalledWith(
+        'tok-ok',
+        {
+          target_type: 'technology_update',
+          target_id: UPDATE_1.id,
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
     });
     expect(await within(card).findByTestId('ai-feedback-score')).toHaveTextContent(
       '(5)',

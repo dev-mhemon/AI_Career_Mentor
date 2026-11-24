@@ -254,6 +254,10 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           expect(sql).toContain(
             'ON CONFLICT (user_id, target_type, target_id)',
           );
+          expect(sql).toContain('DO UPDATE SET');
+          expect(sql).toContain('score = EXCLUDED.score');
+          expect(sql).toContain('comment = EXCLUDED.comment');
+          expect(sql).not.toContain('DO NOTHING');
           const [uId, tType, tId, score, comment] = params as [
             string,
             string,
@@ -292,6 +296,116 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           comment: 'Much better after revision',
         },
       );
+    });
+
+    it('rejects locked merge-result roadmap_versions (created_by = merge) as roadmap_draft while preserving draft/draft-origin versions and separate roadmap_merge ratings', async () => {
+      const mergeVersionId = '12121212-1212-4121-8121-121212121212';
+      const draftOriginLockedId = '34343434-3434-4343-8343-343434343434';
+      const mergeId = '56565656-5656-4565-8565-565656565656';
+
+      const versionsTable = new Map<
+        string,
+        { user_id: string; state: string; created_by: string }
+      >([
+        [
+          mergeVersionId,
+          { user_id: USER_A, state: 'locked', created_by: 'merge' },
+        ],
+        [
+          draftOriginLockedId,
+          { user_id: USER_A, state: 'locked', created_by: 'ai' },
+        ],
+        [
+          VERSION_ID,
+          { user_id: USER_A, state: 'draft', created_by: 'user_request' },
+        ],
+      ]);
+
+      const { database } = createMockDb((sql, params) => {
+        if (sql.includes('FROM public.roadmap_versions rv')) {
+          expect(sql).toContain(
+            "rv.state = 'draft'::public.roadmap_version_state",
+          );
+          expect(sql).toContain(
+            "rv.created_by <> 'merge'::public.roadmap_version_origin",
+          );
+          const [uId, vId] = params as [string, string];
+          const row = versionsTable.get(vId);
+          if (
+            row &&
+            row.user_id === uId &&
+            (row.state === 'draft' || row.created_by !== 'merge')
+          ) {
+            return [{ id: vId }];
+          }
+          return [];
+        }
+        if (sql.includes('FROM public.roadmap_merges rm')) {
+          const [uId, mId] = params as [string, string];
+          return uId === USER_A && mId === mergeId ? [{ id: mId }] : [];
+        }
+        if (sql.includes('INSERT INTO public.user_ratings')) {
+          const [, tType, tId, score] = params as [
+            string,
+            string,
+            string,
+            number,
+          ];
+          return [{ target_type: tType, target_id: tId, score }];
+        }
+        return [];
+      });
+
+      const quality = new SharedContentQualityService(database);
+      const service = new FeedbackService(database, quality);
+
+      // Locked merge-result version MUST NOT qualify as roadmap_draft
+      await expectContractError(
+        service.submitRating(USER_A, {
+          target_type: 'roadmap_draft',
+          target_id: mergeVersionId,
+          score: 4,
+        }),
+        404,
+        'TARGET_NOT_FOUND',
+      );
+
+      // Owned draft and draft-origin versions remain ratable as roadmap_draft
+      await expect(
+        service.submitRating(USER_A, {
+          target_type: 'roadmap_draft',
+          target_id: VERSION_ID,
+          score: 4,
+        }),
+      ).resolves.toMatchObject({
+        target_type: 'roadmap_draft',
+        target_id: VERSION_ID,
+        score: 4,
+      });
+      await expect(
+        service.submitRating(USER_A, {
+          target_type: 'roadmap_draft',
+          target_id: draftOriginLockedId,
+          score: 5,
+        }),
+      ).resolves.toMatchObject({
+        target_type: 'roadmap_draft',
+        target_id: draftOriginLockedId,
+        score: 5,
+      });
+
+      // Separate roadmap_merge rating remains intact
+      await expect(
+        service.submitRating(USER_A, {
+          target_type: 'roadmap_merge',
+          target_id: mergeId,
+          score: 5,
+        }),
+      ).resolves.toMatchObject({
+        target_type: 'roadmap_merge',
+        target_id: mergeId,
+        score: 5,
+      });
     });
 
     it.each([
@@ -337,6 +451,9 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           }
           if (sql.includes('pg_advisory_xact_lock(hashtextextended')) {
             return [{ pg_advisory_xact_lock: '' }];
+          }
+          if (sql.includes('UPDATE public.system_configurations')) {
+            return [];
           }
           if (sql.includes('INSERT INTO public.content_reports')) {
             return [{ id: REPORT_ID }];
@@ -561,6 +678,89 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
         TARGET_ID,
       ]);
     });
+
+    it.each([
+      ['canonical integer 2', '2', 'topic_content', 'FROM public.topics t'],
+      [
+        'non-canonical whole-number 2.0 on shared topic_content',
+        '2.0',
+        'topic_content',
+        'FROM public.topics t',
+      ],
+      [
+        'non-canonical whole-number 2.0 on private practice_review',
+        '2.0',
+        'practice_review',
+        'FROM public.practice_reviews pr',
+      ],
+    ] as const)(
+      'normalizes %s threshold JSONB before INSERT so frozen trigger ::integer cast never fails',
+      async (_label, initialRawJsonText, targetType, exposureSqlFragment) => {
+        let storedConfigText: string = initialRawJsonText;
+        let normalizedRowsUpdated = 0;
+
+        const { database, executedStatements } = createMockDb((sql) => {
+          if (sql.includes(exposureSqlFragment)) {
+            return [{ id: TARGET_ID }];
+          }
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{}];
+          }
+          if (sql.includes('UPDATE public.system_configurations')) {
+            expect(sql).toContain(
+              "config_key = 'quality.report_auto_hide_threshold'",
+            );
+            expect(sql).toContain(
+              "to_jsonb((config_value #>> '{}')::numeric::integer)",
+            );
+            if (
+              /^[0-9]+\.[0-9]+$/.test(storedConfigText) &&
+              Number(storedConfigText) === Math.trunc(Number(storedConfigText))
+            ) {
+              storedConfigText = String(Math.trunc(Number(storedConfigText)));
+              normalizedRowsUpdated += 1;
+            }
+            return [];
+          }
+          if (sql.includes('INSERT INTO public.content_reports')) {
+            // Simulate frozen trigger 020_gaps_and_alignment.sql strict (config_value #>> '{}')::integer cast
+            if (!/^[0-9]+$/.test(storedConfigText)) {
+              throw new Error(
+                `invalid input syntax for type integer: "${storedConfigText}"`,
+              );
+            }
+            return [{ id: REPORT_ID }];
+          }
+          return [];
+        });
+
+        const service = new FeedbackService(
+          database,
+          new SharedContentQualityService(database),
+        );
+
+        const res = await service.submitReport(USER_A, {
+          target_type: targetType,
+          target_id: TARGET_ID,
+          reason: 'incorrect',
+        });
+
+        expect(res).toEqual({ report_id: REPORT_ID, status: 'received' });
+        expect(storedConfigText).toBe('2');
+        expect(normalizedRowsUpdated).toBe(
+          initialRawJsonText.includes('.') ? 1 : 0,
+        );
+
+        const normalizeIndex = executedStatements.findIndex((s) =>
+          s.sql.includes('UPDATE public.system_configurations'),
+        );
+        const insertIndex = executedStatements.findIndex((s) =>
+          s.sql.includes('INSERT INTO public.content_reports'),
+        );
+        expect(normalizeIndex).toBeGreaterThanOrEqual(0);
+        expect(insertIndex).toBeGreaterThan(normalizeIndex);
+      },
+    );
 
     it('serializes two concurrent sessions at non-default threshold=2, blocks duplicate-user double-counting, and ignores rolled-back inserts', async () => {
       // Simulated PostgreSQL state with advisory xact lock mutex + READ COMMITTED snapshot + trigger

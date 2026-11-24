@@ -1335,6 +1335,8 @@ describe('RoadmapDetailView (Screen 15)', () => {
       accepted_at: null,
       rejected_at: null,
       undone_at: null,
+      undo_available: false,
+      undo_window_closed_at: null,
     };
 
     vi.mocked(listRoadmapMerges).mockResolvedValue({
@@ -1388,11 +1390,15 @@ describe('RoadmapDetailView (Screen 15)', () => {
       within(reportDialog).getByRole('button', { name: /Submit report/i }),
     );
     await waitFor(() => {
-      expect(submitReport).toHaveBeenCalledWith('token-1', {
-        target_type: 'roadmap_content',
-        target_id: 'rm-locked-1',
-        reason: 'incorrect',
-      });
+      expect(submitReport).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'roadmap_content',
+          target_id: 'rm-locked-1',
+          reason: 'incorrect',
+        },
+        { timeoutMs: 15_000 },
+      );
     });
 
     // Switch to Merge Proposals tab and expand proposal -> rating_1_5 on merge.id ONLY (no report button)
@@ -1408,11 +1414,15 @@ describe('RoadmapDetailView (Screen 15)', () => {
     fireEvent.click(within(mergeRadioGroup).getByRole('radio', { name: '4 stars' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
     await waitFor(() => {
-      expect(submitRating).toHaveBeenCalledWith('token-1', {
-        target_type: 'roadmap_merge',
-        target_id: 'merge-prop-99',
-        score: 4,
-      });
+      expect(submitRating).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'roadmap_merge',
+          target_id: 'merge-prop-99',
+          score: 4,
+        },
+        { timeoutMs: 15_000 },
+      );
     });
   });
 

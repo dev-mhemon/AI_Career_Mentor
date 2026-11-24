@@ -357,7 +357,7 @@ export function QuizCard({
                 }
                 onToggleIDontKnow?.(e.target.checked);
               }}
-              className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 accent-teal-600 text-teal-600 outline-none ring-0 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-0 dark:border-slate-600 dark:bg-slate-800 dark:accent-teal-500"
+              className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 accent-teal-600 text-teal-600 outline-none ring-0 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600 dark:border-slate-600 dark:bg-slate-800 dark:accent-teal-500 dark:focus-visible:outline-teal-400"
             />
             <span>I don&apos;t know this yet (skip without guessing)</span>
           </label>

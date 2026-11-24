@@ -653,11 +653,15 @@ describe('TodayView', () => {
       within(explanationSection).getByRole('button', { name: /Submit rating/i }),
     );
     await waitFor(() => {
-      expect(submitRating).toHaveBeenCalledWith('token-1', {
-        target_type: 'topic_content',
-        target_id: 'top-1',
-        score: 5,
-      });
+      expect(submitRating).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'topic_content',
+          target_id: 'top-1',
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
     });
 
     // Report capability is also exposed on approved topic_content

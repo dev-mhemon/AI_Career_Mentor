@@ -380,11 +380,15 @@ describe('RoadmapDiffViewer (Component 17)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
 
     await waitFor(() => {
-      expect(submitRating).toHaveBeenCalledWith('tok-1', {
-        target_type: 'roadmap_merge',
-        target_id: 'merge-1',
-        score: 5,
-      });
+      expect(submitRating).toHaveBeenCalledWith(
+        'tok-1',
+        {
+          target_type: 'roadmap_merge',
+          target_id: 'merge-1',
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
     });
   });
 });

@@ -857,11 +857,15 @@ describe('RoadmapDraftView (Screen 12)', () => {
     fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
     await waitFor(() => {
-      expect(submitRating).toHaveBeenCalledWith('token-1', {
-        target_type: 'roadmap_draft',
-        target_id: 'ver-1',
-        score: 5,
-      });
+      expect(submitRating).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'roadmap_draft',
+          target_id: 'ver-1',
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
     });
 
     fireEvent.click(screen.getByRole('button', { name: /report issue/i }));
@@ -872,11 +876,15 @@ describe('RoadmapDraftView (Screen 12)', () => {
       within(reportDialog).getByRole('button', { name: /Submit report/i }),
     );
     await waitFor(() => {
-      expect(submitReport).toHaveBeenCalledWith('token-1', {
-        target_type: 'roadmap_content',
-        target_id: 'rm-draft-1',
-        reason: 'incorrect',
-      });
+      expect(submitReport).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'roadmap_content',
+          target_id: 'rm-draft-1',
+          reason: 'incorrect',
+        },
+        { timeoutMs: 15_000 },
+      );
     });
   });
 });

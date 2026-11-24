@@ -197,11 +197,15 @@ describe('QuizResultView & QuizCard R34 Feedback Integration (Screen 18)', () =>
     );
 
     await waitFor(() => {
-      expect(submitReport).toHaveBeenCalledWith('tok-quiz', {
-        target_type: 'practice_review',
-        target_id: 'rev-1',
-        reason: 'unfair_scoring',
-      });
+      expect(submitReport).toHaveBeenCalledWith(
+        'tok-quiz',
+        {
+          target_type: 'practice_review',
+          target_id: 'rev-1',
+          reason: 'unfair_scoring',
+        },
+        { timeoutMs: 15_000 },
+      );
     });
 
     // MCQ #1 report button submits quiz_question with q-mcq-1
@@ -219,11 +223,15 @@ describe('QuizResultView & QuizCard R34 Feedback Integration (Screen 18)', () =>
     );
 
     await waitFor(() => {
-      expect(submitReport).toHaveBeenCalledWith('tok-quiz', {
-        target_type: 'quiz_question',
-        target_id: 'q-mcq-1',
-        reason: 'incorrect',
-      });
+      expect(submitReport).toHaveBeenCalledWith(
+        'tok-quiz',
+        {
+          target_type: 'quiz_question',
+          target_id: 'q-mcq-1',
+          reason: 'incorrect',
+        },
+        { timeoutMs: 15_000 },
+      );
     });
   });
 

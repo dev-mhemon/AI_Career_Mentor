@@ -2801,6 +2801,82 @@ describe('M11 Technology Intelligence API client (EP-T01..EP-T03)', () => {
         statusCode: 502,
       });
 
+      // Mismatched EP-F01 target_type in response
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'roadmap_draft',
+              target_id: FEEDBACK_TARGET_ID,
+              score: 5,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID,
+          score: 5,
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+        statusCode: 502,
+      });
+
+      // Mismatched EP-F01 target_id in response
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'topic_content',
+              target_id: REPORT_ID,
+              score: 5,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID,
+          score: 5,
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+        statusCode: 502,
+      });
+
+      // Case-insensitive UUID match succeeds
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'topic_content',
+              target_id: FEEDBACK_TARGET_ID.toLowerCase(),
+              score: 4,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID.toUpperCase(),
+          score: 4,
+        }),
+      ).resolves.toEqual({
+        target_type: 'topic_content',
+        target_id: FEEDBACK_TARGET_ID.toLowerCase(),
+        score: 4,
+      });
+
       // Malformed EP-F02 unexpected status
       mockFetch.mockResolvedValueOnce({
         ok: true,

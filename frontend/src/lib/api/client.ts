@@ -3652,7 +3652,12 @@ export async function submitRating(
       : {}),
     ...(options?.signal ? { signal: options.signal } : {}),
   });
-  if (!isValidRatingResponseDTO(data)) {
+  if (
+    !isValidRatingResponseDTO(data) ||
+    data.target_type !== payload.target_type ||
+    data.target_id.trim().toLowerCase() !==
+      payload.target_id.trim().toLowerCase()
+  ) {
     throwInvalidFeedbackResponse('Unexpected rating response format.');
   }
   return data;

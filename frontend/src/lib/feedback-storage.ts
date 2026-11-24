@@ -40,7 +40,12 @@ type CachedSnapshot = {
   value: StoredFeedbackEntry | null;
 };
 
+export type SaveStoredRatingResult = {
+  status: 'saved' | 'superseded';
+};
+
 const snapshotCache = new Map<string, CachedSnapshot>();
+const memoryOverlay = new Map<string, StoredFeedbackEntry>();
 const keyListeners = new Map<string, Set<() => void>>();
 let nextRatingWriteSeq = 0;
 const latestAcceptedRatingWriteSeq = new Map<string, number>();
@@ -195,20 +200,26 @@ function safeReadRaw(key: string): string | null {
   }
 }
 
-function safeWriteRaw(key: string, raw: string): void {
+function safeWriteRaw(key: string, raw: string): boolean {
   if (typeof window === 'undefined') {
-    return;
+    return false;
   }
   try {
     window.localStorage.setItem(key, raw);
+    return true;
   } catch {
-    // Ignore storage quota or restricted-mode errors gracefully.
+    // Storage quota or restricted-mode error; caller retains an in-memory overlay.
+    return false;
   }
 }
 
 function readFeedbackSnapshot(key: string | null): StoredFeedbackEntry | null {
   if (!key || typeof window === 'undefined') {
     return null;
+  }
+  const overlaid = memoryOverlay.get(key);
+  if (overlaid !== undefined) {
+    return overlaid;
   }
   const raw = safeReadRaw(key);
   const cached = snapshotCache.get(key);
@@ -246,6 +257,7 @@ function subscribeKey(key: string | null, listener: () => void): () => void {
 
   const onStorage = (event: StorageEvent) => {
     if (event.key === null || event.key === key) {
+      memoryOverlay.delete(key);
       snapshotCache.delete(key);
       listener();
     }
@@ -277,15 +289,15 @@ export function saveStoredRating(
   targetId: string,
   rating: StoredRatingFeedback,
   writeSeq?: number,
-): void {
+): SaveStoredRatingResult {
   const key = buildFeedbackStorageKey(accessToken, targetType, targetId);
   if (!key) {
-    return;
+    return { status: 'saved' };
   }
   if (writeSeq !== undefined) {
     const latestSeq = latestAcceptedRatingWriteSeq.get(key) ?? 0;
     if (writeSeq < latestSeq) {
-      return;
+      return { status: 'superseded' };
     }
     latestAcceptedRatingWriteSeq.set(key, writeSeq);
   }
@@ -299,9 +311,15 @@ export function saveStoredRating(
     },
   };
   const raw = JSON.stringify(nextEntry);
-  safeWriteRaw(key, raw);
-  snapshotCache.set(key, { raw, value: nextEntry });
+  if (safeWriteRaw(key, raw)) {
+    memoryOverlay.delete(key);
+    snapshotCache.set(key, { raw, value: nextEntry });
+  } else {
+    memoryOverlay.set(key, nextEntry);
+    snapshotCache.delete(key);
+  }
   notifyKeyListeners(key);
+  return { status: 'saved' };
 }
 
 export function saveStoredReport(
@@ -332,8 +350,13 @@ export function saveStoredReport(
     },
   };
   const raw = JSON.stringify(nextEntry);
-  safeWriteRaw(key, raw);
-  snapshotCache.set(key, { raw, value: nextEntry });
+  if (safeWriteRaw(key, raw)) {
+    memoryOverlay.delete(key);
+    snapshotCache.set(key, { raw, value: nextEntry });
+  } else {
+    memoryOverlay.set(key, nextEntry);
+    snapshotCache.delete(key);
+  }
   notifyKeyListeners(key);
 }
 
