@@ -848,9 +848,7 @@ describe('MergeProposalJobHandler', () => {
     expect(validated.target_level).toBe('mid');
     expect(validated.operations[0].sort_order).toBe(1);
     expect(validated.operations[0].op).toBe('add_topic');
-    expect(validated.operations[0].topic_id).toBe(
-      'apache-airflow-orchestration',
-    );
+    expect(validated.operations[0].topic_id).toBeNull();
     expect(validated.operations[0].priority).toBe('core');
     expect(validated.operations[1].sort_order).toBe(2);
     expect(validated.operations[1].lineage_id).toBe(LINEAGE_B);
@@ -1683,5 +1681,162 @@ describe('MergeProposalJobHandler', () => {
       }),
     );
     expect(insertedTopicParams[0]?.[3]).toBe('mid');
+  });
+
+  it('strips reprioritize depends_on_lineage_ids, excludes earliest incomplete day from preview, rejects unapproved fast-path skills, and truncates surrogate-pair titles safely', async () => {
+    const insertedItemPayloads: unknown[] = [];
+    const insertedMergeImpacts: unknown[] = [];
+    const tx = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM public.users')) return [{ status: 'active' }];
+        if (sql.includes('FROM public.roadmaps')) {
+          return [
+            {
+              id: ROADMAP_ID,
+              status: 'locked',
+              target_level: 'mid',
+              current_version_id: VERSION_ID,
+            },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_versions')) {
+          return [{ id: VERSION_ID, version_no: 2 }];
+        }
+        if (sql.includes('FROM public.roadmap_merges')) return [];
+        if (sql.includes('FROM public.roadmap_items')) return makeBaseItems();
+        if (sql.includes('FROM public.system_configurations')) return [];
+        if (sql.includes('FROM public.daily_plans')) {
+          return [{ id: 'dp-1', hours_per_day: 2 }];
+        }
+        if (sql.includes('FROM public.daily_plan_items')) {
+          return [
+            { id: 'dpi-1', day_no: 1, status: 'completed' },
+            { id: 'dpi-2', day_no: 2, status: 'pending' }, // earliest incomplete -> excluded
+            { id: 'dpi-3', day_no: 3, status: 'pending' }, // future mutable -> counted
+          ];
+        }
+        if (sql.includes('FROM public.quiz_attempts')) return [];
+        if (sql.includes('FROM public.ai_requests')) return [];
+        if (sql.includes('INSERT INTO public.roadmap_merges')) {
+          insertedMergeImpacts.push(JSON.parse(String(params?.[10] ?? '{}')));
+          return [[{ id: MERGE_ID }], 1];
+        }
+        if (sql.includes('INSERT INTO public.roadmap_merge_items')) {
+          insertedItemPayloads.push(JSON.parse(String(params?.[9] ?? '{}')));
+          return [];
+        }
+        return [];
+      }),
+    };
+
+    const handler = new MergeProposalJobHandler(
+      {} as DatabaseService,
+      {} as AiGatewayService,
+    );
+
+    // 1. reprioritize with cyclic depends_on_lineage_ids is ignored/stripped (matching Accept),
+    //    and daily_plan_impact excludes earliest incomplete day (Day 2) so future_days_affected = 1.
+    const emojiTitle = `${'A'.repeat(239)}🚀tail`;
+    await handler.persistArtifact(
+      tx as unknown as JobQueryExecutor,
+      makeClaimedMergeJob(),
+      makeExecResult({
+        reason: 'Reprioritize only',
+        target_level: null,
+        operations: [
+          {
+            sort_order: 1,
+            op: 'reprioritize',
+            lineage_id: LINEAGE_A,
+            topic_id: null,
+            title: emojiTitle,
+            priority: 'core',
+            reason: 'Promote priority',
+            payload: { depends_on_lineage_ids: [LINEAGE_B] },
+          },
+        ],
+        size_impact: {
+          active_topics_before: 2,
+          active_topics_after: 2,
+          materially_large: false,
+          warning: null,
+        },
+      }),
+    );
+    expect(insertedItemPayloads[0]).toEqual({});
+    expect(insertedMergeImpacts[0]).toEqual({
+      has_active_plan: true,
+      completed_days_unchanged: 1,
+      future_days_affected: 1,
+    });
+
+    // 2. Fast-path UUID topic with unapproved skill fails 502 AI_VALIDATION_FAILED
+    const UNAPPROVED_TOPIC = '77777777-7777-4777-8777-777777777799';
+    const txUnapproved = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM public.users')) return [{ status: 'active' }];
+        if (sql.includes('FROM public.roadmaps')) {
+          return [
+            {
+              id: ROADMAP_ID,
+              status: 'locked',
+              target_level: 'mid',
+              current_version_id: VERSION_ID,
+            },
+          ];
+        }
+        if (sql.includes('FROM public.roadmap_versions')) {
+          return [{ id: VERSION_ID, version_no: 2 }];
+        }
+        if (sql.includes('FROM public.roadmap_merges')) return [];
+        if (sql.includes('FROM public.roadmap_items')) return makeBaseItems();
+        if (
+          sql.includes('FROM public.topics') &&
+          sql.includes('WHERE id = $1')
+        ) {
+          return [
+            {
+              id: UNAPPROVED_TOPIC,
+              skill_id: '88888888-8888-4888-8888-888888888899',
+              title: 'Hidden Topic',
+              career_level: 'mid',
+            },
+          ];
+        }
+        if (sql.includes('FROM public.skills')) return [];
+        return [];
+      }),
+    };
+    await expect(
+      handler.persistArtifact(
+        txUnapproved as unknown as JobQueryExecutor,
+        makeClaimedMergeJob(),
+        makeExecResult({
+          reason: 'Try unapproved skill topic',
+          target_level: null,
+          operations: [
+            {
+              sort_order: 1,
+              op: 'add_topic',
+              lineage_id: null,
+              topic_id: UNAPPROVED_TOPIC,
+              title: 'Hidden Topic',
+              priority: 'supporting',
+              reason: 'Should reject',
+              payload: {},
+            },
+          ],
+          size_impact: {
+            active_topics_before: 2,
+            active_topics_after: 3,
+            materially_large: false,
+            warning: null,
+          },
+        }),
+      ),
+    ).rejects.toSatisfy((err: unknown) => {
+      expectContractError(err, 502, 'AI_VALIDATION_FAILED');
+      return true;
+    });
   });
 });

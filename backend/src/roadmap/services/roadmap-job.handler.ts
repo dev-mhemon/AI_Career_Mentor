@@ -155,6 +155,35 @@ export function buildValidTopicSlug(
   return candidate;
 }
 
+export function buildLegacyTopicSlug(
+  title: string,
+  disambiguator?: string,
+): string {
+  const ascii = title
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+  const hashSuffix = createHash('sha256')
+    .update(`${title}:${disambiguator ?? ''}`, 'utf8')
+    .digest('hex')
+    .slice(0, 8);
+  let candidate = ascii;
+  if (!candidate) {
+    candidate = `topic-${hashSuffix}`;
+  } else if (disambiguator) {
+    const prefix = candidate.slice(0, 80).replace(/-+$/g, '');
+    candidate = prefix ? `${prefix}-${hashSuffix}` : `topic-${hashSuffix}`;
+  } else {
+    candidate = candidate.slice(0, 96).replace(/-+$/g, '');
+  }
+  if (!VALID_TOPIC_SLUG_PATTERN.test(candidate)) {
+    return `topic-${hashSuffix}`;
+  }
+  return candidate;
+}
+
 function assertDagAcyclic(edges: Map<string, string[]>): void {
   const state = new Map<string, number>();
 
@@ -1429,29 +1458,60 @@ export class RoadmapJobHandler implements JobHandler {
         continue;
       }
 
+      let disambiguator: string | undefined;
       let slug = buildValidTopicSlug(item.title);
       const slugKey = `${item.skill_id}:${slug}:${targetLevel}`;
       if (usedSlugKeys.has(slugKey)) {
-        slug = buildValidTopicSlug(item.title, item.lineage_id);
+        disambiguator = item.lineage_id;
+        slug = buildValidTopicSlug(item.title, disambiguator);
       }
       usedSlugKeys.add(`${item.skill_id}:${slug}:${targetLevel}`);
 
+      const legacySlug = buildLegacyTopicSlug(item.title, disambiguator);
+      const lookupSlugs = legacySlug === slug ? [slug] : [slug, legacySlug];
       const bySlugRows = await tx.query<Array<{ id: string }>>(
         `SELECT id
            FROM public.topics
           WHERE skill_id = $1
-            AND slug = $2
+            AND slug = ANY($2::text[])
             AND career_level = $3::public.career_level
             AND deleted_at IS NULL
-          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END, content_version DESC
+          ORDER BY CASE WHEN slug = $4 THEN 0 ELSE 1 END,
+                   CASE status WHEN 'approved' THEN 0 ELSE 1 END,
+                   content_version DESC
           LIMIT 1`,
-        [item.skill_id, slug, targetLevel],
+        [item.skill_id, lookupSlugs, targetLevel, slug],
       );
       let topicId = Array.isArray(bySlugRows) ? bySlugRows[0]?.id : undefined;
 
       if (topicId && usedTopicIds.has(String(topicId))) {
         slug = buildValidTopicSlug(item.title, item.lineage_id);
-        topicId = undefined;
+        const disambiguatedLegacy = buildLegacyTopicSlug(
+          item.title,
+          item.lineage_id,
+        );
+        const disambiguatedSlugs =
+          disambiguatedLegacy === slug ? [slug] : [slug, disambiguatedLegacy];
+        const byDisambiguatedRows = await tx.query<Array<{ id: string }>>(
+          `SELECT id
+             FROM public.topics
+            WHERE skill_id = $1
+              AND slug = ANY($2::text[])
+              AND career_level = $3::public.career_level
+              AND deleted_at IS NULL
+            ORDER BY CASE WHEN slug = $4 THEN 0 ELSE 1 END,
+                     CASE status WHEN 'approved' THEN 0 ELSE 1 END,
+                     content_version DESC
+            LIMIT 1`,
+          [item.skill_id, disambiguatedSlugs, targetLevel, slug],
+        );
+        const disambiguatedId = Array.isArray(byDisambiguatedRows)
+          ? byDisambiguatedRows[0]?.id
+          : undefined;
+        topicId =
+          disambiguatedId && !usedTopicIds.has(String(disambiguatedId))
+            ? disambiguatedId
+            : undefined;
       }
 
       if (!topicId) {

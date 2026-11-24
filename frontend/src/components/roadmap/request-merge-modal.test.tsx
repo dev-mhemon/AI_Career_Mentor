@@ -223,9 +223,8 @@ describe('RequestMergeModal', () => {
         retryable: false,
       },
       retryable: false,
-      retry_after_seconds: 1,
       created_at: '2026-11-23T16:00:55.000Z',
-      updated_at: '2026-11-23T16:02:23.000Z',
+      finished_at: '2026-11-23T16:02:23.000Z',
     });
 
     const { rerender } = render(

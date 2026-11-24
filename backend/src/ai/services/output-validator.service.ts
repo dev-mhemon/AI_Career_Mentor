@@ -394,7 +394,7 @@ function assignUnambiguousMergeSortOrders(
     }
     if (
       typeof rawOrder !== 'number' ||
-      !Number.isInteger(rawOrder) ||
+      !Number.isSafeInteger(rawOrder) ||
       rawOrder < 0
     ) {
       validationFail();
@@ -407,6 +407,13 @@ function assignUnambiguousMergeSortOrders(
   }
 
   const hasZero = seenExplicit.has(0);
+  if (hasZero) {
+    for (const entry of explicitEntries) {
+      if (entry.order > Number.MAX_SAFE_INTEGER - 1) {
+        validationFail();
+      }
+    }
+  }
   if (omittedIndices.length === 0) {
     if (hasZero) {
       for (const entry of explicitEntries) {
@@ -497,7 +504,7 @@ function validateMergeProposal(raw: Record<string, unknown>): void {
         typeof op.title === 'string' &&
         op.title.length > 0
       ) {
-        op.topic_id = deriveMergeTopicSlug(op.title, idx + 1);
+        op.topic_id = null;
       } else {
         validationFail();
       }

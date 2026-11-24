@@ -3978,7 +3978,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '409':
-          description: INVALID_STATE_TRANSITION, STALE_VERSION, IDEMPOTENCY_KEY_REUSED
+          description: INVALID_STATE_TRANSITION, MERGE_ALREADY_PROPOSED, ROADMAP_ARCHIVED, ROADMAP_NOT_LOCKED, STALE_VERSION, IDEMPOTENCY_KEY_REUSED
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -3988,6 +3988,9 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
             - INVALID_STATE_TRANSITION
+            - MERGE_ALREADY_PROPOSED
+            - ROADMAP_ARCHIVED
+            - ROADMAP_NOT_LOCKED
             - STALE_VERSION
             - IDEMPOTENCY_KEY_REUSED
         '422':
@@ -4186,15 +4189,16 @@ paths:
         - Roadmaps
       summary: Accept a pending merge proposal, publish a new immutable roadmap version, and reconcile future Daily Plan days
       description: >-
-        C05 EP-R11 (POST /api/v1/roadmaps/{id}/merges/{merge_id}/accept). Atomically locks user_career_goals
-        (on level_change), roadmaps, roadmap_merges, and active daily_plans in strict lock order; validates
-        required version precondition (If-Match and/or base_version_no -> 409 STALE_VERSION) and 45-topic
-        expansion acknowledgment (acknowledge_large_expansion -> 409 MERGE_EXPANSION_ACK_REQUIRED); writes a
-        new immutable locked roadmap_versions snapshot and roadmap_items; supersedes the displaced version and
-        any other pending proposals for the roadmap; closes any prior accepted merge Undo window; updates
-        target_level in-place on level_change without archiving or copying lower-level Proficient mastery;
-        reconciles future-only Daily Plan days preserving completed/current/started-quiz days and ordering
-        replacements by (phase_no, sequence_no); and stores an atomic undo_snapshot on the accepted merge.
+        C05 EP-R11 (POST /api/v1/roadmaps/{id}/merges/{merge_id}/accept). Atomically locks active daily_plans,
+        roadmaps, roadmap_merges, and daily_plan_items in strict lock order (daily_plans -> roadmaps ->
+        roadmap_merges -> daily_plan_items); validates required version precondition (If-Match and/or
+        base_version_no -> 409 STALE_VERSION) and unacknowledged large-expansion protection
+        (acknowledge_large_expansion: true -> 409 MERGE_EXPANSION_ACK_REQUIRED); writes a new immutable locked
+        roadmap_versions snapshot and chunked roadmap_items; supersedes the displaced version; closes any prior
+        accepted merge Undo window; updates target_level in-place on level_change without archiving or copying
+        lower-level Proficient mastery; reconciles future-only Daily Plan days preserving completed, in-progress,
+        started-quiz, and earliest-incomplete (Today) days and ordering replacements by (phase_no, sequence_no);
+        and stores an atomic undo_snapshot on the accepted merge.
       x-source: API-Specification.md sections 14.5, 15.5, 17.3; PRD sections 20, 21, 22; DMS M09
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER
@@ -4385,17 +4389,19 @@ paths:
       operationId: EP-R13
       tags:
         - Roadmaps
-      summary: Undo the latest accepted merge by publishing a restored immutable roadmap version
+      summary: Undo the latest accepted merge by restoring the previous roadmap version in-place
       description: >-
         C05 EP-R13 (POST /api/v1/roadmaps/{id}/merges/undo). Performs a one-step rollback of the most recent
         accepted merge when its Undo window is open, active Daily Plan plan_revision has not changed since
-        merge acceptance, and no post-merge quiz attempt has been started on any future day. Honors optional
-        If-Match version header (included in the H-IDEM idempotency fingerprint and validated against current
-        version_no under roadmaps FOR UPDATE -> 409 STALE_VERSION). Publishes a new immutable roadmap_versions
-        row with status restored (incrementing version_no, never mutating prior versions), supersedes any
-        pending merge proposals for the displaced version, restores prior career level when undoing a
-        level_change merge, and restores future-only Daily Plan items from undo_snapshot. Uses Gate none so
-        learners can undo even when generation is disabled.
+        merge acceptance, and no post-merge quiz attempt has been started (status <> generated). Enforces strict
+        lock order (daily_plans -> roadmaps -> roadmap_merges -> daily_plan_items). Honors optional If-Match
+        version header (included in the H-IDEM idempotency fingerprint and validated against current version_no
+        under roadmaps FOR UPDATE -> 409 STALE_VERSION). Transitions the displaced merged version in-place
+        (locked -> superseded) and restores the previous base roadmap_versions row in-place (superseded ->
+        restored per 015_functions.sql trg_roadmap_versions_guard), supersedes any pending merge proposals
+        anchored to the displaced version, restores prior career level when undoing a level_change merge, and
+        restores future-only Daily Plan items from undo_snapshot. Uses Gate none so learners can undo even when
+        generation is disabled.
       x-source: API-Specification.md sections 14.5, 15.5, 17.3; PRD section 20; DMS M09
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER
@@ -4459,7 +4465,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '409':
-          description: UNDO_WINDOW_EXPIRED, STALE_VERSION, INVALID_STATE_TRANSITION, IDEMPOTENCY_KEY_REUSED
+          description: UNDO_NOT_AVAILABLE, STALE_VERSION, ROADMAP_ARCHIVED, ROADMAP_NOT_LOCKED, IDEMPOTENCY_KEY_REUSED
           headers:
             X-Request-Id:
               $ref: '#/components/headers/RequestId'
@@ -4468,9 +4474,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           x-error-codes:
-            - UNDO_WINDOW_EXPIRED
+            - UNDO_NOT_AVAILABLE
             - STALE_VERSION
-            - INVALID_STATE_TRANSITION
+            - ROADMAP_ARCHIVED
+            - ROADMAP_NOT_LOCKED
             - IDEMPOTENCY_KEY_REUSED
         '503':
           description: SERVICE_UNAVAILABLE (R14 Idempotency barrier)
@@ -8871,25 +8878,46 @@ components:
       type: string
       enum: [add_topic, update_topic, reprioritize, reclassify, retire_topic]
     CreateMergeProposalDTO:
-      type: object
-      required: [origin]
-      properties:
-        origin:
-          $ref: '#/components/schemas/UserMergeOrigin'
-        target_level:
-          type: string
-          enum: [junior, mid, senior]
-          description: Required when origin=level_change; must differ from the roadmap's current career level.
-        instruction:
-          type: string
-          minLength: 3
-          maxLength: 1000
-          description: Required when origin=user_request (3-1000 Unicode code points); optional when origin=level_change.
-        base_version_no:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
-          description: Optional optimistic concurrency precondition checked alongside optional If-Match.
+      oneOf:
+        - type: object
+          required: [origin, instruction]
+          properties:
+            origin:
+              type: string
+              enum: [user_request]
+            instruction:
+              type: string
+              minLength: 3
+              maxLength: 1000
+              description: Required for user_request (3-1000 Unicode code points).
+            base_version_no:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+              nullable: true
+              description: Optional optimistic concurrency precondition checked alongside optional If-Match.
+        - type: object
+          required: [origin, target_level]
+          properties:
+            origin:
+              type: string
+              enum: [level_change]
+            target_level:
+              type: string
+              enum: [junior, mid, senior]
+              description: Required for level_change; must differ from the roadmap's current career level.
+            instruction:
+              type: string
+              minLength: 3
+              maxLength: 1000
+              nullable: true
+              description: Optional focus notes for level_change (3-1000 Unicode code points when provided).
+            base_version_no:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+              nullable: true
+              description: Optional optimistic concurrency precondition checked alongside optional If-Match.
     MergeJobAcceptedDTO:
       type: object
       required: [job_id, kind, status, poll_url, retry_after_seconds]
@@ -9174,7 +9202,7 @@ components:
       properties:
         restored_version_no:
           type: integer
-          minimum: 3
+          minimum: 1
         merge_id:
           type: string
           format: uuid

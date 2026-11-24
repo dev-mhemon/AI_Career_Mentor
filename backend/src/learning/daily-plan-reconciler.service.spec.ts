@@ -188,7 +188,12 @@ describe('DailyPlanReconciler', () => {
   it('orders scheduled items by (phase_no ASC, sequence_no ASC) matching Daily Plan creation', async () => {
     const { tx, log } = makeTx({
       planStatus: 'active',
-      items: [item(1, 1, 'pending')],
+      items: [
+        item(9, 1, 'completed'),
+        item(8, 2, 'pending'), // earliest incomplete day (Today) -> frozen
+        item(1, 3, 'pending'),
+        item(2, 4, 'pending'),
+      ],
     });
     await new DailyPlanReconciler().reconcileForMergeInTx(tx, {
       userId: USER_ID,
@@ -196,6 +201,20 @@ describe('DailyPlanReconciler', () => {
       mergeId: MERGE_ID,
       resultVersionId: RESULT_VERSION_ID,
       activeItems: [
+        {
+          lineage_id: L(9),
+          topic_id: T(9),
+          phase_no: 1,
+          sequence_no: 1,
+          effort_hours: 1,
+        },
+        {
+          lineage_id: L(8),
+          topic_id: T(8),
+          phase_no: 1,
+          sequence_no: 2,
+          effort_hours: 1,
+        },
         {
           lineage_id: L(2),
           topic_id: T(2),
@@ -216,12 +235,49 @@ describe('DailyPlanReconciler', () => {
       .filter((c) => c.sql.includes('INSERT INTO public.daily_plan_items'))
       .map((c) => c.params as unknown[]);
     expect(inserts.map((p) => p[4])).toEqual([L(1), L(2)]);
+    expect(inserts.map((p) => p[2])).toEqual([3, 4]);
   });
 
-  it('marks daily_plans completed when a merge retires the last pending topic leaving only completed frozen items', async () => {
+  it('freezes the earliest incomplete day (Today) even when all its items are pending with no quiz started', async () => {
     const { tx, log } = makeTx({
       planStatus: 'active',
-      items: [item(1, 1, 'completed'), item(2, 2, 'pending')],
+      items: [
+        item(1, 1, 'completed'),
+        item(2, 2, 'pending'), // earliest incomplete day -> frozen
+        item(3, 3, 'pending'), // future mutable day
+      ],
+    });
+    const res = await new DailyPlanReconciler().reconcileForMergeInTx(tx, {
+      userId: USER_ID,
+      planId: PLAN_ID,
+      mergeId: MERGE_ID,
+      resultVersionId: RESULT_VERSION_ID,
+      activeItems: [
+        { lineage_id: L(1), topic_id: T(1), sequence_no: 1, effort_hours: 1 },
+        { lineage_id: L(2), topic_id: T(2), sequence_no: 2, effort_hours: 1 },
+        { lineage_id: L(6), topic_id: T(6), sequence_no: 3, effort_hours: 1 },
+      ],
+    });
+    const deleteCall = log.find((c) =>
+      c.sql.includes('DELETE FROM public.daily_plan_items'),
+    );
+    expect(deleteCall?.params?.[2]).toEqual([I(3)]);
+    const inserts = log
+      .filter((c) => c.sql.includes('INSERT INTO public.daily_plan_items'))
+      .map((c) => c.params as unknown[]);
+    expect(inserts.map((p) => p[2])).toEqual([3]);
+    expect(inserts.map((p) => p[4])).toEqual([L(6)]);
+    expect(res.dailyPlanImpact).toEqual({
+      has_active_plan: true,
+      completed_days_unchanged: 1,
+      future_days_affected: 1,
+    });
+  });
+
+  it('marks daily_plans completed when only completed frozen items remain and no new pending work is scheduled', async () => {
+    const { tx, log } = makeTx({
+      planStatus: 'active',
+      items: [item(1, 1, 'completed')],
     });
     await new DailyPlanReconciler().reconcileForMergeInTx(tx, {
       userId: USER_ID,

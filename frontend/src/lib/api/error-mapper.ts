@@ -202,7 +202,7 @@ const SAFE_CODE_ERRORS: Readonly<
   },
   MERGE_ALREADY_PROPOSED: {
     message:
-      'A merge proposal is already open for this roadmap. Review, accept, or reject it before requesting another change.',
+      'A merge proposal is already open or being generated for this roadmap. Wait for generation to finish, or review, accept, or reject the existing proposal before requesting another change.',
     tone: 'warning',
     retryable: false,
   },

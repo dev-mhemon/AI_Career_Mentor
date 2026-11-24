@@ -663,6 +663,8 @@ export function RoadmapDetailView({
   const mergeDetailAbortRef = useRef<AbortController | null>(null);
   const mergeDetailSessionRef = useRef(0);
   const activeTabRef = useRef<RoadmapDetailTab>('active');
+  const scopeKeyRef = useRef(`${accessToken}:${roadmapId}`);
+  const requestKeyRef = useRef('');
   const mountedRef = useRef(true);
 
   const [activeTab, setActiveTab] = useState<RoadmapDetailTab>(() => {
@@ -709,6 +711,11 @@ export function RoadmapDetailView({
     mergeId: string;
     action: 'accept' | 'reject';
   } | null>(null);
+  const [mergeMutationErrorState, setMergeMutationErrorState] = useState<{
+    roadmapId: string;
+    mergeId: string;
+    error: MappedError;
+  } | null>(null);
   const [mergeListActionError, setMergeListActionError] =
     useState<MappedError | null>(null);
   const [expandedMergeState, setExpandedMergeState] = useState<{
@@ -732,7 +739,10 @@ export function RoadmapDetailView({
   const [mergeJobByRoadmap, setMergeJobByRoadmap] = useState<
     Record<string, MergeModalJobState | null>
   >({});
-  const [undoModalOpen, setUndoModalOpen] = useState(false);
+  const [undoModalVersionNo, setUndoModalVersionNo] = useState<number | null>(
+    null,
+  );
+  const undoModalOpen = undoModalVersionNo !== null;
   const [undoing, setUndoing] = useState(false);
 
   const [switchingFocus, setSwitchingFocus] = useState(false);
@@ -798,6 +808,11 @@ export function RoadmapDetailView({
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    scopeKeyRef.current = `${accessToken}:${roadmapId}`;
+    requestKeyRef.current = requestKey;
+  }, [accessToken, requestKey, roadmapId]);
 
   useEffect(() => {
     if (!shouldLoadVersions || seededVersions) {
@@ -1246,23 +1261,43 @@ export function RoadmapDetailView({
     if (!currentRoadmap || switchingFocus || archiving) {
       return;
     }
+    const startScope = `${accessToken}:${roadmapId}`;
+    const startRequestKey = requestKey;
+    const startRoadmap = currentRoadmap;
     setSwitchingFocus(true);
     setActionError(null);
     setFeedback(null);
     try {
       const res = await focusRoadmap(accessToken, roadmapId);
-      setFetchState({
-        key: requestKey,
-        status: 'loaded',
-        roadmap: {
-          ...currentRoadmap,
-          is_focus: res.focus_roadmap_id === currentRoadmap.id,
-        },
-      });
+      if (!mountedRef.current || scopeKeyRef.current !== startScope) {
+        return;
+      }
+      if (requestKeyRef.current !== startRequestKey) {
+        setReloadTick((prev) => prev + 1);
+      } else {
+        setFetchState((prev) =>
+          prev && prev.key === startRequestKey && prev.status === 'loaded'
+            ? {
+                ...prev,
+                roadmap: {
+                  ...prev.roadmap,
+                  is_focus: res.focus_roadmap_id === prev.roadmap.id,
+                },
+              }
+            : {
+                key: startRequestKey,
+                status: 'loaded',
+                roadmap: {
+                  ...startRoadmap,
+                  is_focus: res.focus_roadmap_id === startRoadmap.id,
+                },
+              },
+        );
+      }
       const openHoursModal = () =>
         setHoursModalTarget({
-          roadmapId: currentRoadmap.id,
-          roadmapTitle: currentRoadmap.role_name,
+          roadmapId: startRoadmap.id,
+          roadmapTitle: startRoadmap.role_name,
           initialHours: res.daily_plan.requires_learning_hours
             ? null
             : preferredDailyHours,
@@ -1272,9 +1307,14 @@ export function RoadmapDetailView({
         openHoursModal();
       }
     } catch (err) {
+      if (!mountedRef.current || scopeKeyRef.current !== startScope) {
+        return;
+      }
       setActionError(mapApiError(err));
     } finally {
-      setSwitchingFocus(false);
+      if (mountedRef.current && scopeKeyRef.current === startScope) {
+        setSwitchingFocus(false);
+      }
     }
   };
 
@@ -1410,12 +1450,15 @@ export function RoadmapDetailView({
     collapseMergeAccordion();
     versionsSessionRef.current += 1;
     mergesSessionRef.current += 1;
+    snapshotAbortRef.current?.abort();
+    snapshotAbortRef.current = null;
     loadMoreVersionsAbortRef.current?.abort();
     loadMoreVersionsAbortRef.current = null;
     loadMoreMergesAbortRef.current?.abort();
     loadMoreMergesAbortRef.current = null;
     setLoadingMoreVersionsKey(null);
     setLoadingMoreMergesKey(null);
+    setMergeMutationErrorState(null);
     setHistoricalSnapshot(null);
     setMergeDetailsCache({ roadmapId, byId: {} });
     setReloadTick((prev) => prev + 1);
@@ -1433,7 +1476,13 @@ export function RoadmapDetailView({
       },
       ifMatchVersionNo: number,
     ): Promise<AcceptRoadmapMergeResultDTO> => {
+      const startScope = `${accessToken}:${roadmapId}`;
       setMutatingMergeState({ mergeId: proposal.id, action: 'accept' });
+      setMergeMutationErrorState((prev) =>
+        prev?.roadmapId === roadmapId && prev.mergeId === proposal.id
+          ? null
+          : prev,
+      );
       try {
         const res = await acceptRoadmapMerge(
           accessToken,
@@ -1446,7 +1495,7 @@ export function RoadmapDetailView({
           input.idempotencyKey,
           ifMatchVersionNo,
         );
-        if (!mountedRef.current) {
+        if (!mountedRef.current || scopeKeyRef.current !== startScope) {
           return res;
         }
         const levelSuffix =
@@ -1461,8 +1510,16 @@ export function RoadmapDetailView({
         });
         return res;
       } catch (err) {
-        if (mountedRef.current && activeTabRef.current !== 'merges') {
-          setActionError(mapApiError(err));
+        if (mountedRef.current && scopeKeyRef.current === startScope) {
+          const mapped = mapApiError(err);
+          setMergeMutationErrorState({
+            roadmapId,
+            mergeId: proposal.id,
+            error: mapped,
+          });
+          if (activeTabRef.current !== 'merges') {
+            setActionError(mapped);
+          }
         }
         throw err;
       } finally {
@@ -1480,14 +1537,20 @@ export function RoadmapDetailView({
     async (
       proposal: MergeProposalDTO,
     ): Promise<RejectRoadmapMergeResultDTO> => {
+      const startScope = `${accessToken}:${roadmapId}`;
       setMutatingMergeState({ mergeId: proposal.id, action: 'reject' });
+      setMergeMutationErrorState((prev) =>
+        prev?.roadmapId === roadmapId && prev.mergeId === proposal.id
+          ? null
+          : prev,
+      );
       try {
         const res = await rejectRoadmapMerge(
           accessToken,
           roadmapId,
           proposal.id,
         );
-        if (!mountedRef.current) {
+        if (!mountedRef.current || scopeKeyRef.current !== startScope) {
           return res;
         }
         collapseMergeAccordion();
@@ -1495,6 +1558,7 @@ export function RoadmapDetailView({
         loadMoreMergesAbortRef.current?.abort();
         loadMoreMergesAbortRef.current = null;
         setLoadingMoreMergesKey(null);
+        setMergeMutationErrorState(null);
         setMergeDetailsCache({ roadmapId, byId: {} });
         setMergesReloadTick((prev) => prev + 1);
         setArchiveToast({
@@ -1503,8 +1567,16 @@ export function RoadmapDetailView({
         });
         return res;
       } catch (err) {
-        if (mountedRef.current && activeTabRef.current !== 'merges') {
-          setActionError(mapApiError(err));
+        if (mountedRef.current && scopeKeyRef.current === startScope) {
+          const mapped = mapApiError(err);
+          setMergeMutationErrorState({
+            roadmapId,
+            mergeId: proposal.id,
+            error: mapped,
+          });
+          if (activeTabRef.current !== 'merges') {
+            setActionError(mapped);
+          }
         }
         throw err;
       } finally {
@@ -1522,6 +1594,8 @@ export function RoadmapDetailView({
     if (!currentRoadmap || undoing) {
       return;
     }
+    const startScope = `${accessToken}:${roadmapId}`;
+    const expectedVersionNo = undoModalVersionNo ?? currentRoadmap.version_no;
     setUndoing(true);
     setActionError(null);
     setFeedback(null);
@@ -1530,11 +1604,12 @@ export function RoadmapDetailView({
         accessToken,
         roadmapId,
         generateClientIdempotencyKey(),
+        expectedVersionNo,
       );
-      if (!mountedRef.current) {
+      if (!mountedRef.current || scopeKeyRef.current !== startScope) {
         return;
       }
-      setUndoModalOpen(false);
+      setUndoModalVersionNo(null);
       refreshAllAfterMergeMutation();
       setActiveTab('active');
       setArchiveToast({
@@ -1542,14 +1617,14 @@ export function RoadmapDetailView({
         message: `Last merge undone — restored v${res.restored_version_no}.`,
       });
     } catch (err) {
-      if (!mountedRef.current) {
+      if (!mountedRef.current || scopeKeyRef.current !== startScope) {
         return;
       }
-      setUndoModalOpen(false);
+      setUndoModalVersionNo(null);
       setActionError(mapApiError(err));
       setMergesReloadTick((prev) => prev + 1);
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && scopeKeyRef.current === startScope) {
         setUndoing(false);
       }
     }
@@ -1559,38 +1634,67 @@ export function RoadmapDetailView({
     if (!currentRoadmap || archiving) {
       return;
     }
+    const startScope = `${accessToken}:${roadmapId}`;
+    const startRequestKey = requestKey;
+    const startRoadmap = currentRoadmap;
     setArchiving(true);
     setActionError(null);
     setFeedback(null);
     setArchiveToast(null);
     try {
       const res = await archiveRoadmap(accessToken, roadmapId);
+      if (!mountedRef.current || scopeKeyRef.current !== startScope) {
+        return;
+      }
       collapseMergeAccordion();
       mergesSessionRef.current += 1;
+      snapshotAbortRef.current?.abort();
+      snapshotAbortRef.current = null;
       loadMoreMergesAbortRef.current?.abort();
       loadMoreMergesAbortRef.current = null;
       setLoadingMoreMergesKey(null);
+      setMergeMutationErrorState(null);
       setMergeDetailsCache({ roadmapId, byId: {} });
       setMergesReloadTick((prev) => prev + 1);
       setHistoricalSnapshot(null);
-      setFetchState({
-        key: requestKey,
-        status: 'loaded',
-        roadmap: {
-          ...currentRoadmap,
-          status: 'archived',
-          is_focus: false,
-        },
-      });
+      if (requestKeyRef.current !== startRequestKey) {
+        setReloadTick((prev) => prev + 1);
+      } else {
+        setFetchState((prev) =>
+          prev && prev.key === startRequestKey && prev.status === 'loaded'
+            ? {
+                ...prev,
+                roadmap: {
+                  ...prev.roadmap,
+                  status: 'archived',
+                  is_focus: false,
+                },
+              }
+            : {
+                key: startRequestKey,
+                status: 'loaded',
+                roadmap: {
+                  ...startRoadmap,
+                  status: 'archived',
+                  is_focus: false,
+                },
+              },
+        );
+      }
       setArchiveToast(
-        formatArchiveFeedback(res, Boolean(currentRoadmap.is_focus)),
+        formatArchiveFeedback(res, Boolean(startRoadmap.is_focus)),
       );
       setArchiveModalOpen(false);
     } catch (err) {
+      if (!mountedRef.current || scopeKeyRef.current !== startScope) {
+        return;
+      }
       setActionError(mapApiError(err));
       setArchiveModalOpen(false);
     } finally {
-      setArchiving(false);
+      if (mountedRef.current && scopeKeyRef.current === startScope) {
+        setArchiving(false);
+      }
     }
   };
 
@@ -2107,6 +2211,20 @@ export function RoadmapDetailView({
                             ? mutatingMergeState.action
                             : null
                         }
+                        externalError={
+                          mergeMutationErrorState?.roadmapId === roadmapId &&
+                          mergeMutationErrorState.mergeId === loadedDetail.id
+                            ? mergeMutationErrorState.error
+                            : null
+                        }
+                        onClearExternalError={() =>
+                          setMergeMutationErrorState((prev) =>
+                            prev?.roadmapId === roadmapId &&
+                            prev.mergeId === loadedDetail.id
+                              ? null
+                              : prev,
+                          )
+                        }
                         acceptMergeAction={(input) =>
                           handleAcceptMergeProposal(
                             loadedDetail,
@@ -2243,6 +2361,11 @@ export function RoadmapDetailView({
                         {isCurrentVersion && (
                           <span className="inline-flex items-center justify-center rounded-full border border-feedback-success-border bg-feedback-success-background px-2 py-1 text-2xs font-semibold leading-none text-feedback-success-text">
                             Current
+                          </span>
+                        )}
+                        {version.stale && (
+                          <span className="inline-flex items-center justify-center rounded-full border border-feedback-warning-border bg-feedback-warning-background px-2 py-1 text-2xs font-medium leading-none text-feedback-warning-text">
+                            Stale
                           </span>
                         )}
                       </div>
@@ -2489,7 +2612,7 @@ export function RoadmapDetailView({
             loading={undoing}
             loadingText="Undoing..."
             disabled={undoing || archiving || switchingFocus}
-            onClick={() => setUndoModalOpen(true)}
+            onClick={() => setUndoModalVersionNo(currentRoadmap.version_no)}
             className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 leading-none whitespace-nowrap"
           >
             <UndoIcon className="block h-4 w-4 shrink-0" />
@@ -2801,7 +2924,7 @@ export function RoadmapDetailView({
 
       <Modal
         open={undoModalOpen}
-        onClose={() => setUndoModalOpen(false)}
+        onClose={() => setUndoModalVersionNo(null)}
         variant="confirm"
         title="Undo last accepted merge?"
         description="This restores your immediately previous locked roadmap version and future incomplete Daily Plan days. Completed learning days and evidence are never rewritten. Once you start a quiz on a post-merge study day, undo closes permanently."

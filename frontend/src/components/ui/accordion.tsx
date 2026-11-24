@@ -63,7 +63,7 @@ export function AccordionItem({
           aria-controls={panelId}
           aria-label={triggerAriaLabel}
           aria-labelledby={
-            triggerAriaLabel === undefined && triggerContent === undefined
+            triggerAriaLabel === undefined && triggerContent == null
               ? headerId
               : undefined
           }

@@ -46,6 +46,10 @@ export type RoadmapDiffViewerProps = {
   rejectMergeAction?: () => Promise<RejectRoadmapMergeResultDTO>;
   /** Optional parent-tracked submitting state scoped to this merge.id. */
   externalSubmittingAction?: 'accept' | 'reject' | null;
+  /** Optional parent-persisted Accept/Reject error scoped to this (roadmapId, mergeId). */
+  externalError?: MappedError | null;
+  /** Optional callback to clear parent-persisted error (e.g. when acknowledging expansion). */
+  onClearExternalError?: () => void;
   onAccepted?: (result: AcceptRoadmapMergeResultDTO) => void;
   onRejected?: (result: RejectRoadmapMergeResultDTO) => void;
   onReloadRequested?: () => void;
@@ -294,6 +298,8 @@ export function RoadmapDiffViewer({
   acceptMergeAction,
   rejectMergeAction,
   externalSubmittingAction = null,
+  externalError = null,
+  onClearExternalError,
   onAccepted,
   onRejected,
   onReloadRequested,
@@ -329,7 +335,8 @@ export function RoadmapDiffViewer({
 
   const ackLargeExpansion = ackState.scope === scopeKey && ackState.checked;
   const actionError =
-    errorState && errorState.scope === scopeKey ? errorState.error : null;
+    externalError ??
+    (errorState && errorState.scope === scopeKey ? errorState.error : null);
   const submitting: 'accept' | 'reject' | null =
     externalSubmittingAction ??
     (submittingState && submittingState.mergeId === merge.id
@@ -343,6 +350,7 @@ export function RoadmapDiffViewer({
 
   const acceptDisabled =
     !isPending ||
+    isStaleBase ||
     !roadmapGeneratorEnabled ||
     submitting !== null ||
     (requiresLargeAck && !ackLargeExpansion);
@@ -369,6 +377,7 @@ export function RoadmapDiffViewer({
     const ack = requiresLargeAck ? ackLargeExpansion : false;
     setSubmittingState({ mergeId: targetMergeId, action: 'accept' });
     setErrorState(null);
+    onClearExternalError?.();
     try {
       const result = acceptMergeAction
         ? await acceptMergeAction({
@@ -419,6 +428,7 @@ export function RoadmapDiffViewer({
     const targetMergeId = merge.id;
     setSubmittingState({ mergeId: targetMergeId, action: 'reject' });
     setErrorState(null);
+    onClearExternalError?.();
     try {
       const result = rejectMergeAction
         ? await rejectMergeAction()
@@ -624,7 +634,8 @@ export function RoadmapDiffViewer({
                 {merge.daily_plan_impact.future_days_affected === 1
                   ? 'day'
                   : 'days'}{' '}
-                will be reconciled after acceptance.
+                may be reconciled after acceptance. This count is an estimate
+                until acceptance.
               </p>
             </div>
           ) : (
@@ -732,6 +743,7 @@ export function RoadmapDiffViewer({
               actionError?.code === 'MERGE_EXPANSION_ACK_REQUIRED'
             ) {
               setErrorState(null);
+              onClearExternalError?.();
             }
           }}
           label={`I acknowledge this merge expands the roadmap to ${merge.size_impact.after} active topics (above the recommended soft limit of ${merge.size_impact.soft_limit}).`}

@@ -31,9 +31,12 @@ import {
   type MergeOrigin,
   type MergeSizeImpactDTO,
 } from '../dto/roadmap-merge.dto.js';
-import { buildValidTopicSlug } from './roadmap-job.handler.js';
+import {
+  buildLegacyTopicSlug,
+  buildValidTopicSlug,
+} from './roadmap-job.handler.js';
 
-export { buildValidTopicSlug };
+export { buildLegacyTopicSlug, buildValidTopicSlug };
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -593,21 +596,18 @@ function normalizeMergeProposalOutput(raw: unknown): NormalizedMergeOutput {
 
     const title =
       typeof rawOp.title === 'string' && rawOp.title.trim().length > 0
-        ? rawOp.title.trim().slice(0, 240)
+        ? Array.from(rawOp.title.trim()).slice(0, 240).join('')
         : null;
 
     if (opKind === 'add_topic') {
-      if (!rawTopicId) {
-        if (!title) {
-          fail(
-            502,
-            'AI_VALIDATION_FAILED',
-            'add_topic merge operation requires topic_id or title',
-            undefined,
-            true,
-          );
-        }
-        rawTopicId = buildValidTopicSlug(title, String(i + 1));
+      if (!rawTopicId && !title) {
+        fail(
+          502,
+          'AI_VALIDATION_FAILED',
+          'add_topic merge operation requires topic_id or title',
+          undefined,
+          true,
+        );
       }
       lineageId = null;
     } else if (!lineageId) {
@@ -788,21 +788,35 @@ export async function computeDailyPlanImpactPreviewInTx(
   }
 
   let completedDaysUnchanged = 0;
-  let mutableFutureDayCount = 0;
-
-  for (const [, dayItems] of byDay.entries()) {
+  let earliestIncompleteDay: number | null = null;
+  for (const [dayNo, dayItems] of byDay.entries()) {
     const allCompleted =
       dayItems.length > 0 && dayItems.every((i) => i.status === 'completed');
     if (allCompleted) {
       completedDaysUnchanged += 1;
+    } else {
+      earliestIncompleteDay =
+        earliestIncompleteDay === null
+          ? dayNo
+          : Math.min(earliestIncompleteDay, dayNo);
+    }
+  }
+
+  let mutableFutureDayCount = 0;
+  for (const [dayNo, dayItems] of byDay.entries()) {
+    const allCompleted =
+      dayItems.length > 0 && dayItems.every((i) => i.status === 'completed');
+    if (allCompleted) {
       continue;
     }
-    const isFrozen = dayItems.some(
-      (i) =>
-        i.status === 'completed' ||
-        i.status === 'in_progress' ||
-        activeQuizItemIds.has(String(i.id)),
-    );
+    const isFrozen =
+      dayNo === earliestIncompleteDay ||
+      dayItems.some(
+        (i) =>
+          i.status === 'completed' ||
+          i.status === 'in_progress' ||
+          activeQuizItemIds.has(String(i.id)),
+      );
     if (!isFrozen) {
       mutableFutureDayCount += 1;
     }
@@ -1121,10 +1135,68 @@ export class MergeProposalJobHandler implements JobHandler {
     const instructionOnlySkills = prioritizedSkills
       .filter((s) => !usedSkillIds.has(s.id))
       .slice(0, 30);
-    return {
+    nextContext = {
       ...nextContext,
       approved_skills: [...usedSkills, ...instructionOnlySkills],
     };
+    if (
+      this.estimateEnvelopeBytes(nextContext, language, untrustedInputs) <=
+      MERGE_ENVELOPE_BYTE_BUDGET
+    ) {
+      return nextContext;
+    }
+
+    // Final trimming pass: strip optional active_item metadata while preserving
+    // required lineage_id, topic_id, skill_id, phase_no, sequence_no, priority,
+    // gap_type, and depends_on_lineage_ids.
+    const compactItems = context.roadmap.active_items.map((item) => ({
+      ...item,
+      phase_title: null,
+      required_depth: null,
+      estimated_effort_hours: null,
+      title: Array.from(item.title).slice(0, 80).join(''),
+    }));
+    nextContext = {
+      ...nextContext,
+      evidence_summary: [],
+      approved_skills: usedSkills,
+      roadmap: {
+        ...context.roadmap,
+        active_items: compactItems,
+      },
+    };
+    if (
+      this.estimateEnvelopeBytes(nextContext, language, untrustedInputs) <=
+      MERGE_ENVELOPE_BYTE_BUDGET
+    ) {
+      return nextContext;
+    }
+
+    nextContext = {
+      ...nextContext,
+      approved_skills: [],
+      roadmap: {
+        ...context.roadmap,
+        active_items: compactItems.map((item) => ({
+          ...item,
+          title: Array.from(item.title).slice(0, 40).join(''),
+        })),
+      },
+    };
+    if (
+      this.estimateEnvelopeBytes(nextContext, language, untrustedInputs) <=
+      MERGE_ENVELOPE_BYTE_BUDGET
+    ) {
+      return nextContext;
+    }
+
+    fail(
+      502,
+      'AI_GENERATION_FAILED',
+      'Roadmap merge context exceeds AI input budget after trimming',
+      undefined,
+      false,
+    );
   }
 
   /**
@@ -1479,10 +1551,29 @@ export class MergeProposalJobHandler implements JobHandler {
           !existing.career_level ||
           existing.career_level === effectiveLevel
         ) {
+          const existingSkillId = String(existing.skill_id).toLowerCase();
+          const fastSkillRows = await tx.query<Array<{ id: string }>>(
+            `SELECT id
+               FROM public.skills
+              WHERE id = $1
+                AND status = 'approved'::public.content_status
+                AND deleted_at IS NULL
+              LIMIT 1`,
+            [existingSkillId],
+          );
+          if (!Array.isArray(fastSkillRows) || !fastSkillRows[0]?.id) {
+            fail(
+              502,
+              'AI_VALIDATION_FAILED',
+              'add_topic merge operation references a topic whose skill is unknown or unapproved',
+              undefined,
+              true,
+            );
+          }
           usedTopicIds.add(existingId);
           return {
             topicId: existingId,
-            skillId: String(existing.skill_id).toLowerCase(),
+            skillId: existingSkillId,
             title: op.title ?? String(existing.title),
           };
         }
@@ -1569,18 +1660,22 @@ export class MergeProposalJobHandler implements JobHandler {
     }
 
     let slug = buildValidTopicSlug(title);
+    const legacySlug = buildLegacyTopicSlug(title);
     let topicId: string | undefined;
     if (slug !== suppliedSlug) {
+      const lookupSlugs = legacySlug === slug ? [slug] : [slug, legacySlug];
       const bySlugRows = await tx.query<Array<{ id: string }>>(
         `SELECT id
            FROM public.topics
           WHERE skill_id = $1
-            AND slug = $2
+            AND slug = ANY($2::text[])
             AND career_level = $3::public.career_level
             AND deleted_at IS NULL
-          ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END, content_version DESC
+          ORDER BY CASE WHEN slug = $4 THEN 0 ELSE 1 END,
+                   CASE status WHEN 'approved' THEN 0 ELSE 1 END,
+                   content_version DESC
           LIMIT 1`,
-        [resolvedSkillId, slug, effectiveLevel],
+        [resolvedSkillId, lookupSlugs, effectiveLevel, slug],
       );
       topicId =
         Array.isArray(bySlugRows) && bySlugRows[0]?.id
@@ -1589,7 +1684,8 @@ export class MergeProposalJobHandler implements JobHandler {
     }
 
     if (topicId && usedTopicIds.has(topicId)) {
-      slug = buildValidTopicSlug(title, `${op.sort_order}:${rawTopicId}`);
+      const disambiguator = `${op.sort_order}:${rawTopicId ?? ''}`;
+      slug = buildValidTopicSlug(title, disambiguator);
       topicId = undefined;
     }
 
@@ -2044,7 +2140,10 @@ export class MergeProposalJobHandler implements JobHandler {
             );
           }
         }
-        if (Array.isArray(op.payload.depends_on_lineage_ids)) {
+        if (
+          op.op === 'update_topic' &&
+          Array.isArray(op.payload.depends_on_lineage_ids)
+        ) {
           const nextDeps: string[] = [];
           for (const dep of op.payload.depends_on_lineage_ids) {
             if (typeof dep !== 'string' || !UUID_PATTERN.test(dep.trim())) {
@@ -2063,13 +2162,18 @@ export class MergeProposalJobHandler implements JobHandler {
         }
       }
 
+      const baseNormalizedPayload: Record<string, unknown> = { ...op.payload };
+      if (op.op !== 'update_topic') {
+        delete baseNormalizedPayload.depends_on_lineage_ids;
+      }
+
       persistedOps.push({
         ...op,
         title: op.title ?? String(baseItem.title),
         resolved_topic_id: String(baseItem.topic_id).toLowerCase(),
         resolved_skill_id: String(baseItem.skill_id).toLowerCase(),
         normalized_payload: {
-          ...op.payload,
+          ...baseNormalizedPayload,
           ...(normalizedExistingDeps !== undefined
             ? { depends_on_lineage_ids: normalizedExistingDeps }
             : {}),

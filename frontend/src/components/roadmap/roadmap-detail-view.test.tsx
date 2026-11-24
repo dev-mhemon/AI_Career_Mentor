@@ -1107,6 +1107,7 @@ describe('RoadmapDetailView (Screen 15)', () => {
         'token-1',
         'rm-locked-1',
         expect.stringMatching(/^[0-9a-f-]{36}$/i),
+        3,
       );
     });
     expect(
@@ -1125,10 +1126,9 @@ describe('RoadmapDetailView (Screen 15)', () => {
       items: [
         {
           id: 'ver-3',
-          roadmap_id: 'rm-locked-1',
           version_no: 3,
           state: 'locked',
-          created_by: 'merge_accept',
+          created_by: 'merge',
           target_level: 'mid',
           base_version_id: 'ver-2',
           merge_id: 'm-2',
@@ -1139,10 +1139,9 @@ describe('RoadmapDetailView (Screen 15)', () => {
         },
         {
           id: 'ver-2',
-          roadmap_id: 'rm-locked-1',
           version_no: 2,
           state: 'restored',
-          created_by: 'undo',
+          created_by: 'merge',
           target_level: 'mid',
           base_version_id: 'ver-1',
           merge_id: 'm-1',
@@ -1153,10 +1152,9 @@ describe('RoadmapDetailView (Screen 15)', () => {
         },
         {
           id: 'ver-1',
-          roadmap_id: 'rm-locked-1',
           version_no: 1,
           state: 'superseded',
-          created_by: 'initial',
+          created_by: 'ai',
           target_level: 'junior',
           base_version_id: null,
           merge_id: null,

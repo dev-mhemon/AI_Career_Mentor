@@ -1009,9 +1009,10 @@ export function CareerProfileView({
             <Modal.Description>
               Its linked roadmap will be archived and Focus will move to another
               active roadmap if needed. Your progress and learning evidence are
-              kept. If you only want to change Career Level or adjust topics on
-              this same goal, use Change Career Level or Request Change (Merge)
-              on the roadmap instead of discontinuing.
+              kept.
+              {discontinueTarget?.roadmap_id
+                ? ' If you only want to change Career Level or adjust topics on this same goal, use Change Career Level or Request Change (Merge) on the roadmap instead of discontinuing.'
+                : ''}
             </Modal.Description>
           </div>
           <Modal.Close />

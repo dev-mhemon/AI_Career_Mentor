@@ -564,7 +564,7 @@ export class RoadmapMergeService {
       );
     }
 
-    const bodyBaseVersionNo = dto?.base_version_no;
+    const bodyBaseVersionNo = dto?.base_version_no ?? undefined;
     const headerIfMatch = options.ifMatch;
     if (
       bodyBaseVersionNo !== undefined &&
@@ -1123,11 +1123,16 @@ export class RoadmapMergeService {
           sizeAfter,
           softMaxTopics,
         );
+        const isMateriallyLarge =
+          Boolean(merge.materially_large) ||
+          computedSizeImpact.materially_large;
         const sizeImpact = {
           ...computedSizeImpact,
-          materially_large:
-            Boolean(merge.materially_large) ||
-            computedSizeImpact.materially_large,
+          materially_large: isMateriallyLarge,
+          warning: isMateriallyLarge
+            ? (computedSizeImpact.warning ??
+              'This proposal was flagged as a materially large roadmap expansion and requires acknowledgement before accepting.')
+            : computedSizeImpact.warning,
         };
 
         const dailyPlanImpact =
@@ -1321,7 +1326,7 @@ export class RoadmapMergeService {
       'Merge proposal id',
     );
 
-    const bodyVersionNo = dto?.base_version_no;
+    const bodyVersionNo = dto?.base_version_no ?? undefined;
     const headerIfMatch = options.ifMatch;
     if (bodyVersionNo === undefined && headerIfMatch === undefined) {
       fail(
@@ -1607,10 +1612,16 @@ export class RoadmapMergeService {
           );
         }
 
-        if (newItems.length > 0) {
+        const ITEM_INSERT_BATCH_SIZE = 1_000;
+        for (
+          let offset = 0;
+          offset < newItems.length;
+          offset += ITEM_INSERT_BATCH_SIZE
+        ) {
+          const batch = newItems.slice(offset, offset + ITEM_INSERT_BATCH_SIZE);
           const valueTuples: string[] = [];
           const itemParams: unknown[] = [];
-          for (const item of newItems) {
+          for (const item of batch) {
             const baseIdx = itemParams.length;
             valueTuples.push(
               `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}::public.item_priority, $${baseIdx + 10}::public.skill_gap_type, $${baseIdx + 11}, $${baseIdx + 12}, $${baseIdx + 13}, $${baseIdx + 14}::uuid[], $${baseIdx + 15}, $${baseIdx + 16}, $${baseIdx + 17}::timestamptz, $${baseIdx + 18}::jsonb)`,

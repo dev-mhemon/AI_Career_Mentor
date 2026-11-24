@@ -38,6 +38,12 @@ export type MergeModalJobState =
       kind: 'failed';
       job: JobStatusDTO;
       mode: UserMergeOrigin;
+    }
+  | {
+      kind: 'preview_failed';
+      mergeId: string;
+      mode: UserMergeOrigin;
+      error: MappedError;
     };
 
 export type RequestMergeModalProps = {
@@ -375,10 +381,22 @@ function RequestMergeModalContent({
   const failedJob: JobStatusDTO | null =
     jobState?.kind === 'failed' ? jobState.job : null;
 
+  const persistedPreviewFailure =
+    jobState?.kind === 'preview_failed' ? jobState : null;
+
   const pendingResult =
     pendingResultState && pendingResultState.roadmapId === roadmapId
       ? pendingResultState
-      : null;
+      : persistedPreviewFailure
+        ? {
+            roadmapId,
+            mergeId: persistedPreviewFailure.mergeId,
+            mode: persistedPreviewFailure.mode,
+          }
+        : null;
+
+  const displayedSubmitError =
+    submitError ?? persistedPreviewFailure?.error ?? null;
 
   const jobMode: UserMergeOrigin =
     jobState?.mode ?? storedEntry?.mode ?? pendingResult?.mode ?? mode;
@@ -595,16 +613,24 @@ function RequestMergeModalContent({
         if (!mountedRef.current || controller.signal.aborted) {
           return;
         }
+        const mapped = mapApiError(error);
         setLoadingResult(false);
-        clearJobState();
-        setSubmitError(mapApiError(error));
+        writeStoredMergeJob(roadmapId, null);
+        setStoredActiveJobState({ roadmapId, entry: null });
+        onUpdateJobState({
+          kind: 'preview_failed',
+          mergeId,
+          mode: previewMode,
+          error: mapped,
+        });
+        setSubmitError(mapped);
       } finally {
         if (fetchAbortRef.current === controller) {
           fetchAbortRef.current = null;
         }
       }
     },
-    [accessToken, clearJobState, onMergeCreated, roadmapId],
+    [accessToken, clearJobState, onMergeCreated, onUpdateJobState, roadmapId],
   );
 
   const handleJobSucceeded = useCallback(
@@ -755,19 +781,19 @@ function RequestMergeModalContent({
             </Alert>
           )}
 
-          {submitError && (
+          {displayedSubmitError && (
             <Alert
               variant={
-                submitError.tone === 'info'
+                displayedSubmitError.tone === 'info'
                   ? 'info'
-                  : submitError.tone === 'warning'
+                  : displayedSubmitError.tone === 'warning'
                     ? 'warning'
                     : 'error_retryable'
               }
               role="alert"
-              retryAfterSeconds={submitError.retryAfterSeconds}
+              retryAfterSeconds={displayedSubmitError.retryAfterSeconds}
             >
-              {submitError.message}
+              {displayedSubmitError.message}
             </Alert>
           )}
 

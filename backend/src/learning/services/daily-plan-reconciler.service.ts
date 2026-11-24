@@ -220,8 +220,16 @@ export class DailyPlanReconciler {
       }
     }
     let completedDaysUnchanged = 0;
-    for (const isDone of completedDayCandidates.values()) {
-      if (isDone) completedDaysUnchanged += 1;
+    const incompleteDays: number[] = [];
+    for (const [dayNo, isDone] of completedDayCandidates.entries()) {
+      if (isDone) {
+        completedDaysUnchanged += 1;
+      } else {
+        incompleteDays.push(dayNo);
+      }
+    }
+    if (incompleteDays.length > 0) {
+      frozenDays.add(Math.min(...incompleteDays));
     }
     const maxFrozenDay = frozenDays.size > 0 ? Math.max(...frozenDays) : 0;
 

@@ -462,7 +462,13 @@ export function DailyPlanView({
   };
 
   const handleLoadMore = async () => {
-    if (!nextCursor || loadingMore || modalMode !== null || !loadedPlan) {
+    if (
+      !nextCursor ||
+      loadingMore ||
+      switchingFocus ||
+      modalMode !== null ||
+      !loadedPlan
+    ) {
       return;
     }
     const gen = requestGenRef.current;
@@ -961,7 +967,7 @@ export function DailyPlanView({
                   variant="secondary"
                   loading={loadingMore}
                   loadingText="Loading more days..."
-                  disabled={loadingMore || modalMode !== null}
+                  disabled={loadingMore || switchingFocus || modalMode !== null}
                   onClick={() => void handleLoadMore()}
                   className="w-full justify-center border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 sm:w-auto"
                 >

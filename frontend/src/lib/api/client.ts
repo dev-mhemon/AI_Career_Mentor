@@ -1920,14 +1920,23 @@ export function undoLastRoadmapMerge(
   accessToken: string,
   roadmapId: string,
   idempotencyKey: string,
+  ifMatchVersionNo?: number,
   options?: AuthStateRequestOptions,
 ): Promise<UndoRoadmapMergeResultDTO> {
+  const extraHeaders: Record<string, string> = {};
+  if (
+    typeof ifMatchVersionNo === 'number' &&
+    Number.isInteger(ifMatchVersionNo) &&
+    ifMatchVersionNo >= 1
+  ) {
+    extraHeaders['If-Match'] = String(ifMatchVersionNo);
+  }
   return apiFetch<UndoRoadmapMergeResultDTO>(
     `/roadmaps/${encodeURIComponent(roadmapId.trim())}/merges/undo`,
     accessToken,
     {
       method: 'POST',
-      headers: withIdempotencyKey(idempotencyKey),
+      headers: withIdempotencyKey(idempotencyKey, extraHeaders),
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options?.signal ? { signal: options.signal } : {}),
     },

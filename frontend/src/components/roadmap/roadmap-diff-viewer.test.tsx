@@ -193,7 +193,28 @@ describe('RoadmapDiffViewer (Component 17)', () => {
     expect(screen.getByText('OpenTelemetry Tracing')).toBeInTheDocument();
     expect(screen.getByText('Legacy XML-RPC')).toBeInTheDocument();
     expect(screen.getByText(/4 completed days unchanged/i)).toBeInTheDocument();
-    expect(screen.getByText(/3 future incomplete days/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /3 future incomplete days may be reconciled after acceptance\. This count is an estimate until acceptance\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('disables Accept while keeping Reject enabled when merge base_version_no is stale', () => {
+    render(
+      <RoadmapDiffViewer
+        accessToken="tok-1"
+        roadmapId="rm-1"
+        merge={makeMerge({ base_version_no: 1 })}
+        currentVersionNo={2}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: 'Accept Merge' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Reject Proposal' }),
+    ).toBeEnabled();
   });
 
   it('gates Accept behind acknowledge_large_expansion when materially_large and sends EP-R11 with Idempotency-Key', async () => {

@@ -515,12 +515,14 @@ describe('RoadmapMergeService (EP-R08, EP-R09, EP-R10, EP-R12)', () => {
       const microTs1 = '2026-11-23T10:00:00.123456Z';
       const microTs2 = '2026-11-23T10:00:00.123111Z';
       const capturedParams: unknown[][] = [];
+      const capturedSqls: string[] = [];
 
       const dbQuery = vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('FROM public.roadmaps')) {
           return [{ id: ROADMAP_ID, status: 'locked' }];
         }
         if (sql.includes('FROM public.roadmap_merges rm')) {
+          capturedSqls.push(sql);
           capturedParams.push(params ?? []);
           if (capturedParams.length === 1) {
             return [
@@ -600,6 +602,12 @@ describe('RoadmapMergeService (EP-R08, EP-R09, EP-R10, EP-R12)', () => {
       expect(page2.items.map((i) => i.id)).toEqual([MERGE_ID_2]);
       expect(capturedParams[1]).toContain(microTs1);
       expect(capturedParams[1]).toContain(MERGE_ID_1);
+      expect(capturedSqls[1]).toMatch(
+        /rm\.created_at\s*<\s*\$\d+::timestamptz/i,
+      );
+      expect(capturedSqls[1]).toMatch(
+        /rm\.created_at\s*=\s*\$\d+::timestamptz\s+AND\s+rm\.id\s*<\s*\$\d+::uuid/i,
+      );
     });
   });
 
