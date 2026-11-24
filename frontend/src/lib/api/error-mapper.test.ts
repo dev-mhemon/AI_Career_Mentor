@@ -564,6 +564,42 @@ describe("mapApiError", () => {
       expect(mapped.message).not.toContain("stack trace");
     }
   });
+
+  it("maps M10 mentor error codes cleanly with context-aware FEATURE_DISABLED copy", () => {
+    const rawInternalLeak = "google-gemini internal postgres detail stack trace";
+
+    const notFound = mapApiError(
+      new ApiError(404, rawInternalLeak, "CONVERSATION_NOT_FOUND", "req-m10-1"),
+      { feature: "mentor" },
+    );
+    expect(notFound.code).toBe("CONVERSATION_NOT_FOUND");
+    expect(notFound.status).toBe(404);
+    expect(notFound.tone).toBe("warning");
+    expect(notFound.retryable).toBe(false);
+    expect(notFound.message).toMatch(/conversation could not be found/i);
+    expect(notFound.message).not.toMatch(/gemini|postgres|stack trace/i);
+
+    const unsupportedLang = mapApiError(
+      new ApiError(422, rawInternalLeak, "UNSUPPORTED_LANGUAGE", "req-m10-2"),
+      { feature: "mentor" },
+    );
+    expect(unsupportedLang.code).toBe("UNSUPPORTED_LANGUAGE");
+    expect(unsupportedLang.status).toBe(422);
+    expect(unsupportedLang.tone).toBe("warning");
+    expect(unsupportedLang.retryable).toBe(false);
+    expect(unsupportedLang.message).toMatch(/Bangla.*English.*Mixed/i);
+
+    const mentorDisabled = mapApiError(
+      new ApiError(403, rawInternalLeak, "FEATURE_DISABLED", "req-m10-3"),
+      { feature: "mentor" },
+    );
+    expect(mentorDisabled.code).toBe("FEATURE_DISABLED");
+    expect(mentorDisabled.status).toBe(403);
+    expect(mentorDisabled.tone).toBe("info");
+    expect(mentorDisabled.retryable).toBe(false);
+    expect(mentorDisabled.message).toMatch(/AI Mentor.*90-day/i);
+    expect(mentorDisabled.message).not.toMatch(/roadmaps and progress/i);
+  });
 });
 
 describe("mapActionResult", () => {

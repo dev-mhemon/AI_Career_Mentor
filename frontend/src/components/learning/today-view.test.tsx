@@ -139,6 +139,10 @@ describe('TodayView', () => {
       'href',
       '/roadmaps',
     );
+    expect(screen.getByRole('link', { name: /Ask Mentor/i })).toHaveAttribute(
+      'href',
+      '/mentor?context=general',
+    );
   });
 
   it('renders no_daily_plan state, opens HoursPromptModal, creates plan via EP-L02, and reloads EP-L04', async () => {

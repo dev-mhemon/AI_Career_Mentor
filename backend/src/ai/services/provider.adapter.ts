@@ -606,13 +606,203 @@ function buildSyntheticPracticeReview(): PracticeReviewOutput {
   };
 }
 
-function buildSyntheticMentorChat(language: UiLanguage): MentorChatOutput {
+const MENTOR_BANGLA_SCRIPT_PATTERN = /[\u0980-\u09ff]/;
+const MENTOR_LATIN_LETTER_PATTERN = /[a-zA-Z]/;
+
+const MENTOR_DIRECT_DISTRESS_EN_PATTERN =
+  /\b(?:kill\s+myself|end\s+my\s+life|hurt\s+myself|harm\s+myself|want\s+to\s+die|don['\u2019]t\s+want\s+to\s+live|do\s+not\s+want\s+to\s+live|can['\u2019]t\s+go\s+on|cannot\s+go\s+on|(?:i\s+am|i['\u2019]m|feel(?:ing)?)\s+(?:suicidal|in\s+severe\s+distress)|(?:having|experiencing)\s+(?:a\s+)?panic\s+attack|thinking\s+(?:of|about)\s+(?:suicide|ending\s+my\s+life|self[\s-]?harm)|commit\s+suicide)\b/i;
+
+const MENTOR_TOPIC_SENSITIVE_DISTRESS_EN_PATTERN =
+  /\b(?:suicide|suicidal|self[\s-]?harm|severe\s+distress|panic\s+attack)\b/i;
+
+const MENTOR_TECHNICAL_TOPIC_FRAMING_EN_PATTERN =
+  /\b(?:design|build|develop|architect|implement|create|code|program|schema|api|database|app|application|website|platform|bot|system|dataset|model|classifier|feature|project)\b/i;
+
+const MENTOR_DISTRESS_BN_PATTERN =
+  /(?:আত্মহত্যা|নিজেকে\s*শেষ|বাঁচতে\s*ইচ্ছা\s*করছে\s*না|নিজের\s*ক্ষতি|মানসিকভাবে\s*ভেঙে\s*পড়েছি|চরম\s*হতাশা)/u;
+
+const MENTOR_INJECTION_EN_PATTERN =
+  /\b(?:ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above)\s+instructions?|reveal\s+(?:your\s+|the\s+)?(?:system|hidden|developer)\s+prompt|print\s+(?:your\s+|the\s+)?(?:system\s+)?prompt|disregard\s+(?:all\s+)?(?:system|previous)|override\s+(?:system|directives)|what\s+are\s+your\s+hidden\s+instructions)\b|\[ESCAPED_UNTRUSTED_TAG\]/i;
+
+const MENTOR_INJECTION_BN_PATTERN =
+  /(?:আগের\s*(?:সব\s*)?নির্দেশনা\s*ভুলে\s*যাও|সিস্টেম\s*প্রম্পট\s*(?:দেখাও|বলো)|গোপন\s*নির্দেশনা)/u;
+
+const MENTOR_STUDY_CLAIM_EN_PATTERN =
+  /\b(?:i\s+(?:already\s+|have\s+)?studied(?:\s+this)?|finished\s+studying|i\s+(?:have\s+)?completed\s+(?:this|the)\s+topic|mark\s+(?:this|it)\s+(?:as\s+)?(?:done|complete|studied|proficient))\b/gi;
+
+const MENTOR_NEGATED_STUDY_PREFIX_PATTERN =
+  /\b(?:not|never|haven['\u2019]t|hasn['\u2019]t|didn['\u2019]t|did\s+not|have\s+not|don['\u2019]t|do\s+not|cannot|can['\u2019]t|won['\u2019]t)\s+(?:yet\s+)?$/i;
+
+const MENTOR_STUDY_CLAIM_BN_PATTERN =
+  /(?:আমি\s*(?:এই\s*টপিক(?:টি|টা)?\s*|এটা\s*|এটি\s*)?(?:পড়েছি|শিখেছি|শেষ\s*করেছি)|পড়া\s*শেষ\s*করেছি|শেষ\s*করেছি)/u;
+
+const MENTOR_OUT_OF_SCOPE_EN_PATTERN =
+  /\b(?:cooking\s+recipe|biryani\s+recipe|how\s+to\s+cook|stock\s+(?:tips?|picks?|market\s+prediction)|crypto\s+trading\s+signal|medical\s+prescription|divorce\s+lawyer|astrology|horoscope|betting\s+odds)\b/i;
+
+const MENTOR_OUT_OF_SCOPE_BN_PATTERN =
+  /(?:বিরিয়ানি\s*রান্না|রান্নার\s*রেসিপি|শেয়ার\s*বাজারের\s*টিপস|ওষুধের\s*প্রেসক্রিপশন|রাশিফল)/u;
+
+function isPersonalDistressEn(text: string): boolean {
+  if (MENTOR_DIRECT_DISTRESS_EN_PATTERN.test(text)) {
+    return true;
+  }
+  if (!MENTOR_TOPIC_SENSITIVE_DISTRESS_EN_PATTERN.test(text)) {
+    return false;
+  }
+  return !MENTOR_TECHNICAL_TOPIC_FRAMING_EN_PATTERN.test(text);
+}
+
+function isAffirmativeStudyClaimEn(text: string): boolean {
+  for (const match of text.matchAll(MENTOR_STUDY_CLAIM_EN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const rawPrefix = text.slice(Math.max(0, idx - 48), idx);
+    const boundaryIdx = Math.max(
+      rawPrefix.lastIndexOf('.'),
+      rawPrefix.lastIndexOf('!'),
+      rawPrefix.lastIndexOf('?'),
+      rawPrefix.lastIndexOf(';'),
+      rawPrefix.lastIndexOf('\n'),
+    );
+    const clausePrefix =
+      boundaryIdx >= 0 ? rawPrefix.slice(boundaryIdx + 1) : rawPrefix;
+    if (MENTOR_NEGATED_STUDY_PREFIX_PATTERN.test(clausePrefix)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function extractLatestMentorMessage(userEnvelope: string): string {
+  if (!userEnvelope || !userEnvelope.trim()) {
+    return '';
+  }
+  const inputMatches = Array.from(
+    userEnvelope.matchAll(
+      /<untrusted_data\s+index="\d+"\s+treat_as="data_only">\s*([\s\S]*?)\s*<\/untrusted_data>/g,
+    ),
+  );
+  if (inputMatches.length > 0) {
+    return inputMatches[inputMatches.length - 1][1]?.trim() ?? '';
+  }
+  if (/<untrusted_data\b/i.test(userEnvelope)) {
+    return '';
+  }
+  return userEnvelope.trim();
+}
+
+function detectMentorLanguage(
+  latestMessage: string,
+  fallbackLanguage: UiLanguage,
+): UiLanguage {
+  if (!latestMessage) {
+    return fallbackLanguage;
+  }
+  const hasBangla = MENTOR_BANGLA_SCRIPT_PATTERN.test(latestMessage);
+  const hasLatin = MENTOR_LATIN_LETTER_PATTERN.test(latestMessage);
+  if (hasBangla && hasLatin) {
+    return 'mixed';
+  }
+  if (hasBangla) {
+    return 'bn';
+  }
+  if (hasLatin) {
+    return 'en';
+  }
+  return fallbackLanguage;
+}
+
+export function buildSyntheticMentorChat(
+  requestedLanguage: UiLanguage,
+  userEnvelope = '',
+): MentorChatOutput {
+  const latestRaw = extractLatestMentorMessage(userEnvelope);
+  const latestNfc = latestRaw.normalize('NFC');
+  const language = detectMentorLanguage(latestNfc, requestedLanguage);
+
+  // 1. Personal distress / crisis safety redirection (PRD §37)
+  if (
+    isPersonalDistressEn(latestNfc) ||
+    MENTOR_DISTRESS_BN_PATTERN.test(latestNfc)
+  ) {
+    const content =
+      language === 'bn'
+        ? 'আপনি কঠিন সময়ের মধ্য দিয়ে যাচ্ছেন জেনে আমরা আন্তরিকভাবে উদ্বিগ্ন। আমি শুধু ক্যারিয়ার ও শেখার সহায়ক এবং পেশাদার মানসিক স্বাস্থ্যসেবা দিতে পারি না। অনুগ্রহ করে এখনই কোনো বিশ্বস্ত পরিবারের সদস্য, বন্ধু বা স্থানীয় জরুরি সহায়তা ও মানসিক স্বাস্থ্য বিশেষজ্ঞের সাথে যোগাযোগ করুন।'
+        : language === 'mixed'
+          ? 'আপনি কঠিন সময়ের মধ্য দিয়ে যাচ্ছেন শুনে আমরা উদ্বিগ্ন। এই প্ল্যাটফর্মটি শুধু tech career learning-এর জন্য; আমি পেশাদার সহায়তা দিতে পারি না। অনুগ্রহ করে এখনই বিশ্বস্ত কারো সাথে অথবা স্থানীয় emergency crisis helpline ও mental health specialist-এর সাথে কথা বলুন।'
+          : 'I am really sorry you are going through a difficult moment. As a technology-career learning mentor, I cannot provide crisis or clinical care—please reach out right now to a trusted family member, friend, or a qualified local crisis helpline or mental-health professional for immediate support.';
+    return {
+      content,
+      language,
+      safety_mode: true,
+      learning_claim_recorded: false,
+    };
+  }
+
+  // 2. Prompt injection / system-prompt extraction refusal (PRD §44)
+  if (
+    MENTOR_INJECTION_EN_PATTERN.test(latestNfc) ||
+    MENTOR_INJECTION_BN_PATTERN.test(latestNfc)
+  ) {
+    const content =
+      language === 'bn'
+        ? 'আমি অভ্যন্তরীণ নির্দেশনা প্রকাশ বা পরিবর্তন করতে পারি না। তবে আপনার প্রযুক্তি ক্যারিয়ার লক্ষ্য, রোডম্যাপের টপিক এবং অনুশীলন নিয়ে সাহায্য করতে প্রস্তুত আছি।'
+        : language === 'mixed'
+          ? 'আমি internal configuration বা নির্দেশনা পরিবর্তন করতে পারি না। চলুন আপনার active roadmap এবং tech skill অনুশীলন নিয়ে আলোচনা করি।'
+          : 'I cannot disclose internal instructions or alter my operating boundaries, but I am happy to help you with your technology career roadmap, study topics, and practice questions.';
+    return {
+      content,
+      language,
+      safety_mode: false,
+      learning_claim_recorded: false,
+    };
+  }
+
+  // 3. Unverified study claim -> chat context only, never evidence (PRD §37)
+  if (
+    isAffirmativeStudyClaimEn(latestNfc) ||
+    MENTOR_STUDY_CLAIM_BN_PATTERN.test(latestNfc)
+  ) {
+    const content =
+      language === 'bn'
+        ? 'দারুণ! আপনার এই অধ্যয়নের তথ্যটি আলোচনার প্রেক্ষাপট হিসেবে সংরক্ষিত হয়েছে। স্কিল প্রোগ্রেস যাচাইকৃতভাবে আপডেট করতে অনুগ্রহ করে সংশ্লিষ্ট টপিকের অনুশীলন কুইজ সম্পন্ন করুন।'
+        : language === 'mixed'
+          ? 'চমৎকার! আপনার study update-টি conversation context হিসেবে রাখা হয়েছে। Verified skill progress অর্জনের জন্য এই topic-এর practice quiz সম্পন্ন করুন।'
+          : 'Great progress! I have noted your study update in our conversation context. To record verified skill mastery, complete the practice quiz for this topic.';
+    return {
+      content,
+      language,
+      safety_mode: false,
+      learning_claim_recorded: true,
+    };
+  }
+
+  // 4. Out-of-scope non-career request redirection (PRD §37)
+  if (
+    MENTOR_OUT_OF_SCOPE_EN_PATTERN.test(latestNfc) ||
+    MENTOR_OUT_OF_SCOPE_BN_PATTERN.test(latestNfc)
+  ) {
+    const content =
+      language === 'bn'
+        ? 'আমি শুধুমাত্র প্রযুক্তি ক্যারিয়ার পরিকল্পনা, রোডম্যাপ টপিক এবং দক্ষতা অনুশীলনে সহায়তা করি। আপনার বর্তমান ক্যারিয়ার লক্ষ্য বা শেখার বিষয় নিয়ে প্রশ্ন করলে আনন্দের সাথে সাহায্য করব।'
+        : language === 'mixed'
+          ? 'আমি শুধুমাত্র technology career এবং roadmap learning বিষয়ে সহায়তা করতে পারি। আপনার বর্তমান study topic বা skill প্রস্তুতি নিয়ে প্রশ্ন করতে পারেন।'
+          : 'I focus exclusively on technology-career guidance, roadmap topics, and skill practice. Let me know which technical topic or career goal step you would like to explore next.';
+    return {
+      content,
+      language,
+      safety_mode: false,
+      learning_claim_recorded: false,
+    };
+  }
+
+  // 5. Standard contextual career guidance (roadmap-neutral across bn/en/mixed)
   const content =
     language === 'bn'
-      ? 'আপনার বর্তমান রোডম্যাপ অনুযায়ী PostgreSQL লকিং ও কুইজ অনুশীলন চালিয়ে যান।'
+      ? 'আপনার বর্তমান রোডম্যাপ অনুযায়ী মূল ধারণাগুলো ধাপে ধাপে অনুশীলন করুন এবং পরবর্তী কুইজের মাধ্যমে দক্ষতা যাচাই করুন।'
       : language === 'mixed'
-        ? 'আপনার roadmap-এর next step হিসেবে SKIP LOCKED queue pattern অনুশীলন করুন।'
-        : 'Continue practicing the PostgreSQL queue pattern from your active roadmap phase.';
+        ? 'আপনার active roadmap-এর core concept-গুলো ধাপে ধাপে অনুশীলন করুন এবং পরবর্তী topic practice quiz-এর মাধ্যমে দক্ষতা যাচাই করুন।'
+        : 'Continue practicing the core concepts from your active roadmap phase and reinforce them with your next topic quiz.';
   return {
     content,
     language,
@@ -657,7 +847,7 @@ export function buildSyntheticTaskOutput(
     case 'practice_review':
       return buildSyntheticPracticeReview();
     case 'mentor_chat':
-      return buildSyntheticMentorChat(language);
+      return buildSyntheticMentorChat(language, userEnvelope);
     case 'technology_update':
       return buildSyntheticTechnologyUpdate();
   }

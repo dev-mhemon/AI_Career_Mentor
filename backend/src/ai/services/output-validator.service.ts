@@ -50,8 +50,154 @@ const RELEASE_STATUSES = new Set([
 ]);
 const RELEVANCE_LEVELS = new Set(['high', 'medium', 'low']);
 const ACTION_TIMINGS = new Set(['act_now', 'learn_later', 'awareness_only']);
-const JOB_GUARANTEE_PATTERN =
-  /\b(job[\s-]?ready|guarantee[ds]?\s+(a\s+)?job|100%\s+placement)\b/i;
+const JOB_GUARANTEE_EN_PATTERN =
+  /\b(?:job[\s-]?ready|(?:guarantee[ds]?|promising|promise[ds]?|assured?)\s+(?:you\s+)?(?:a\s+|an\s+)?(?:tech\s+|software\s+|engineering\s+)?(?:job|employment|placement|hiring|offer|salary)|(?:job|employment|placement|hiring)\s+is\s+guaranteed|100%\s*(?:job|placement|hiring|employment)(?:\s+guarantee[ds]?)?|you(?:\s+will|['\u2019]ll)\s+(?:definitely|certainly|surely|undoubtedly|100%)\s+(?:get\s+hired|be\s+hired|(?:land|get)\s+(?:a|an)\s+(?:tech\s+|software\s+|engineering\s+)?(?:job|offer|role))|you(?:\s+are|['\u2019]re)\s+(?:certain|sure|guaranteed|bound)\s+to\s+(?:get\s+hired|be\s+hired|(?:land|get)\s+(?:a|an)\s+(?:tech\s+|software\s+|engineering\s+)?(?:job|offer|role)))\b/gi;
+
+const NEGATED_JOB_PROMISE_PREFIX_PATTERN =
+  /\b(?:can(?:not|['\u2019]t|\s+not)|won['\u2019]t|will\s+not|do(?:n['\u2019]t|\s+not)|never|unable\s+to|not\s+able\s+to)\s+(?:ever\s+)?$/i;
+
+// Note: ASCII \b does not match Bengali script boundaries; match NFC-normalized Bengali substrings directly.
+const JOB_GUARANTEE_BN_PATTERN =
+  /(?:চাকরির\s*জন্য\s*(?:সম্পূর্ণ\s*)?প্রস্তুত|চাকরি(?:র)?\s*(?:গ্যারান্টি|নিশ্চয়তা)|নিশ্চিত\s*(?:চাকরি|প্লেসমেন্ট|নিয়োগ)|(?:১০০%|100%)\s*(?:চাকরি|প্লেসমেন্ট|জব|নিয়োগ))/u;
+
+const MENTOR_PROMPT_LEAK_PATTERN =
+  /(?:<\/?\s*untrusted_data\b|\[ESCAPED_UNTRUSTED_TAG\]|\bprompts\/(?:mentor-chat|goal-interpretation|roadmap-generate|roadmap-revision|merge-proposal|topic-content|quiz-generate|practice-review|technology-update)\.v\d+\b|\b(?:SYSTEM\s+PROMPT|DEVELOPER\s+PROMPT)\s*:|\bSCOPED_CONTEXT_JSON\s*\(DATA\s+ONLY|\bUNTRUSTED_INPUTS\s*\(DATA\s+ONLY|\bSECURITY\s+RULE\s*\(PRD\s*§\s*44\)|treat_as="data_only")/i;
+
+const OVERT_CLINICAL_DIAGNOSIS_EN_PATTERN =
+  /\b(?:i\s+(?:diagnose|am\s+diagnosing|would\s+diagnose)\s+you|my\s+(?:clinical\s+|medical\s+)?diagnosis\s+(?:is|for\s+you\s+is)|you\s+are\s+(?:officially\s+|clinically\s+)?diagnosed\s+with)\b/gi;
+
+const OVERT_CLINICAL_DIAGNOSIS_BN_PATTERN =
+  /(?:আপনার\s+রোগ\s+নির্ণয়|আমি\s+রোগ\s+নির্ণয়\s+করছি)/gu;
+
+const NEGATED_CLINICAL_BN_SUFFIX_PATTERN =
+  /^\s*(?:করতে\s+পারি\s*না|করতে\s+পারব\s*না|করতে\s+সক্ষম\s+নই|করি\s*না|করছি\s*না|দিতে\s+পারি\s*না|সম্ভব\s+নয়)/u;
+
+const SAFETY_MODE_RX_EN_PATTERN =
+  /\b(?:(?:take|prescribe|prescribing|start\s+taking)\s+\d+\s*(?:mg|milligrams?)|(?:prescribe|prescribing)\s+(?:you\s+)?(?:antidepressants?|ssris?|benzodiazepines?|sertraline|fluoxetine|alprazolam|xanax|prozac|zoloft|lexapro|clonazepam))\b/i;
+
+const SAFETY_MODE_DIRECT_DIAGNOSIS_EN_PATTERN =
+  /\byou\s+(?:have|suffer\s+from|are\s+suffering\s+from)\s+(?:(?:clinical|major)\s+)?(?:depression|depressive\s+disorder|bipolar(?:\s+(?:i|ii|1|2))?(?:\s+disorder)?|adhd|attention[\s-]deficit(?:\s+hyperactivity)?\s+disorder|anxiety\s+disorder|generalized\s+anxiety\s+disorder|panic\s+disorder|ptsd|post[\s-]traumatic\s+stress\s+disorder|ocd|obsessive[\s-]compulsive\s+disorder|schizophrenia|borderline\s+personality\s+disorder|eating\s+disorder|autism(?:\s+spectrum\s+disorder)?)\b/gi;
+
+const NON_DIAGNOSTIC_HYPOTHETICAL_PREFIX_PATTERN =
+  /\b(?:if|whether|when|assuming|suppose)\s+$/i;
+
+const SAFETY_MODE_CLINICAL_ROLE_EN_PATTERN =
+  /\bas\s+your\s+(?:therapist|psychiatrist|psychologist|doctor|physician)\b/gi;
+
+const NEGATED_CLINICAL_ROLE_PREFIX_PATTERN =
+  /\b(?:can(?:not|['\u2019]t|\s+not)|am\s+not|i['\u2019]m\s+not|not|never|unable\s+to|do(?:n['\u2019]t|\s+not)|won['\u2019]t|will\s+not)\s+(?:act\s+|serve\s+|function\s+|operate\s+|work\s+)?$/i;
+
+const SAFETY_MODE_CLINICAL_BN_PATTERN =
+  /(?:আপনি\s+ক্লিনিক্যাল\s+ডিপ্রেশনে\s+ভুগছেন|প্রেসক্রাইব\s+করছি|ওষুধ\s+সেবন\s+করুন|মিলিগ্রাম\s+করে\s+খাবেন|\d+\s*মি\.?গ্রা\.?)/u;
+
+function clausePrefixBefore(text: string, index: number, window = 48): string {
+  const raw = text.slice(Math.max(0, index - window), index);
+  const boundaryIdx = Math.max(
+    raw.lastIndexOf('.'),
+    raw.lastIndexOf('!'),
+    raw.lastIndexOf('?'),
+    raw.lastIndexOf(';'),
+    raw.lastIndexOf('\n'),
+  );
+  return boundaryIdx >= 0 ? raw.slice(boundaryIdx + 1) : raw;
+}
+
+function clauseSuffixAfter(
+  text: string,
+  endIndex: number,
+  window = 48,
+): string {
+  const raw = text.slice(endIndex, Math.min(text.length, endIndex + window));
+  const boundaryMatch = /[.!?;\n।]/.exec(raw);
+  return boundaryMatch ? raw.slice(0, boundaryMatch.index) : raw;
+}
+
+function hasProhibitedJobGuaranteeEn(text: string): boolean {
+  for (const match of text.matchAll(JOB_GUARANTEE_EN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const matched = match[0] ?? '';
+    // Only allow explicit refusal/negation before promise/guarantee/assure verbs (never "job ready", "100% placement", or direct hiring certainty).
+    const isPromiseVerbMatch =
+      /^(?:guarantee[ds]?|promising|promise[ds]?|assured?)\b/i.test(matched);
+    if (isPromiseVerbMatch) {
+      const prefix = clausePrefixBefore(text, idx);
+      if (NEGATED_JOB_PROMISE_PREFIX_PATTERN.test(prefix)) {
+        continue;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+function hasOvertClinicalDiagnosis(text: string): boolean {
+  for (const match of text.matchAll(OVERT_CLINICAL_DIAGNOSIS_EN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const matched = match[0] ?? '';
+    if (/^you\s+are\b/i.test(matched)) {
+      const prefix = clausePrefixBefore(text, idx);
+      if (NON_DIAGNOSTIC_HYPOTHETICAL_PREFIX_PATTERN.test(prefix)) {
+        continue;
+      }
+    }
+    return true;
+  }
+  for (const match of text.matchAll(OVERT_CLINICAL_DIAGNOSIS_BN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const matched = match[0] ?? '';
+    const suffix = clauseSuffixAfter(text, idx + matched.length);
+    if (NEGATED_CLINICAL_BN_SUFFIX_PATTERN.test(suffix)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function hasProhibitedSafetyClinicalEn(text: string): boolean {
+  if (SAFETY_MODE_RX_EN_PATTERN.test(text)) {
+    return true;
+  }
+  for (const match of text.matchAll(SAFETY_MODE_DIRECT_DIAGNOSIS_EN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const prefix = clausePrefixBefore(text, idx);
+    if (NON_DIAGNOSTIC_HYPOTHETICAL_PREFIX_PATTERN.test(prefix)) {
+      continue;
+    }
+    return true;
+  }
+  for (const match of text.matchAll(SAFETY_MODE_CLINICAL_ROLE_EN_PATTERN)) {
+    const idx = match.index ?? 0;
+    const prefix = clausePrefixBefore(text, idx);
+    if (NEGATED_CLINICAL_ROLE_PREFIX_PATTERN.test(prefix)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function hasInvalidUnicodeText(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code === 0) {
+      return true;
+    }
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (i + 1 >= value.length) {
+        return true;
+      }
+      const next = value.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) {
+        return true;
+      }
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function validationFail(): never {
   fail(
@@ -707,14 +853,58 @@ function validatePracticeReview(raw: Record<string, unknown>): void {
 }
 
 function validateMentorChat(raw: Record<string, unknown>): void {
-  const content = asNonEmptyString(raw.content, 16_000);
-  if (JOB_GUARANTEE_PATTERN.test(content)) {
+  if (raw.content === undefined && typeof raw.reply === 'string') {
+    raw.content = raw.reply;
+    delete raw.reply;
+  } else if (raw.reply !== undefined) {
+    if (
+      typeof raw.reply !== 'string' ||
+      (typeof raw.content === 'string' &&
+        raw.reply.trim() !== raw.content.trim())
+    ) {
+      validationFail();
+    }
+    delete raw.reply;
+  }
+
+  if (typeof raw.content !== 'string' || hasInvalidUnicodeText(raw.content)) {
     validationFail();
   }
+
+  const content = raw.content.trim();
+  if (!content || Array.from(content).length > 16_000) {
+    validationFail();
+  }
+  raw.content = content;
+
+  const normalizedNfc = content.normalize('NFC');
+  if (
+    hasProhibitedJobGuaranteeEn(normalizedNfc) ||
+    JOB_GUARANTEE_BN_PATTERN.test(normalizedNfc)
+  ) {
+    validationFail();
+  }
+
+  if (MENTOR_PROMPT_LEAK_PATTERN.test(normalizedNfc)) {
+    validationFail();
+  }
+
+  if (hasOvertClinicalDiagnosis(normalizedNfc)) {
+    validationFail();
+  }
+
   if (
     !isEnumValue(UI_LANGUAGES, raw.language) ||
     typeof raw.safety_mode !== 'boolean' ||
     typeof raw.learning_claim_recorded !== 'boolean'
+  ) {
+    validationFail();
+  }
+
+  if (
+    raw.safety_mode &&
+    (hasProhibitedSafetyClinicalEn(normalizedNfc) ||
+      SAFETY_MODE_CLINICAL_BN_PATTERN.test(normalizedNfc))
   ) {
     validationFail();
   }

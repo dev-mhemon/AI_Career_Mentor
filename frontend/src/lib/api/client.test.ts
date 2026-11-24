@@ -68,6 +68,10 @@ import {
   getProgress,
   getSkillProgressDetail,
   getProgressHistory,
+  createMentorConversation,
+  listMentorConversations,
+  sendMentorMessage,
+  getMentorHistory,
   isJobAcceptedDTO,
   type DailyPlanResponseDTO,
   type JobKind,
@@ -2218,6 +2222,292 @@ describe('M08 Quiz, Practice Review & Progress API client (EP-Q01..Q07, EP-PR01.
     ).rejects.toMatchObject({
       code: 'INVALID_RESPONSE',
       statusCode: 502,
+    });
+  });
+});
+
+describe('M10 Mentor API Client (EP-M01 through EP-M04)', () => {
+  const CONV_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const TOPIC_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const CLIENT_MSG_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const USER_MSG_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const ASST_MSG_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+
+  const MOCK_CONVERSATION = {
+    id: CONV_ID,
+    context_type: 'topic' as const,
+    roadmap_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+    topic_id: TOPIC_ID,
+    title: 'TypeScript Generics',
+    created_at: '2026-11-24T08:00:00.000Z',
+  };
+
+  it('calls EP-M01 createMentorConversation, EP-M02 listMentorConversations, EP-M03 sendMentorMessage, and EP-M04 getMentorHistory', async () => {
+    // EP-M01 POST /mentor/conversations
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ success: true, data: MOCK_CONVERSATION }),
+    });
+    const created = await createMentorConversation(MOCK_TOKEN, {
+      context_type: 'topic',
+      topic_id: TOPIC_ID,
+    });
+    expect(created).toEqual(MOCK_CONVERSATION);
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      'http://localhost:3000/api/v1/mentor/conversations',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({ context_type: 'topic', topic_id: TOPIC_ID }),
+      }),
+    );
+
+    // EP-M02 GET /mentor/conversations?limit=20&cursor=cur-1
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [MOCK_CONVERSATION],
+          meta: { limit: 20, next_cursor: 'cur-2' },
+        }),
+    });
+    const list = await listMentorConversations(MOCK_TOKEN, {
+      limit: 20,
+      cursor: 'cur-1',
+    });
+    expect(list).toEqual({
+      items: [MOCK_CONVERSATION],
+      meta: { limit: 20, next_cursor: 'cur-2' },
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      'http://localhost:3000/api/v1/mentor/conversations?limit=20&cursor=cur-1',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+
+    // EP-M03 POST /mentor/messages (synchronous 201 JSON, body client_message_id, NO Idempotency-Key header)
+    const mockReply = {
+      user_message_id: USER_MSG_ID,
+      assistant_message: {
+        id: ASST_MSG_ID,
+        role: 'assistant' as const,
+        content: 'Generics allow reusable type-safe helpers.',
+        language: 'en' as const,
+        created_at: '2026-11-24T08:01:00.000Z',
+      },
+      safety_mode: false,
+      learning_claim_recorded: true,
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ success: true, data: mockReply }),
+    });
+    const reply = await sendMentorMessage(MOCK_TOKEN, {
+      conversation_id: CONV_ID,
+      content: 'I studied generics!',
+      client_message_id: CLIENT_MSG_ID,
+    });
+    expect(reply).toEqual(mockReply);
+    const sendCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    expect(sendCall[0]).toBe('http://localhost:3000/api/v1/mentor/messages');
+    expect(sendCall[1]?.method).toBe('POST');
+    expect(sendCall[1]?.headers).toMatchObject({
+      Authorization: `Bearer ${MOCK_TOKEN}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    });
+    expect(new Headers(sendCall[1]?.headers).has('Idempotency-Key')).toBe(false);
+    expect(sendCall[1]?.body).toBe(
+      JSON.stringify({
+        conversation_id: CONV_ID,
+        content: 'I studied generics!',
+        client_message_id: CLIENT_MSG_ID,
+      }),
+    );
+
+    // EP-M04 GET /mentor/history?conversation_id=...&limit=20&cursor=hist-1
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [mockReply.assistant_message],
+          meta: { limit: 20, next_cursor: null },
+        }),
+    });
+    const history = await getMentorHistory(MOCK_TOKEN, {
+      conversation_id: CONV_ID,
+      limit: 20,
+      cursor: 'hist-1',
+    });
+    expect(history).toEqual({
+      items: [mockReply.assistant_message],
+      meta: { limit: 20, next_cursor: null },
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/mentor/history?conversation_id=${CONV_ID}&limit=20&cursor=hist-1`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+  });
+
+  it('rejects malformed EP-M01 through EP-M04 payloads with ApiError(502, INVALID_RESPONSE)', async () => {
+    // Malformed EP-M01 missing id
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { context_type: 'general', created_at: '2026-11-24T08:00:00.000Z' },
+        }),
+    });
+    await expect(
+      createMentorConversation(MOCK_TOKEN, { context_type: 'general' }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+
+    // Malformed EP-M02 non-array items
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { items: null },
+        }),
+    });
+    await expect(listMentorConversations(MOCK_TOKEN)).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+
+    // Malformed EP-M03 missing assistant_message
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            user_message_id: USER_MSG_ID,
+            safety_mode: false,
+            learning_claim_recorded: false,
+          },
+        }),
+    });
+    await expect(
+      sendMentorMessage(MOCK_TOKEN, {
+        conversation_id: CONV_ID,
+        content: 'Hello',
+        client_message_id: CLIENT_MSG_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+
+    // Malformed EP-M04 invalid role in history message
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [
+            {
+              id: ASST_MSG_ID,
+              role: 'system',
+              content: 'bad',
+              language: 'en',
+              created_at: '2026-11-24T08:01:00.000Z',
+            },
+          ],
+        }),
+    });
+    await expect(
+      getMentorHistory(MOCK_TOKEN, { conversation_id: CONV_ID }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      statusCode: 502,
+    });
+  });
+
+  it('validates embedded data.meta (rejecting invalid next_cursor: 123) and keeps valid top-level meta authoritative', async () => {
+    // 1. normalizePaginatedEnvelope (listRoadmaps): invalid embedded next_cursor: 123 falls back cleanly
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            items: [],
+            meta: { limit: 15, next_cursor: 123 },
+          },
+        }),
+    });
+    const roadmapFallback = await listRoadmaps(MOCK_TOKEN, { limit: 10 });
+    expect(roadmapFallback).toEqual({
+      items: [],
+      meta: { limit: 10, next_cursor: null },
+    });
+
+    // 2. normalizePaginatedEnvelope: valid top-level meta stays authoritative over embedded data.meta
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            items: [],
+            meta: { limit: 10, next_cursor: 'embedded-cur' },
+          },
+          meta: { limit: 25, next_cursor: 'top-cur' },
+        }),
+    });
+    const roadmapTopAuthoritative = await listRoadmaps(MOCK_TOKEN);
+    expect(roadmapTopAuthoritative.meta).toEqual({
+      limit: 25,
+      next_cursor: 'top-cur',
+    });
+
+    // 3. extractValidatedArray (listMentorConversations): invalid embedded next_cursor: 123 falls back cleanly
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            items: [MOCK_CONVERSATION],
+            meta: { limit: 20, next_cursor: 123 },
+          },
+        }),
+    });
+    const convFallback = await listMentorConversations(MOCK_TOKEN, {
+      limit: 12,
+    });
+    expect(convFallback).toEqual({
+      items: [MOCK_CONVERSATION],
+      meta: { limit: 12, next_cursor: null },
     });
   });
 });

@@ -191,6 +191,11 @@ describe('RoadmapDetailView (Screen 15)', () => {
       await screen.findByRole('heading', { level: 1, name: 'Backend Engineer' }),
     ).toBeInTheDocument();
     expect(screen.getByText('v2')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', {
+        name: 'Ask Mentor about Transactional Outbox Pattern',
+      }),
+    ).toHaveAttribute('href', '/mentor?context=topic&topicId=top-a');
 
     // Closed drawer shell must NOT expose dialog role to assistive tech or Testing Library
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

@@ -175,6 +175,38 @@ export function createTimedAbortSignal(
 interface ApiEnvelopeResult<T> {
   data: T;
   meta?: PageMetaDTO;
+  serverDateMs?: number;
+}
+
+let observedServerClockOffsetMs: number | null = null;
+
+/**
+ * Returns the latest observed `serverTime - clientTime` offset in milliseconds derived from
+ * HTTP `Date` response headers, or `null` when no server `Date` header has been observed yet.
+ */
+export function getObservedServerClockOffsetMs(): number | null {
+  return observedServerClockOffsetMs;
+}
+
+function parsePageMeta(raw: unknown): PageMetaDTO | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+  const meta = raw as Record<string, unknown>;
+  if (
+    typeof meta.limit !== 'number' ||
+    !Number.isFinite(meta.limit) ||
+    meta.limit <= 0
+  ) {
+    return undefined;
+  }
+  if (meta.next_cursor !== null && typeof meta.next_cursor !== 'string') {
+    return undefined;
+  }
+  return {
+    limit: meta.limit,
+    next_cursor: meta.next_cursor,
+  };
 }
 
 async function apiFetchEnvelope<T>(
@@ -277,22 +309,23 @@ async function apiFetchEnvelope<T>(
       retryAfterSeconds,
     );
   }
+  const rawDateHeader = response.headers?.get('Date');
+  const parsedServerDateMs = rawDateHeader
+    ? Date.parse(rawDateHeader)
+    : Number.NaN;
+  const serverDateMs = Number.isFinite(parsedServerDateMs)
+    ? parsedServerDateMs
+    : undefined;
+  if (serverDateMs !== undefined) {
+    observedServerClockOffsetMs = serverDateMs - Date.now();
+  }
   if (body?.success !== true || !('data' in body))
     throw new ApiError(502, 'Invalid backend response', 'INVALID_RESPONSE');
-  const rawMeta =
-    body.meta &&
-    typeof body.meta === 'object' &&
-    typeof (body.meta as Record<string, unknown>).limit === 'number' &&
-    ((body.meta as Record<string, unknown>).next_cursor === null ||
-      typeof (body.meta as Record<string, unknown>).next_cursor === 'string')
-      ? {
-          limit: (body.meta as PageMetaDTO).limit,
-          next_cursor: (body.meta as PageMetaDTO).next_cursor,
-        }
-      : undefined;
+  const rawMeta = parsePageMeta(body.meta);
   return {
     data: body.data as T,
     ...(rawMeta ? { meta: rawMeta } : {}),
+    ...(serverDateMs !== undefined ? { serverDateMs } : {}),
   };
 }
 
@@ -1557,52 +1590,34 @@ export type UndoRoadmapMergeResultDTO = {
   status: 'undone';
 };
 
-function isValidPageMeta(raw: unknown): raw is PageMetaDTO {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return false;
-  }
-  const meta = raw as Record<string, unknown>;
-  return (
-    typeof meta.limit === 'number' &&
-    Number.isInteger(meta.limit) &&
-    meta.limit >= 1 &&
-    (meta.next_cursor === null || typeof meta.next_cursor === 'string')
-  );
-}
-
 function normalizePaginatedEnvelope<T>(
   envelope: ApiEnvelopeResult<T[] | { items: T[]; meta?: PageMetaDTO }>,
   defaultLimit = 20,
 ): { items: T[]; meta: PageMetaDTO } {
+  const topMeta = parsePageMeta(envelope.meta);
   const payload = envelope.data;
   if (Array.isArray(payload)) {
     return {
       items: payload,
-      meta: isValidPageMeta(envelope.meta)
-        ? envelope.meta
-        : {
-            limit: defaultLimit,
-            next_cursor: null,
-          },
+      meta: topMeta ?? {
+        limit: defaultLimit,
+        next_cursor: null,
+      },
     };
   }
   if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
-    const resolvedMeta = isValidPageMeta(payload.meta)
-      ? payload.meta
-      : isValidPageMeta(envelope.meta)
-        ? envelope.meta
-        : {
-            limit: defaultLimit,
-            next_cursor: null,
-          };
+    const embeddedMeta = parsePageMeta((payload as { meta?: unknown }).meta);
     return {
       items: payload.items,
-      meta: resolvedMeta,
+      meta: topMeta ?? embeddedMeta ?? {
+        limit: defaultLimit,
+        next_cursor: null,
+      },
     };
   }
   return {
     items: [],
-    meta: envelope.meta ?? { limit: defaultLimit, next_cursor: null },
+    meta: topMeta ?? { limit: defaultLimit, next_cursor: null },
   };
 }
 
@@ -2930,4 +2945,286 @@ export async function getProgressHistory(
     ...(options?.signal ? { signal: options.signal } : {}),
   });
   return normalizePaginatedEnvelope(envelope, normalizedLimit ?? 20);
+}
+
+// ─── M10 AI Career Mentor API (C05 §14.10 / §15.10) ─────────────────────────
+
+export type MentorContextType = 'focus_roadmap' | 'topic' | 'general';
+export type MentorLanguage = 'bn' | 'en' | 'mixed';
+export type MentorMessageRole = 'user' | 'assistant';
+
+export type ConversationCreateInput = {
+  context_type: MentorContextType;
+  topic_id?: string;
+};
+
+export type ConversationDTO = {
+  id: string;
+  context_type: MentorContextType;
+  roadmap_id: string | null;
+  topic_id: string | null;
+  title: string | null;
+  created_at: string;
+};
+
+export type ListMentorConversationsParams = {
+  limit?: number;
+  cursor?: string;
+};
+
+export type PaginatedConversationsResponseDTO = {
+  items: ConversationDTO[];
+  meta: PageMetaDTO;
+};
+
+export type MessageRequestInput = {
+  conversation_id: string;
+  content: string;
+  client_message_id: string;
+};
+
+export type MessageDTO = {
+  id: string;
+  role: MentorMessageRole;
+  content: string;
+  language: MentorLanguage;
+  created_at: string;
+};
+
+export type MessageResponseDTO = {
+  user_message_id: string;
+  assistant_message: MessageDTO;
+  safety_mode: boolean;
+  learning_claim_recorded: boolean;
+};
+
+export type GetMentorHistoryParams = {
+  conversation_id: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type PaginatedMentorHistoryResponseDTO = {
+  items: MessageDTO[];
+  meta: PageMetaDTO;
+};
+
+const VALID_MENTOR_CONTEXT_TYPES: ReadonlySet<string> = new Set([
+  'focus_roadmap',
+  'topic',
+  'general',
+]);
+const VALID_MENTOR_LANGUAGES: ReadonlySet<string> = new Set([
+  'bn',
+  'en',
+  'mixed',
+]);
+const VALID_MENTOR_ROLES: ReadonlySet<string> = new Set(['user', 'assistant']);
+
+function throwInvalidMentorResponse(message: string): never {
+  throw new ApiError(502, message, 'INVALID_RESPONSE', undefined, [], true);
+}
+
+function isValidConversationDTO(value: unknown): value is ConversationDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.id === 'string' &&
+    rec.id.trim().length > 0 &&
+    typeof rec.context_type === 'string' &&
+    VALID_MENTOR_CONTEXT_TYPES.has(rec.context_type) &&
+    (rec.roadmap_id === null || typeof rec.roadmap_id === 'string') &&
+    (rec.topic_id === null || typeof rec.topic_id === 'string') &&
+    (rec.title === null || typeof rec.title === 'string') &&
+    typeof rec.created_at === 'string' &&
+    rec.created_at.trim().length > 0
+  );
+}
+
+function isValidMessageDTO(value: unknown): value is MessageDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.id === 'string' &&
+    rec.id.trim().length > 0 &&
+    typeof rec.role === 'string' &&
+    VALID_MENTOR_ROLES.has(rec.role) &&
+    typeof rec.content === 'string' &&
+    typeof rec.language === 'string' &&
+    VALID_MENTOR_LANGUAGES.has(rec.language) &&
+    typeof rec.created_at === 'string' &&
+    rec.created_at.trim().length > 0
+  );
+}
+
+function isValidMessageResponseDTO(value: unknown): value is MessageResponseDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.user_message_id === 'string' &&
+    rec.user_message_id.trim().length > 0 &&
+    isValidMessageDTO(rec.assistant_message) &&
+    rec.assistant_message.role === 'assistant' &&
+    typeof rec.safety_mode === 'boolean' &&
+    typeof rec.learning_claim_recorded === 'boolean'
+  );
+}
+
+function extractValidatedArray<T>(
+  envelope: { data: unknown; meta?: PageMetaDTO },
+  validator: (item: unknown) => item is T,
+  fallbackLimit: number,
+  label: string,
+): { items: T[]; meta: PageMetaDTO } {
+  const payload = envelope.data;
+  let rawItems: unknown;
+  let rawEmbeddedMeta: unknown;
+
+  if (Array.isArray(payload)) {
+    rawItems = payload;
+  } else if (
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    'items' in payload
+  ) {
+    rawItems = (payload as { items?: unknown }).items;
+    rawEmbeddedMeta = (payload as { meta?: unknown }).meta;
+  }
+
+  if (!Array.isArray(rawItems) || !rawItems.every(validator)) {
+    throwInvalidMentorResponse(`Unexpected ${label} format.`);
+  }
+
+  return {
+    items: rawItems,
+    meta:
+      parsePageMeta(envelope.meta) ??
+      parsePageMeta(rawEmbeddedMeta) ?? {
+        limit: fallbackLimit,
+        next_cursor: null,
+      },
+  };
+}
+
+/**
+ * POST /mentor/conversations (EP-M01, 201 Created, Gate: write ai_mentor)
+ */
+export async function createMentorConversation(
+  accessToken: string,
+  input: ConversationCreateInput,
+  options?: AuthStateRequestOptions,
+): Promise<ConversationDTO> {
+  const payload: ConversationCreateInput = {
+    context_type: input.context_type,
+    ...(input.topic_id !== undefined ? { topic_id: input.topic_id.trim() } : {}),
+  };
+  const data = await apiFetch<unknown>('/mentor/conversations', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  if (!isValidConversationDTO(data)) {
+    throwInvalidMentorResponse('Unexpected mentor conversation response format.');
+  }
+  return data;
+}
+
+/**
+ * GET /mentor/conversations (EP-M02, 200 OK, Gate: none)
+ */
+export async function listMentorConversations(
+  accessToken: string,
+  params?: ListMentorConversationsParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedConversationsResponseDTO> {
+  const search = new URLSearchParams();
+  const normalizedLimit = normalizePositiveLimit(params?.limit);
+  if (normalizedLimit !== undefined) {
+    search.set('limit', String(normalizedLimit));
+  }
+  if (params?.cursor) {
+    search.set('cursor', params.cursor);
+  }
+  const qs = search.toString();
+  const envelope = await apiFetchEnvelope<unknown>(
+    qs ? `/mentor/conversations?${qs}` : '/mentor/conversations',
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  return extractValidatedArray(
+    envelope,
+    isValidConversationDTO,
+    normalizedLimit ?? 20,
+    'mentor conversations list',
+  );
+}
+
+/**
+ * POST /mentor/messages (EP-M03, 201 Created JSON default, Gate: write ai_mentor).
+ * Deduplication is body-level via `client_message_id` (no `Idempotency-Key` header).
+ */
+export async function sendMentorMessage(
+  accessToken: string,
+  input: MessageRequestInput,
+  options?: AuthStateRequestOptions,
+): Promise<MessageResponseDTO> {
+  const data = await apiFetch<unknown>('/mentor/messages', accessToken, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+    body: JSON.stringify({
+      conversation_id: input.conversation_id.trim(),
+      content: input.content,
+      client_message_id: input.client_message_id.trim(),
+    }),
+    timeoutMs: options?.timeoutMs ?? 15_000,
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  if (!isValidMessageResponseDTO(data)) {
+    throwInvalidMentorResponse('Unexpected mentor message response format.');
+  }
+  return data;
+}
+
+/**
+ * GET /mentor/history (EP-M04, 200 OK, Gate: none; 90-day retention cutoff enforced server-side)
+ */
+export async function getMentorHistory(
+  accessToken: string,
+  params: GetMentorHistoryParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedMentorHistoryResponseDTO> {
+  const search = new URLSearchParams();
+  search.set('conversation_id', params.conversation_id.trim());
+  const normalizedLimit = normalizePositiveLimit(params.limit);
+  if (normalizedLimit !== undefined) {
+    search.set('limit', String(normalizedLimit));
+  }
+  if (params.cursor) {
+    search.set('cursor', params.cursor);
+  }
+  const envelope = await apiFetchEnvelope<unknown>(
+    `/mentor/history?${search.toString()}`,
+    accessToken,
+    {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  return extractValidatedArray(
+    envelope,
+    isValidMessageDTO,
+    normalizedLimit ?? 20,
+    'mentor history',
+  );
 }

@@ -55,6 +55,7 @@ import {
   CloseIcon,
   CompassIcon,
   LockIcon,
+  MessageSquareIcon,
 } from '@/components/ui/icons';
 import { Modal, useBackdropDismiss } from '@/components/ui/modal';
 import { SegmentedTabs } from '@/components/ui/segmented-tabs';
@@ -1910,6 +1911,16 @@ export function RoadmapDetailView({
                             {item.estimated_effort_hours} hrs
                           </span>
                         )}
+                        {!item.retired && item.topic_id && (
+                          <Link
+                            href={`/mentor?context=topic&topicId=${encodeURIComponent(item.topic_id)}`}
+                            aria-label={`Ask Mentor about ${item.title}`}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-50/70 px-2.5 py-1 text-2xs font-medium leading-none text-teal-800 transition-colors hover:bg-teal-100/80 dark:border-teal-800/70 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-950/70"
+                          >
+                            <MessageSquareIcon className="block h-3 w-3 shrink-0" />
+                            <span>Ask Mentor</span>
+                          </Link>
+                        )}
                       </div>
                     </div>
 
@@ -2533,6 +2544,16 @@ export function RoadmapDetailView({
                   <LevelUpIcon className="block h-4 w-4 shrink-0" />
                   <span>Change Career Level</span>
                 </Button>
+
+                {currentRoadmap.is_focus && (
+                  <Link
+                    href="/mentor?context=focus_roadmap"
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-teal-800 transition-colors hover:bg-teal-100/80 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/80"
+                  >
+                    <MessageSquareIcon className="block h-4 w-4 shrink-0" />
+                    <span>Ask Mentor</span>
+                  </Link>
+                )}
               </>
             )}
 

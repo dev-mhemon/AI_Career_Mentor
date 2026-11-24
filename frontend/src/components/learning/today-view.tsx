@@ -27,6 +27,7 @@ import {
   ChevronRightIcon,
   ClockIcon,
   CompassIcon,
+  MessageSquareIcon,
   RefreshCwIcon,
   SparklesIcon,
 } from '@/components/ui/icons';
@@ -354,6 +355,19 @@ export function TodayView({
         </div>
 
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <Link
+            href={
+              activeTopicId
+                ? `/mentor?context=topic&topicId=${encodeURIComponent(activeTopicId)}`
+                : today?.status === 'no_focus_roadmap'
+                  ? '/mentor?context=general'
+                  : '/mentor?context=focus_roadmap'
+            }
+            className={secondaryLinkClass}
+          >
+            <MessageSquareIcon className="block h-4 w-4 shrink-0" />
+            <span>Ask Mentor</span>
+          </Link>
           <Link href="/daily-plan" className={secondaryLinkClass}>
             <CalendarDaysIcon className="block h-4 w-4 shrink-0" />
             <span>View Daily Plan</span>

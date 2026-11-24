@@ -290,6 +290,18 @@ const SAFE_CODE_ERRORS: Readonly<
     tone: 'info',
     retryable: false,
   },
+  CONVERSATION_NOT_FOUND: {
+    message:
+      'This mentor conversation could not be found. Select another conversation or start a new one.',
+    tone: 'warning',
+    retryable: false,
+  },
+  UNSUPPORTED_LANGUAGE: {
+    message:
+      'Please write your message in Bangla, English, or natural Bangla-English mixed language.',
+    tone: 'warning',
+    retryable: false,
+  },
 };
 
 /**
@@ -368,7 +380,10 @@ const M05_SAFE_ERRORS: Readonly<
 
 export function mapApiError(
   error: unknown,
-  options?: { channel?: 'email' | 'phone' },
+  options?: {
+    channel?: 'email' | 'phone';
+    feature?: 'mentor' | 'roadmap' | 'learning' | 'quiz';
+  },
 ): MappedError {
   const base: MappedError = {
     message: 'Something went wrong. Please try again.',
@@ -399,6 +414,16 @@ export function mapApiError(
     retryable: error.retryable,
     requestId: error.requestId,
   };
+
+  if (error.code === 'FEATURE_DISABLED' && options?.feature === 'mentor') {
+    return {
+      ...m,
+      message:
+        'AI Mentor is currently disabled for your account. Your existing conversations and 90-day chat history remain readable.',
+      tone: 'info',
+      retryable: false,
+    };
+  }
 
   if (error.code && Object.hasOwn(M05_SAFE_ERRORS, error.code)) {
     const safe = M05_SAFE_ERRORS[error.code];

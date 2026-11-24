@@ -5793,6 +5793,357 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /mentor/conversations:
+    post:
+      operationId: EP-M01
+      tags:
+        - AI Mentor
+      summary: Create contextual AI mentor conversation
+      description: >-
+        C05 EP-M01 (POST /api/v1/mentor/conversations). Creates an owned mentor conversation scoped to
+        focus_roadmap, topic, or general (Gate: write ai_mentor, R24 foreground = true). Enforces active
+        locked Focus Roadmap ownership on focus_roadmap (409 NO_FOCUS_ROADMAP when absent) and owned
+        non-archived non-retired topic ownership on topic (404 RESOURCE_NOT_FOUND for foreign/unowned
+        topic IDs). Initializes an ai_context_records scope entry for non-general threads.
+      x-source: API-Specification.md sections 14.10, 15.10, 18.3; C08 sections 7.1, 10; R08, R11
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: ai_mentor
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationCreateDTO'
+      responses:
+        '201':
+          description: C05 EP-M01 success; returns ConversationDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND (topic_id not found in caller's active roadmaps)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: NO_FOCUS_ROADMAP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED, INVALID_ENUM_VALUE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    get:
+      operationId: EP-M02
+      tags:
+        - AI Mentor
+      summary: List caller-owned AI mentor conversations
+      description: >-
+        C05 EP-M02 (GET /api/v1/mentor/conversations). Lists caller-owned conversations ordered by
+        (last_message_at DESC NULLS LAST, created_at DESC, id DESC) with microsecond-precision opaque
+        keyset cursor pagination. Gate: none so existing conversations remain readable when ai_mentor
+        is disabled (PRD §7 / §52). Strictly owner-scoped (R11: zero admin access).
+      x-source: API-Specification.md sections 14.10, 15.10; PRD §7 / §52; R11
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: Paginated ConversationDTO[] envelope with top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedConversationsResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED, INVALID_FORMAT (impossible calendar cursor date)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /mentor/messages:
+    post:
+      operationId: EP-M03
+      tags:
+        - AI Mentor
+      summary: Send AI mentor message and receive contextual reply (default JSON or opt-in R15 SSE)
+      description: >-
+        C05 EP-M03 (POST /api/v1/mentor/messages). Gate: write (ai_mentor), R24 foreground = true.
+        Deduplication uses body-level client_message_id UUID (uq_messages_client_message; NO
+        Idempotency-Key header). Replays committed replies with zero LLM/quota cost, recovers failed
+        turns against the persisted user row on same-ID retry, and rejects mismatched bodies or
+        expired retention rows with 409 IDEMPOTENCY_KEY_REUSED. Executes AiGatewayService
+        (prompts/mentor-chat.v1) strictly outside DB transactions (Tx 1 -> Context/Gateway -> Tx 2
+        with post-lock R08 retention recheck -> non-blocking 20-turn episodic compaction). Returns
+        201 Created application/json by default; opt-in R15 SSE (200 text/event-stream,
+        Cache-Control: no-store) activates only when Accept explicitly lists text/event-stream with
+        positive quality weight (q > 0) outside quoted media-type parameters (q=0 and quoted strings
+        such as profile="x,text/event-stream,y" return 201 JSON) and streams grapheme-safe chunks of
+        the already-validated, DB-committed reply (message.delta seq 0..N -> message.completed).
+        Never writes to learning_evidence, skill_progress, roadmap_items, or daily_plan_items.
+      x-source: API-Specification.md sections 14.10, 15.10, 18.3; ADR-018; R08, R11, R15
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: ai_mentor
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: Accept
+          in: header
+          required: false
+          description: >-
+            Defaults to application/json (201 Created). Set to text/event-stream (with q > 0 outside
+            quoted parameters) to opt into R15 committed-chunk SSE (200 OK).
+          schema:
+            type: string
+            default: application/json
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRequestDTO'
+      responses:
+        '200':
+          description: >-
+            Optional R15 SSE stream (when Accept explicitly includes text/event-stream with q > 0
+            outside quoted parameters). Streams committed reply frames (message.delta seq 0..N,
+            authoritative message.completed, or post-header message.error).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/MentorStreamDeltaEvent'
+                  - $ref: '#/components/schemas/MentorStreamCompletedEvent'
+                  - $ref: '#/components/schemas/MentorStreamErrorEvent'
+        '201':
+          description: Default C05 EP-M03 response; returns MessageResponseDTO JSON envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, FEATURE_DISABLED, VERIFIED_CONTACT_REQUIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: CONVERSATION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: IDEMPOTENCY_KEY_REUSED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED, UNSUPPORTED_LANGUAGE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: RATE_LIMITED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '502':
+          description: AI_SERVICE_ERROR, AI_VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: AI_BUDGET_EXHAUSTED, SERVICE_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '504':
+          description: AI_TIMEOUT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /mentor/history:
+    get:
+      operationId: EP-M04
+      tags:
+        - AI Mentor
+      summary: List paginated 90-day conversation message history
+      description: >-
+        C05 EP-M04 (GET /api/v1/mentor/history). Gate: none so existing 90-day history remains
+        readable when ai_mentor is disabled (PRD §7 / §52). Enforces owner isolation
+        (404 CONVERSATION_NOT_FOUND for foreign/unknown IDs), dual-predicate R08 retention
+        (expires_at > now AND created_at > cutoff), and N02 resilience when an older parent user
+        message was purged (reply_to_message_id IS NULL). Ordered (created_at DESC, id DESC) with
+        microsecond-precision keyset cursor pagination.
+      x-source: API-Specification.md sections 14.10, 15.10; R08, R11, N02
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: conversation_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: Paginated MessageDTO[] envelope with top-level meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMentorHistoryResponseDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, VERIFIED_CONTACT_REQUIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: CONVERSATION_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED, INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -9278,3 +9629,184 @@ components:
           enum: [true]
         data:
           $ref: '#/components/schemas/MergeUndoResponseDTO'
+    ConversationContextType:
+      type: string
+      enum: [focus_roadmap, topic, general]
+    MentorMessageRole:
+      type: string
+      enum: [user, assistant]
+    MentorLanguage:
+      type: string
+      enum: [bn, en, mixed]
+    ConversationCreateDTO:
+      type: object
+      required: [context_type]
+      additionalProperties: false
+      properties:
+        context_type:
+          $ref: '#/components/schemas/ConversationContextType'
+        topic_id:
+          type: string
+          format: uuid
+          description: Required when context_type is topic; forbidden for focus_roadmap or general.
+    ConversationDTO:
+      type: object
+      required: [id, context_type, roadmap_id, topic_id, title, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        context_type:
+          $ref: '#/components/schemas/ConversationContextType'
+        roadmap_id:
+          type: string
+          format: uuid
+          nullable: true
+        topic_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+          maxLength: 200
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    MessageRequestDTO:
+      type: object
+      required: [conversation_id, content, client_message_id]
+      additionalProperties: false
+      properties:
+        conversation_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: 1..4000 well-formed Unicode code points (rejects NUL bytes and unpaired surrogates).
+        client_message_id:
+          type: string
+          format: uuid
+          description: Body-level idempotency UUID reused across retries of the same turn (no Idempotency-Key header).
+    MessageDTO:
+      type: object
+      required: [id, role, content, language, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/MentorMessageRole'
+        content:
+          type: string
+          maxLength: 16000
+        language:
+          $ref: '#/components/schemas/MentorLanguage'
+        created_at:
+          type: string
+          format: date-time
+    MessageResponseDTO:
+      type: object
+      required: [user_message_id, assistant_message, safety_mode, learning_claim_recorded]
+      properties:
+        user_message_id:
+          type: string
+          format: uuid
+        assistant_message:
+          $ref: '#/components/schemas/MessageDTO'
+        safety_mode:
+          type: boolean
+        learning_claim_recorded:
+          type: boolean
+          description: Chat-context flag only; never mutates learning_evidence or skill_progress.
+    MentorStreamDeltaEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [message.delta]
+        data:
+          type: object
+          required: [message_id, seq, text]
+          properties:
+            message_id:
+              type: string
+              format: uuid
+            seq:
+              type: integer
+              minimum: 0
+            text:
+              type: string
+    MentorStreamCompletedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [message.completed]
+        data:
+          $ref: '#/components/schemas/MessageResponseDTO'
+    MentorStreamErrorEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [message.error]
+        data:
+          type: object
+          required: [code, retryable, request_id]
+          properties:
+            code:
+              type: string
+            retryable:
+              type: boolean
+            request_id:
+              type: string
+    ConversationDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/ConversationDTO'
+    PaginatedConversationsResponseDTOEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    MessageResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/MessageResponseDTO'
+    PaginatedMentorHistoryResponseDTOEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
