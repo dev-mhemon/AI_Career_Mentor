@@ -509,4 +509,129 @@ describe('TechUpdatesView (Screen 21 /tech-updates)', () => {
       screen.queryByRole('heading', { name: UPDATE_1.title }),
     ).not.toBeInTheDocument();
   });
+
+  it('distinguishes 403 ACCOUNT_SUSPENDED from FEATURE_DISABLED, shows Sign In on 401 AUTH_REQUIRED, preserves readActionError when detail GET succeeds, and falls back to Unread filter focus when trigger disconnects', async () => {
+    // 1. 403 ACCOUNT_SUSPENDED renders account error alert, NOT Subscribe screen
+    mockListTechnologyUpdates.mockRejectedValueOnce(
+      new ApiError(
+        403,
+        'Account suspended',
+        'ACCOUNT_SUSPENDED',
+        'req-403-susp',
+        [],
+        false,
+      ),
+    );
+
+    const { unmount } = render(
+      <TechUpdatesView accessToken="tok-susp" technologyUpdateEnabled={true} />,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /You don't have permission to do that\./i,
+    );
+    expect(
+      screen.queryByRole('heading', { name: 'Tech Updates Locked' }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    // 2. 401 AUTH_REQUIRED renders Sign In link (/login)
+    mockListTechnologyUpdates.mockRejectedValueOnce(
+      new ApiError(
+        401,
+        'Authentication required',
+        'AUTH_REQUIRED',
+        'req-401',
+        [],
+        false,
+      ),
+    );
+
+    const { unmount: unmount401 } = render(
+      <TechUpdatesView accessToken="tok-401" technologyUpdateEnabled={true} />,
+    );
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign In' })).toHaveAttribute(
+      'href',
+      '/login',
+    );
+    unmount401();
+
+    // 3. Separate detailError vs readActionError + focus fallback to Unread filter button when trigger is disconnected
+    let resolveDetail!: (val: TechnologyUpdateDTO) => void;
+    mockListTechnologyUpdates.mockResolvedValueOnce({
+      data: {
+        today_state: 'available',
+        generation_pending: false,
+        message: null,
+        items: [UPDATE_1],
+      },
+      meta: { limit: 20, next_cursor: null },
+    });
+    mockGetTechnologyUpdate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDetail = resolve;
+        }),
+    );
+    mockMarkTechnologyUpdateViewed.mockRejectedValueOnce(
+      new ApiError(
+        503,
+        'View action failed',
+        'SERVICE_UNAVAILABLE',
+        'req-view-503',
+        [],
+        true,
+      ),
+    );
+
+    render(
+      <TechUpdatesView accessToken="tok-ok" technologyUpdateEnabled={true} />,
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: UPDATE_1.title }),
+    ).toBeInTheDocument();
+
+    const card = screen.getByRole('article', { name: UPDATE_1.title });
+    const viewDetailsBtn = within(card).getByRole('button', {
+      name: /View Details/i,
+    });
+    fireEvent.click(viewDetailsBtn);
+
+    const dialog = await screen.findByRole('dialog');
+    // Trigger Mark as Read failure while EP-T02 GET is still in flight
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /Mark as Read/i }),
+    );
+    expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+
+    // Now EP-T02 GET succeeds -> must NOT erase the readActionError alert inside dialog
+    await act(async () => {
+      resolveDetail({
+        ...UPDATE_1,
+        what_changed: 'Fresh detail loaded without erasing readActionError.',
+      });
+    });
+    expect(
+      await within(dialog).findByText(
+        'Fresh detail loaded without erasing readActionError.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('alert')).toBeInTheDocument();
+
+    // Disconnect trigger button from DOM and close dialog -> focus falls back to Unread filter button
+    viewDetailsBtn.remove();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    const filterGroup = screen.getByRole('group', {
+      name: 'Filter technology updates',
+    });
+    expect(document.activeElement).toBe(
+      within(filterGroup).getByRole('button', { name: /Unread/i }),
+    );
+  });
 });

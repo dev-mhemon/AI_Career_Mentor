@@ -14,6 +14,8 @@ import {
 
 const HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
 
+export const MAX_LIVE_FEED_BYTES = 512 * 1024;
+
 export const TECH_UPDATE_SOURCE_FETCHER = Symbol('TECH_UPDATE_SOURCE_FETCHER');
 
 export interface ActiveTechnologySourceRecord {
@@ -39,6 +41,7 @@ export interface TechnologyUpdateLearnerContext {
   skills: string[];
   sources: ActiveTechnologySourceRecord[];
   deliveredContentHashes: ReadonlySet<string>;
+  deliveredSourceUrls?: ReadonlySet<string>;
 }
 
 export interface RawExternalFeedItem {
@@ -93,7 +96,7 @@ export class TechnologySourceFetchError extends Error {
   }
 }
 
-function normalizeCanonicalSourceUrlForHash(rawUrl: string): string {
+export function normalizeCanonicalSourceUrlForHash(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   try {
     const parsed = new URL(trimmed);
@@ -142,14 +145,29 @@ function normalizeValidIsoTimestamp(
 }
 
 /**
+ * Scopes a canonical source `content_hash` by learner `language` (`SHA-256(language + ':' + canonicalSourceHash)`)
+ * so Bangla and English learners never share or overwrite each other's localized `technology_updates` rows (`PRD` §45).
+ */
+export function computeLanguageScopedTechnologyUpdateHash(
+  language: UiLanguage,
+  canonicalSourceHash: string,
+): string {
+  return createHash('sha256')
+    .update(`${language}:${canonicalSourceHash.trim()}`, 'utf8')
+    .digest('hex');
+}
+
+/**
  * Computes a deterministic SHA-256 content hash (`public.technology_updates.content_hash`,
  * `uq_technology_updates_hash`) across canonical `sourceUrl` (lowercasing scheme & host while
  * preserving case-sensitive path/query components per RFC 3986), `title`, and `summary` (`PRD` §45).
+ * When `language` is supplied, returns the language-scoped digest `SHA-256(language + ':' + canonicalSourceHash)`.
  */
 export function computeTechnologyUpdateContentHash(input: {
   sourceUrl: string;
   title: string;
   summary: string;
+  language?: UiLanguage;
 }): string {
   const canonicalUrl = normalizeCanonicalSourceUrlForHash(input.sourceUrl);
   const canonicalTitle = input.title.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -157,35 +175,63 @@ export function computeTechnologyUpdateContentHash(input: {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
-  return createHash('sha256')
+  const canonicalSourceHash = createHash('sha256')
     .update(`${canonicalUrl}\n${canonicalTitle}\n${canonicalSummary}`, 'utf8')
     .digest('hex');
+  if (input.language) {
+    return computeLanguageScopedTechnologyUpdateHash(
+      input.language,
+      canonicalSourceHash,
+    );
+  }
+  return canonicalSourceHash;
 }
 
+const XML_ENTITY_SINGLE_PASS_PATTERN =
+  /&(?:#(\d+)|#x([0-9a-fA-F]+)|(quot|apos|lt|gt|amp));/g;
+
 function decodeXmlEntitySegment(segment: string): string {
-  return segment
-    .replace(/&#(\d+);/g, (_m, dec: string) => {
-      const code = Number.parseInt(dec, 10);
-      return Number.isInteger(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : _m;
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => {
-      const code = Number.parseInt(hex, 16);
-      return Number.isInteger(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : _m;
-    })
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+  return segment.replace(
+    XML_ENTITY_SINGLE_PASS_PATTERN,
+    (
+      fullMatch,
+      dec: string | undefined,
+      hex: string | undefined,
+      named: string | undefined,
+    ) => {
+      if (dec !== undefined) {
+        const code = Number.parseInt(dec, 10);
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+          ? String.fromCodePoint(code)
+          : fullMatch;
+      }
+      if (hex !== undefined) {
+        const code = Number.parseInt(hex, 16);
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+          ? String.fromCodePoint(code)
+          : fullMatch;
+      }
+      switch (named) {
+        case 'quot':
+          return '"';
+        case 'apos':
+          return "'";
+        case 'lt':
+          return '<';
+        case 'gt':
+          return '>';
+        case 'amp':
+          return '&';
+        default:
+          return fullMatch;
+      }
+    },
+  );
 }
 
 /**
  * Decodes standard XML entities (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, numeric entities)
- * in non-CDATA XML text while preserving literal `<!\[CDATA\[...\]\]>` content untouched.
+ * in a single regex pass outside CDATA while preserving literal `<![CDATA[...]]>` content untouched.
  */
 export function decodeXmlEntitiesOutsideCdata(raw: string): string {
   const cdataPattern = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
@@ -205,6 +251,40 @@ export function decodeXmlEntitiesOutsideCdata(raw: string): string {
     result += decodeXmlEntitySegment(raw.slice(lastIdx));
   }
   return result;
+}
+
+/**
+ * Splits `<![CDATA[...]]>` blocks BEFORE stripping ordinary XML markup so tags inside CDATA
+ * (e.g., `<![CDATA[Supports <Widget> now]]>`) remain intact while nested XML tags outside CDATA are stripped.
+ */
+export function extractXmlElementText(
+  raw: string,
+  tagReplacement: ' ' | '' = ' ',
+): string {
+  const cdataPattern = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+  let result = '';
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = cdataPattern.exec(raw)) !== null) {
+    if (match.index > lastIdx) {
+      const outside = raw
+        .slice(lastIdx, match.index)
+        .replace(/<[^>]+>/g, tagReplacement);
+      result += decodeXmlEntitySegment(outside);
+    }
+    result += match[1];
+    lastIdx = match.index + match[0].length;
+  }
+
+  if (lastIdx < raw.length) {
+    const outside = raw.slice(lastIdx).replace(/<[^>]+>/g, tagReplacement);
+    result += decodeXmlEntitySegment(outside);
+  }
+
+  return tagReplacement === ' '
+    ? result.replace(/\s+/g, ' ').trim()
+    : result.trim();
 }
 
 function isReleaseStatus(val: unknown): val is ReleaseStatus {
@@ -478,7 +558,10 @@ export class TechnologyUpdateSourceService {
           await res.body?.cancel().catch(() => undefined);
           continue;
         }
-        const bodyText = await res.text();
+        const bodyText = await this.readResponseTextWithinLimit(
+          res,
+          MAX_LIVE_FEED_BYTES,
+        );
         const extracted = this.parseLiveSourcePayload(source, bodyText);
         anySourceSucceeded = true;
         items.push(...extracted);
@@ -495,6 +578,59 @@ export class TechnologyUpdateSourceService {
     }
 
     return items;
+  }
+
+  private async readResponseTextWithinLimit(
+    res: Response,
+    maxBytes: number,
+  ): Promise<string> {
+    const contentLengthHeader = res.headers?.get?.('content-length');
+    if (contentLengthHeader) {
+      const contentLength = Number.parseInt(contentLengthHeader, 10);
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new TechnologySourceFetchError(
+          'SOURCE_INVALID',
+          `Live technology source response exceeded ${maxBytes} bytes`,
+        );
+      }
+    }
+
+    if (res.body && typeof res.body.getReader === 'function') {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      const chunks: string[] = [];
+      let totalBytes = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (value) {
+          totalBytes += value.byteLength;
+          if (totalBytes > maxBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new TechnologySourceFetchError(
+              'SOURCE_INVALID',
+              `Live technology source stream exceeded ${maxBytes} bytes`,
+            );
+          }
+          chunks.push(decoder.decode(value, { stream: true }));
+        }
+      }
+      chunks.push(decoder.decode());
+      return chunks.join('');
+    }
+
+    const fallbackText = await res.text();
+    if (Buffer.byteLength(fallbackText, 'utf8') > maxBytes) {
+      throw new TechnologySourceFetchError(
+        'SOURCE_INVALID',
+        `Live technology source response exceeded ${maxBytes} bytes`,
+      );
+    }
+    return fallbackText;
   }
 
   private parseLiveSourcePayload(
@@ -535,37 +671,65 @@ export class TechnologyUpdateSourceService {
           'JSON feed payload lacks items array',
         );
       }
-      return list
+      if (list.length === 0) {
+        return [];
+      }
+      const mappedItems = list
         .filter(
           (entry): entry is Record<string, unknown> =>
-            Boolean(entry) && typeof entry === 'object',
+            Boolean(entry) &&
+            typeof entry === 'object' &&
+            !Array.isArray(entry),
         )
-        .slice(0, 5)
-        .map((entry) => ({
-          sourceId: source.id,
-          title: typeof entry.title === 'string' ? entry.title : source.name,
-          summary:
-            typeof entry.summary === 'string'
-              ? entry.summary
-              : typeof entry.description === 'string'
-                ? entry.description
-                : '',
-          publisher: source.publisher,
-          sourceUrl:
-            typeof entry.url === 'string'
-              ? entry.url
-              : typeof entry.link === 'string'
-                ? entry.link
-                : source.base_url,
-          fetchedAt,
-          publishedAt:
-            typeof entry.published_at === 'string'
-              ? entry.published_at
-              : typeof entry.date_published === 'string'
-                ? entry.date_published
-                : null,
-          releaseStatus: 'released' as const,
-        }));
+        .map((entry) => {
+          const title =
+            typeof entry.title === 'string' && entry.title.trim()
+              ? entry.title.trim()
+              : '';
+          const summary =
+            typeof entry.summary === 'string' && entry.summary.trim()
+              ? entry.summary.trim()
+              : typeof entry.description === 'string' &&
+                  entry.description.trim()
+                ? entry.description.trim()
+                : '';
+          const sourceUrl =
+            typeof entry.url === 'string' && entry.url.trim()
+              ? entry.url.trim()
+              : typeof entry.link === 'string' && entry.link.trim()
+                ? entry.link.trim()
+                : source.base_url;
+          return {
+            sourceId: source.id,
+            title,
+            summary,
+            publisher: source.publisher,
+            sourceUrl,
+            fetchedAt,
+            publishedAt:
+              typeof entry.published_at === 'string'
+                ? entry.published_at
+                : typeof entry.date_published === 'string'
+                  ? entry.date_published
+                  : null,
+            releaseStatus: 'released' as const,
+          };
+        })
+        .filter(
+          (entry) =>
+            Boolean(entry.title) &&
+            Boolean(entry.summary) &&
+            isValidHttpSourceUrl(entry.sourceUrl),
+        )
+        .slice(0, 5);
+
+      if (mappedItems.length === 0) {
+        throw new TechnologySourceFetchError(
+          'SOURCE_INVALID',
+          'JSON feed items array contained no usable entries',
+        );
+      }
+      return mappedItems;
     }
 
     if (!/<(?:rss|feed|rdf:RDF)\b/i.test(trimmed)) {
@@ -593,24 +757,14 @@ export class TechnologyUpdateSourceService {
           block,
         );
 
-      const stripXmlText = (val: string) =>
-        decodeXmlEntitiesOutsideCdata(
-          val.replace(/<(?!!\[CDATA\[)[^>]+>/g, ' '),
-        )
-          .replace(/\s+/g, ' ')
-          .trim();
-
-      const stripXmlLink = (val: string) =>
-        decodeXmlEntitiesOutsideCdata(
-          val.replace(/<(?!!\[CDATA\[)[^>]+>/g, ''),
-        ).trim();
-
-      const title = titleMatch ? stripXmlText(titleMatch[1]) : '';
-      const summary = summaryMatch ? stripXmlText(summaryMatch[1]) : '';
+      const title = titleMatch ? extractXmlElementText(titleMatch[1], ' ') : '';
+      const summary = summaryMatch
+        ? extractXmlElementText(summaryMatch[1], ' ')
+        : '';
       const rawLink = linkHrefMatch
         ? decodeXmlEntitiesOutsideCdata(linkHrefMatch[1].trim())
         : linkTextMatch
-          ? stripXmlLink(linkTextMatch[1])
+          ? extractXmlElementText(linkTextMatch[1], '')
           : source.base_url;
       let resolvedUrl: string;
       try {
@@ -627,7 +781,9 @@ export class TechnologyUpdateSourceService {
           publisher: source.publisher,
           sourceUrl: resolvedUrl,
           fetchedAt,
-          publishedAt: pubDateMatch ? stripXmlText(pubDateMatch[1]) : null,
+          publishedAt: pubDateMatch
+            ? extractXmlElementText(pubDateMatch[1], ' ')
+            : null,
           releaseStatus: 'released',
         });
       }

@@ -9,14 +9,19 @@ import { TechUpdateCard } from '@/components/tech-updates/tech-update-card';
 import { cn } from '@/components/ui/cn';
 import { BookOpenIcon, ChevronDownIcon } from '@/components/ui/icons';
 
-export type AIExplanationCardProps = {
-  variant?: 'topic_explanation' | 'technology_update';
-  title?: string;
-  explanationMarkdown?: string | null;
-  importantQuestions?: readonly TopicImportantQuestionDTO[];
+export type TopicExplanationCardProps = {
+  variant?: 'topic_explanation';
+  title: string;
+  explanationMarkdown: string | null;
+  importantQuestions: readonly TopicImportantQuestionDTO[];
   contentVersion?: number;
   requiredDepth?: string;
-  update?: TechnologyUpdateDTO;
+  className?: string;
+};
+
+export type TechnologyUpdateExplanationCardProps = {
+  variant: 'technology_update';
+  update: TechnologyUpdateDTO;
   isTodayHighlight?: boolean;
   isMarkingViewed?: boolean;
   onInspectDetail?: (
@@ -26,6 +31,10 @@ export type AIExplanationCardProps = {
   onMarkViewed?: (update: TechnologyUpdateDTO) => void;
   className?: string;
 };
+
+export type AIExplanationCardProps =
+  | TopicExplanationCardProps
+  | TechnologyUpdateExplanationCardProps;
 
 type MarkdownBlock =
   | { type: 'heading'; level: 1 | 2 | 3; text: string }
@@ -258,36 +267,32 @@ function MarkdownContent({
  * Renders mixed Bangla-English Markdown topic study guidance safely without raw HTML injection,
  * plus collapsible self-check Q&A (`important_questions`). Never displays internal provider/model info.
  */
-export function AIExplanationCard({
-  variant = 'topic_explanation',
-  title = '',
-  explanationMarkdown = null,
-  importantQuestions = [],
-  contentVersion,
-  requiredDepth,
-  update,
-  isTodayHighlight,
-  isMarkingViewed,
-  onInspectDetail,
-  onMarkViewed,
-  className,
-}: AIExplanationCardProps) {
+export function AIExplanationCard(props: AIExplanationCardProps) {
   const [expandedIndices, setExpandedIndices] = useState<ReadonlySet<number>>(
     () => new Set(),
   );
 
-  if (variant === 'technology_update' && update) {
+  if (props.variant === 'technology_update') {
     return (
       <TechUpdateCard
-        update={update}
-        isTodayHighlight={isTodayHighlight}
-        isMarkingViewed={isMarkingViewed}
-        onInspectDetail={onInspectDetail}
-        onMarkViewed={onMarkViewed}
-        className={className}
+        update={props.update}
+        isTodayHighlight={props.isTodayHighlight}
+        isMarkingViewed={props.isMarkingViewed}
+        onInspectDetail={props.onInspectDetail}
+        onMarkViewed={props.onMarkViewed}
+        className={props.className}
       />
     );
   }
+
+  const {
+    title,
+    explanationMarkdown,
+    importantQuestions,
+    contentVersion,
+    requiredDepth,
+    className,
+  } = props;
 
   const toggleQuestion = (index: number) => {
     setExpandedIndices((prev) => {

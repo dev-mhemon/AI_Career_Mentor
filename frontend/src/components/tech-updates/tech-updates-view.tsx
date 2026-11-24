@@ -81,6 +81,7 @@ const NO_IMPORTANT_CHANGES_FALLBACK =
   'No important changes for your current learning path today.';
 const TEMPORARILY_UNAVAILABLE_FALLBACK =
   'Technology updates are temporarily unavailable.';
+const EMPTY_STRING_SET: ReadonlySet<string> = new Set();
 
 /**
  * Screen 21 (`/tech-updates`) client workspace (`C09` §3.4 Screen 21, `C05` §14.11 `EP-T01`–`EP-T03`, `R25`).
@@ -100,12 +101,31 @@ export function TechUpdatesView({
     error: null,
   }));
 
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState<MappedError | null>(null);
-  const [markingViewedIds, setMarkingViewedIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [actionError, setActionError] = useState<MappedError | null>(null);
+  const [loadMoreState, setLoadMoreState] = useState<{
+    token: string;
+    fetchGen: number;
+    loading: boolean;
+    error: MappedError | null;
+  }>(() => ({
+    token: accessToken,
+    fetchGen: 0,
+    loading: false,
+    error: null,
+  }));
+  const [markingViewedByToken, setMarkingViewedByToken] = useState<{
+    token: string;
+    ids: ReadonlySet<string>;
+  }>(() => ({
+    token: accessToken,
+    ids: EMPTY_STRING_SET,
+  }));
+  const [actionErrorState, setActionErrorState] = useState<{
+    token: string;
+    error: MappedError | null;
+  }>(() => ({
+    token: accessToken,
+    error: null,
+  }));
 
   const [detailModal, setDetailModal] = useState<{
     token: string;
@@ -113,17 +133,22 @@ export function TechUpdatesView({
     seedUpdate: TechnologyUpdateDTO;
     detailUpdate: TechnologyUpdateDTO | null;
     loading: boolean;
-    error: MappedError | null;
+    detailError: MappedError | null;
+    readActionError: MappedError | null;
   } | null>(null);
 
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
   const fetchGenRef = useRef(0);
   const loadMoreGenRef = useRef(0);
   const detailGenRef = useRef(0);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const unreadFilterButtonRef = useRef<HTMLButtonElement | null>(null);
   const dialogContainerRef = useRef<HTMLDivElement | null>(null);
   const dialogCloseButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
+    loadMoreGenRef.current += 1;
     if (!technologyUpdateEnabled) {
       return;
     }
@@ -151,7 +176,8 @@ export function TechUpdatesView({
           return;
         }
         const mapped = mapApiError(err, { feature: 'technology_update' });
-        if (mapped.code === 'FEATURE_DISABLED' || mapped.status === 403) {
+        if (mapped.code === 'FEATURE_DISABLED') {
+          setDetailModal(null);
           setScopedState({
             token: accessToken,
             status: 'feature_disabled',
@@ -176,8 +202,39 @@ export function TechUpdatesView({
     };
   }, [accessToken, technologyUpdateEnabled, reloadTick]);
 
+  const effectiveStatus: ScopedListState['status'] = !technologyUpdateEnabled
+    ? 'feature_disabled'
+    : scopedState.token !== accessToken
+      ? 'loading'
+      : scopedState.status;
+
+  const effectiveEnabled =
+    technologyUpdateEnabled && effectiveStatus !== 'feature_disabled';
+  const activeDetailUpdate =
+    detailModal?.detailUpdate ?? detailModal?.seedUpdate ?? null;
+  const isDetailModalOpen =
+    effectiveEnabled &&
+    detailModal !== null &&
+    detailModal.token === accessToken &&
+    activeDetailUpdate !== null;
+
+  const restoreFocusOnModalClose = () => {
+    const trigger = lastTriggerRef.current;
+    if (trigger && trigger.isConnected && typeof trigger.focus === 'function') {
+      trigger.focus();
+      return;
+    }
+    const fallback = unreadFilterButtonRef.current;
+    if (
+      fallback &&
+      fallback.isConnected &&
+      typeof fallback.focus === 'function'
+    ) {
+      fallback.focus();
+    }
+  };
+
   // Focus management, Tab focus trap, and Escape key handler for the EP-T02 detail inspection dialog
-  const isDetailModalOpen = detailModal !== null;
   useEffect(() => {
     if (!isDetailModalOpen) {
       return;
@@ -191,10 +248,7 @@ export function TechUpdatesView({
       if (event.key === 'Escape') {
         event.preventDefault();
         setDetailModal(null);
-        const trigger = lastTriggerRef.current;
-        if (trigger && typeof trigger.focus === 'function') {
-          trigger.focus();
-        }
+        restoreFocusOnModalClose();
         return;
       }
 
@@ -233,18 +287,28 @@ export function TechUpdatesView({
     };
   }, [isDetailModalOpen]);
 
-  const effectiveStatus: ScopedListState['status'] = !technologyUpdateEnabled
-    ? 'feature_disabled'
-    : scopedState.token !== accessToken
-      ? 'loading'
-      : scopedState.status;
-
   const listData =
     scopedState.token === accessToken ? scopedState.listData : null;
   const nextCursor =
     scopedState.token === accessToken ? scopedState.nextCursor : null;
   const initialError =
     scopedState.token === accessToken ? scopedState.error : null;
+
+  const loadingMore =
+    loadMoreState.token === accessToken &&
+    loadMoreState.fetchGen === fetchGenRef.current &&
+    loadMoreState.loading;
+  const loadMoreError =
+    loadMoreState.token === accessToken &&
+    loadMoreState.fetchGen === fetchGenRef.current
+      ? loadMoreState.error
+      : null;
+  const markingViewedIds =
+    markingViewedByToken.token === accessToken
+      ? markingViewedByToken.ids
+      : EMPTY_STRING_SET;
+  const actionError =
+    actionErrorState.token === accessToken ? actionErrorState.error : null;
 
   const items = useMemo(() => listData?.items ?? [], [listData]);
 
@@ -270,8 +334,14 @@ export function TechUpdatesView({
   }, [items, activeFilter]);
 
   const handleRetryInitial = () => {
-    setActionError(null);
-    setLoadMoreError(null);
+    loadMoreGenRef.current += 1;
+    setActionErrorState({ token: accessToken, error: null });
+    setLoadMoreState({
+      token: accessToken,
+      fetchGen: fetchGenRef.current,
+      loading: false,
+      error: null,
+    });
     setScopedState((prev) => ({
       ...prev,
       token: accessToken,
@@ -285,16 +355,25 @@ export function TechUpdatesView({
     if (!nextCursor || loadingMore) {
       return;
     }
-    const requestToken = accessToken;
+    const requestToken = accessTokenRef.current;
+    const requestFetchGen = fetchGenRef.current;
     const gen = ++loadMoreGenRef.current;
-    setLoadingMore(true);
-    setLoadMoreError(null);
+    setLoadMoreState({
+      token: requestToken,
+      fetchGen: requestFetchGen,
+      loading: true,
+      error: null,
+    });
     try {
       const res = await listTechnologyUpdates(requestToken, {
         limit: 20,
         cursor: nextCursor,
       });
-      if (gen !== loadMoreGenRef.current) {
+      if (
+        gen !== loadMoreGenRef.current ||
+        requestFetchGen !== fetchGenRef.current ||
+        requestToken !== accessTokenRef.current
+      ) {
         return;
       }
       setScopedState((prev) => {
@@ -314,15 +393,26 @@ export function TechUpdatesView({
           nextCursor: res.meta.next_cursor,
         };
       });
+      setLoadMoreState({
+        token: requestToken,
+        fetchGen: requestFetchGen,
+        loading: false,
+        error: null,
+      });
     } catch (err) {
-      if (gen !== loadMoreGenRef.current || requestToken !== accessToken) {
+      if (
+        gen !== loadMoreGenRef.current ||
+        requestFetchGen !== fetchGenRef.current ||
+        requestToken !== accessTokenRef.current
+      ) {
         return;
       }
-      setLoadMoreError(mapApiError(err, { feature: 'technology_update' }));
-    } finally {
-      if (gen === loadMoreGenRef.current) {
-        setLoadingMore(false);
-      }
+      setLoadMoreState({
+        token: requestToken,
+        fetchGen: requestFetchGen,
+        loading: false,
+        error: mapApiError(err, { feature: 'technology_update' }),
+      });
     }
   };
 
@@ -330,15 +420,18 @@ export function TechUpdatesView({
     if (update.viewed || markingViewedIds.has(update.id)) {
       return;
     }
-    const requestToken = accessToken;
-    setActionError(null);
+    const requestToken = accessTokenRef.current;
+    setActionErrorState({ token: requestToken, error: null });
     setDetailModal((prev) =>
-      prev && prev.updateId === update.id ? { ...prev, error: null } : prev,
+      prev && prev.token === requestToken && prev.updateId === update.id
+        ? { ...prev, readActionError: null }
+        : prev,
     );
-    setMarkingViewedIds((prev) => {
-      const next = new Set(prev);
+    setMarkingViewedByToken((prev) => {
+      const base = prev.token === requestToken ? prev.ids : EMPTY_STRING_SET;
+      const next = new Set(base);
       next.add(update.id);
-      return next;
+      return { token: requestToken, ids: next };
     });
 
     try {
@@ -346,6 +439,9 @@ export function TechUpdatesView({
         requestToken,
         update.id,
       );
+      if (requestToken !== accessTokenRef.current) {
+        return;
+      }
       setScopedState((prev) => {
         if (prev.token !== requestToken || !prev.listData) {
           return prev;
@@ -374,24 +470,28 @@ export function TechUpdatesView({
           detailUpdate: prev.detailUpdate
             ? { ...prev.detailUpdate, viewed: true }
             : null,
+          readActionError: null,
         };
       });
     } catch (err) {
-      if (requestToken !== accessToken) {
+      if (requestToken !== accessTokenRef.current) {
         return;
       }
       const mapped = mapApiError(err, { feature: 'technology_update' });
-      setActionError(mapped);
+      setActionErrorState({ token: requestToken, error: mapped });
       setDetailModal((prev) =>
         prev && prev.token === requestToken && prev.updateId === update.id
-          ? { ...prev, error: mapped }
+          ? { ...prev, readActionError: mapped }
           : prev,
       );
     } finally {
-      setMarkingViewedIds((prev) => {
-        const next = new Set(prev);
+      setMarkingViewedByToken((prev) => {
+        if (prev.token !== requestToken) {
+          return prev;
+        }
+        const next = new Set(prev.ids);
         next.delete(update.id);
-        return next;
+        return { token: requestToken, ids: next };
       });
     }
   };
@@ -401,7 +501,7 @@ export function TechUpdatesView({
     triggerEl: HTMLButtonElement | null,
   ) => {
     lastTriggerRef.current = triggerEl;
-    const requestToken = accessToken;
+    const requestToken = accessTokenRef.current;
     const gen = ++detailGenRef.current;
     setDetailModal({
       token: requestToken,
@@ -409,13 +509,17 @@ export function TechUpdatesView({
       seedUpdate: update,
       detailUpdate: null,
       loading: true,
-      error: null,
+      detailError: null,
+      readActionError: null,
     });
 
     void (async () => {
       try {
         const freshDetail = await getTechnologyUpdate(requestToken, update.id);
-        if (gen !== detailGenRef.current) {
+        if (
+          gen !== detailGenRef.current ||
+          requestToken !== accessTokenRef.current
+        ) {
           return;
         }
         setDetailModal((prev) => {
@@ -437,7 +541,7 @@ export function TechUpdatesView({
               viewed: preservedViewed,
             },
             loading: false,
-            error: null,
+            detailError: null,
           };
         });
         setScopedState((prev) => {
@@ -460,7 +564,10 @@ export function TechUpdatesView({
           };
         });
       } catch (err) {
-        if (gen !== detailGenRef.current) {
+        if (
+          gen !== detailGenRef.current ||
+          requestToken !== accessTokenRef.current
+        ) {
           return;
         }
         setDetailModal((prev) => {
@@ -474,7 +581,7 @@ export function TechUpdatesView({
           return {
             ...prev,
             loading: false,
-            error: mapApiError(err, { feature: 'technology_update' }),
+            detailError: mapApiError(err, { feature: 'technology_update' }),
           };
         });
       }
@@ -483,14 +590,8 @@ export function TechUpdatesView({
 
   const handleCloseDetailModal = () => {
     setDetailModal(null);
-    const trigger = lastTriggerRef.current;
-    if (trigger && typeof trigger.focus === 'function') {
-      trigger.focus();
-    }
+    restoreFocusOnModalClose();
   };
-
-  const activeDetailUpdate =
-    detailModal?.detailUpdate ?? detailModal?.seedUpdate ?? null;
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -596,14 +697,23 @@ export function TechUpdatesView({
             {initialError.message}
           </Alert>
           <div>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={handleRetryInitial}
-            >
-              <RefreshCwIcon className="block h-4 w-4 shrink-0" />
-              <span>Try Again</span>
-            </Button>
+            {initialError.requiresSignIn ? (
+              <Link
+                href="/login"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 text-sm font-semibold text-white transition-colors hover:bg-teal-800"
+              >
+                <span>Sign In</span>
+              </Link>
+            ) : (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleRetryInitial}
+              >
+                <RefreshCwIcon className="block h-4 w-4 shrink-0" />
+                <span>Try Again</span>
+              </Button>
+            )}
           </div>
         </section>
       )}
@@ -716,6 +826,7 @@ export function TechUpdatesView({
               </button>
 
               <button
+                ref={unreadFilterButtonRef}
                 type="button"
                 aria-pressed={activeFilter === 'unread'}
                 onClick={() => setActiveFilter('unread')}
@@ -818,13 +929,11 @@ export function TechUpdatesView({
       )}
 
       {/* EP-T02 Detail Inspection Modal Dialog */}
-      {detailModal &&
-        detailModal.token === accessToken &&
-        activeDetailUpdate && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[1px]"
-            onClick={handleCloseDetailModal}
-          >
+      {isDetailModalOpen && detailModal && activeDetailUpdate && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[1px]"
+          onClick={handleCloseDetailModal}
+        >
             <div
               ref={dialogContainerRef}
               role="dialog"
@@ -898,9 +1007,15 @@ export function TechUpdatesView({
               </div>
             )}
 
-            {detailModal.error && (
+            {detailModal.detailError && (
               <Alert variant="warning" role="alert">
-                {detailModal.error.message}
+                {detailModal.detailError.message}
+              </Alert>
+            )}
+
+            {detailModal.readActionError && (
+              <Alert variant="warning" role="alert">
+                {detailModal.readActionError.message}
               </Alert>
             )}
 

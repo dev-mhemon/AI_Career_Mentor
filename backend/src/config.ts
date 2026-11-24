@@ -191,6 +191,72 @@ export interface TechnologyUpdateConfiguration {
   concurrency: number;
   externalTimeoutMs: number;
   sourceMode: TechnologyUpdateSourceMode;
+  directDatabaseUrl?: string;
+}
+
+/**
+ * Validates an optional PostgreSQL direct/session connection URL (`postgres:` or `postgresql:`),
+ * verifying percent-encoded username/password credentials and non-empty hostname (`R25`).
+ */
+export function validateOptionalPostgresUrl(
+  rawUrl: unknown,
+  keyName: string,
+): string | undefined {
+  if (
+    rawUrl === undefined ||
+    rawUrl === null ||
+    (typeof rawUrl === 'string' && rawUrl.trim() === '')
+  ) {
+    return undefined;
+  }
+  if (typeof rawUrl !== 'string') {
+    throw new Error(`Invalid ${keyName}`);
+  }
+  const trimmed = rawUrl.trim();
+  if (trimmed.startsWith('replace_')) {
+    throw new Error(`Invalid ${keyName}`);
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (
+      (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') ||
+      !parsed.hostname
+    ) {
+      throw new Error();
+    }
+    if (parsed.username) {
+      decodeURIComponent(parsed.username);
+    }
+    if (parsed.password) {
+      decodeURIComponent(parsed.password);
+    }
+  } catch {
+    throw new Error(`Invalid ${keyName}`);
+  }
+  return trimmed;
+}
+
+function isPooledOrProductionDatabaseConfig(
+  raw: Record<string, unknown>,
+): boolean {
+  const nodeEnv =
+    typeof raw.NODE_ENV === 'string' ? raw.NODE_ENV.trim().toLowerCase() : '';
+  if (nodeEnv === 'production') {
+    return true;
+  }
+  const poolMode =
+    typeof raw.DB_POOL_MODE === 'string'
+      ? raw.DB_POOL_MODE.trim().toLowerCase()
+      : '';
+  if (poolMode === 'transaction') {
+    return true;
+  }
+  if (Number(raw.DB_PORT) === 6543) {
+    return true;
+  }
+  const dbHost =
+    typeof raw.DB_HOST === 'string' ? raw.DB_HOST.trim().toLowerCase() : '';
+  return /pooler|pgbouncer/i.test(dbHost);
 }
 
 type ConfigLookup =
@@ -409,11 +475,22 @@ export function readTechnologyUpdateConfiguration(
     }
   }
 
+  const explicitDirectUrl = validateOptionalPostgresUrl(
+    getConfigValue(source, 'TECH_UPDATE_DIRECT_DATABASE_URL'),
+    'TECH_UPDATE_DIRECT_DATABASE_URL',
+  );
+  const fallbackDirectUrl = validateOptionalPostgresUrl(
+    getConfigValue(source, 'DATABASE_DIRECT_URL'),
+    'DATABASE_DIRECT_URL',
+  );
+  const directDatabaseUrl = explicitDirectUrl ?? fallbackDirectUrl;
+
   return {
     schedulerEnabled,
     concurrency,
     externalTimeoutMs,
     sourceMode,
+    ...(directDatabaseUrl ? { directDatabaseUrl } : {}),
   };
 }
 
@@ -546,9 +623,27 @@ export function validateConfiguration(raw: Record<string, unknown>) {
     );
   }
   readJobWorkerConfiguration(raw);
-  readAiGatewayConfiguration(raw);
+  const aiCfg = readAiGatewayConfiguration(raw);
   readGeminiProviderConfiguration(raw);
-  readTechnologyUpdateConfiguration(raw);
+  const techCfg = readTechnologyUpdateConfiguration(raw);
+  if (
+    techCfg.schedulerEnabled &&
+    aiCfg.executionMode === 'real_user' &&
+    techCfg.sourceMode !== 'live'
+  ) {
+    throw new Error(
+      'TECH_UPDATE_SOURCE_MODE must be live when TECH_UPDATE_SCHEDULER_ENABLED=true and AI_EXECUTION_MODE=real_user',
+    );
+  }
+  if (
+    techCfg.schedulerEnabled &&
+    !techCfg.directDatabaseUrl &&
+    isPooledOrProductionDatabaseConfig(raw)
+  ) {
+    throw new Error(
+      'TECH_UPDATE_DIRECT_DATABASE_URL (or DATABASE_DIRECT_URL) is required when TECH_UPDATE_SCHEDULER_ENABLED=true in pooled or production environments (R25)',
+    );
+  }
   trustedProxyCidrs(raw.AUTH_TRUSTED_PROXY_CIDRS);
   return raw;
 }

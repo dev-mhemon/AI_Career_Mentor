@@ -22,7 +22,9 @@ import type {
   UpdateState,
 } from '../dto/technology-update.dto.js';
 import {
+  computeLanguageScopedTechnologyUpdateHash,
   computeTechnologyUpdateContentHash,
+  normalizeCanonicalSourceUrlForHash,
   TechnologySourceFetchError,
   TechnologyUpdateSourceService,
   type ActiveTechnologySourceRecord,
@@ -98,14 +100,26 @@ interface UserSkillRow {
   canonical_name: string;
 }
 
-interface UserPreferenceRow {
-  preferred_ui_language: UiLanguage | null;
+interface UserLanguageRow {
+  language?: UiLanguage | null;
+  preferred_ui_language?: UiLanguage | null;
 }
 
 interface DeliveredHashRow {
   update_id: string;
   content_hash: string | null;
+  source_url?: string | null;
 }
+
+type PinnedSessionRunner = Pick<
+  QueryRunner,
+  | 'connect'
+  | 'query'
+  | 'startTransaction'
+  | 'commitTransaction'
+  | 'rollbackTransaction'
+  | 'release'
+>;
 
 interface UpsertedUpdateRow {
   id: string;
@@ -156,7 +170,7 @@ function extractReturningRows<T>(raw: unknown): T[] {
 }
 
 async function queryRunnerRows<T>(
-  qr: QueryRunner,
+  qr: PinnedSessionRunner,
   sql: string,
   params?: unknown[],
 ): Promise<T[]> {
@@ -189,6 +203,7 @@ export class TechnologyUpdateSchedulerService
   readonly concurrency: number;
   readonly externalTimeoutMs: number;
   readonly executionMode: AiExecutionModeConfig;
+  readonly directDatabaseUrl?: string;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private isShuttingDown = false;
@@ -196,6 +211,8 @@ export class TechnologyUpdateSchedulerService
     null;
   private activePinnedConnections = 0;
   private maxObservedPinnedConnections = 0;
+  private directDataSource: DataSource | null = null;
+  private directDataSourceInitPromise: Promise<DataSource> | null = null;
 
   constructor(
     @Inject(DataSource) private readonly dataSource: DataSource,
@@ -212,6 +229,7 @@ export class TechnologyUpdateSchedulerService
     this.concurrency = techCfg.concurrency;
     this.externalTimeoutMs = techCfg.externalTimeoutMs;
     this.executionMode = aiCfg.executionMode;
+    this.directDatabaseUrl = techCfg.directDatabaseUrl;
   }
 
   onApplicationBootstrap(): void {
@@ -231,6 +249,67 @@ export class TechnologyUpdateSchedulerService
         // Ignore sweep error during shutdown.
       }
     }
+    if (this.directDataSourceInitPromise) {
+      try {
+        await this.directDataSourceInitPromise;
+      } catch {
+        // Ignore init error during teardown.
+      }
+      this.directDataSourceInitPromise = null;
+    }
+    if (this.directDataSource) {
+      const dsToClose = this.directDataSource;
+      this.directDataSource = null;
+      try {
+        if (dsToClose.isInitialized) {
+          await dsToClose.destroy();
+        }
+      } catch {
+        // Ignore direct DataSource shutdown errors during teardown.
+      }
+    }
+  }
+
+  private async getOrCreateDirectDataSource(
+    connectionString: string,
+  ): Promise<DataSource> {
+    if (this.directDataSource?.isInitialized) {
+      return this.directDataSource;
+    }
+    if (!this.directDataSourceInitPromise) {
+      const ds = new DataSource({
+        type: 'postgres',
+        url: connectionString,
+        extra: {
+          max: this.concurrency,
+        },
+        entities: [],
+        migrations: [],
+        migrationsRun: false,
+        synchronize: false,
+      });
+      this.directDataSourceInitPromise = ds
+        .initialize()
+        .then((initialized) => {
+          this.directDataSource = initialized;
+          return initialized;
+        })
+        .catch((err) => {
+          this.directDataSourceInitPromise = null;
+          throw err;
+        });
+    }
+    return this.directDataSourceInitPromise;
+  }
+
+  private async createPinnedSessionRunner(): Promise<PinnedSessionRunner> {
+    if (!this.directDatabaseUrl) {
+      return this.dataSource.createQueryRunner();
+    }
+    const directDs = await this.getOrCreateDirectDataSource(
+      this.directDatabaseUrl,
+    );
+    return directDs.createQueryRunner();
   }
 
   getActivePinnedConnections(): number {
@@ -393,12 +472,13 @@ export class TechnologyUpdateSchedulerService
     const capturedTimezone = candidate.timezone.trim() || 'Asia/Dhaka';
     const capturedLocalDate = candidate.user_local_date.trim();
 
-    const qr = this.dataSource.createQueryRunner();
+    let qr: PinnedSessionRunner | null = null;
     let connected = false;
     let lockAcquired = false;
     let sessionLost = false;
 
     try {
+      qr = await this.createPinnedSessionRunner();
       await qr.connect();
       connected = true;
       this.activePinnedConnections += 1;
@@ -480,6 +560,7 @@ export class TechnologyUpdateSchedulerService
         capturedLocalDate,
         desiredOutcome,
         learnerContext.deliveredContentHashes,
+        learnerContext.deliveredSourceUrls ?? new Set<string>(),
       );
     } catch (error) {
       this.logger.warn(
@@ -493,7 +574,7 @@ export class TechnologyUpdateSchedulerService
         status: 'discarded_drift_or_session_loss',
       };
     } finally {
-      if (lockAcquired) {
+      if (lockAcquired && qr) {
         try {
           await qr.query(
             `SELECT pg_advisory_unlock(hashtext($1::text), hashtext($2::text))`,
@@ -509,16 +590,18 @@ export class TechnologyUpdateSchedulerService
           this.activePinnedConnections - 1,
         );
       }
-      try {
-        await qr.release();
-      } catch {
-        // Ignore release errors on broken socket.
+      if (qr) {
+        try {
+          await qr.release();
+        } catch {
+          // Ignore release errors on broken socket.
+        }
       }
     }
   }
 
   private async verifySessionEligibilityAndDrift(
-    qr: QueryRunner,
+    qr: PinnedSessionRunner,
     userId: string,
     capturedTimezone: string,
     capturedLocalDate: string,
@@ -550,6 +633,7 @@ export class TechnologyUpdateSchedulerService
               AND pid = pg_backend_pid()
               AND classid = hashtext($1::text)
               AND objid = hashtext($2::text)
+              AND objsubid = 2
               AND granted = true
          ) AS lock_still_held
        FROM public.users u
@@ -575,19 +659,19 @@ export class TechnologyUpdateSchedulerService
     ) {
       return false;
     }
-    if (requireLockOwnershipCheck && row.lock_still_held === false) {
+    if (requireLockOwnershipCheck && row.lock_still_held !== true) {
       return false;
     }
     return true;
   }
 
   private async loadLearnerContextOnPinnedSession(
-    qr: QueryRunner,
+    qr: PinnedSessionRunner,
     userId: string,
     capturedTimezone: string,
     capturedLocalDate: string,
   ): Promise<TechnologyUpdateLearnerContext> {
-    const [focusRows, skillRows, prefRows, sourceRows, deliveredRows] =
+    const [focusRows, skillRows, langRows, sourceRows, deliveredRows] =
       await Promise.all([
         queryRunnerRows<FocusRoadmapContextRow>(
           qr,
@@ -613,12 +697,22 @@ export class TechnologyUpdateSchedulerService
             LIMIT 25`,
           [userId],
         ),
-        queryRunnerRows<UserPreferenceRow>(
+        queryRunnerRows<UserLanguageRow>(
           qr,
-          `SELECT preferred_ui_language
-             FROM public.user_preferences
-            WHERE user_id = $1::uuid
-            LIMIT 1`,
+          `SELECT COALESCE(
+             (SELECT m.language::text
+                FROM public.messages m
+               WHERE m.user_id = $1::uuid
+                 AND m.role = 'user'::public.message_role
+               ORDER BY m.created_at DESC
+               LIMIT 1),
+             (SELECT ar.language::text
+                FROM public.ai_requests ar
+               WHERE ar.user_id = $1::uuid
+                 AND ar.language IS NOT NULL
+               ORDER BY ar.created_at DESC
+               LIMIT 1)
+           ) AS language`,
           [userId],
         ),
         queryRunnerRows<ActiveTechnologySourceRecord>(
@@ -639,7 +733,8 @@ export class TechnologyUpdateSchedulerService
           qr,
           `SELECT
              d.update_id,
-             tu.content_hash
+             tu.content_hash,
+             tu.source_url
            FROM public.update_delivery_history d
            INNER JOIN public.technology_updates tu ON tu.id = d.update_id
           WHERE d.user_id = $1::uuid
@@ -653,18 +748,15 @@ export class TechnologyUpdateSchedulerService
     if (focusRow) {
       const topicRows = await queryRunnerRows<RoadmapTopicRow>(
         qr,
-        `SELECT t.title
+        `SELECT ri.title
            FROM public.roadmaps r
-           INNER JOIN public.roadmap_versions rv
-             ON rv.roadmap_id = r.id
-            AND rv.version_no = r.current_version_no
            INNER JOIN public.roadmap_items ri
-             ON ri.roadmap_version_id = rv.id
-            AND ri.is_retired = false
-           INNER JOIN public.topics t ON t.id = ri.topic_id
+             ON ri.version_id = r.current_version_id
+            AND ri.user_id = r.user_id
+            AND ri.retired = false
           WHERE r.id = $1::uuid
             AND r.user_id = $2::uuid
-          ORDER BY ri.phase_no ASC, ri.display_order ASC
+          ORDER BY ri.phase_no ASC, ri.sequence_no ASC
           LIMIT 15`,
         [focusRow.id, userId],
       );
@@ -672,16 +764,23 @@ export class TechnologyUpdateSchedulerService
     }
 
     const deliveredContentHashes = new Set<string>();
+    const deliveredSourceUrls = new Set<string>();
     for (const row of deliveredRows) {
       if (typeof row.content_hash === 'string' && row.content_hash.trim()) {
         deliveredContentHashes.add(row.content_hash.trim());
       }
+      if (typeof row.source_url === 'string' && row.source_url.trim()) {
+        deliveredSourceUrls.add(
+          normalizeCanonicalSourceUrlForHash(row.source_url),
+        );
+      }
     }
 
-    const prefLanguage = prefRows[0]?.preferred_ui_language;
+    const rawLang =
+      langRows[0]?.language ?? langRows[0]?.preferred_ui_language ?? null;
     const language: UiLanguage =
-      prefLanguage === 'bn' || prefLanguage === 'en' || prefLanguage === 'mixed'
-        ? prefLanguage
+      rawLang === 'bn' || rawLang === 'en' || rawLang === 'mixed'
+        ? rawLang
         : 'en';
 
     return {
@@ -700,6 +799,7 @@ export class TechnologyUpdateSchedulerService
       skills: skillRows.map((s) => s.canonical_name),
       sources: sourceRows,
       deliveredContentHashes,
+      deliveredSourceUrls,
     };
   }
 
@@ -746,10 +846,24 @@ export class TechnologyUpdateSchedulerService
         return { kind: 'temporarily_unavailable' };
       }
 
-      // PRD §45: Filter out any candidate whose content_hash was already delivered to this user
-      const undeliveredCandidates = candidates.filter(
-        (c) => !context.deliveredContentHashes.has(c.contentHash),
-      );
+      if (Date.now() > deadlineMs || deadlineController.signal.aborted) {
+        return { kind: 'temporarily_unavailable' };
+      }
+
+      // PRD §45: Filter out any candidate whose content_hash or canonical source_url was already delivered to this user
+      const undeliveredCandidates = candidates.filter((c) => {
+        const baseHash = c.contentHash;
+        const localizedHash = computeLanguageScopedTechnologyUpdateHash(
+          context.language,
+          baseHash,
+        );
+        const normUrl = normalizeCanonicalSourceUrlForHash(c.sourceUrl);
+        return (
+          !context.deliveredContentHashes.has(baseHash) &&
+          !context.deliveredContentHashes.has(localizedHash) &&
+          !context.deliveredSourceUrls?.has(normUrl)
+        );
+      });
 
       if (undeliveredCandidates.length === 0) {
         return { kind: 'no_important_changes' };
@@ -815,20 +929,30 @@ export class TechnologyUpdateSchedulerService
             continue;
           }
 
-          // PRD §41: Keep citation metadata (sourceUrl, publisher, contentHash) strictly tied to the fetched candidate
+          // PRD §41 & §45: Keep citation metadata strictly tied to the fetched candidate and scope content_hash by language
           const finalSourceUrl = candidate.sourceUrl;
           const finalPublisher = candidate.publisher;
           const finalTitle = output.title ?? candidate.title;
           const finalWhatChanged = output.what_changed ?? candidate.summary;
-          const finalContentHash =
+          const baseSourceHash =
             candidate.contentHash ||
             computeTechnologyUpdateContentHash({
               sourceUrl: finalSourceUrl,
-              title: finalTitle,
-              summary: finalWhatChanged,
+              title: candidate.title,
+              summary: candidate.summary,
             });
+          const finalContentHash = computeLanguageScopedTechnologyUpdateHash(
+            context.language,
+            baseSourceHash,
+          );
+          const normFinalUrl =
+            normalizeCanonicalSourceUrlForHash(finalSourceUrl);
 
-          if (context.deliveredContentHashes.has(finalContentHash)) {
+          if (
+            context.deliveredContentHashes.has(baseSourceHash) ||
+            context.deliveredContentHashes.has(finalContentHash) ||
+            context.deliveredSourceUrls?.has(normFinalUrl)
+          ) {
             continue;
           }
 
@@ -867,7 +991,7 @@ export class TechnologyUpdateSchedulerService
   }
 
   private async insertConditionalDeliveryHistory(
-    qr: QueryRunner,
+    qr: PinnedSessionRunner,
     userId: string,
     updateId: string | null,
     capturedTimezone: string,
@@ -899,6 +1023,16 @@ export class TechnologyUpdateSchedulerService
          AND private.effective_feature_access(u.id, 'technology_update'::public.feature_key)
          AND COALESCE(up.timezone, 'Asia/Dhaka') = $5::text
          AND to_char((clock_timestamp() AT TIME ZONE COALESCE(up.timezone, 'Asia/Dhaka'))::date, 'YYYY-MM-DD') = $3::text
+         AND EXISTS (
+           SELECT 1
+             FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND pid = pg_backend_pid()
+              AND classid = hashtext($1::text)
+              AND objid = hashtext($3::text)
+              AND objsubid = 2
+              AND granted = true
+         )
        ON CONFLICT (user_id, local_date) DO NOTHING
        RETURNING id`,
       [userId, updateId, capturedLocalDate, state, capturedTimezone],
@@ -908,12 +1042,13 @@ export class TechnologyUpdateSchedulerService
   }
 
   private async commitOutcomeOnPinnedSession(
-    qr: QueryRunner,
+    qr: PinnedSessionRunner,
     userId: string,
     capturedTimezone: string,
     capturedLocalDate: string,
     outcome: DesiredDeliveryOutcome,
     deliveredContentHashes: ReadonlySet<string>,
+    deliveredSourceUrls: ReadonlySet<string>,
   ): Promise<CandidateProcessResult> {
     let txStarted = false;
     try {
@@ -951,7 +1086,10 @@ export class TechnologyUpdateSchedulerService
 
       if (
         outcome.kind === 'no_important_changes' ||
-        deliveredContentHashes.has(outcome.contentHash)
+        deliveredContentHashes.has(outcome.contentHash) ||
+        deliveredSourceUrls.has(
+          normalizeCanonicalSourceUrlForHash(outcome.sourceUrl),
+        )
       ) {
         const inserted = await this.insertConditionalDeliveryHistory(
           qr,
@@ -1030,16 +1168,17 @@ export class TechnologyUpdateSchedulerService
         throw new Error('Failed to upsert technology_updates row');
       }
 
-      // Check uq_update_delivery_user_update in case the resolved updateId was already delivered on an earlier date
+      // Check uq_update_delivery_user_update or matching source_url across languages on earlier dates
       const [alreadyDelivered] = await queryRunnerRows<{ exists: boolean }>(
         qr,
         `SELECT EXISTS (
            SELECT 1
-             FROM public.update_delivery_history
-            WHERE user_id = $1::uuid
-              AND update_id = $2::uuid
+             FROM public.update_delivery_history d
+             INNER JOIN public.technology_updates tu ON tu.id = d.update_id
+            WHERE d.user_id = $1::uuid
+              AND (d.update_id = $2::uuid OR tu.source_url = $3)
          ) AS exists`,
-        [userId, updateId],
+        [userId, updateId, outcome.sourceUrl],
       );
 
       if (alreadyDelivered?.exists) {

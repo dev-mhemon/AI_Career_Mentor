@@ -6149,11 +6149,11 @@ paths:
       description: >-
         C05 EP-T01 (GET /api/v1/technology-updates). Gate: read (technology_update; default OFF per PRD §7 / §39).
         R24 foreground = false (passive listing / dashboard preview never stamps users.last_active_at). Resolves
-        caller's effective local_date in user_preferences.timezone (default Asia/Dhaka), looks up
+        caller's effective local_date in user_profiles.timezone (default Asia/Dhaka), looks up
         update_delivery_history for (user_id, local_date) to set today_state (available | no_important_changes |
-        temporarily_unavailable | null), and returns paginated delivered items ordered by
-        (local_date DESC, delivered_at DESC, id DESC). Rejects malformed or impossible calendar-date cursors
-        (e.g. 2026-02-31) with 422 INVALID_FORMAT.
+        temporarily_unavailable | null), generation_pending, and message, and returns paginated delivered items
+        (state = 'available') ordered by (local_date DESC, delivered_at DESC, id DESC). Rejects malformed or
+        impossible calendar-date cursors (e.g. 2026-02-31) with 422 INVALID_FORMAT.
       x-source: API-Specification.md sections 13.2, 14.11, 15.11; PRD §7 / §38–46; R24, R25, N01
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER
@@ -6205,7 +6205,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '422':
-          description: VALIDATION_FAILED, INVALID_FORMAT (malformed or impossible calendar cursor date)
+          description: VALIDATION_FAILED, INVALID_FORMAT (malformed or impossible calendar cursor date; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
@@ -6220,7 +6220,7 @@ paths:
         C05 EP-T02 (GET /api/v1/technology-updates/{id}). Gate: read (technology_update; default OFF).
         R24 foreground = true (explicit detail inspection records meaningful foreground activity).
         Scoped strictly to updates delivered to the authenticated caller via update_delivery_history
-        (delivery_status = 'delivered'); undelivered or foreign update IDs return 404 RESOURCE_NOT_FOUND.
+        (state = 'available'); undelivered or foreign update IDs return 404 RESOURCE_NOT_FOUND.
       x-source: API-Specification.md sections 13.2, 14.11, 15.11; R24, R25
       x-implementation-status: implemented
       x-authorization-profile: AZ-USER
@@ -6269,6 +6269,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_FORMAT (malformed id UUID; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /technology-updates/{id}/view:
     post:
       operationId: EP-T03
@@ -6278,7 +6284,7 @@ paths:
       description: >-
         C05 EP-T03 (POST /api/v1/technology-updates/{id}/view). Gate: read (technology_update; default OFF).
         R24 foreground = true. Idempotently stamps viewed_at = COALESCE(viewed_at, clock_timestamp()) on the
-        caller's latest delivered update_delivery_history row for technology_update_id = {id} and returns
+        caller's delivered update_delivery_history row (state = 'available', update_id = {id}) and returns
         TechnologyUpdateViewedDTO ({ id, viewed: true, viewed_at }). Returns 404 RESOURCE_NOT_FOUND if the
         update was not delivered to the caller.
       x-source: API-Specification.md sections 13.2, 14.11, 15.11; R24, R25
@@ -6325,6 +6331,12 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
           description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: INVALID_FORMAT (malformed id UUID; error.retryAfterSeconds is null)
           content:
             application/json:
               schema:
@@ -9996,13 +10008,13 @@ components:
           $ref: '#/components/schemas/PageMetaDTO'
     TechnologyReleaseStatus:
       type: string
-      enum: [stable, preview, deprecated]
+      enum: [released, announced, planned, experimental]
     TechnologyRelevanceLevel:
       type: string
       enum: [high, medium, low]
     TechnologyActionTiming:
       type: string
-      enum: [now, later, awareness_only]
+      enum: [act_now, learn_later, awareness_only]
     TechnologyUpdateState:
       type: string
       enum: [available, no_important_changes, temporarily_unavailable]
@@ -10010,60 +10022,69 @@ components:
       type: object
       required:
         - id
+        - local_date
         - title
-        - summary
-        - why_relevant
-        - action_timing
-        - release_status
-        - relevance_level
-        - source_url
+        - what_changed
+        - why_it_matters
         - publisher
-        - published_at
+        - source_url
         - fetched_at
+        - release_status
+        - relevance
+        - action_timing
+        - roadmap_relation
         - viewed
       properties:
         id:
           type: string
           format: uuid
+        local_date:
+          type: string
+          format: date
         title:
           type: string
-          maxLength: 240
-        summary:
+          maxLength: 300
+        what_changed:
           type: string
-          maxLength: 2000
-        why_relevant:
+          maxLength: 4000
+        why_it_matters:
           type: string
-          maxLength: 1000
-        action_timing:
-          $ref: '#/components/schemas/TechnologyActionTiming'
-        release_status:
-          $ref: '#/components/schemas/TechnologyReleaseStatus'
-        relevance_level:
-          $ref: '#/components/schemas/TechnologyRelevanceLevel'
+          maxLength: 4000
+        publisher:
+          type: string
+          maxLength: 200
         source_url:
           type: string
           format: uri
-          maxLength: 1024
-        publisher:
-          type: string
-          maxLength: 120
-        published_at:
-          type: string
-          format: date-time
-          nullable: true
+          maxLength: 2000
         fetched_at:
           type: string
           format: date-time
+        release_status:
+          $ref: '#/components/schemas/TechnologyReleaseStatus'
+        relevance:
+          $ref: '#/components/schemas/TechnologyRelevanceLevel'
+        action_timing:
+          $ref: '#/components/schemas/TechnologyActionTiming'
+        roadmap_relation:
+          type: string
+          maxLength: 1000
+          nullable: true
         viewed:
           type: boolean
     TechnologyUpdateListDTO:
       type: object
-      required: [today_state, items]
+      required: [today_state, generation_pending, message, items]
       properties:
         today_state:
           type: string
           nullable: true
           enum: [available, no_important_changes, temporarily_unavailable, null]
+        generation_pending:
+          type: boolean
+        message:
+          type: string
+          nullable: true
         items:
           type: array
           items:

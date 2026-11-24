@@ -164,7 +164,7 @@ export function DashboardTechUpdatesPreview({
 
       {status === 'ready' && listData && (
         <div className="flex flex-col gap-3">
-          {latestItem ? (
+          {latestItem && listData.today_state === 'available' ? (
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span

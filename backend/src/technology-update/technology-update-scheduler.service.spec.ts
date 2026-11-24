@@ -3,7 +3,11 @@ import type { DataSource, QueryRunner } from 'typeorm';
 import type { AiGatewayService } from '../ai/services/ai-gateway.service.js';
 import { TechnologyUpdateSchedulerService } from './services/technology-update-scheduler.service.js';
 import {
+  computeLanguageScopedTechnologyUpdateHash,
   computeTechnologyUpdateContentHash,
+  decodeXmlEntitiesOutsideCdata,
+  extractXmlElementText,
+  MAX_LIVE_FEED_BYTES,
   TechnologySourceFetchError,
   TechnologyUpdateSourceService,
   type ExternalUpdateCandidate,
@@ -116,8 +120,11 @@ function createMockQueryRunner(opts: MockRunnerOptions = {}) {
           { canonical_name: 'Node.js' },
         ];
       }
-      if (sql.includes('FROM public.user_preferences')) {
-        return [{ preferred_ui_language: 'en' }];
+      if (
+        sql.includes('FROM public.messages m') &&
+        sql.includes('FROM public.ai_requests ar')
+      ) {
+        return [{ language: 'en' }];
       }
       if (sql.includes('FROM public.technology_sources')) {
         return [
@@ -138,6 +145,7 @@ function createMockQueryRunner(opts: MockRunnerOptions = {}) {
         return (opts.deliveredContentHashes ?? []).map((hash, i) => ({
           update_id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
           content_hash: hash,
+          source_url: null,
         }));
       }
       if (sql.includes('INNER JOIN public.roadmap_items ri')) {
@@ -951,7 +959,7 @@ describe('TechnologyUpdateSchedulerService (R25 Pinned-Session Advisory Lock Pro
       'https://example.test/release?v=1&lang=en',
     );
 
-    // When all sources fail or return malformed payloads, liveService throws SOURCE_UNAVAILABLE
+    //When all sources fail or return malformed payloads, liveService throws SOURCE_UNAVAILABLE
     fetchSpy.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -974,6 +982,194 @@ describe('TechnologyUpdateSchedulerService (R25 Pinned-Session Advisory Lock Pro
       code: 'SOURCE_UNAVAILABLE',
     });
 
+    fetchSpy.mockRestore();
+  });
+
+  it('enforces schema-contract SQL for Focus Roadmap items and language, objsubid = 2 advisory lock ownership, language-scoped content_hash, streaming byte cap, single-pass XML entity decoding, and CDATA tag preservation', async () => {
+    // 1. Single-pass XML entity decoding (`&#38;amp;` -> literal `&amp;`, never double-decoded to `&`) & CDATA `<Widget>` tag preservation
+    expect(decodeXmlEntitiesOutsideCdata('v=1&#38;amp;lang=en')).toBe(
+      'v=1&amp;lang=en',
+    );
+    expect(
+      extractXmlElementText(
+        '<b>Release:</b> <![CDATA[Supports <Widget> &amp; fast UI]]> <i>today</i>',
+        ' ',
+      ),
+    ).toBe('Release: Supports <Widget> &amp; fast UI today');
+
+    // 2. Language-scoped content_hash prevents Bangla vs English collision on shared technology_updates rows
+    const baseHash = sampleCandidate.contentHash;
+    const enHash = computeLanguageScopedTechnologyUpdateHash('en', baseHash);
+    const bnHash = computeLanguageScopedTechnologyUpdateHash('bn', baseHash);
+    expect(enHash).not.toBe(bnHash);
+    expect(
+      computeTechnologyUpdateContentHash({
+        sourceUrl: sampleCandidate.sourceUrl,
+        title: sampleCandidate.title,
+        summary: sampleCandidate.summary,
+        language: 'bn',
+      }),
+    ).toBe(bnHash);
+
+    // 3. Schema-contract SQL check on executed queries:
+    // - Focus Roadmap items query uses r.current_version_id, ri.version_id, ri.retired = false, ORDER BY ri.phase_no ASC, ri.sequence_no ASC
+    // - Language query uses public.messages / public.ai_requests (NEVER user_preferences.preferred_ui_language)
+    // - Both pg_locks queries enforce objsubid = 2
+    const qr = createMockQueryRunner();
+    const dataSource = {
+      createQueryRunner: vi.fn(() => qr as unknown as QueryRunner),
+    } as unknown as DataSource;
+    const aiGateway = {
+      execute: vi.fn(async () => ({
+        generation_id: GEN_1,
+        output: {
+          has_meaningful_update: true,
+          propose_roadmap_merge: false,
+          title: sampleCandidate.title,
+          what_changed: sampleCandidate.summary,
+          why_it_matters: 'Matters for PostgreSQL.',
+          publisher: sampleCandidate.publisher,
+          source_url: sampleCandidate.sourceUrl,
+          release_status: 'released',
+          relevance: 'high',
+          action_timing: 'learn_later',
+          roadmap_relation: 'Database Indexing',
+        },
+      })),
+    } as unknown as AiGatewayService;
+    const sourceService = {
+      fetchFreshCandidates: vi.fn(async () => [sampleCandidate]),
+    } as unknown as TechnologyUpdateSourceService;
+
+    const scheduler = new TechnologyUpdateSchedulerService(
+      dataSource,
+      aiGateway,
+      sourceService,
+    );
+
+    const res = await scheduler.processCandidate({
+      user_id: USER_1,
+      timezone: 'Asia/Dhaka',
+      user_local_date: '2026-11-24',
+    });
+    expect(res.status).toBe('committed_available');
+
+    const roadmapSql = qr.executedSql.find((s) =>
+      s.includes('INNER JOIN public.roadmap_items ri'),
+    );
+    expect(roadmapSql).toBeDefined();
+    expect(roadmapSql).toContain('ri.version_id = r.current_version_id');
+    expect(roadmapSql).toContain('ri.retired = false');
+    expect(roadmapSql).toContain(
+      'ORDER BY ri.phase_no ASC, ri.sequence_no ASC',
+    );
+    expect(roadmapSql).not.toContain('current_version_no');
+    expect(roadmapSql).not.toContain('roadmap_version_id');
+    expect(roadmapSql).not.toContain('is_retired');
+    expect(roadmapSql).not.toContain('display_order');
+
+    expect(
+      qr.executedSql.some((s) => s.includes('preferred_ui_language')),
+    ).toBe(false);
+    expect(
+      qr.executedSql.some(
+        (s) =>
+          s.includes('FROM public.messages m') &&
+          s.includes('FROM public.ai_requests ar'),
+      ),
+    ).toBe(true);
+
+    const pgLocksQueries = qr.executedSql.filter((s) =>
+      s.includes('FROM pg_locks'),
+    );
+    expect(pgLocksQueries.length).toBeGreaterThanOrEqual(2);
+    for (const lockQuery of pgLocksQueries) {
+      expect(lockQuery).toContain('objsubid = 2');
+    }
+
+    // Verify language-scoped contentHash was persisted into public.technology_updates
+    expect(qr.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO public.technology_updates'),
+      expect.arrayContaining([enHash]),
+    );
+
+    // 4. Streaming byte cap (MAX_LIVE_FEED_BYTES) cancels oversized stream and falls back;
+    //    non-empty JSON items array with 0 usable entries ([null]) falls back to next source
+    const oversizedChunk = new Uint8Array(MAX_LIVE_FEED_BYTES + 1024);
+    const readerCancelSpy = vi.fn(async () => undefined);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      // Source 1: Oversized streaming body -> cancelled via reader.cancel()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: vi
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: oversizedChunk }),
+            cancel: readerCancelSpy,
+          }),
+        },
+      } as unknown as Response)
+      // Source 2: Non-empty JSON items with 0 usable entries -> treated as SOURCE_INVALID and skipped
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ items: [null, {}] }),
+      } as unknown as Response)
+      // Source 3: Valid empty JSON feed {"items":[]} -> succeeds with 0 items
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ items: [] }),
+      } as unknown as Response);
+
+    const liveService = new TechnologyUpdateSourceService(
+      new ConfigService({
+        TECH_UPDATE_SOURCE_MODE: 'live',
+        TECH_UPDATE_EXTERNAL_TIMEOUT_MS: '5000',
+      }),
+    );
+
+    const emptyCandidates = await liveService.fetchFreshCandidates({
+      userId: USER_1,
+      localDate: '2026-11-24',
+      timezone: 'Asia/Dhaka',
+      language: 'en',
+      focusRoadmap: null,
+      skills: [],
+      sources: [
+        {
+          id: SOURCE_1,
+          name: 'Oversized Source',
+          publisher: 'Pub 1',
+          base_url: 'https://s1.example.test/huge.xml',
+          source_type: 'official_release_notes',
+          trust_tier: 1,
+        },
+        {
+          id: SOURCE_1,
+          name: 'Unusable JSON Items Source',
+          publisher: 'Pub 2',
+          base_url: 'https://s2.example.test/nulls.json',
+          source_type: 'official_release_notes',
+          trust_tier: 1,
+        },
+        {
+          id: SOURCE_1,
+          name: 'Empty Valid JSON Source',
+          publisher: 'Pub 3',
+          base_url: 'https://s3.example.test/empty.json',
+          source_type: 'official_release_notes',
+          trust_tier: 1,
+        },
+      ],
+      deliveredContentHashes: new Set(),
+    });
+
+    expect(readerCancelSpy).toHaveBeenCalledTimes(1);
+    expect(emptyCandidates).toEqual([]);
     fetchSpy.mockRestore();
   });
 });
