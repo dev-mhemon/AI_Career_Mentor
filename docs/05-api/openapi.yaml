@@ -11033,17 +11033,54 @@ components:
           type: integer
           minimum: 0
     AdminUserDetailDTO:
-      allOf:
-        - $ref: '#/components/schemas/AdminUserSummaryDTO'
-        - type: object
-          required: [feature_access, counts]
-          properties:
-            feature_access:
-              type: array
-              items:
-                $ref: '#/components/schemas/AdminUserFeatureAccessDTO'
-            counts:
-              $ref: '#/components/schemas/AdminUserAggregateCountsDTO'
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - phone
+        - contact_masked
+        - status
+        - created_at
+        - last_active_at
+        - roadmap_count
+        - technology_update_enabled
+        - feature_access
+        - counts
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          nullable: true
+          description: Full learner email exposed strictly behind server-verified AZ-ADMIN (never logged per R11).
+        phone:
+          type: string
+          nullable: true
+          description: Full learner phone exposed strictly behind server-verified AZ-ADMIN (never logged per R11).
+        contact_masked:
+          type: string
+        status:
+          $ref: '#/components/schemas/AdminUserStatus'
+        created_at:
+          type: string
+          format: date-time
+        last_active_at:
+          type: string
+          format: date-time
+          nullable: true
+        roadmap_count:
+          type: integer
+          minimum: 0
+        technology_update_enabled:
+          type: boolean
+        feature_access:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserFeatureAccessDTO'
+        counts:
+          $ref: '#/components/schemas/AdminUserAggregateCountsDTO'
     AdminUserStatusDTO:
       type: object
       additionalProperties: false

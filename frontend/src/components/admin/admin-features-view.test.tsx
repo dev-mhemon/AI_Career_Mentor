@@ -566,4 +566,119 @@ describe('AdminFeaturesView (Screen 25 /admin/features — EP-AD04..EP-AD06)', (
       within(techGroup).getByRole('button', { name: 'Enabled' }),
     ).toHaveAttribute('aria-pressed', 'true');
   });
+
+  it('reconciles global matrix and selected user detail with the new token when a global PATCH settles after token renewal', async () => {
+    const { rerender } = render(
+      <AdminFeaturesView accessToken="token-1" initialUserId={USER_ID} />,
+    );
+    const roadmapSwitch = await screen.findByRole('switch', {
+      name: 'Roadmap Generator',
+    });
+    expect(roadmapSwitch).toHaveAttribute('aria-checked', 'true');
+
+    let resolveGlobalPatch!: (val: FeatureControlDTO) => void;
+    mockUpdateGlobalFeature.mockImplementationOnce(
+      () =>
+        new Promise<FeatureControlDTO>((resolve) => {
+          resolveGlobalPatch = resolve;
+        }),
+    );
+
+    fireEvent.click(roadmapSwitch);
+
+    // Token renews while PATCH is in flight; new-token GET reads pre-PATCH ON state
+    mockListAdminFeatures.mockResolvedValueOnce(GLOBAL_FEATURES);
+    mockGetAdminUser.mockResolvedValueOnce(makeUserDetail());
+    rerender(
+      <AdminFeaturesView accessToken="token-2" initialUserId={USER_ID} />,
+    );
+    await waitFor(() => expect(mockListAdminFeatures).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockGetAdminUser).toHaveBeenCalledTimes(2));
+
+    // After PATCH commits on server, prepare reconciled responses for current token
+    const updatedGlobal = GLOBAL_FEATURES.map((f) =>
+      f.feature_key === 'roadmap_generator' ? { ...f, enabled: false } : f,
+    );
+    const updatedDetail = makeUserDetail({
+      feature_access: makeUserDetail().feature_access.map((f) =>
+        f.feature_key === 'roadmap_generator'
+          ? { ...f, global_enabled: false, effective: false }
+          : f,
+      ),
+    });
+    mockListAdminFeatures.mockResolvedValueOnce(updatedGlobal);
+    mockGetAdminUser.mockResolvedValueOnce(updatedDetail);
+
+    // Old-token PATCH settles -> must NOT apply old-token payload blindly; must reload both with token-2
+    resolveGlobalPatch({ ...GLOBAL_FEATURES[0], enabled: false });
+
+    await waitFor(() => expect(mockListAdminFeatures).toHaveBeenCalledTimes(3));
+    expect(mockListAdminFeatures).toHaveBeenLastCalledWith(
+      'token-2',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    await waitFor(() => expect(mockGetAdminUser).toHaveBeenCalledTimes(3));
+    expect(mockGetAdminUser).toHaveBeenLastCalledWith(
+      'token-2',
+      USER_ID,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole('switch', { name: 'Roadmap Generator' }),
+      ).toHaveAttribute('aria-checked', 'false');
+    });
+  });
+
+  it('resumes an aborted detail reload when an override PATCH fails while preserving the mutation error', async () => {
+    render(
+      <AdminFeaturesView accessToken="admin-token" initialUserId={USER_ID} />,
+    );
+    const overrideRegion = await screen.findByRole('region', {
+      name: 'Per-user feature overrides table',
+    });
+
+    // Global toggle turns Roadmap Generator OFF and starts a detail reload
+    mockUpdateGlobalFeature.mockResolvedValueOnce({
+      ...GLOBAL_FEATURES[0],
+      enabled: false,
+    });
+    mockGetAdminUser.mockImplementationOnce(
+      () => new Promise<AdminUserDetailDTO>(() => {}),
+    );
+    fireEvent.click(screen.getByRole('switch', { name: 'Roadmap Generator' }));
+    await waitFor(() => expect(mockGetAdminUser).toHaveBeenCalledTimes(2));
+
+    // Before the reload settles, an override PATCH aborts it and fails
+    mockUpdateUserFeatureOverride.mockRejectedValueOnce(
+      new ApiError(500, 'server failure', 'INTERNAL_ERROR'),
+    );
+    const reconciledDetail = makeUserDetail({
+      feature_access: makeUserDetail().feature_access.map((f) =>
+        f.feature_key === 'roadmap_generator'
+          ? { ...f, global_enabled: false, effective: false }
+          : f,
+      ),
+    });
+    mockGetAdminUser.mockResolvedValueOnce(reconciledDetail);
+
+    const techGroup = within(overrideRegion).getByRole('group', {
+      name: 'Daily Technology Updates override',
+    });
+    fireEvent.click(within(techGroup).getByRole('button', { name: 'Enabled' }));
+
+    // Both the override error alert AND the resumed detail reload must occur
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+    await waitFor(() => expect(mockGetAdminUser).toHaveBeenCalledTimes(3));
+
+    const roadmapRow = within(overrideRegion)
+      .getByText('Roadmap Generator')
+      .closest('tr');
+    expect(roadmapRow).not.toBeNull();
+    await waitFor(() => {
+      expect(within(roadmapRow!).getByText('Global OFF')).toBeInTheDocument();
+    });
+  });
 });

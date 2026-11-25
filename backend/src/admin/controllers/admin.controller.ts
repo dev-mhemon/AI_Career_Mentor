@@ -11,7 +11,6 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { isIP } from 'node:net';
 import { trustedClientIp } from '../../auth/client-ip.js';
 import { Policy } from '../../auth/policy.js';
 import { fail } from '../../common/http.js';
@@ -76,9 +75,7 @@ function extractAuditContext(
   try {
     ipAddress = trustedClientIp(req);
   } catch {
-    const rawIp = typeof req?.ip === 'string' ? req.ip.trim() : '';
-    ipAddress =
-      rawIp && !rawIp.includes('%') && isIP(rawIp) !== 0 ? rawIp : null;
+    ipAddress = null;
   }
 
   return { requestId, ipAddress };

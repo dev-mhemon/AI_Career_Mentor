@@ -660,5 +660,35 @@ describe('AdminController (EP-AD01..EP-AD08 & AZ-ADMIN Global Guards)', () => {
         .expect(422);
       expect(oversizedUsage.body.error.code).toBe('VALIDATION_FAILED');
     });
+
+    it('stores ipAddress as null in audit context when trustedClientIp rejects an untrusted client IP', async () => {
+      const controller = app.get(AdminController);
+      const untrustedReq = {
+        user: { sub: ADMIN_ID, status: 'active' },
+        headers: { 'x-request-id': '55555555-5555-4555-8555-555555555555' },
+        ip: '198.51.100.10',
+        ips: [],
+        socket: { remoteAddress: '198.51.100.10' },
+        app: {
+          get: (key: string) =>
+            key === 'trust proxy fn' ? () => true : undefined,
+        },
+      } as unknown as Parameters<AdminController['setGlobalFeature']>[0];
+
+      const result = await controller.setGlobalFeature(untrustedReq, {
+        feature_key: 'technology_update',
+        enabled: true,
+      });
+
+      expect(result.feature_key).toBe('technology_update');
+      expect(featureControlService.setGlobalFeature).toHaveBeenCalledWith(
+        ADMIN_ID,
+        { feature_key: 'technology_update', enabled: true },
+        {
+          requestId: '55555555-5555-4555-8555-555555555555',
+          ipAddress: null,
+        },
+      );
+    });
   });
 });

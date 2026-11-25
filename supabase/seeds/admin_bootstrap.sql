@@ -250,9 +250,15 @@ COMMIT;
 --
 --   UPDATE auth.users
 --      SET encrypted_password = extensions.crypt(v_new_password, extensions.gen_salt('bf')),
+--          recovery_token = '',
+--          recovery_sent_at = NULL,
 --          updated_at = now()
 --    WHERE id = v_admin_id;
 --
+--   -- Invalidate pending recovery/one-time tokens, revoke approved backend
+--   -- sessions immediately (AccessGuard), and purge Supabase auth sessions +
+--   -- refresh tokens (see revocation scope note above).
+--   DELETE FROM auth.one_time_tokens WHERE user_id = v_admin_id;
 --   UPDATE private.approved_auth_sessions
 --      SET revoked_at = now()
 --    WHERE user_id = v_admin_id
@@ -293,6 +299,10 @@ COMMIT;
 --            ELSE encrypted_password
 --          END,
 --          email_confirmed_at = now(),
+--          recovery_token = '',
+--          recovery_sent_at = NULL,
+--          email_change = '',
+--          email_change_token_new = '',
 --          updated_at = now()
 --    WHERE id = v_admin_id;
 --
@@ -315,8 +325,10 @@ COMMIT;
 --    WHERE user_id = v_admin_id
 --      AND provider = 'email';
 --
---   -- Revoke approved backend sessions immediately (AccessGuard) and purge
---   -- Supabase auth sessions + refresh tokens (see revocation scope note above).
+--   -- Invalidate pending recovery/one-time tokens, revoke approved backend
+--   -- sessions immediately (AccessGuard), and purge Supabase auth sessions +
+--   -- refresh tokens (see revocation scope note above).
+--   DELETE FROM auth.one_time_tokens WHERE user_id = v_admin_id;
 --   UPDATE private.approved_auth_sessions
 --      SET revoked_at = now()
 --    WHERE user_id = v_admin_id

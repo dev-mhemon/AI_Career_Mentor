@@ -360,6 +360,9 @@ function SelectedUserOverrideMatrix({
 
     void getAdminUser(accessToken, userId, { signal: controller.signal })
       .then((res) => {
+        if (detailAbortRef.current === controller) {
+          detailAbortRef.current = null;
+        }
         if (
           active &&
           !controller.signal.aborted &&
@@ -371,6 +374,9 @@ function SelectedUserOverrideMatrix({
         }
       })
       .catch((err: unknown) => {
+        if (detailAbortRef.current === controller) {
+          detailAbortRef.current = null;
+        }
         if (
           active &&
           !controller.signal.aborted &&
@@ -393,10 +399,14 @@ function SelectedUserOverrideMatrix({
   const handleSelectOverride = useCallback(
     async (featureKey: AdminFeatureKey, nextValue: boolean | null) => {
       if (savingKey !== null) return;
+      const abortPendingDetail = () => {
+        detailAbortRef.current?.abort();
+        detailAbortRef.current = null;
+      };
       // Invalidate & abort any older in-flight GET reload so it cannot overwrite this mutation.
+      const abortedPendingReload = detailAbortRef.current !== null;
       mutationEpochRef.current += 1;
-      detailAbortRef.current?.abort();
-      detailAbortRef.current = null;
+      abortPendingDetail();
 
       setSavingKey(featureKey);
       setMutationError(null);
@@ -407,9 +417,16 @@ function SelectedUserOverrideMatrix({
           feature_key: featureKey,
           enabled: nextValue,
         });
-        if (!mountedRef.current || activeTokenRef.current !== requestToken) {
+        if (!mountedRef.current) {
           return;
         }
+        if (activeTokenRef.current !== requestToken) {
+          setRetryNonce((n) => n + 1);
+          return;
+        }
+        // Reject any detail GET issued before this write committed.
+        mutationEpochRef.current += 1;
+        abortPendingDetail();
         setDetail(updated);
         const label = ADMIN_FEATURE_META_BY_KEY[featureKey]?.label ?? featureKey;
         const stateText =
@@ -420,11 +437,20 @@ function SelectedUserOverrideMatrix({
               : 'Disabled';
         onOverrideSaved(`Updated ${label} override to ${stateText}.`);
       } catch (err) {
-        if (!mountedRef.current || activeTokenRef.current !== requestToken) {
+        if (!mountedRef.current) {
           return;
         }
-        // Pessimistic: detail remains at exact server state; display inline error.
+        if (activeTokenRef.current !== requestToken) {
+          if (abortedPendingReload) {
+            setRetryNonce((n) => n + 1);
+          }
+          return;
+        }
+        // Pessimistic: preserve override error and resume any aborted detail reload.
         setMutationError(mapApiError(err).message);
+        if (abortedPendingReload) {
+          setRetryNonce((n) => n + 1);
+        }
       } finally {
         if (mountedRef.current) {
           setSavingKey(null);

@@ -95,7 +95,13 @@ export function AdminFeaturesView({
           feature_key: featureKey,
           enabled: nextEnabled,
         });
-        if (!mountedRef.current || activeTokenRef.current !== requestToken) {
+        if (!mountedRef.current) {
+          return;
+        }
+        if (activeTokenRef.current !== requestToken) {
+          // Do not apply old-token payload directly; reconcile both global and selected-user views with the current token.
+          setRetryNonce((n) => n + 1);
+          setGlobalRefreshNonce((n) => n + 1);
           return;
         }
         setFeatures((prev) =>
