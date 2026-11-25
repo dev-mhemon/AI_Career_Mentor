@@ -6,7 +6,11 @@ import {
   type SkillBadgeVariant,
 } from '@/components/ui/skill-badge';
 
-export type MilestoneStatus = 'pending' | 'in_progress' | 'completed';
+export type MilestoneStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'archived';
 
 export type MilestoneSkillTag = {
   label: string;
@@ -16,7 +20,7 @@ export type MilestoneSkillTag = {
 export type MilestoneCardProps = {
   title: string;
   status: MilestoneStatus;
-  completedTopics: number;
+  completedTopics?: number;
   totalTopics: number;
   targetCriteria?: string;
   skills?: readonly MilestoneSkillTag[];
@@ -49,11 +53,18 @@ const MILESTONE_STATUS_META: Record<MilestoneStatus, MilestoneMeta> = {
       'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/80 dark:bg-emerald-950/50 dark:text-emerald-200',
     renderIcon: () => <CheckCircleIcon className="h-3.5 w-3.5" />,
   },
+  archived: {
+    label: 'Archived',
+    badgeClass:
+      'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    renderIcon: () => <TargetIcon className="h-3.5 w-3.5" />,
+  },
 };
 
 /**
  * Component 18 — `MilestoneCard` (`C09 §2.4`).
- * Displays phase milestone completion state, accessible `<progress>` bar,
+ * Displays phase milestone completion state, accessible `<progress>` bar when
+ * completion data is known (omitting fabricated zero-progress on archived views),
  * skill tags (`SkillBadge`), target criteria, and encouraging learning copy
  * with zero employment-guarantee or gamified trophy imagery (`PRD §36`).
  */
@@ -68,7 +79,11 @@ export function MilestoneCard({
   className,
 }: MilestoneCardProps) {
   const safeTotal = Math.max(0, totalTopics);
-  const safeCompleted = Math.min(safeTotal, Math.max(0, completedTopics));
+  const showProgress =
+    status !== 'archived' && typeof completedTopics === 'number';
+  const safeCompleted = showProgress
+    ? Math.min(safeTotal, Math.max(0, completedTopics))
+    : 0;
   const percent =
     safeTotal === 0
       ? 0
@@ -112,20 +127,27 @@ export function MilestoneCard({
         </p>
       )}
 
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
-          <span>
-            {safeCompleted} / {safeTotal} topics
-          </span>
-          <span className="font-mono">{percent}%</span>
+      {showProgress ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+            <span>
+              {safeCompleted} / {safeTotal} topics
+            </span>
+            <span className="font-mono">{percent}%</span>
+          </div>
+          <progress
+            value={safeCompleted}
+            max={Math.max(1, safeTotal)}
+            aria-label={`${title}: ${safeCompleted} of ${safeTotal} topics completed`}
+            className="h-2 w-full overflow-hidden rounded-full bg-slate-100 accent-teal-600 dark:bg-slate-800"
+          />
         </div>
-        <progress
-          value={safeCompleted}
-          max={Math.max(1, safeTotal)}
-          aria-label={`${title}: ${safeCompleted} of ${safeTotal} topics completed`}
-          className="h-2 w-full overflow-hidden rounded-full bg-slate-100 accent-teal-600 dark:bg-slate-800"
-        />
-      </div>
+      ) : (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          {safeTotal} {safeTotal === 1 ? 'topic' : 'topics'} · Historical
+          progress preserved (not shown in archived draft snapshot)
+        </p>
+      )}
 
       {skills.length > 0 && (
         <div className="flex flex-wrap gap-1.5">

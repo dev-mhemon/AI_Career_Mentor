@@ -1767,7 +1767,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
   /auth/verify-otp:
     post:
       operationId: verifyOtpAlias
@@ -1793,7 +1793,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EmailVerificationRequest'
+              $ref: '#/components/schemas/VerifyCodeRequestDTO'
       responses:
         '200':
           description: Same response as EP-A02 / EP-A03.
@@ -1809,7 +1809,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
   /auth/sync:
     post:
       operationId: transitionalSync
@@ -5437,13 +5437,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
         '409':
           description: QUIZ_NOT_SUBMITTED
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
   /quiz/{id}/retry:
     post:
       operationId: EP-Q07_retryQuizAttempt

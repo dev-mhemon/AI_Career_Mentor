@@ -52,4 +52,22 @@ describe('MilestoneCard (Component 18, C09 §2.4)', () => {
     expect(progress).toHaveAttribute('value', '0');
     expect(progress).toHaveAttribute('max', '1');
   });
+
+  it('omits fabricated 0/N progress and Pending badge when status is archived', () => {
+    render(
+      <MilestoneCard
+        title="Archived Backend Milestone"
+        status="archived"
+        totalTopics={4}
+      />,
+    );
+
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+    expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 / 4 topics')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/4 topics · Historical progress preserved/i),
+    ).toBeInTheDocument();
+  });
 });

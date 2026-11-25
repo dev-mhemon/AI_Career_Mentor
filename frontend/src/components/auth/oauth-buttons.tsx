@@ -4,6 +4,10 @@ import { memo, type ReactNode, useCallback, useState } from "react";
 import { signInWithOAuth } from "@/lib/auth/actions";
 import { type OAuthLoginHint } from "@/lib/auth/remember-login";
 import { getUserInitials } from "@/lib/auth/user-display";
+import {
+  markTelemetrySignInPending,
+  rotateTelemetrySessionId,
+} from "@/lib/telemetry/telemetry";
 import { Button } from "@/components/ui/button";
 import { AuthAlert } from "@/components/auth/auth-alert";
 
@@ -76,6 +80,8 @@ export const OAuthButtons = memo(function OAuthButtons({
   const handleOAuth = useCallback(async (provider: Provider) => {
     setError(null);
     setPending(provider);
+    markTelemetrySignInPending();
+    rotateTelemetrySessionId();
     try {
       const res = await signInWithOAuth(provider);
       if (res?.error) {

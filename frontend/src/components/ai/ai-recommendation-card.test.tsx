@@ -28,7 +28,7 @@ describe('AIRecommendationCard (Component 26, C09 §2.7)', () => {
     expect(onAction).toHaveBeenCalledTimes(1);
   });
 
-  it('supports dismiss and restore for optional merge suggestions without auto-applying', () => {
+  it('supports dismiss and restore while preserving keyboard focus in both directions and not forcing focus on pointer clicks', () => {
     render(
       <AIRecommendationCard
         variant="optional_merge_banner"
@@ -38,11 +38,25 @@ describe('AIRecommendationCard (Component 26, C09 §2.7)', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    // Keyboard activation (detail === 0) moves focus to Restore and back to Dismiss
+    const dismissBtn = screen.getByRole('button', { name: 'Dismiss' });
+    dismissBtn.focus();
+    fireEvent.click(dismissBtn, { detail: 0 });
     expect(screen.getByText('AI suggestion dismissed')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    const restoreBtn = screen.getByRole('button', { name: 'Restore' });
+    expect(restoreBtn).toHaveFocus();
+
+    fireEvent.click(restoreBtn, { detail: 0 });
     expect(
       screen.getByRole('heading', { name: 'Optional skill refresh' }),
     ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toHaveFocus();
+
+    // Pointer activation (detail === 1) transitions cleanly without forcibly stealing focus
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }), {
+      detail: 1,
+    });
+    expect(screen.getByRole('button', { name: 'Restore' })).not.toHaveFocus();
   });
 });

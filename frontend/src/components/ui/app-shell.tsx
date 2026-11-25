@@ -19,6 +19,7 @@ import { useOptionalAppShellContext } from './app-shell-context';
 import { logoutAction } from '@/lib/auth/actions';
 import type { ShellUserInfo } from '@/lib/auth/user-display';
 import { useSafePathname } from '@/lib/navigation/use-safe-pathname';
+import { consumePendingTelemetryRotation } from '@/lib/telemetry/telemetry';
 
 const DRAWER_FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -104,6 +105,10 @@ export function AppShell({
   const sidebarRef = useRef<HTMLElement>(null);
   const mobileTriggerRef = useRef<HTMLButtonElement>(null);
   const wasMobileOpenRef = useRef(false);
+
+  useEffect(() => {
+    consumePendingTelemetryRotation();
+  }, []);
 
   useEffect(() => {
     const wasOpen = wasMobileOpenRef.current;

@@ -94,6 +94,7 @@ export type TrackEventInput = {
 export type TelemetrySink = (event: TelemetryEvent) => void;
 
 const SESSION_STORAGE_KEY = 'acm:telemetry:anonymous_session_id';
+const PENDING_ROTATION_KEY = 'acm:telemetry:rotate_on_auth';
 const MAX_BUFFER_SIZE = 100;
 
 const ALLOWED_EVENTS: ReadonlySet<string> = new Set<TelemetryEventName>([
@@ -216,6 +217,8 @@ const ENUM_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,47}$/;
 const REQUEST_ID_TOKEN_PATTERN = /^req_[A-Za-z0-9_-]{8,48}$/;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 const BD_OR_INTL_PHONE_PATTERN = /(?:\+?8801[3-9]\d{8}|(?<!\d)01[3-9]\d{8}(?!\d)|\+\d{8,15})/;
+const SEPARATED_PHONE_PATTERN =
+  /(?:^|[^0-9])(?:\+?880[\s_.-]*1[3-9](?:[\s_.-]*\d){8}|01[3-9](?:[\s_.-]*\d){8})(?:$|[^0-9])/;
 const JWT_OR_BEARER_PATTERN = /(?:bearer\s+[a-z0-9._-]+|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/i;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -322,19 +325,55 @@ export function rotateTelemetrySessionId(): string {
   return nextId;
 }
 
+/**
+ * Marks that an external redirect sign-in (e.g., OAuth) is in flight so the
+ * authenticated client shell rotates `anonymous_session_id` immediately upon return.
+ */
+export function markTelemetrySignInPending(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(PENDING_ROTATION_KEY, '1');
+  } catch {
+    // Non-throwing contract under restricted storage.
+  }
+}
+
+/**
+ * Consumes a pending post-OAuth rotation marker on authenticated client shell mount
+ * and rotates `anonymous_session_id` once. Returns the new UUID when rotated, else `null`.
+ */
+export function consumePendingTelemetryRotation(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    if (window.sessionStorage.getItem(PENDING_ROTATION_KEY) !== '1') {
+      return null;
+    }
+    window.sessionStorage.removeItem(PENDING_ROTATION_KEY);
+    return rotateTelemetrySessionId();
+  } catch {
+    return null;
+  }
+}
+
+function containsSensitivePattern(value: string): boolean {
+  return (
+    EMAIL_PATTERN.test(value) ||
+    BD_OR_INTL_PHONE_PATTERN.test(value) ||
+    SEPARATED_PHONE_PATTERN.test(value) ||
+    JWT_OR_BEARER_PATTERN.test(value)
+  );
+}
+
 function isSafeEnumCode(value: string): boolean {
   const trimmed = value.trim();
   if (!ENUM_CODE_PATTERN.test(trimmed)) {
     return false;
   }
-  if (
-    EMAIL_PATTERN.test(trimmed) ||
-    BD_OR_INTL_PHONE_PATTERN.test(trimmed) ||
-    JWT_OR_BEARER_PATTERN.test(trimmed)
-  ) {
-    return false;
-  }
-  return true;
+  return !containsSensitivePattern(trimmed);
 }
 
 function sanitizeAllowlistedMetadataValue(
@@ -431,11 +470,7 @@ function sanitizeRequestId(raw?: string | null): string | undefined {
     return undefined;
   }
   const trimmed = raw.trim();
-  if (
-    EMAIL_PATTERN.test(trimmed) ||
-    BD_OR_INTL_PHONE_PATTERN.test(trimmed) ||
-    JWT_OR_BEARER_PATTERN.test(trimmed)
-  ) {
+  if (containsSensitivePattern(trimmed)) {
     return undefined;
   }
   return UUID_PATTERN.test(trimmed) || REQUEST_ID_TOKEN_PATTERN.test(trimmed)

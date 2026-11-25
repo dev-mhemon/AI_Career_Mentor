@@ -21,16 +21,17 @@ describe('SkillBadge (Component 15, C09 §2.3)', () => {
     expect(container.querySelectorAll('svg')).toHaveLength(4);
   });
 
-  it('avoids duplicate suffix when label matches priority/gap status text and supports retired styling', () => {
+  it('avoids duplicate suffix when label matches priority/gap status text and keeps Retired suffix even when label matches base status', () => {
     render(
       <div>
         <SkillBadge label="Core" status="core" />
+        <SkillBadge label="Core" status="core" retired />
         <SkillBadge label="Legacy Tool" status="gap" retired />
       </div>,
     );
 
-    expect(screen.getByText('Core')).toBeInTheDocument();
+    expect(screen.getAllByText('Core')).toHaveLength(2);
     expect(screen.queryByText('· Core')).not.toBeInTheDocument();
-    expect(screen.getByText(/Retired/)).toBeInTheDocument();
+    expect(screen.getAllByText(/· Retired/)).toHaveLength(2);
   });
 });

@@ -85,6 +85,17 @@ function isHealthResponsePayload(body: unknown): boolean {
   );
 }
 
+function isHealthRequest(request?: Request): boolean {
+  if (!request) {
+    return false;
+  }
+  const routePath = (request.route as { path?: unknown } | undefined)?.path;
+  if (typeof routePath === 'string') {
+    return routePath === '/health';
+  }
+  return request.path === '/health';
+}
+
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
@@ -97,7 +108,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const status = error instanceof HttpException ? error.getStatus() : 500;
     const body = error instanceof HttpException ? error.getResponse() : null;
     if (
-      request?.path === '/health' &&
+      isHealthRequest(request) &&
       error instanceof ServiceUnavailableException &&
       status === 503 &&
       isHealthResponsePayload(body)
@@ -148,13 +159,12 @@ export class ApiExceptionFilter implements ExceptionFilter {
 @Injectable()
 export class EnvelopeInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler) {
+    const request = context.switchToHttp().getRequest<Request>();
     return next
       .handle()
       .pipe(
         map((data) =>
-          context.switchToHttp().getRequest<Request>().path === '/health'
-            ? data
-            : { success: true, data },
+          isHealthRequest(request) ? data : { success: true, data },
         ),
       );
   }

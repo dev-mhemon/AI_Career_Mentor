@@ -124,8 +124,9 @@ export function SkillBadge({
   icon,
 }: SkillBadgeProps) {
   const meta = STATUS_META[status];
+  const displayStatusText = retired ? 'Retired' : meta.statusText;
   const labelNormalized = label.trim().toLowerCase();
-  const statusNormalized = meta.statusText.toLowerCase();
+  const statusNormalized = displayStatusText.toLowerCase();
   const showStatusSuffix = labelNormalized !== statusNormalized;
 
   return (
@@ -141,7 +142,7 @@ export function SkillBadge({
       {icon ?? meta.renderIcon()}
       <span dir="auto">{label}</span>
       {showStatusSuffix && (
-        <span className="opacity-80">· {retired ? 'Retired' : meta.statusText}</span>
+        <span className="opacity-80">· {displayStatusText}</span>
       )}
     </span>
   );

@@ -355,6 +355,8 @@ describe('M14-C Cross-Screen PWA, Responsive (360/768/1024+), WCAG 2.1 AA, R16 &
           contact_number: 8801712345678,
           source: '01712-345678',
           screen_name: '01712-345678',
+          reason_code: 'CONTACT_01712_345678',
+          request_id: 'req_01712_345678',
           goal_text: 'I want to become a Backend Architect in Dhaka',
           answer_text: 'My free response quiz answer text',
           content: 'Private mentor chat turn',
@@ -400,6 +402,7 @@ describe('M14-C Cross-Screen PWA, Responsive (360/768/1024+), WCAG 2.1 AA, R16 &
       expect(serialized).not.toContain('user@example.com');
       expect(serialized).not.toContain('8801712345678');
       expect(serialized).not.toContain('01712-345678');
+      expect(serialized).not.toContain('01712_345678');
       expect(serialized).not.toContain('UltraSecretPassword');
       expect(serialized).not.toContain('eyJhbGci');
     });

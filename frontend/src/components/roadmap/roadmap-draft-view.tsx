@@ -1212,8 +1212,8 @@ export function RoadmapDraftView({
                     <MilestoneCard
                       key={m.id}
                       title={`Milestone: ${m.title}`}
-                      status="pending"
-                      completedTopics={0}
+                      status={isArchived ? 'archived' : 'pending'}
+                      completedTopics={isArchived ? undefined : 0}
                       totalTopics={phase.items.length}
                     />
                   ))}

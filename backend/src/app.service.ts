@@ -57,8 +57,12 @@ export class AppService implements OnApplicationBootstrap {
       return false;
     }
 
+    const existing = this.inFlightProbes.get(probeKey);
+    if (existing) {
+      return existing;
+    }
+
     const boundedMs = Math.max(100, Math.floor(timeoutMs));
-    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const executeProbe = async (): Promise<boolean> => {
       if (typeof this.dataSource.createQueryRunner === 'function') {
@@ -99,30 +103,30 @@ export class AppService implements OnApplicationBootstrap {
       return true;
     };
 
-    // Single-flight coalescing prevents repeated /health calls from piling up
-    // pooled connections while an earlier stalled probe is still settling.
-    let probePromise = this.inFlightProbes.get(probeKey);
-    if (!probePromise) {
-      probePromise = executeProbe()
-        .catch(() => false)
-        .finally(() => {
+    // Single-flight coalescing bounds the shared probe itself to `boundedMs` from
+    // probe start so all joined callers observe the same timeout outcome, while
+    // retaining the map entry until the underlying runner settles (preventing
+    // connection pile-up; pool acquisition itself is bounded via connectionTimeoutMillis).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const rawProbe = executeProbe()
+      .catch(() => false)
+      .finally(() => {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        if (this.inFlightProbes.get(probeKey) === boundedOutcome) {
           this.inFlightProbes.delete(probeKey);
-        });
-      this.inFlightProbes.set(probeKey, probePromise);
-    }
+        }
+      });
 
-    const timeoutPromise = new Promise<boolean>((resolve) => {
+    const sharedTimeout = new Promise<boolean>((resolve) => {
       timer = setTimeout(() => resolve(false), boundedMs);
       timer.unref?.();
     });
 
-    try {
-      return await Promise.race([probePromise, timeoutPromise]);
-    } finally {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-    }
+    const boundedOutcome = Promise.race([rawProbe, sharedTimeout]);
+    this.inFlightProbes.set(probeKey, boundedOutcome);
+    return boundedOutcome;
   }
 
   private async checkDatabase(): Promise<HealthCheckStatus> {

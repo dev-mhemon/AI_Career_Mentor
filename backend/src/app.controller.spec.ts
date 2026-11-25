@@ -247,23 +247,56 @@ describe('AppController — EP-H01 GET /health', () => {
     // Only 2 runners opened (1 database + 1 queue)
     expect(createQueryRunnerSpy).toHaveBeenCalledTimes(2);
 
-    // Repeated /health while previous runners are still stalled must reuse in-flight probes
+    // Repeated /health joining after the shared probe already exceeded 2000ms MUST
+    // still fail closed with 503 even when the stalled underlying runner settles shortly after.
     const secondCall = runnerService.getHealth().then(
       () => null,
       (err: unknown) => err,
     );
-    await vi.advanceTimersByTimeAsync(HEALTH_PROBE_TIMEOUT_MS + 50);
-    expect(await secondCall).toBeInstanceOf(ServiceUnavailableException);
     expect(createQueryRunnerSpy).toHaveBeenCalledTimes(2);
-
-    // Late completion releases runners cleanly and restores readiness
     for (const done of releases) {
       done();
     }
     for (let i = 0; i < 6; i += 1) {
       await Promise.resolve();
     }
+    expect(await secondCall).toBeInstanceOf(ServiceUnavailableException);
     expect(releaseSpy).toHaveBeenCalledTimes(2);
+
+    // Once the stalled runners settle, the next /health call starts fresh probes and succeeds.
+    const thirdCall = runnerService.getHealth();
+    for (let i = 0; i < 6; i += 1) {
+      await Promise.resolve();
+    }
+    for (const done of releases.slice(2)) {
+      done();
+    }
+    const recovered = await thirdCall;
+    expect(recovered.status).toBe('ok');
+    expect(createQueryRunnerSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it('serves canonical HealthResponseDTO on trailing-slash /health/ for both 200 and 503', async () => {
+    const okRes = await request(app.getHttpServer())
+      .get('/health/')
+      .expect(200);
+    expect(okRes.body).toEqual({
+      status: 'ok',
+      version: HEALTH_CONTRACT_VERSION,
+      time: expect.any(String),
+      checks: { database: 'ok', queue: 'ok' },
+    });
+
+    mockQueueConsumer.isReady.mockReturnValue(false);
+    const errRes = await request(app.getHttpServer())
+      .get('/health/')
+      .expect(503);
+    expect(errRes.body).toEqual({
+      status: 'unavailable',
+      version: HEALTH_CONTRACT_VERSION,
+      time: expect.any(String),
+      checks: { database: 'ok', queue: 'error' },
+    });
   });
 
   it('downgrades checks.queue to error and returns 503 if consumer stop() is called mid-probe', async () => {

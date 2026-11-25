@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearTelemetryEvents,
+  consumePendingTelemetryRotation,
   getTelemetryEvents,
   getTelemetrySessionId,
+  markTelemetrySignInPending,
   rotateTelemetrySessionId,
   setTelemetrySink,
   trackEvent,
@@ -100,7 +102,8 @@ describe('Privacy-Filtered Telemetry (C09 §7, R11)', () => {
         source: '01712-345678',
         screen_name: '01712-345678',
         feature_key: 'custom_unlisted_feature',
-        reason_code: 'free text with spaces',
+        reason_code: 'CONTACT_01712_345678',
+        request_id: 'req_01712_345678',
         status_code: 999,
         error_code: 'RATE_LIMITED',
         step: 3,
@@ -120,8 +123,23 @@ describe('Privacy-Filtered Telemetry (C09 §7, R11)', () => {
     expect(raw).not.toContain('learner@example.com');
     expect(raw).not.toContain('8801712345678');
     expect(raw).not.toContain('01712-345678');
-    expect(raw).not.toContain('free text');
+    expect(raw).not.toContain('01712_345678');
     expect(raw).not.toContain('eyJhbGci');
+  });
+
+  it('rotates anonymous_session_id once when consuming pending OAuth sign-in rotation marker', () => {
+    const beforeOAuth = getTelemetrySessionId();
+    expect(consumePendingTelemetryRotation()).toBeNull();
+
+    markTelemetrySignInPending();
+    const afterOAuth = consumePendingTelemetryRotation();
+    expect(afterOAuth).not.toBeNull();
+    expect(afterOAuth).not.toBe(beforeOAuth);
+    expect(getTelemetrySessionId()).toBe(afterOAuth);
+
+    // Second call is a no-op because the marker was consumed.
+    expect(consumePendingTelemetryRotation()).toBeNull();
+    expect(getTelemetrySessionId()).toBe(afterOAuth);
   });
 
   it('caps in-memory buffer at 100 events', () => {

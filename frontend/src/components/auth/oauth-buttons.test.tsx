@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { signInWithOAuth } from "@/lib/auth/actions";
+import {
+  consumePendingTelemetryRotation,
+  getTelemetrySessionId,
+} from "@/lib/telemetry/telemetry";
 
 vi.mock("@/lib/auth/actions", () => ({
   signInWithOAuth: vi.fn(),
@@ -23,7 +27,9 @@ describe("OAuthButtons", () => {
     ).toBeInTheDocument();
   });
 
-  it("calls signInWithOAuth with google when Google button is clicked", async () => {
+  it("calls signInWithOAuth with google and rotates telemetry session ID on OAuth sign-in", async () => {
+    window.sessionStorage.clear();
+    const beforeId = getTelemetrySessionId();
     vi.mocked(signInWithOAuth).mockResolvedValueOnce({});
     render(<OAuthButtons />);
 
@@ -34,6 +40,11 @@ describe("OAuthButtons", () => {
     await waitFor(() => {
       expect(signInWithOAuth).toHaveBeenCalledWith("google");
     });
+    const duringOAuthId = getTelemetrySessionId();
+    expect(duringOAuthId).not.toBe(beforeId);
+    const postCallbackId = consumePendingTelemetryRotation();
+    expect(postCallbackId).not.toBeNull();
+    expect(postCallbackId).not.toBe(duringOAuthId);
   });
 
   it("calls signInWithOAuth with facebook when Facebook button is clicked", async () => {

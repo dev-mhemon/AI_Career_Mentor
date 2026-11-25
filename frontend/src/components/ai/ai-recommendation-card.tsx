@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { cn } from '@/components/ui/cn';
 import { Button } from '@/components/ui/button';
 import { InfoIcon, SparklesIcon } from '@/components/ui/icons';
@@ -44,6 +44,36 @@ export function AIRecommendationCard({
   className,
 }: AIRecommendationCardProps) {
   const [dismissed, setDismissed] = useState(false);
+  const dismissBtnRef = useRef<HTMLButtonElement>(null);
+  const restoreBtnRef = useRef<HTMLButtonElement>(null);
+  const pendingFocusRef = useRef<'dismiss' | 'restore' | null>(null);
+
+  useEffect(() => {
+    const target = pendingFocusRef.current;
+    if (!target) {
+      return;
+    }
+    pendingFocusRef.current = null;
+    if (target === 'restore' && dismissed) {
+      restoreBtnRef.current?.focus();
+    } else if (target === 'dismiss' && !dismissed) {
+      dismissBtnRef.current?.focus();
+    }
+  }, [dismissed]);
+
+  const handleDismiss = (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.detail === 0) {
+      pendingFocusRef.current = 'restore';
+    }
+    setDismissed(true);
+  };
+
+  const handleRestore = (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.detail === 0) {
+      pendingFocusRef.current = 'dismiss';
+    }
+    setDismissed(false);
+  };
 
   if (dismissed) {
     return (
@@ -55,8 +85,9 @@ export function AIRecommendationCard({
       >
         <span>AI suggestion dismissed</span>
         <button
+          ref={restoreBtnRef}
           type="button"
-          onClick={() => setDismissed(false)}
+          onClick={handleRestore}
           className="font-medium text-indigo-700 underline-offset-2 hover:underline focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600 dark:text-indigo-300"
         >
           Restore
@@ -90,8 +121,9 @@ export function AIRecommendationCard({
 
         {dismissible && (
           <button
+            ref={dismissBtnRef}
             type="button"
-            onClick={() => setDismissed(true)}
+            onClick={handleDismiss}
             className="inline-flex min-h-11 items-center rounded-lg px-2.5 text-xs font-medium text-slate-500 transition-colors hover:bg-white/70 hover:text-slate-800 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             Dismiss

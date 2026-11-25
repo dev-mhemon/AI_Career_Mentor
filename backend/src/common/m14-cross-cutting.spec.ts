@@ -28,7 +28,7 @@ type OpenApiOperationEntry = {
   method: string;
   path: string;
   operationId: string;
-  unversioned: boolean;
+  serverUrl: string;
 };
 
 type ExpressRouteLayer = {
@@ -55,9 +55,21 @@ function normalizeRoutePath(rawPath: string): string {
     .replace(/\{[^}]+\}/g, '{param}');
 }
 
+function resolveFullOpenApiPath(serverUrl: string, routePath: string): string {
+  const base = serverUrl.trim().replace(/\/+$/, '');
+  const normalizedRoute = routePath.startsWith('/')
+    ? routePath
+    : `/${routePath}`;
+  if (!base || base === '/') {
+    return normalizedRoute;
+  }
+  return `${base}${normalizedRoute}`;
+}
+
 /**
- * Zero-dependency deterministic parser for the `paths:` block of `docs/05-api/openapi.yaml`.
- * Extracts every documented `(method, path, operationId)` and checks for duplicate path+method keys.
+ * Zero-dependency deterministic parser for `docs/05-api/openapi.yaml`.
+ * Resolves `servers` in OpenAPI 3.0 precedence order (`operation > path-item > root`)
+ * AFTER reading each complete path item, regardless of YAML property ordering.
  */
 function parseOpenApiPaths(yamlText: string): {
   entries: OpenApiOperationEntry[];
@@ -68,14 +80,61 @@ function parseOpenApiPaths(yamlText: string): {
   const duplicates: string[] = [];
   const seen = new Set<string>();
 
+  type PendingOperation = {
+    method: string;
+    path: string;
+    operationId: string;
+    opServerUrl: string | null;
+  };
+
+  let rootServerUrl = '/api/v1';
+  let inRootServers = false;
   let inPaths = false;
   let currentPath: string | null = null;
-  let currentPathUnversioned = false;
+  let pathServerUrl: string | null = null;
+  let pendingOps: PendingOperation[] = [];
   let inPathServers = false;
-  let currentMethod: string | null = null;
+  let inOpServers = false;
+  let currentOp: PendingOperation | null = null;
+
+  const flushCurrentPath = (): void => {
+    if (!currentPath) {
+      return;
+    }
+    for (const op of pendingOps) {
+      const effectiveServer = op.opServerUrl ?? pathServerUrl ?? rootServerUrl;
+      entries.push({
+        method: op.method,
+        path: op.path,
+        operationId: op.operationId,
+        serverUrl: effectiveServer,
+      });
+    }
+    pendingOps = [];
+    currentPath = null;
+    pathServerUrl = null;
+    currentOp = null;
+    inPathServers = false;
+    inOpServers = false;
+  };
 
   for (const line of lines) {
     if (!inPaths) {
+      if (line === 'servers:') {
+        inRootServers = true;
+        continue;
+      }
+      if (inRootServers) {
+        const rootUrlMatch = /^ {2}- url:\s*(.+)$/.exec(line);
+        if (rootUrlMatch) {
+          rootServerUrl = rootUrlMatch[1].trim().replace(/^['"]|['"]$/g, '');
+          inRootServers = false;
+          continue;
+        }
+        if (/^[A-Za-z0-9_-]+:/.test(line)) {
+          inRootServers = false;
+        }
+      }
       if (line === 'paths:') {
         inPaths = true;
       }
@@ -83,15 +142,14 @@ function parseOpenApiPaths(yamlText: string): {
     }
 
     if (/^[A-Za-z0-9_-]+:/.test(line)) {
+      flushCurrentPath();
       break; // Reached top-level `components:` or next root section
     }
 
     const pathMatch = /^ {2}(\/[^:]*):$/.exec(line);
     if (pathMatch) {
+      flushCurrentPath();
       currentPath = pathMatch[1];
-      currentPathUnversioned = false;
-      inPathServers = false;
-      currentMethod = null;
       continue;
     }
 
@@ -101,44 +159,68 @@ function parseOpenApiPaths(yamlText: string): {
 
     if (line === '    servers:') {
       inPathServers = true;
-      currentMethod = null;
+      inOpServers = false;
+      currentOp = null;
       continue;
     }
 
     if (inPathServers) {
       const serverUrlMatch = /^ {6}- url:\s*(.+)$/.exec(line);
-      if (serverUrlMatch && serverUrlMatch[1].trim() === '/') {
-        currentPathUnversioned = true;
+      if (serverUrlMatch && pathServerUrl === null) {
+        pathServerUrl = serverUrlMatch[1].trim().replace(/^['"]|['"]$/g, '');
+        continue;
+      }
+      if (/^ {4}[A-Za-z0-9_-]+:/.test(line)) {
+        inPathServers = false;
       }
     }
 
     const methodMatch = /^ {4}(get|post|patch|put|delete):$/.exec(line);
     if (methodMatch && HTTP_METHODS.has(methodMatch[1])) {
       inPathServers = false;
-      currentMethod = methodMatch[1].toUpperCase();
-      const key = `${currentMethod} ${currentPath}`;
+      inOpServers = false;
+      const method = methodMatch[1].toUpperCase();
+      const key = `${method} ${currentPath}`;
       if (seen.has(key)) {
         duplicates.push(key);
       } else {
         seen.add(key);
       }
-      entries.push({
-        method: currentMethod,
+      currentOp = {
+        method,
         path: currentPath,
         operationId: '',
-        unversioned: currentPathUnversioned,
-      });
+        opServerUrl: null,
+      };
+      pendingOps.push(currentOp);
       continue;
     }
 
-    if (currentMethod) {
+    if (currentOp) {
+      if (line === '      servers:') {
+        inOpServers = true;
+        continue;
+      }
+      if (inOpServers) {
+        const opServerMatch = /^ {8}- url:\s*(.+)$/.exec(line);
+        if (opServerMatch && currentOp.opServerUrl === null) {
+          currentOp.opServerUrl = opServerMatch[1]
+            .trim()
+            .replace(/^['"]|['"]$/g, '');
+          continue;
+        }
+        if (/^ {6}[A-Za-z0-9_-]+:/.test(line)) {
+          inOpServers = false;
+        }
+      }
       const opMatch = /^ {6}operationId:\s*(.+)$/.exec(line);
-      if (opMatch && entries.length > 0) {
-        entries[entries.length - 1].operationId = opMatch[1].trim();
+      if (opMatch) {
+        currentOp.operationId = opMatch[1].trim();
       }
     }
   }
 
+  flushCurrentPath();
   return { entries, duplicates };
 }
 
@@ -300,14 +382,23 @@ describe('M14-A C05 §17.6 Cross-Cutting Contract, Route Parity & R10 Access Mat
       expect(canonicalEntries.length).toBe(81);
       expect(entries.length).toBe(85);
 
-      const openapiRoutes = new Set<RouteKey>(
-        entries.map((entry) => {
-          const fullPath = entry.unversioned
-            ? entry.path
-            : `/api/v1${entry.path}`;
-          return `${entry.method} ${normalizeRoutePath(fullPath)}`;
-        }),
-      );
+      const openApiRouteCounts = new Map<RouteKey, number>();
+      for (const entry of entries) {
+        const fullPath = resolveFullOpenApiPath(entry.serverUrl, entry.path);
+        const routeKey: RouteKey = `${entry.method} ${normalizeRoutePath(fullPath)}`;
+        openApiRouteCounts.set(
+          routeKey,
+          (openApiRouteCounts.get(routeKey) ?? 0) + 1,
+        );
+      }
+      const duplicateOpenApiNormalizedRoutes = [...openApiRouteCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([key]) => key)
+        .sort();
+      expect(duplicateOpenApiNormalizedRoutes).toEqual([]);
+
+      const openapiRoutes = new Set<RouteKey>(openApiRouteCounts.keys());
+      expect(openapiRoutes.size).toBe(entries.length);
       const { routes: nestRoutes, duplicates: duplicateExpressRoutes } =
         collectExpressRoutes(app);
 
