@@ -21,6 +21,7 @@ import {
   type ServerTimeAnchor,
 } from '@/lib/api/client';
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
+import { trackEvent } from '@/lib/telemetry/telemetry';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
@@ -1316,6 +1317,11 @@ export function MentorChatView({
           conversation_id: conversationId,
           content,
           client_message_id: clientMessageId,
+        });
+        trackEvent({
+          event_name: 'mentor_message_sent',
+          feature_key: 'ai_mentor',
+          screen_name: 'mentor',
         });
         if (
           !mountedRef.current ||

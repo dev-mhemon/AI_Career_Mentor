@@ -40,6 +40,9 @@ import { TechnologyUpdateModule } from './technology-update/technology-update.mo
         migrations: [],
         migrationsRun: false,
         synchronize: false,
+        extra: {
+          connectionTimeoutMillis: 5000,
+        },
       }),
       inject: [ConfigService],
     }),

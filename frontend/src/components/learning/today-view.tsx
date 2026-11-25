@@ -17,6 +17,7 @@ import {
   type TodayResponseDTO,
 } from '@/lib/api/client';
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
+import { trackEvent } from '@/lib/telemetry/telemetry';
 import { AILoadingState } from '@/components/ui/ai-loading-state';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -290,6 +291,11 @@ export function TodayView({
     const idemKey = quizIdemKeyRef.current.key;
 
     try {
+      trackEvent({
+        event_name: 'learning_started',
+        feature_key: 'daily_plan',
+        screen_name: 'today',
+      });
       const outcome = await generateQuiz(
         accessToken,
         { daily_plan_item_id: planItemId },

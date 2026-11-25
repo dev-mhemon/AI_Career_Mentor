@@ -7,6 +7,7 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  ServiceUnavailableException,
   ValidationPipe,
 } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
@@ -63,12 +64,58 @@ export function fail(
     status,
   );
 }
+function isHealthResponsePayload(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  if (
+    (record.status !== 'ok' && record.status !== 'unavailable') ||
+    typeof record.version !== 'string' ||
+    typeof record.time !== 'string' ||
+    typeof record.checks !== 'object' ||
+    record.checks === null
+  ) {
+    return false;
+  }
+  const checks = record.checks as Record<string, unknown>;
+  return (
+    (checks.database === 'ok' || checks.database === 'error') &&
+    (checks.queue === 'ok' || checks.queue === 'error')
+  );
+}
+
+function isHealthRequest(request?: Request): boolean {
+  if (!request) {
+    return false;
+  }
+  const routePath = (request.route as { path?: unknown } | undefined)?.path;
+  if (typeof routePath === 'string') {
+    return routePath === '/health';
+  }
+  return request.path === '/health';
+}
+
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
-    const response = host.switchToHttp().getResponse<Response>();
+    const http = host.switchToHttp();
+    const request =
+      typeof http.getRequest === 'function'
+        ? http.getRequest<Request | undefined>()
+        : undefined;
+    const response = http.getResponse<Response>();
     const status = error instanceof HttpException ? error.getStatus() : 500;
     const body = error instanceof HttpException ? error.getResponse() : null;
+    if (
+      isHealthRequest(request) &&
+      error instanceof ServiceUnavailableException &&
+      status === 503 &&
+      isHealthResponsePayload(body)
+    ) {
+      response.status(503).json(body);
+      return;
+    }
     const coded =
       error instanceof ContractException &&
       typeof body === 'object' &&
@@ -112,13 +159,12 @@ export class ApiExceptionFilter implements ExceptionFilter {
 @Injectable()
 export class EnvelopeInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler) {
+    const request = context.switchToHttp().getRequest<Request>();
     return next
       .handle()
       .pipe(
         map((data) =>
-          context.switchToHttp().getRequest<Request>().path === '/health'
-            ? data
-            : { success: true, data },
+          isHealthRequest(request) ? data : { success: true, data },
         ),
       );
   }

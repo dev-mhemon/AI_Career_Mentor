@@ -35,6 +35,11 @@ import {
   WarningIcon,
 } from '@/components/ui/icons';
 import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
+import { AIRecommendationCard } from '@/components/ai/ai-recommendation-card';
+import { MilestoneCard } from '@/components/roadmap/milestone-card';
+import { RoadmapPhaseCard } from '@/components/roadmap/roadmap-phase-card';
+import { SkillBadge } from '@/components/ui/skill-badge';
+import { trackEvent } from '@/lib/telemetry/telemetry';
 import { HoursPromptModal } from '@/components/learning/hours-prompt-modal';
 
 function ArrowLeftIcon({ className }: { className?: string }) {
@@ -86,31 +91,10 @@ const LEVEL_LABELS: Record<CareerLevel, string> = {
   senior: 'Senior',
 };
 
-const PRIORITY_BADGE_CLASSES: Record<ItemPriority, string> = {
-  core: 'border-priority-core-border bg-priority-core-background text-priority-core-text',
-  supporting:
-    'border-priority-supporting-border bg-priority-supporting-background text-priority-supporting-text',
-  optional:
-    'border-priority-optional-border bg-priority-optional-background text-priority-optional-text',
-};
-
 const PRIORITY_LABELS: Record<ItemPriority, string> = {
   core: 'Core',
   supporting: 'Supporting',
   optional: 'Optional',
-};
-
-const GAP_BADGE_CLASSES: Record<SkillGapType, string> = {
-  existing:
-    'border-gap-existing-border bg-gap-existing-background text-gap-existing-text',
-  transferable:
-    'border-gap-transferable-border bg-gap-transferable-background text-gap-transferable-text',
-  refresh:
-    'border-gap-refresh-border bg-gap-refresh-background text-gap-refresh-text',
-  strengthen:
-    'border-gap-strengthen-border bg-gap-strengthen-background text-gap-strengthen-text',
-  missing:
-    'border-gap-missing-border bg-gap-missing-background text-gap-missing-text',
 };
 
 const GAP_LABELS: Record<SkillGapType, string> = {
@@ -543,6 +527,11 @@ export function RoadmapDraftView({
         payload,
         idempotencyKey,
       );
+      trackEvent({
+        event_name: 'roadmap_activated',
+        feature_key: 'roadmap_generator',
+        screen_name: 'roadmap_draft',
+      });
       pendingLockKeyRef.current = null;
       if (locked.next_step === 'confirm_learning_hours') {
         setLockedResult(locked);
@@ -1126,16 +1115,12 @@ export function RoadmapDraftView({
         </dl>
         {draft.summary.next_steps.length > 0 && (
           <div className="mt-4 border-t border-border-subtle pt-4">
-            <p className="text-caption font-semibold uppercase tracking-wide text-text-muted">
-              Recommended Next Steps
-            </p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-body-sm text-text-secondary">
-              {draft.summary.next_steps.map((step, idx) => (
-                <li key={`${idx}-${step}`} dir="auto">
-                  {step}
-                </li>
-              ))}
-            </ul>
+            <AIRecommendationCard
+              variant="roadmap_summary"
+              sourceLabel="AI Roadmap Rationale"
+              title="Recommended Next Steps"
+              rationale={draft.summary.next_steps.join(' · ')}
+            />
           </div>
         )}
 
@@ -1206,78 +1191,71 @@ export function RoadmapDraftView({
           </p>
         </div>
 
-        {phases.map((phase) => (
-          <article
-            key={phase.phase_no}
-            className="rounded-xl border border-border-default bg-surface-raised p-6 shadow-xs"
-          >
-            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border-subtle pb-3">
-              <h3 className="text-heading-sm font-semibold text-text-primary" dir="auto">
-                Phase {phase.phase_no}: {phase.title}
-              </h3>
-              <span className="text-caption text-text-muted">
-                {phase.items.length} {phase.items.length === 1 ? 'topic' : 'topics'}
-              </span>
-            </div>
+        {phases.map((phase) => {
+          const totalPhaseHours = phase.items.reduce(
+            (acc, item) => acc + (item.estimated_effort_hours ?? 0),
+            0,
+          );
+          return (
+            <RoadmapPhaseCard
+              key={phase.phase_no}
+              phaseNo={phase.phase_no}
+              title={phase.title}
+              status={isArchived ? 'locked' : 'draft'}
+              topicCount={phase.items.length}
+              estimatedHours={totalPhaseHours > 0 ? totalPhaseHours : null}
+              collapsible={false}
+            >
+              {phase.milestones.length > 0 && (
+                <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {phase.milestones.map((m) => (
+                    <MilestoneCard
+                      key={m.id}
+                      title={`Milestone: ${m.title}`}
+                      status={isArchived ? 'archived' : 'pending'}
+                      completedTopics={isArchived ? undefined : 0}
+                      totalTopics={phase.items.length}
+                    />
+                  ))}
+                </div>
+              )}
 
-            {phase.milestones.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {phase.milestones.map((m) => (
-                  <span
-                    key={m.id}
-                    className="inline-flex items-center rounded-md border border-border-default bg-surface-subtle px-2.5 py-1 text-caption font-medium text-text-secondary"
-                    dir="auto"
-                  >
-                    Milestone: {m.title}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <ol className="mt-4 flex flex-col gap-3">
-              {phase.items.map((item) => {
-                const prereqs = resolvePrerequisites(item, titleById);
-                return (
-                  <li
-                    key={item.item_id}
-                    className="rounded-lg border border-border-default bg-surface-default p-4"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-caption font-mono text-text-muted">
-                          #{item.sequence_no}
-                        </span>
-                        <h4
-                          className="text-label-lg font-semibold text-text-primary"
-                          dir="auto"
-                        >
-                          {item.title}
-                        </h4>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={cn(
-                            'inline-flex items-center justify-center rounded-full border px-2 py-1 text-2xs font-medium leading-none',
-                            PRIORITY_BADGE_CLASSES[item.priority],
-                          )}
-                        >
-                          {PRIORITY_LABELS[item.priority]}
-                        </span>
-                        <span
-                          className={cn(
-                            'inline-flex items-center justify-center rounded-full border px-2 py-1 text-2xs font-medium leading-none',
-                            GAP_BADGE_CLASSES[item.gap_type],
-                          )}
-                        >
-                          {GAP_LABELS[item.gap_type]}
-                        </span>
-                        {item.estimated_effort_hours !== null && (
-                          <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2 py-1 text-2xs leading-none text-text-secondary">
-                            {item.estimated_effort_hours} hrs
+              <ol className="flex flex-col gap-3">
+                {phase.items.map((item) => {
+                  const prereqs = resolvePrerequisites(item, titleById);
+                  return (
+                    <li
+                      key={item.item_id}
+                      className="rounded-lg border border-border-default bg-surface-default p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-caption font-mono text-text-muted">
+                            #{item.sequence_no}
                           </span>
-                        )}
+                          <h4
+                            className="text-label-lg font-semibold text-text-primary"
+                            dir="auto"
+                          >
+                            {item.title}
+                          </h4>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <SkillBadge
+                            label={PRIORITY_LABELS[item.priority]}
+                            status={item.priority}
+                          />
+                          <SkillBadge
+                            label={GAP_LABELS[item.gap_type]}
+                            status={item.gap_type}
+                          />
+                          {item.estimated_effort_hours !== null && (
+                            <span className="inline-flex items-center justify-center rounded-full border border-border-default bg-surface-subtle px-2 py-1 text-2xs leading-none text-text-secondary">
+                              {item.estimated_effort_hours} hrs
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
                     {item.required_depth && (
                       <p className="mt-1.5 text-caption text-text-muted" dir="auto">
@@ -1320,8 +1298,9 @@ export function RoadmapDraftView({
                 );
               })}
             </ol>
-          </article>
-        ))}
+          </RoadmapPhaseCard>
+          );
+        })}
       </section>
 
       {lockedResult && (

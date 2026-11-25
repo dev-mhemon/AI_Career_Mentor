@@ -15,6 +15,10 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { loginAction, type AuthActionResult } from "@/lib/auth/actions";
+import {
+  rotateTelemetrySessionId,
+  trackEvent,
+} from "@/lib/telemetry/telemetry";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import {
   AuthAlert,
@@ -233,6 +237,12 @@ export function LoginForm({
     FormData
   >(
     async (prevState, formData) => {
+      rotateTelemetrySessionId();
+      trackEvent({
+        event_name: "auth_login_submitted",
+        feature_key: "auth",
+        screen_name: "login",
+      });
       const result = await loginAction(prevState, formData);
       if (result?.error && !result?.redirectTo) {
         setPassword("");

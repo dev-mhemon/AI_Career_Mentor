@@ -283,8 +283,12 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
   readonly pollIntervalMs: number;
   private readonly randomFn: () => number;
   private readonly handlers = new Map<string, JobHandler>();
+  private fallbackHandler: JobHandler | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollingActive = false;
   private pollingInFlight = false;
+  private stoppedExplicitly = false;
+  private destroyed = false;
 
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
@@ -1141,13 +1145,21 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
    * Safe to invoke from multiple modules' `onModuleInit()` hooks.
    */
   start(handlerOrBatchSize?: JobHandler | number, batchSizeArg = 1): void {
-    if (this.pollTimer !== null) {
+    if (this.destroyed) {
       return;
     }
-    const fallbackHandler =
+    this.stoppedExplicitly = false;
+    const incomingFallback =
       typeof handlerOrBatchSize === 'object' && handlerOrBatchSize !== null
         ? handlerOrBatchSize
         : undefined;
+    if (incomingFallback) {
+      this.fallbackHandler = incomingFallback;
+    }
+    if (this.pollTimer !== null) {
+      this.pollingActive = true;
+      return;
+    }
     const effectiveBatchSize =
       typeof handlerOrBatchSize === 'number'
         ? handlerOrBatchSize
@@ -1159,7 +1171,7 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
       }
       this.pollingInFlight = true;
       void this.pollOnce(
-        fallbackHandler ?? effectiveBatchSize,
+        this.fallbackHandler ?? effectiveBatchSize,
         effectiveBatchSize,
       )
         .catch(() => {
@@ -1170,17 +1182,36 @@ export class PostgresJobQueueConsumer implements OnModuleDestroy {
         });
     }, this.pollIntervalMs);
     this.pollTimer.unref?.();
+    this.pollingActive = true;
   }
 
   /** Stops the background polling loop. */
   stop(): void {
+    this.stoppedExplicitly = true;
+    this.pollingActive = false;
+    this.fallbackHandler = null;
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
   }
 
+  /**
+   * Returns whether the durable job queue consumer is actively polling,
+   * has at least one registered handler or an active fallback handler,
+   * and is not stopped or shutting down.
+   */
+  isReady(): boolean {
+    return (
+      !this.destroyed &&
+      !this.stoppedExplicitly &&
+      this.pollingActive &&
+      (this.handlers.size > 0 || Boolean(this.fallbackHandler))
+    );
+  }
+
   onModuleDestroy(): void {
+    this.destroyed = true;
     this.stop();
   }
 }

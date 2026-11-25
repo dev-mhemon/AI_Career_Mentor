@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AI Career Mentor">
+  <defs>
+    <linearGradient id="brand-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f766e" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#brand-bg)" />
+  <g fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 92 404 176v160L256 420 108 336V176L256 92Z" />
+    <path d="M256 172v168" />
+    <path d="m176 232 80-60 80 60" />
+  </g>
+  <circle cx="256" cy="300" r="22" fill="#ffffff" />
+</svg>

@@ -18,7 +18,9 @@ import { cn } from './cn';
 import { SkipLink } from './skip-link';
 import {
   BellIcon,
+  CheckCircleIcon,
   ChevronDownIcon,
+  GlobeIcon,
   InfoIcon,
   LogOutIcon,
   MenuIcon,
@@ -27,6 +29,7 @@ import {
   UserIcon,
 } from './icons';
 import { logoutAction } from '@/lib/auth/actions';
+import { rotateTelemetrySessionId } from '@/lib/telemetry/telemetry';
 import {
   resolveShellUserDisplay,
   type ShellUserInfo,
@@ -174,26 +177,109 @@ const ADMIN_QUICK_SEARCH_ROUTES: readonly QuickSearchRoute[] = [
   },
 ];
 
-function subscribe(cb: () => void) {
-  window.addEventListener('online', cb);
-  window.addEventListener('offline', cb);
+type ConnectivityBannerState = 'online' | 'offline' | 'reconnected';
+
+const RECONNECTED_BANNER_DURATION_MS = 4000;
+
+let connectivityState: ConnectivityBannerState = 'online';
+let reconnectClearTimer: ReturnType<typeof setTimeout> | null = null;
+const connectivityListeners = new Set<() => void>();
+let windowConnectivityBound = false;
+
+function notifyConnectivityListeners(): void {
+  for (const listener of connectivityListeners) {
+    listener();
+  }
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectClearTimer !== null) {
+    clearTimeout(reconnectClearTimer);
+    reconnectClearTimer = null;
+  }
+}
+
+function handleWindowOffline(): void {
+  clearReconnectTimer();
+  if (connectivityState !== 'offline') {
+    connectivityState = 'offline';
+    notifyConnectivityListeners();
+  }
+}
+
+function handleWindowOnline(): void {
+  clearReconnectTimer();
+  if (connectivityState === 'offline') {
+    connectivityState = 'reconnected';
+    notifyConnectivityListeners();
+    reconnectClearTimer = setTimeout(() => {
+      reconnectClearTimer = null;
+      if (connectivityState === 'reconnected') {
+        connectivityState = 'online';
+        notifyConnectivityListeners();
+      }
+    }, RECONNECTED_BANNER_DURATION_MS);
+  } else if (connectivityState !== 'online') {
+    connectivityState = 'online';
+    notifyConnectivityListeners();
+  }
+}
+
+function subscribeConnectivity(cb: () => void): () => void {
+  if (typeof window !== 'undefined' && !windowConnectivityBound) {
+    connectivityState = navigator.onLine ? 'online' : 'offline';
+    window.addEventListener('online', handleWindowOnline);
+    window.addEventListener('offline', handleWindowOffline);
+    windowConnectivityBound = true;
+  }
+  connectivityListeners.add(cb);
   return () => {
-    window.removeEventListener('online', cb);
-    window.removeEventListener('offline', cb);
+    connectivityListeners.delete(cb);
+    if (
+      connectivityListeners.size === 0 &&
+      typeof window !== 'undefined' &&
+      windowConnectivityBound
+    ) {
+      window.removeEventListener('online', handleWindowOnline);
+      window.removeEventListener('offline', handleWindowOffline);
+      clearReconnectTimer();
+      windowConnectivityBound = false;
+      connectivityState = 'online';
+    }
   };
 }
 
-const isOffline = () => !navigator.onLine;
-const getServerOffline = () => false;
+const getConnectivitySnapshot = (): ConnectivityBannerState => {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return 'offline';
+  }
+  return connectivityState;
+};
+
+const getServerConnectivity = (): ConnectivityBannerState => 'online';
 
 const OfflineBanner = memo(function OfflineBanner() {
   return (
     <div
       role="status"
+      aria-live="polite"
       className="flex items-center gap-2 border-b border-feedback-info-border bg-feedback-info-background px-4 py-2 text-body-sm text-feedback-info-text"
     >
       <InfoIcon className="shrink-0 text-feedback-info-icon" />
       <span>You are offline. Reconnect to continue learning.</span>
+    </div>
+  );
+});
+
+const ReconnectedBanner = memo(function ReconnectedBanner() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 border-b border-feedback-success-border bg-feedback-success-background px-4 py-2 text-body-sm text-feedback-success-text"
+    >
+      <CheckCircleIcon className="shrink-0 text-feedback-success-icon" />
+      <span>Back online. Your connection has been restored.</span>
     </div>
   );
 });
@@ -203,11 +289,13 @@ const PublicHeader = memo(function PublicHeader({
   actions,
   includeSkipLink,
   showOffline,
+  showReconnected,
 }: {
   items: HeaderNavItem[];
   actions?: React.ReactNode;
   includeSkipLink: boolean;
   showOffline: boolean;
+  showReconnected: boolean;
 }) {
   return (
     <>
@@ -235,6 +323,7 @@ const PublicHeader = memo(function PublicHeader({
         </nav>
       </header>
       {showOffline && <OfflineBanner />}
+      {showReconnected && <ReconnectedBanner />}
     </>
   );
 });
@@ -475,6 +564,7 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
             <button
               type="submit"
               role="menuitem"
+              onClick={() => rotateTelemetrySessionId()}
               className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10 cursor-pointer"
             >
               <LogOutIcon className="h-4 w-4 shrink-0" />
@@ -503,12 +593,19 @@ export const Header = memo(function Header({
   mobileTriggerRef,
 }: HeaderProps) {
   const pathname = useSafePathname();
-  const browserOffline = useSyncExternalStore(
-    subscribe,
-    isOffline,
-    getServerOffline,
+  const browserConnectivity = useSyncExternalStore(
+    subscribeConnectivity,
+    getConnectivitySnapshot,
+    getServerConnectivity,
   );
-  const showOffline = offline ?? browserOffline;
+  const bannerState: ConnectivityBannerState =
+    offline === true
+      ? 'offline'
+      : offline === false
+        ? 'online'
+        : browserConnectivity;
+  const showOffline = bannerState === 'offline';
+  const showReconnected = bannerState === 'reconnected';
 
   const userMenuId = useId();
   const notificationsId = useId();
@@ -739,6 +836,7 @@ export const Header = memo(function Header({
         actions={actions}
         includeSkipLink={includeSkipLink}
         showOffline={showOffline}
+        showReconnected={showReconnected}
       />
     );
   }
@@ -780,6 +878,15 @@ export const Header = memo(function Header({
         <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
           {!isAdminVariant && (
             <>
+              <span
+                aria-label="Language mode: Bangla and English"
+                title="Bangla & English mixed-language support"
+                className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300 sm:inline-flex"
+              >
+                <GlobeIcon className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+                <span>BN / EN</span>
+              </span>
+
               <HeaderNotifications
                 containerRef={notificationsContainerRef}
                 triggerRef={notificationsTriggerRef}
@@ -817,6 +924,7 @@ export const Header = memo(function Header({
       </header>
 
       {showOffline && <OfflineBanner />}
+      {showReconnected && <ReconnectedBanner />}
     </>
   );
 });

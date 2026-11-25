@@ -11,6 +11,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { registerAction, type AuthActionResult } from "@/lib/auth/actions";
+import { trackEvent } from "@/lib/telemetry/telemetry";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import {
   AuthAlert,
@@ -97,6 +98,12 @@ export function RegisterForm() {
   >(async (prevState, formData) => {
     const channel: Channel =
       formData.get("type") === "phone" ? "phone" : "email";
+    trackEvent({
+      event_name: "auth_signup_submitted",
+      feature_key: "auth",
+      screen_name: "register",
+      metadata: { channel },
+    });
     const result = await registerAction(prevState, formData);
     const emailFromResult =
       result?.fieldErrors?.email ??

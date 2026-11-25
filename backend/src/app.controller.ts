@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { Policy } from './auth/policy.js';
-import { AppService } from './app.service.js';
+import { AppService, type HealthResponseDTO } from './app.service.js';
 
 @Controller()
 export class AppController {
@@ -8,7 +8,7 @@ export class AppController {
 
   @Policy({ public: true })
   @Get('health')
-  getHealth() {
+  getHealth(): Promise<HealthResponseDTO> {
     return this.appService.getHealth();
   }
 }

@@ -1,12 +1,29 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { inter, geist, hindSiliguri, jetbrainsMono } from '@/fonts';
 import { SkipLink } from '@/components/ui/skip-link';
 import './globals.css';
 
+export const viewport: Viewport = {
+  themeColor: '#0f766e',
+  width: 'device-width',
+  initialScale: 1,
+};
+
 export const metadata: Metadata = {
   title: 'AI Career Mentor',
   description:
-    'Your personal AI-powered career mentor for personalized guidance and structured learning.',
+    'Bangla-first career roadmap, daily study plan, and AI practice mentor.',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/icons/icon.svg', type: 'image/svg+xml' },
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
