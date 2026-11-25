@@ -3542,3 +3542,145 @@ export async function markTechnologyUpdateViewed(
   }
   return data;
 }
+
+/* -------------------------------------------------------------------------- */
+/* M12 Quality Feedback API — Ratings & Reports (EP-F01, EP-F02, C05 §15.11)  */
+/* -------------------------------------------------------------------------- */
+
+export type RatingTarget =
+  | 'roadmap_draft'
+  | 'roadmap_merge'
+  | 'topic_content'
+  | 'technology_update';
+
+export type ReportTarget =
+  | 'quiz_question'
+  | 'practice_review'
+  | 'topic_content'
+  | 'roadmap_content';
+
+export type ReportReason =
+  | 'incorrect'
+  | 'unclear'
+  | 'unfair_scoring'
+  | 'inappropriate'
+  | 'outdated'
+  | 'other';
+
+export type RatingRequestDTO = {
+  target_type: RatingTarget;
+  target_id: string;
+  score: number;
+  comment?: string;
+};
+
+export type RatingResponseDTO = {
+  target_type: RatingTarget;
+  target_id: string;
+  score: number;
+};
+
+export type ReportRequestDTO = {
+  target_type: ReportTarget;
+  target_id: string;
+  reason: ReportReason;
+  comment?: string;
+};
+
+export type ReportResponseDTO = {
+  report_id: string;
+  status: 'received';
+};
+
+const VALID_RATING_TARGETS: ReadonlySet<string> = new Set([
+  'roadmap_draft',
+  'roadmap_merge',
+  'topic_content',
+  'technology_update',
+]);
+
+function throwInvalidFeedbackResponse(message: string): never {
+  throw new ApiError(502, message, 'INVALID_RESPONSE', undefined, [], true);
+}
+
+function isValidRatingResponseDTO(
+  value: unknown,
+): value is RatingResponseDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.target_type === 'string' &&
+    VALID_RATING_TARGETS.has(rec.target_type) &&
+    typeof rec.target_id === 'string' &&
+    rec.target_id.trim().length > 0 &&
+    typeof rec.score === 'number' &&
+    Number.isInteger(rec.score) &&
+    rec.score >= 1 &&
+    rec.score <= 5
+  );
+}
+
+function isValidReportResponseDTO(
+  value: unknown,
+): value is ReportResponseDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.report_id === 'string' &&
+    rec.report_id.trim().length > 0 &&
+    rec.status === 'received'
+  );
+}
+
+/**
+ * POST /ratings (EP-F01, 200 OK, AZ-USER, Gate: none)
+ */
+export async function submitRating(
+  accessToken: string,
+  payload: RatingRequestDTO,
+  options?: AuthStateRequestOptions,
+): Promise<RatingResponseDTO> {
+  const data = await apiFetch<unknown>('/ratings', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    ...(options?.timeoutMs !== undefined
+      ? { timeoutMs: options.timeoutMs }
+      : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  if (
+    !isValidRatingResponseDTO(data) ||
+    data.target_type !== payload.target_type ||
+    data.target_id.trim().toLowerCase() !==
+      payload.target_id.trim().toLowerCase()
+  ) {
+    throwInvalidFeedbackResponse('Unexpected rating response format.');
+  }
+  return data;
+}
+
+/**
+ * POST /reports (EP-F02, 201 Created, AZ-USER, Gate: none)
+ */
+export async function submitReport(
+  accessToken: string,
+  payload: ReportRequestDTO,
+  options?: AuthStateRequestOptions,
+): Promise<ReportResponseDTO> {
+  const data = await apiFetch<unknown>('/reports', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    ...(options?.timeoutMs !== undefined
+      ? { timeoutMs: options.timeoutMs }
+      : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  if (!isValidReportResponseDTO(data)) {
+    throwInvalidFeedbackResponse('Unexpected report response format.');
+  }
+  return data;
+}

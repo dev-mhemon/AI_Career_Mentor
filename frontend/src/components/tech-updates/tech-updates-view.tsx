@@ -11,6 +11,7 @@ import {
 } from '@/lib/api/client';
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import { AIExplanationCard } from '@/components/learning/ai-explanation-card';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import {
   ACTION_TIMING_LABELS,
   formatTechUpdateTimestamp,
@@ -125,6 +126,13 @@ export function TechUpdatesView({
   }>(() => ({
     token: accessToken,
     error: null,
+  }));
+  const [ratingsState, setRatingsState] = useState<{
+    token: string;
+    byUpdateId: Readonly<Record<string, number>>;
+  }>(() => ({
+    token: accessToken,
+    byUpdateId: {},
   }));
 
   const [detailModal, setDetailModal] = useState<{
@@ -309,6 +317,25 @@ export function TechUpdatesView({
       : EMPTY_STRING_SET;
   const actionError =
     actionErrorState.token === accessToken ? actionErrorState.error : null;
+  const ratingsByUpdateId =
+    ratingsState.token === accessToken ? ratingsState.byUpdateId : {};
+
+  const handleUpdateRated = (
+    updateId: string,
+    score: number,
+    originatingToken: string,
+  ) => {
+    if (originatingToken !== accessTokenRef.current) {
+      return;
+    }
+    setRatingsState((prev) => ({
+      token: originatingToken,
+      byUpdateId: {
+        ...(prev.token === originatingToken ? prev.byUpdateId : {}),
+        [updateId]: score,
+      },
+    }));
+  };
 
   const items = useMemo(() => listData?.items ?? [], [listData]);
 
@@ -892,6 +919,11 @@ export function TechUpdatesView({
                   key={update.id}
                   variant="technology_update"
                   update={update}
+                  accessToken={accessToken}
+                  currentRatingScore={ratingsByUpdateId[update.id]}
+                  onRated={(score) =>
+                    handleUpdateRated(update.id, score, accessToken)
+                  }
                   isTodayHighlight={
                     idx === 0 &&
                     activeFilter === 'all' &&
@@ -1057,9 +1089,29 @@ export function TechUpdatesView({
                   </div>
                 </div>
               )}
+
+              {/* R34: Technology Updates support rating_1_5 ONLY — strictly omits reportTarget */}
+              <div className="border-y border-slate-100 dark:border-slate-800">
+                <AIFeedbackComponent
+                  accessToken={accessToken}
+                  ratingTarget={{
+                    type: 'technology_update',
+                    id: activeDetailUpdate.id,
+                  }}
+                  currentScore={ratingsByUpdateId[activeDetailUpdate.id]}
+                  onRated={(score) =>
+                    handleUpdateRated(
+                      activeDetailUpdate.id,
+                      score,
+                      accessToken,
+                    )
+                  }
+                  compact
+                />
+              </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500 dark:text-slate-400">
                 <span className="font-medium text-slate-700 dark:text-slate-300">
                   Source: {activeDetailUpdate.publisher}

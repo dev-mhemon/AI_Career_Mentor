@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import {
   ApiError,
@@ -14,6 +15,8 @@ import {
   getJobStatus,
   getToday,
   listLearningResources,
+  submitRating,
+  submitReport,
   type TodayResponseDTO,
 } from '@/lib/api/client';
 import { TodayView } from './today-view';
@@ -37,6 +40,8 @@ vi.mock('@/lib/api/client', async () => {
     createDailyPlan: vi.fn(),
     generateQuiz: vi.fn(),
     listLearningResources: vi.fn(),
+    submitRating: vi.fn(),
+    submitReport: vi.fn(),
   };
 });
 
@@ -609,5 +614,206 @@ describe('TodayView', () => {
     });
 
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('delegates R34 Screen 17 topic_content rating and report capabilities via AIExplanationCard and hydrates already-reported state', async () => {
+    vi.mocked(listLearningResources).mockResolvedValue({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+    vi.mocked(submitRating).mockResolvedValueOnce({
+      target_type: 'topic_content',
+      target_id: 'top-1',
+      score: 5,
+    });
+    vi.mocked(submitReport).mockResolvedValueOnce({
+      report_id: 'rep-top-1',
+      status: 'received',
+    });
+
+    const readyAllowed = makeReadyToday();
+    readyAllowed.topic = {
+      ...readyAllowed.topic!,
+      rating_allowed: true,
+      report_allowed: true,
+    };
+
+    const { rerender } = render(
+      <TodayView accessToken="token-1" initialToday={readyAllowed} />,
+    );
+
+    const explanationSection = screen.getByRole('region', {
+      name: 'Topic study explanation',
+    });
+    const ratingGroup = within(explanationSection).getByRole('radiogroup', {
+      name: 'Rate this content',
+    });
+    fireEvent.click(within(ratingGroup).getByRole('radio', { name: '5 stars' }));
+    fireEvent.click(
+      within(explanationSection).getByRole('button', { name: /Submit rating/i }),
+    );
+    await waitFor(() => {
+      expect(submitRating).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'topic_content',
+          target_id: 'top-1',
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
+
+    // Report capability is also exposed on approved topic_content and submits topic_content for top-1
+    const reportBtn = within(explanationSection).getByRole('button', {
+      name: /report issue/i,
+    });
+    expect(reportBtn).toBeInTheDocument();
+    fireEvent.click(reportBtn);
+    const reportDialog = await screen.findByRole('dialog', {
+      name: /Report content issue/i,
+    });
+    fireEvent.click(
+      within(reportDialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(submitReport).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'topic_content',
+          target_id: 'top-1',
+          reason: 'incorrect',
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    // When report_allowed === false, renders disabled "Reported" state while preserving rating
+    const alreadyReportedToday = makeReadyToday();
+    alreadyReportedToday.topic = {
+      ...alreadyReportedToday.topic!,
+      topic_id: 'top-already-rep',
+      rating_allowed: true,
+      report_allowed: false,
+    };
+
+    rerender(
+      <TodayView accessToken="token-2" initialToday={alreadyReportedToday} />,
+    );
+
+    expect(
+      within(explanationSection).getByRole('radiogroup', {
+        name: 'Rate this content',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(explanationSection)
+        .getByText('Reported')
+        .closest('[aria-disabled]'),
+    ).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('tracks replaced initialToday ownership across A/R0 -> B/R1 -> C/R1 without displaying B plan for C or suppressing getToday(C)', async () => {
+    const r0 = makeReadyToday();
+    r0.topic = { ...r0.topic!, title: 'Topic For Account A' };
+
+    const r1 = makeReadyToday();
+    r1.topic = { ...r1.topic!, title: 'Topic For Account B' };
+
+    const r2 = makeReadyToday();
+    r2.topic = { ...r2.topic!, title: 'Topic For Account C' };
+
+    vi.mocked(getToday).mockResolvedValueOnce(r2);
+
+    const { rerender } = render(
+      <TodayView accessToken="token-A" initialToday={r0} />,
+    );
+    expect(screen.getByText('Topic For Account A')).toBeInTheDocument();
+    expect(getToday).not.toHaveBeenCalled();
+
+    // Parent replaces both token and seed -> B/R1 hydrates cleanly
+    rerender(<TodayView accessToken="token-B" initialToday={r1} />);
+    expect(screen.getByText('Topic For Account B')).toBeInTheDocument();
+    expect(getToday).not.toHaveBeenCalled();
+
+    // Parent switches token to C while retaining stale R1 reference -> MUST NOT show B's plan and MUST fetch getToday(C)
+    rerender(<TodayView accessToken="token-C" initialToday={r1} />);
+    expect(screen.queryByText('Topic For Account B')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(getToday).toHaveBeenCalledWith('token-C', expect.any(Object));
+    });
+    expect(await screen.findByText('Topic For Account C')).toBeInTheDocument();
+  });
+
+  it('replaces a stale same-token fetch error when a valid initialToday seed arrives for that token', async () => {
+    vi.mocked(getToday).mockRejectedValueOnce(
+      new ApiError(503, 'Temporary outage', 'SERVICE_UNAVAILABLE'),
+    );
+    vi.mocked(listLearningResources).mockResolvedValue({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    const { rerender } = render(<TodayView accessToken="token-same" />);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    const recoveredSeed = makeReadyToday();
+    recoveredSeed.topic = {
+      ...recoveredSeed.topic!,
+      title: 'Recovered Seeded Topic',
+    };
+
+    rerender(
+      <TodayView accessToken="token-same" initialToday={recoveredSeed} />,
+    );
+    expect(screen.getByText('Recovered Seeded Topic')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('clears stale fetch error while refetching after a valid seed is removed for the same token', async () => {
+    let resolveRefetch!: (today: TodayResponseDTO) => void;
+    vi.mocked(getToday)
+      .mockRejectedValueOnce(
+        new ApiError(503, 'Temporary outage', 'SERVICE_UNAVAILABLE'),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRefetch = resolve;
+        }),
+      );
+    vi.mocked(listLearningResources).mockResolvedValue({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    // 1. Initial fetch fails for token-cycle
+    const { rerender } = render(<TodayView accessToken="token-cycle" />);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    // 2. Valid seed arrives and hides the error
+    const seeded = makeReadyToday();
+    seeded.topic = { ...seeded.topic!, title: 'Temporary Seed Topic' };
+    rerender(<TodayView accessToken="token-cycle" initialToday={seeded} />);
+    expect(screen.getByText('Temporary Seed Topic')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // 3. Seed is removed -> new fetch starts; stale error from step 1 MUST NOT resurface while loading
+    rerender(<TodayView accessToken="token-cycle" initialToday={undefined} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('Temporary Seed Topic')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(getToday).toHaveBeenCalledTimes(2);
+    });
+
+    // 4. Fresh fetch resolves and displays loaded topic
+    const fresh = makeReadyToday();
+    fresh.topic = { ...fresh.topic!, title: 'Fresh Refetched Topic' };
+    resolveRefetch(fresh);
+    expect(
+      await screen.findByText('Fresh Refetched Topic'),
+    ).toBeInTheDocument();
   });
 });

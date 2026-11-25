@@ -112,8 +112,29 @@ export function TodayView({
     };
   }, []);
 
-  const requestKey = `${accessToken}:${reloadTick}`;
-  const seededToday = initialToday && reloadTick === 0 ? initialToday : null;
+  const [seedTracker, setSeedTracker] = useState<{
+    today: TodayResponseDTO | null | undefined;
+    ownerToken: string;
+    seedCycle: number;
+  }>(() => ({
+    today: initialToday,
+    ownerToken: accessToken,
+    seedCycle: 0,
+  }));
+  if (seedTracker.today !== initialToday) {
+    setSeedTracker((prev) => ({
+      today: initialToday,
+      ownerToken: accessToken,
+      seedCycle: prev.seedCycle + 1,
+    }));
+  }
+  const isSeedValidForToken =
+    Boolean(initialToday) &&
+    seedTracker.today === initialToday &&
+    seedTracker.ownerToken === accessToken;
+  const requestKey = `${accessToken}:${reloadTick}:${seedTracker.seedCycle}`;
+  const seededToday =
+    reloadTick === 0 && isSeedValidForToken ? initialToday : null;
 
   useEffect(() => {
     if (seededToday) {
@@ -146,12 +167,11 @@ export function TodayView({
     };
   }, [accessToken, requestKey, seededToday]);
 
-  const activeState =
-    fetchState && fetchState.key === requestKey
+  const activeState = seededToday
+    ? { key: requestKey, status: 'loaded' as const, today: seededToday }
+    : fetchState && fetchState.key === requestKey
       ? fetchState
-      : seededToday
-        ? { key: requestKey, status: 'loaded' as const, today: seededToday }
-        : null;
+      : null;
 
   const isLoading = activeState === null;
   const today = activeState?.status === 'loaded' ? activeState.today : null;
@@ -587,6 +607,10 @@ export function TodayView({
               importantQuestions={today.topic.important_questions}
               contentVersion={today.topic.content_version}
               requiredDepth={today.topic.required_depth}
+              accessToken={accessToken}
+              topicId={today.topic.topic_id}
+              ratingAllowed={today.topic.rating_allowed}
+              reportAllowed={today.topic.report_allowed}
             />
           </div>
 

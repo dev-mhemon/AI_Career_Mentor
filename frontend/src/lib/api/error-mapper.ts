@@ -302,6 +302,23 @@ const SAFE_CODE_ERRORS: Readonly<
     tone: 'warning',
     retryable: false,
   },
+  TARGET_NOT_RATABLE: {
+    message:
+      'This item cannot be rated with stars. Use Report issue instead where available.',
+    tone: 'warning',
+    retryable: false,
+  },
+  TARGET_NOT_FOUND: {
+    message:
+      'The item you are trying to rate or report could not be found or is no longer available.',
+    tone: 'warning',
+    retryable: false,
+  },
+  REPORT_ALREADY_SUBMITTED: {
+    message: 'You have already submitted a report for this item.',
+    tone: 'info',
+    retryable: false,
+  },
 };
 
 /**

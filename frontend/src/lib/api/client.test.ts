@@ -75,6 +75,8 @@ import {
   listTechnologyUpdates,
   getTechnologyUpdate,
   markTechnologyUpdateViewed,
+  submitRating,
+  submitReport,
   isJobAcceptedDTO,
   type DailyPlanResponseDTO,
   type JobKind,
@@ -2682,6 +2684,222 @@ describe('M11 Technology Intelligence API client (EP-T01..EP-T03)', () => {
     ).rejects.toMatchObject({
       code: 'INVALID_RESPONSE',
       statusCode: 502,
+    });
+  });
+
+  describe('M12 Quality Feedback API (EP-F01 submitRating & EP-F02 submitReport)', () => {
+    const FEEDBACK_TARGET_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const REPORT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+    it('calls POST /api/v1/ratings (EP-F01) and POST /api/v1/reports (EP-F02) with Bearer auth and validates response shapes', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'topic_content',
+              target_id: FEEDBACK_TARGET_ID,
+              score: 5,
+            },
+          }),
+      });
+
+      const ratingRes = await submitRating(MOCK_TOKEN, {
+        target_type: 'topic_content',
+        target_id: FEEDBACK_TARGET_ID,
+        score: 5,
+        comment: 'Clear explanation',
+      });
+      expect(ratingRes).toEqual({
+        target_type: 'topic_content',
+        target_id: FEEDBACK_TARGET_ID,
+        score: 5,
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'http://localhost:3000/api/v1/ratings',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: `Bearer ${MOCK_TOKEN}`,
+            'Content-Type': 'application/json',
+          }),
+          body: JSON.stringify({
+            target_type: 'topic_content',
+            target_id: FEEDBACK_TARGET_ID,
+            score: 5,
+            comment: 'Clear explanation',
+          }),
+        }),
+      );
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              report_id: REPORT_ID,
+              status: 'received',
+            },
+          }),
+      });
+
+      const reportRes = await submitReport(MOCK_TOKEN, {
+        target_type: 'practice_review',
+        target_id: FEEDBACK_TARGET_ID,
+        reason: 'unfair_scoring',
+        comment: 'Valid Bangla reasoning',
+      });
+      expect(reportRes).toEqual({
+        report_id: REPORT_ID,
+        status: 'received',
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'http://localhost:3000/api/v1/reports',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: `Bearer ${MOCK_TOKEN}`,
+            'Content-Type': 'application/json',
+          }),
+          body: JSON.stringify({
+            target_type: 'practice_review',
+            target_id: FEEDBACK_TARGET_ID,
+            reason: 'unfair_scoring',
+            comment: 'Valid Bangla reasoning',
+          }),
+        }),
+      );
+    });
+
+    it('rejects malformed EP-F01 and EP-F02 responses with ApiError(502, INVALID_RESPONSE)', async () => {
+      // Malformed EP-F01 score out of range (6)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'topic_content',
+              target_id: FEEDBACK_TARGET_ID,
+              score: 6,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID,
+          score: 5,
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+        statusCode: 502,
+      });
+
+      // Mismatched EP-F01 target_type in response
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'roadmap_draft',
+              target_id: FEEDBACK_TARGET_ID,
+              score: 5,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID,
+          score: 5,
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+        statusCode: 502,
+      });
+
+      // Mismatched EP-F01 target_id in response
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'topic_content',
+              target_id: REPORT_ID,
+              score: 5,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID,
+          score: 5,
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+        statusCode: 502,
+      });
+
+      // Case-insensitive UUID match succeeds
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              target_type: 'topic_content',
+              target_id: FEEDBACK_TARGET_ID.toLowerCase(),
+              score: 4,
+            },
+          }),
+      });
+      await expect(
+        submitRating(MOCK_TOKEN, {
+          target_type: 'topic_content',
+          target_id: FEEDBACK_TARGET_ID.toUpperCase(),
+          score: 4,
+        }),
+      ).resolves.toEqual({
+        target_type: 'topic_content',
+        target_id: FEEDBACK_TARGET_ID.toLowerCase(),
+        score: 4,
+      });
+
+      // Malformed EP-F02 unexpected status
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              report_id: REPORT_ID,
+              status: 'hidden',
+            },
+          }),
+      });
+      await expect(
+        submitReport(MOCK_TOKEN, {
+          target_type: 'quiz_question',
+          target_id: FEEDBACK_TARGET_ID,
+          reason: 'incorrect',
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+        statusCode: 502,
+      });
     });
   });
 });

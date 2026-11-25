@@ -49,6 +49,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
 import {
+  CalendarDaysIcon,
   CheckCircleIcon,
   ChevronRightIcon,
   ClockIcon,
@@ -60,6 +61,7 @@ import {
 import { Modal, useBackdropDismiss } from '@/components/ui/modal';
 import { SegmentedTabs } from '@/components/ui/segmented-tabs';
 import { Toast } from '@/components/ui/toast';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { HoursPromptModal } from '@/components/learning/hours-prompt-modal';
 import {
   RequestMergeModal,
@@ -1835,6 +1837,15 @@ export function RoadmapDetailView({
             </ul>
           </div>
         )}
+
+        {/* R34 Screen 15 Active/Locked view: roadmap_content report uses roadmaps.id ONLY (no draft rating) */}
+        <div className="mt-4 border-t border-border-subtle">
+          <AIFeedbackComponent
+            accessToken={accessToken}
+            reportTarget={{ type: 'roadmap_content', id: currentRoadmap.id }}
+            compact
+          />
+        </div>
       </section>
 
       <section
@@ -2503,7 +2514,7 @@ export function RoadmapDetailView({
                     className="block h-3.5 w-3.5 shrink-0 text-feedback-success-icon"
                     aria-hidden="true"
                   />
-                  <span>Focus Roadmap</span>
+                  <span>Focused Roadmap</span>
                 </span>
               )}
 
@@ -2533,6 +2544,26 @@ export function RoadmapDetailView({
           <div className="flex flex-wrap items-center gap-2 pt-1">
             {currentRoadmap.status === 'locked' && (
               <>
+                <Link
+                  href={
+                    currentRoadmap.is_focus
+                      ? '/today'
+                      : `/daily-plan?roadmap_id=${encodeURIComponent(currentRoadmap.id)}`
+                  }
+                  className={cn(
+                    'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap transition-colors',
+                    currentRoadmap.is_focus
+                      ? 'border-teal-600 bg-teal-600 text-white hover:bg-teal-700 dark:border-teal-500 dark:bg-teal-600 dark:hover:bg-teal-500'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800',
+                  )}
+                >
+                  <CalendarDaysIcon
+                    className="block h-4 w-4 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span>Daily Plan</span>
+                </Link>
+
                 <Button
                   type="button"
                   variant="secondary"
@@ -2562,16 +2593,6 @@ export function RoadmapDetailView({
                   <LevelUpIcon className="block h-4 w-4 shrink-0" />
                   <span>Change Career Level</span>
                 </Button>
-
-                {currentRoadmap.is_focus && (
-                  <Link
-                    href="/mentor?context=focus_roadmap"
-                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-teal-800 transition-colors hover:bg-teal-100/80 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/80"
-                  >
-                    <MessageSquareIcon className="block h-4 w-4 shrink-0" />
-                    <span>Ask Mentor</span>
-                  </Link>
-                )}
               </>
             )}
 
@@ -2628,6 +2649,16 @@ export function RoadmapDetailView({
               >
                 <span>Open Draft Review</span>
                 <ArrowRightIcon className="block h-4 w-4 shrink-0" />
+              </Link>
+            )}
+
+            {currentRoadmap.status === 'locked' && currentRoadmap.is_focus && (
+              <Link
+                href="/mentor?context=focus_roadmap"
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap text-teal-800 transition-colors hover:bg-teal-100/80 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200 dark:hover:bg-teal-950/80"
+              >
+                <MessageSquareIcon className="block h-4 w-4 shrink-0" />
+                <span>Ask Mentor</span>
               </Link>
             )}
           </div>

@@ -21,6 +21,7 @@ export interface AlertProps {
   action?: { label: string; onClick?: () => void; href?: string };
   role?: 'alert' | 'status';
   ariaLive?: 'polite' | 'assertive' | 'off';
+  dense?: boolean;
   className?: string;
 }
 
@@ -140,6 +141,7 @@ export function Alert({
   action,
   role,
   ariaLive,
+  dense = false,
   className,
 }: AlertProps) {
   const [elapsed, setElapsed] = useState(false);
@@ -166,7 +168,8 @@ export function Alert({
   return (
     <div
       className={cn(
-        'flex gap-3 rounded-lg border p-4',
+        'flex rounded-lg border',
+        dense ? 'gap-2.5 px-3.5 py-3' : 'gap-3 p-4',
         singleLineFriendly ? 'items-center' : 'items-start',
         tone[variant],
         className,
@@ -175,18 +178,22 @@ export function Alert({
       <span
         className={cn(
           'flex shrink-0 items-center justify-center',
-          !singleLineFriendly && 'mt-0.5',
+          !singleLineFriendly && (dense ? 'h-5' : 'mt-0.5'),
         )}
       >
         {icons[variant]}
       </span>
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <div className={cn('flex min-w-0 flex-1 flex-col', dense ? 'gap-1' : 'gap-2')}>
         <div
           role={role ?? (live ? 'alert' : 'status')}
           aria-live={ariaLive}
-          className="flex flex-col gap-2"
+          className={cn('flex flex-col', dense ? 'gap-0.5' : 'gap-2')}
         >
-          {title && <p className="text-label-lg">{title}</p>}
+          {title && (
+            <p className={cn('text-label-lg', dense && 'leading-5')}>
+              {title}
+            </p>
+          )}
           <div className="text-body-sm leading-snug" dir="auto">{children}</div>
         </div>
         {counting && (

@@ -33,7 +33,7 @@ const COUNTDOWN_KEYFRAMES_CSS =
   '.agy-toast-bar{animation:agy-toast-countdown var(--toast-duration,6000ms) linear forwards}' +
   '@media(prefers-reduced-motion:reduce){.agy-toast-bar{animation:none}}';
 
-export interface ToastProps extends Omit<AlertProps, 'className'> {
+export interface ToastProps extends Omit<AlertProps, 'className' | 'dense'> {
   onDismiss?: () => void;
   /** Auto-dismiss ms. Ignored for error_retryable (needs user action). */
   autoDismissMs?: number;
@@ -114,16 +114,18 @@ export const Toast = memo(function Toast({
       <div className="relative overflow-hidden rounded-lg">
         <Alert
           {...alert}
+          dense
           ariaLive={ariaLive ?? (sticky ? 'assertive' : 'polite')}
-          className={cn(onDismiss && 'pr-12', hasAutoDismiss && 'pb-[18px]')}
+          className={cn(onDismiss && 'pr-10', hasAutoDismiss && 'pb-4')}
         />
         {onDismiss && (
           <IconButton
             aria-label="Dismiss notification"
+            size="compact"
             onClick={onDismiss}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2"
+            className="absolute top-2 right-2 rounded-md p-1"
           >
-            <CloseIcon />
+            <CloseIcon className="h-4 w-4" />
           </IconButton>
         )}
         {hasAutoDismiss && (

@@ -6,6 +6,7 @@ import type {
   TopicImportantQuestionDTO,
 } from '@/lib/api/client';
 import { TechUpdateCard } from '@/components/tech-updates/tech-update-card';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { cn } from '@/components/ui/cn';
 import { BookOpenIcon, ChevronDownIcon } from '@/components/ui/icons';
 
@@ -16,12 +17,19 @@ export type TopicExplanationCardProps = {
   importantQuestions: readonly TopicImportantQuestionDTO[];
   contentVersion?: number;
   requiredDepth?: string;
+  accessToken?: string;
+  topicId?: string;
+  ratingAllowed?: boolean;
+  reportAllowed?: boolean;
   className?: string;
 };
 
 export type TechnologyUpdateExplanationCardProps = {
   variant: 'technology_update';
   update: TechnologyUpdateDTO;
+  accessToken?: string;
+  currentRatingScore?: number;
+  onRated?: (score: number) => void;
   isTodayHighlight?: boolean;
   isMarkingViewed?: boolean;
   onInspectDetail?: (
@@ -276,6 +284,9 @@ export function AIExplanationCard(props: AIExplanationCardProps) {
     return (
       <TechUpdateCard
         update={props.update}
+        accessToken={props.accessToken}
+        currentRatingScore={props.currentRatingScore}
+        onRated={props.onRated}
         isTodayHighlight={props.isTodayHighlight}
         isMarkingViewed={props.isMarkingViewed}
         onInspectDetail={props.onInspectDetail}
@@ -291,6 +302,10 @@ export function AIExplanationCard(props: AIExplanationCardProps) {
     importantQuestions,
     contentVersion,
     requiredDepth,
+    accessToken,
+    topicId,
+    ratingAllowed,
+    reportAllowed,
     className,
   } = props;
 
@@ -406,6 +421,22 @@ export function AIExplanationCard(props: AIExplanationCardProps) {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {accessToken && topicId && explanationMarkdown !== null && (
+        <div className="border-t border-slate-100 dark:border-slate-800">
+          <AIFeedbackComponent
+            accessToken={accessToken}
+            ratingTarget={
+              ratingAllowed
+                ? { type: 'topic_content', id: topicId }
+                : undefined
+            }
+            reportTarget={{ type: 'topic_content', id: topicId }}
+            alreadyReported={reportAllowed === false}
+            compact
+          />
         </div>
       )}
     </section>

@@ -163,6 +163,7 @@ All new milestones are Proposed. M00 is an observed checkpoint to consume, not r
 
 ### M11 - Personalized daily technology intelligence
 
+- Progress: [M11-01](current-phase/M11-01.md) merged into `main` via PR #56 (`6e5e108671bf24c1ed6466f4df64670875c3d2c3`).
 - Outcome: enabled eligible users get stored fresh/relevant local-date outcomes independently of opening app; view/source/fetch/delivery work.
 - Sources: C01 §38–46; C03 R25; C05 T01–03/R24–25/N01; C06 technology/R25; C08 §7.5; C09 Screen21/optional Screen13 preview.
 - Entry/dependencies/areas: M04 research/gateway, M05 goal/timezone, M06 Focus/M07 learning context; incorporate M08 evidence when available; fetch/scheduler/technology backend and UI.
@@ -172,6 +173,7 @@ All new milestones are Proposed. M00 is an observed checkpoint to consume, not r
 
 ### M12 - Quality feedback and shared-content safety
 
+- Progress: [M12-01](current-phase/M12-01.md) implemented and verified on branch `feat/m12-01-quality-feedback-and-shared-content-safety` from base `main` `6e5e108671bf24c1ed6466f4df64670875c3d2c3` (PR open for review; separate independent reviewer and owner acceptance pending).
 - Outcome: authorized target-specific ratings/reports, independent-user threshold hiding and safely evaluated regeneration.
 - Sources: C01 §24/32; C05 F01–02/R27/R34; C06 threshold; C08 §16; C09 feedback capabilities.
 - Entry/dependencies/areas: M06 draft/roadmap, M07 topics, M08 question/review exposure, M09 merge targets and M11 updates for full integration; feedback/visibility backend and producer UI. Start each target when its producer exists, before wider rollout.

@@ -48,6 +48,8 @@ export interface ProgressViewProps {
   initialRoadmaps?: RoadmapSummaryDTO[];
 }
 
+const ROADMAPS_REQUEST_TIMEOUT_MS = 15_000;
+
 const PROGRESS_TABS: ReadonlyArray<{
   key: ProgressTabKey;
   label: string;
@@ -150,9 +152,12 @@ export function ProgressView({
   >('');
   const [progressReloadTick, setProgressReloadTick] = useState(0);
   const [historyReloadTick, setHistoryReloadTick] = useState(0);
+  const [roadmapsReloadTick, setRoadmapsReloadTick] = useState(0);
 
   const [roadmapsState, setRoadmapsState] = useState<{
     token: string;
+    tick: number;
+    status: 'loaded' | 'error';
     items: RoadmapSummaryDTO[];
   } | null>(null);
 
@@ -255,23 +260,37 @@ export function ProgressView({
     listRoadmaps(
       accessToken,
       { status: 'locked', limit: 20 },
-      { signal: controller.signal },
+      { signal: controller.signal, timeoutMs: ROADMAPS_REQUEST_TIMEOUT_MS },
     )
       .then((res) => {
         if (!active || controller.signal.aborted) {
           return;
         }
-        setRoadmapsState({ token: accessToken, items: res.items });
+        setRoadmapsState({
+          token: accessToken,
+          tick: roadmapsReloadTick,
+          status: 'loaded',
+          items: res.items,
+        });
       })
       .catch(() => {
-        // Non-fatal metadata enrichment
+        if (!active || controller.signal.aborted) {
+          return;
+        }
+        // Non-fatal metadata enrichment: settle state so unified filter bar exits loading cleanly
+        setRoadmapsState({
+          token: accessToken,
+          tick: roadmapsReloadTick,
+          status: 'error',
+          items: [],
+        });
       });
 
     return () => {
       active = false;
       controller.abort();
     };
-  }, [accessToken, initialRoadmaps]);
+  }, [accessToken, initialRoadmaps, roadmapsReloadTick]);
 
   // Load EP-G01 Progress
   useEffect(() => {
@@ -369,6 +388,17 @@ export function ProgressView({
     };
   }, [accessToken, historyQueryKey, seededHistory]);
 
+  const isLoadingRoadmaps =
+    !initialRoadmaps &&
+    (!roadmapsState ||
+      roadmapsState.token !== accessToken ||
+      roadmapsState.tick !== roadmapsReloadTick);
+  const roadmapsLoadFailed =
+    !initialRoadmaps &&
+    roadmapsState !== null &&
+    roadmapsState.token === accessToken &&
+    roadmapsState.tick === roadmapsReloadTick &&
+    roadmapsState.status === 'error';
   const roadmaps = useMemo(
     () =>
       initialRoadmaps ??
@@ -398,6 +428,19 @@ export function ProgressView({
       : null;
   const isLoadingProgress =
     activeProgressData === null && activeProgressError === null;
+  const hasSettledProgressForToken =
+    Boolean(
+      progressState && progressState.key.startsWith(`${accessToken}:`),
+    ) ||
+    Boolean(
+      progressErrorState &&
+        progressErrorState.key.startsWith(`${accessToken}:`),
+    );
+  const isLoadingInitialFilterBar =
+    !initialProgress &&
+    isLoadingProgress &&
+    !hasActiveFilters &&
+    !hasSettledProgressForToken;
 
   const activeHistoryData =
     historyState && historyState.key === historyQueryKey
@@ -722,70 +765,111 @@ export function ProgressView({
       {activeTab !== 'history' && (
         <section
           aria-label="Filter skill progress"
-          className="flex flex-col gap-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs sm:flex-row sm:flex-wrap sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-900"
+          className="flex flex-col gap-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs sm:flex-row sm:flex-wrap sm:items-end sm:justify-between dark:border-slate-800 dark:bg-slate-900"
         >
-          <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
-            {roadmaps.length > 0 && (
-              <Select
-                id={`${tabListId}-filter-roadmap`}
-                label="Roadmap"
-                aria-label="Filter by roadmap"
-                value={selectedRoadmapId}
-                onChange={(e) => setSelectedRoadmapId(e.target.value)}
-                options={[
-                  { value: '', label: 'Focus Roadmap (Default)' },
-                  ...roadmaps.map((rm) => ({
-                    value: rm.id,
-                    label: `${rm.role_name}${rm.is_focus ? ' (Focus)' : ''}`,
-                  })),
-                ]}
-              />
-            )}
-
-            <Select
-              id={`${tabListId}-filter-career-level`}
-              label="Career Level"
-              aria-label="Filter by career level"
-              value={selectedCareerLevel}
-              onChange={(e) =>
-                setSelectedCareerLevel(e.target.value as CareerLevel | '')
-              }
-              options={[
-                { value: '', label: 'All Target Levels' },
-                { value: 'junior', label: 'Junior' },
-                { value: 'mid', label: 'Mid-Level' },
-                { value: 'senior', label: 'Senior' },
-              ]}
-            />
-
-            <Select
-              id={`${tabListId}-filter-mastery-state`}
-              label="Mastery State"
-              aria-label="Filter by mastery state"
-              value={selectedLearningState}
-              onChange={(e) =>
-                setSelectedLearningState(e.target.value as LearningState | '')
-              }
-              options={[
-                { value: '', label: 'All Mastery States' },
-                { value: 'not_started', label: 'Not Started' },
-                { value: 'learning', label: 'Learning' },
-                { value: 'practicing', label: 'Practicing' },
-                { value: 'proficient', label: 'Proficient' },
-              ]}
-            />
-          </div>
-
-          {hasActiveFilters && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={handleClearFilters}
-              className="w-full shrink-0 justify-center whitespace-nowrap border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 sm:w-auto"
+          {isLoadingInitialFilterBar ? (
+            <div
+              data-testid="progress-filter-skeleton"
+              aria-busy="true"
+              aria-label="Loading progress filters"
+              className="flex w-full flex-col gap-3 sm:flex-row sm:items-end"
             >
-              <span>Clear Filters</span>
-            </Button>
+              <div className="grid flex-1 grid-cols-1 items-end gap-3 sm:grid-cols-3">
+                {[0, 1, 2].map((idx) => (
+                  <div key={idx} className="flex flex-col gap-1.5">
+                    <div className="h-4 w-24 rounded bg-skeleton-base motion-safe:animate-pulse motion-reduce:animate-none" />
+                    <div className="h-11 w-full rounded-xl bg-skeleton-base motion-safe:animate-pulse motion-reduce:animate-none" />
+                  </div>
+                ))}
+              </div>
+              <div className="h-11 w-full shrink-0 rounded-xl bg-skeleton-base motion-safe:animate-pulse motion-reduce:animate-none sm:w-28" />
+            </div>
+          ) : (
+            <>
+              <div className="grid flex-1 grid-cols-1 items-end gap-3 sm:grid-cols-3">
+                <div className="flex flex-col gap-1">
+                  <Select
+                    id={`${tabListId}-filter-roadmap`}
+                    label="Roadmap"
+                    aria-label="Filter by roadmap"
+                    value={selectedRoadmapId}
+                    disabled={isLoadingRoadmaps}
+                    onChange={(e) => setSelectedRoadmapId(e.target.value)}
+                    className="!h-11 !rounded-xl"
+                    options={[
+                      { value: '', label: 'Focused Roadmap (Default)' },
+                      ...roadmaps.map((rm) => ({
+                        value: rm.id,
+                        label: `${rm.role_name}${rm.is_focus ? ' (Focus)' : ''}`,
+                      })),
+                    ]}
+                  />
+                  {roadmapsLoadFailed && (
+                    <div
+                      role="status"
+                      className="flex items-center justify-between gap-2 text-xs text-amber-700 dark:text-amber-300"
+                    >
+                      <span>Couldn&apos;t load roadmap list.</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRoadmapsReloadTick((prev) => prev + 1)
+                        }
+                        className="shrink-0 cursor-pointer font-medium text-teal-700 underline underline-offset-2 hover:text-teal-800 dark:text-teal-300 dark:hover:text-teal-200"
+                      >
+                        Retry roadmaps
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <Select
+                  id={`${tabListId}-filter-career-level`}
+                  label="Career Level"
+                  aria-label="Filter by career level"
+                  value={selectedCareerLevel}
+                  onChange={(e) =>
+                    setSelectedCareerLevel(e.target.value as CareerLevel | '')
+                  }
+                  className="!h-11 !rounded-xl"
+                  options={[
+                    { value: '', label: 'All Target Levels' },
+                    { value: 'junior', label: 'Junior' },
+                    { value: 'mid', label: 'Mid-Level' },
+                    { value: 'senior', label: 'Senior' },
+                  ]}
+                />
+
+                <Select
+                  id={`${tabListId}-filter-mastery-state`}
+                  label="Mastery State"
+                  aria-label="Filter by mastery state"
+                  value={selectedLearningState}
+                  onChange={(e) =>
+                    setSelectedLearningState(
+                      e.target.value as LearningState | '',
+                    )
+                  }
+                  className="!h-11 !rounded-xl"
+                  options={[
+                    { value: '', label: 'All Mastery States' },
+                    { value: 'not_started', label: 'Not Started' },
+                    { value: 'learning', label: 'Learning' },
+                    { value: 'practicing', label: 'Practicing' },
+                    { value: 'proficient', label: 'Proficient' },
+                  ]}
+                />
+              </div>
+
+              <button
+                type="button"
+                disabled={!hasActiveFilters}
+                onClick={handleClearFilters}
+                className="inline-flex h-11 min-h-11 w-full shrink-0 cursor-pointer items-center justify-center self-end whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:cursor-not-allowed disabled:border-slate-200/80 disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:disabled:border-slate-800 dark:disabled:bg-slate-900/50 dark:disabled:text-slate-500 sm:w-auto"
+              >
+                <span>Clear Filters</span>
+              </button>
+            </>
           )}
         </section>
       )}

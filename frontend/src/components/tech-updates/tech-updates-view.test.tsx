@@ -13,10 +13,12 @@ const {
   mockListTechnologyUpdates,
   mockGetTechnologyUpdate,
   mockMarkTechnologyUpdateViewed,
+  mockSubmitRating,
 } = vi.hoisted(() => ({
   mockListTechnologyUpdates: vi.fn(),
   mockGetTechnologyUpdate: vi.fn(),
   mockMarkTechnologyUpdateViewed: vi.fn(),
+  mockSubmitRating: vi.fn(),
 }));
 
 vi.mock('@/lib/api/client', async (importOriginal) => {
@@ -26,6 +28,7 @@ vi.mock('@/lib/api/client', async (importOriginal) => {
     listTechnologyUpdates: mockListTechnologyUpdates,
     getTechnologyUpdate: mockGetTechnologyUpdate,
     markTechnologyUpdateViewed: mockMarkTechnologyUpdateViewed,
+    submitRating: mockSubmitRating,
   };
 });
 
@@ -633,5 +636,73 @@ describe('TechUpdatesView (Screen 21 /tech-updates)', () => {
     expect(document.activeElement).toBe(
       within(filterGroup).getByRole('button', { name: /Unread/i }),
     );
+  });
+
+  it('enforces R34 on Screen 21: exposes technology_update 1..5 star rating on cards and detail dialog with ZERO report buttons', async () => {
+    mockListTechnologyUpdates.mockResolvedValueOnce({
+      data: {
+        today_state: 'available',
+        generation_pending: false,
+        message: null,
+        items: [UPDATE_1],
+      },
+      meta: { limit: 20, next_cursor: null },
+    });
+    mockGetTechnologyUpdate.mockResolvedValueOnce(UPDATE_1);
+    mockSubmitRating.mockResolvedValueOnce({
+      target_type: 'technology_update',
+      target_id: UPDATE_1.id,
+      score: 5,
+    });
+
+    render(
+      <TechUpdatesView accessToken="tok-ok" technologyUpdateEnabled={true} />,
+    );
+
+    const card = await screen.findByRole('article', { name: UPDATE_1.title });
+
+    // Strictly ZERO report controls on card
+    expect(
+      screen.queryByRole('button', { name: /report issue/i }),
+    ).not.toBeInTheDocument();
+
+    const ratingGroup = within(card).getByRole('radiogroup', {
+      name: 'Rate this content',
+    });
+    fireEvent.click(within(ratingGroup).getByRole('radio', { name: '5 stars' }));
+    fireEvent.click(
+      within(card).getByRole('button', { name: /Submit rating/i }),
+    );
+
+    await waitFor(() => {
+      expect(mockSubmitRating).toHaveBeenCalledWith(
+        'tok-ok',
+        {
+          target_type: 'technology_update',
+          target_id: UPDATE_1.id,
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
+    expect(await within(card).findByTestId('ai-feedback-score')).toHaveTextContent(
+      '(5)',
+    );
+    expect(screen.queryByText('Saved (5/5)')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('toast-container')).toHaveTextContent(
+      'Rating saved',
+    );
+
+    // Open detail inspection modal -> synchronized (5) rating and still ZERO report buttons
+    fireEvent.click(
+      within(card).getByRole('button', { name: /View Details/i }),
+    );
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('ai-feedback-score')).toHaveTextContent(
+      '(5)',
+    );
+    expect(
+      within(dialog).queryByRole('button', { name: /report issue/i }),
+    ).not.toBeInTheDocument();
   });
 });

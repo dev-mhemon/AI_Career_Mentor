@@ -15,6 +15,7 @@ import {
   type RejectRoadmapMergeResultDTO,
 } from '@/lib/api/client';
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -757,8 +758,22 @@ export function RoadmapDiffViewer({
         </Alert>
       )}
 
+      {/* R34 Screen 15 Merge Proposal view: rating_1_5 on roadmap_merge ONLY */}
+      <div
+        className={cn(
+          'border-t border-border-subtle',
+          isPending && 'border-b',
+        )}
+      >
+        <AIFeedbackComponent
+          accessToken={accessToken}
+          ratingTarget={{ type: 'roadmap_merge', id: merge.id }}
+          compact
+        />
+      </div>
+
       {isPending && (
-        <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border-subtle pt-4">
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
           <Button
             type="button"
             variant="secondary"

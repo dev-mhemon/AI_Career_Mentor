@@ -10,6 +10,7 @@ import {
   ApiError,
   acceptRoadmapMerge,
   rejectRoadmapMerge,
+  submitRating,
   type MergeProposalDTO,
 } from '@/lib/api/client';
 import { RoadmapDiffViewer } from '@/components/roadmap/roadmap-diff-viewer';
@@ -22,6 +23,7 @@ vi.mock('@/lib/api/client', async () => {
     ...actual,
     acceptRoadmapMerge: vi.fn(),
     rejectRoadmapMerge: vi.fn(),
+    submitRating: vi.fn(),
   };
 });
 
@@ -352,5 +354,41 @@ describe('RoadmapDiffViewer (Component 17)', () => {
     expect(
       screen.queryByRole('button', { name: 'Reject Proposal' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('exposes R34 roadmap_merge 1..5 rating ONLY inside RoadmapDiffViewer (zero report buttons)', async () => {
+    vi.mocked(submitRating).mockResolvedValueOnce({
+      target_type: 'roadmap_merge',
+      target_id: 'merge-1',
+      score: 5,
+    });
+
+    render(
+      <RoadmapDiffViewer
+        accessToken="tok-1"
+        roadmapId="rm-1"
+        merge={makeMerge({ id: 'merge-1' })}
+        currentVersionNo={2}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: /report issue/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+
+    await waitFor(() => {
+      expect(submitRating).toHaveBeenCalledWith(
+        'tok-1',
+        {
+          target_type: 'roadmap_merge',
+          target_id: 'merge-1',
+          score: 5,
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
   });
 });
