@@ -750,7 +750,9 @@ export async function loginAction(
     } catch {
       // Best effort cookie cleanup on successful authentication
     }
-    if (session.user.status === 'suspended') {
+    if (session.user.role === 'ADMIN' && session.user.status === 'active') {
+      destination = '/admin';
+    } else if (session.user.status === 'suspended') {
       destination = '/settings';
     } else if (session.next_step === 'profile_setup') {
       destination = '/onboarding';
@@ -1030,7 +1032,9 @@ export async function verifyOtpAction(
     });
     if (error) return { error: 'Failed to establish session.' };
     await clearVerificationContext();
-    if (session.user.status === 'suspended') {
+    if (session.user.role === 'ADMIN' && session.user.status === 'active') {
+      destination = '/admin';
+    } else if (session.user.status === 'suspended') {
       destination = '/settings';
     } else if (verifiedContext === 'secondary_contact') {
       destination = '/settings?verified=contact';

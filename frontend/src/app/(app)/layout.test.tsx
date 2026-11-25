@@ -3,17 +3,26 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { AuthenticatedFastShellSession } from '@/lib/auth/shell-user';
 
 let mockPathname = '/dashboard';
+let mockHeaderPathname: string | null = null;
 
-const { mockRedirect, mockRequireFastSessionShell } = vi.hoisted(() => ({
+const { mockRedirect, mockReplace, mockRequireFastSessionShell } = vi.hoisted(() => ({
   mockRedirect: vi.fn((path: string): never => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
+  mockReplace: vi.fn(),
   mockRequireFastSessionShell: vi.fn<() => Promise<AuthenticatedFastShellSession>>(),
+}));
+
+vi.mock('next/headers', () => ({
+  headers: async () => ({
+    get: (name: string) => (name === 'x-pathname' ? mockHeaderPathname : null),
+  }),
 }));
 
 vi.mock('next/navigation', () => ({
   redirect: mockRedirect,
   usePathname: () => mockPathname,
+  useRouter: () => ({ replace: mockReplace }),
 }));
 
 vi.mock('@/lib/auth/actions', () => ({
@@ -30,6 +39,7 @@ import { AppShellSync } from '@/components/ui/app-shell-context';
 describe('AuthenticatedAppLayout', () => {
   beforeEach(() => {
     mockPathname = '/dashboard';
+    mockHeaderPathname = null;
     vi.clearAllMocks();
   });
 
@@ -49,6 +59,8 @@ describe('AuthenticatedAppLayout', () => {
     mockRequireFastSessionShell.mockResolvedValue({
       unauthenticated: false,
       variant: 'authenticated',
+      role: 'USER',
+      isAdmin: false,
       user: {
         fullName: 'Mehedi Hasan',
         currentRole: null,
@@ -131,6 +143,8 @@ describe('AuthenticatedAppLayout', () => {
     mockRequireFastSessionShell.mockResolvedValue({
       unauthenticated: false,
       variant: 'authenticated',
+      role: 'USER',
+      isAdmin: false,
       user: {
         fullName: 'Mosad',
         currentRole: 'Fronted developer',
@@ -157,5 +171,59 @@ describe('AuthenticatedAppLayout', () => {
     expect(trigger).toHaveTextContent('MO');
     expect(trigger).toHaveTextContent('Fronted developer');
     expect(trigger).not.toHaveTextContent('Learner');
+  });
+
+  it('redirects verified ADMIN sessions away from learner routes directly to /admin', async () => {
+    mockHeaderPathname = '/dashboard';
+    mockRequireFastSessionShell.mockResolvedValue({
+      unauthenticated: false,
+      variant: 'admin',
+      role: 'ADMIN',
+      isAdmin: true,
+      user: {
+        fullName: 'Platform Admin',
+        currentRole: null,
+        email: 'admin@mentor.com',
+        phone: null,
+      },
+    });
+
+    await expect(
+      AuthenticatedAppLayout({ children: <div>Learner Dashboard</div> }),
+    ).rejects.toThrow('NEXT_REDIRECT:/admin');
+    expect(mockRedirect).toHaveBeenCalledWith('/admin');
+  });
+
+  it('allows verified ADMIN sessions on /admin routes and renders admin-only sidebar', async () => {
+    mockPathname = '/admin';
+    mockHeaderPathname = '/admin';
+    mockRequireFastSessionShell.mockResolvedValue({
+      unauthenticated: false,
+      variant: 'admin',
+      role: 'ADMIN',
+      isAdmin: true,
+      user: {
+        fullName: 'Platform Admin',
+        currentRole: null,
+        email: 'admin@mentor.com',
+        phone: null,
+      },
+    });
+
+    const tree = await AuthenticatedAppLayout({
+      children: <div>Admin Console Child</div>,
+    });
+    render(tree);
+
+    const sidebar = screen.getByRole('complementary', { name: 'Primary sidebar' });
+    expect(within(sidebar).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/admin');
+    expect(within(sidebar).getByRole('link', { name: 'Users' })).toBeInTheDocument();
+    expect(within(sidebar).getByRole('link', { name: 'Feature Controls' })).toBeInTheDocument();
+    expect(within(sidebar).getByRole('link', { name: 'Audit Logs' })).toHaveAttribute(
+      'href',
+      '/admin/audit-logs',
+    );
+    expect(within(sidebar).queryByRole('link', { name: 'Daily Plan' })).not.toBeInTheDocument();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

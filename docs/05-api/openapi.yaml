@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence & Quality Feedback Contract (M12)
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence, Quality Feedback & Admin Operations Contract (M13)
   version: 0.6.0
   description: >-
-    Synchronized through M12-01, 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
-    6e5e108671bf24c1ed6466f4df64670875c3d2c3. Canonical auth operations (EP-A01..EP-A13), account deletion and
+    Synchronized through M13-01 (merged with M12-01), 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
+    f7b6aea43a47c22e3352655be0b6a536691f69c5. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
@@ -14,8 +14,9 @@ info:
     One-Step Undo APIs (EP-R01..EP-R15), M07 Learning APIs (EP-L01..EP-L07), M08 Quiz, AI Practice Review, and
     Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that EP-G04 EvidenceService.record is
     strictly internal-only with no HTTP route), M10 Contextual AI Mentor APIs (EP-M01..EP-M04, R08, R11, R15, N02),
-    M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01), and M12 Quality Feedback &
-    Shared-Content Safety APIs (EP-F01..EP-F02, R11, R24, R26, R27, R34) are documented here.
+    M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01), M12 Quality Feedback &
+    Shared-Content Safety APIs (EP-F01..EP-F02, R11, R24, R26, R27, R34), and M13 Admin Operations, Feature
+    Controls & Usage Telemetry APIs (EP-AD01..EP-AD08, R10, R11, R16, R30) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -45,7 +46,9 @@ tags:
     description: C05 14.11 Personalized Daily Technology Intelligence API (EP-T01..EP-T03); default-OFF read gate (technology_update), R25 local-date today_state resolution, and R24 foreground view tracking.
   - name: Feedback
     description: C05 14.12 Quality Feedback & Shared-Content Safety API (EP-F01..EP-F02); R34 target-specific rating upsert and append-only report submission with R27 READ COMMITTED lock-before-insert threshold concurrency.
-x-source: API-Specification.md sections 13, 13.5-6, 14.1-13, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R11/R12/R13/R14/R15/R17/R18/R24/R25/R26/R27/R28/R29/R31/R34/R35/N01/N02
+  - name: Admin
+    description: C05 14.14 Admin API (EP-AD01..EP-AD08); server-verified AZ-ADMIN (public.admin_users, zero JWT-role trust), user management, global & per-user feature controls (R10), immutable append-only audit logs, and aggregate-only usage/cost series (R30, PRD §50–51).
+x-source: API-Specification.md sections 13, 13.5-6, 14.1-14, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R10/R11/R12/R13/R14/R15/R16/R17/R18/R24/R25/R26/R27/R28/R29/R30/R31/R34/R35/N01/N02
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -6474,6 +6477,544 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /admin/users:
+    get:
+      operationId: EP-AD01
+      tags:
+        - Admin
+      summary: List and search non-admin learner accounts
+      description: >-
+        C05 EP-AD01 (GET /api/v1/admin/users). Server-verified AZ-ADMIN (public.admin_users role = 'platform_admin'
+        and users.status = 'active'; zero JWT-role trust per PRD §50). Gate: none. Excludes platform administrator
+        accounts via NOT EXISTS (public.admin_users). Supports escaped ILIKE search across email/phone or exact
+        UUID lookup when q is a UUID, optional status filter, and microsecond-precision base64url keyset cursor
+        pagination ordered (created_at DESC, id DESC). Exposes full email/phone alongside contact_masked strictly
+        behind AZ-ADMIN with zero private learner content (PRD §51 / R11).
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §50–51; R11
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: q
+          in: query
+          required: false
+          description: Optional email/phone fragment or exact user UUID (max 255 chars; never logged).
+          schema:
+            type: string
+            maxLength: 255
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AdminUserStatus'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-AD01 success; returns AdminUserSummaryDTO[] with top-level PageMetaDTO meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAdminUsersResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED (invalid status, limit, q, or malformed cursor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /admin/users/{id}:
+    get:
+      operationId: EP-AD02
+      tags:
+        - Admin
+      summary: Get aggregate-only user detail and 7-feature effective access matrix
+      description: >-
+        C05 EP-AD02 (GET /api/v1/admin/users/{id}). Server-verified AZ-ADMIN. Gate: none. Returns full email/phone
+        alongside contact_masked, the canonical 7-feature effective access matrix (account active AND global_enabled
+        AND COALESCE(user_override, default_user_enabled)), and aggregate counts only (roadmaps, quizzes_submitted,
+        mentor_messages count, ai_requests). Never returns private mentor text, summaries, AI context, or raw quiz
+        answers (PRD §51 / R11).
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §7, §50–51; R10, R11
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: C05 EP-AD02 success; returns AdminUserDetailDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserDetailDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT (malformed UUID path parameter)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+    patch:
+      operationId: EP-AD03
+      tags:
+        - Admin
+      summary: Suspend or reactivate a non-admin user account with mandatory audit reason
+      description: >-
+        C05 EP-AD03 (PATCH /api/v1/admin/users/{id}). Server-verified AZ-ADMIN. Gate: none. Acquires deterministic
+        ascending UUID advisory/row locks across actor and target, rejects admin targets with 403 CANNOT_MODIFY_ADMIN,
+        rejects no-op status changes with 409 STATUS_UNCHANGED, maintains ck_users_suspension_consistent columns
+        (status_reason, suspended_at, suspended_by), preserves all learner data (suspension is not deletion), and
+        writes an immutable public.admin_audit_logs row atomically in the same transaction.
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §7, §50–51; R10, R11
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserStatusDTO'
+      responses:
+        '200':
+          description: C05 EP-AD03 success; returns updated AdminUserDetailDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserDetailDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT, CANNOT_MODIFY_ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '409':
+          description: STATUS_UNCHANGED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED (invalid status or reason outside 3..300 Unicode code points)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /admin/features:
+    get:
+      operationId: EP-AD04
+      tags:
+        - Admin
+      summary: List all 7 global feature controls in canonical deterministic order
+      description: >-
+        C05 EP-AD04 (GET /api/v1/admin/features). Server-verified AZ-ADMIN. Gate: none. Returns all 7
+        public.feature_controls rows ordered canonically (roadmap_generator, daily_plan, quiz_practice,
+        ai_practice_review, progress_tracking, ai_mentor, technology_update).
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §7, §50; R10
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: C05 EP-AD04 success; returns FeatureControlDTO[] envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureControlListDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+    patch:
+      operationId: EP-AD05
+      tags:
+        - Admin
+      summary: Enable or disable a global feature control atomically with audit log
+      description: >-
+        C05 EP-AD05 (PATCH /api/v1/admin/features). Server-verified AZ-ADMIN. Gate: none. Updates
+        public.feature_controls (enabled, updated_by, updated_at = now()) without deleting any existing user data
+        (PRD §7 / R10) and writes a feature.global_update audit entry in the same transaction. Unknown feature_key
+        values return 422 UNKNOWN_FEATURE.
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §7, §50; R10
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureToggleDTO'
+      responses:
+        '200':
+          description: C05 EP-AD05 success; returns updated FeatureControlDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureControlDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: UNKNOWN_FEATURE, VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /admin/users/{id}/features:
+    patch:
+      operationId: EP-AD06
+      tags:
+        - Admin
+      summary: Set or clear (inherit) a per-user feature access override
+      description: >-
+        C05 EP-AD06 (PATCH /api/v1/admin/users/{id}/features). Server-verified AZ-ADMIN. Gate: none. Upserts
+        public.user_access_overrides when enabled is true/false or deletes the override row when enabled is null
+        (reverting to feature default_user_enabled, where technology_update defaults OFF). Per-user overrides never
+        beat global OFF or account suspension (PRD §7 / R10). Writes feature.user_override_set or
+        feature.user_override_clear atomically to public.admin_audit_logs.
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §7, §50; R10
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserFeatureToggleDTO'
+      responses:
+        '200':
+          description: C05 EP-AD06 success; returns updated AdminUserDetailDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserDetailDTOEnvelope'
+        '400':
+          description: INVALID_FORMAT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: UNKNOWN_FEATURE, VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /admin/audit-logs:
+    get:
+      operationId: EP-AD07
+      tags:
+        - Admin
+      summary: List immutable admin audit logs with filters and keyset cursor pagination
+      description: >-
+        C05 EP-AD07 (GET /api/v1/admin/audit-logs). Server-verified AZ-ADMIN. Gate: none. Read-only access to
+        tamper-proof public.admin_audit_logs (trg_admin_audit_logs_append_only) ordered (created_at DESC, id DESC)
+        with microsecond-precision base64url keyset cursor pagination and strict ISO-8601 from/to validation
+        (from <= to). Zero private learner content (PRD §51 / R11).
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §50–51; R11
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: actor_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: target_user_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 120
+        - name: from
+          in: query
+          required: false
+          description: Inclusive ISO-8601 UTC timestamp lower bound (must be <= to).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive ISO-8601 UTC timestamp upper bound.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: C05 EP-AD07 success; returns AuditLogDTO[] with top-level PageMetaDTO meta.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAdminAuditLogsResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED (invalid UUIDs, timestamps, from > to, limit, or cursor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /admin/usage:
+    get:
+      operationId: EP-AD08
+      tags:
+        - Admin
+      summary: Get aggregate platform usage counts and AI cost telemetry series (R30)
+      description: >-
+        C05 EP-AD08 (GET /api/v1/admin/usage). Server-verified AZ-ADMIN. Gate: none. Delegates to
+        private.admin_usage_summary(p_from, p_to) returning aggregate counts and AI cost only (PRD §51 / §55).
+        Enforces R30 bounds: default range is the last 30 inclusive UTC dates including today UTC, strict calendar
+        YYYY-MM-DD validation, from <= to, and max 366 inclusive UTC days. Zero-fills every UTC day bucket for
+        group_by=day and returns explicit null for unavailable per-dimension fields (failures, fallbacks_used,
+        input_units, output_units) when group_by=feature or group_by=provider. Retained AI log window is up to
+        30 days.
+      x-source: API-Specification.md sections 14.14, 15.11; PRD §50–51, §55; R30
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-ADMIN
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: from
+          in: query
+          required: false
+          description: Inclusive UTC start date (YYYY-MM-DD); defaults to today UTC minus 29 days.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Inclusive UTC end date (YYYY-MM-DD); defaults to today UTC. Max 366 inclusive days from `from`.
+          schema:
+            type: string
+            format: date
+        - name: group_by
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AdminUsageGroupBy'
+      responses:
+        '200':
+          description: C05 EP-AD08 success; returns UsageSummaryDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageSummaryDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ADMIN_REQUIRED, ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED (invalid calendar date, from > to, range > 366 inclusive UTC days, or invalid group_by)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -10402,3 +10943,495 @@ components:
           enum: [true]
         data:
           $ref: '#/components/schemas/ReportResponseDTO'
+    AdminUserStatus:
+      type: string
+      enum: [active, suspended]
+    AdminFeatureKey:
+      type: string
+      enum:
+        - roadmap_generator
+        - daily_plan
+        - quiz_practice
+        - ai_practice_review
+        - progress_tracking
+        - ai_mentor
+        - technology_update
+    AdminUsageGroupBy:
+      type: string
+      enum: [day, feature, provider]
+      default: day
+    AdminUserSummaryDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - phone
+        - contact_masked
+        - status
+        - created_at
+        - last_active_at
+        - roadmap_count
+        - technology_update_enabled
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          nullable: true
+          description: Full learner email exposed strictly behind server-verified AZ-ADMIN (never logged per R11).
+        phone:
+          type: string
+          nullable: true
+          description: Full learner phone exposed strictly behind server-verified AZ-ADMIN (never logged per R11).
+        contact_masked:
+          type: string
+        status:
+          $ref: '#/components/schemas/AdminUserStatus'
+        created_at:
+          type: string
+          format: date-time
+        last_active_at:
+          type: string
+          format: date-time
+          nullable: true
+        roadmap_count:
+          type: integer
+          minimum: 0
+        technology_update_enabled:
+          type: boolean
+    AdminUserFeatureAccessDTO:
+      type: object
+      additionalProperties: false
+      required: [feature_key, global_enabled, user_override, effective]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/AdminFeatureKey'
+        global_enabled:
+          type: boolean
+        user_override:
+          type: boolean
+          nullable: true
+        effective:
+          type: boolean
+    AdminUserAggregateCountsDTO:
+      type: object
+      additionalProperties: false
+      required: [roadmaps, quizzes_submitted, mentor_messages, ai_requests]
+      properties:
+        roadmaps:
+          type: integer
+          minimum: 0
+        quizzes_submitted:
+          type: integer
+          minimum: 0
+        mentor_messages:
+          type: integer
+          minimum: 0
+        ai_requests:
+          type: integer
+          minimum: 0
+    AdminUserDetailDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - phone
+        - contact_masked
+        - status
+        - created_at
+        - last_active_at
+        - roadmap_count
+        - technology_update_enabled
+        - feature_access
+        - counts
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          nullable: true
+          description: Full learner email exposed strictly behind server-verified AZ-ADMIN (never logged per R11).
+        phone:
+          type: string
+          nullable: true
+          description: Full learner phone exposed strictly behind server-verified AZ-ADMIN (never logged per R11).
+        contact_masked:
+          type: string
+        status:
+          $ref: '#/components/schemas/AdminUserStatus'
+        created_at:
+          type: string
+          format: date-time
+        last_active_at:
+          type: string
+          format: date-time
+          nullable: true
+        roadmap_count:
+          type: integer
+          minimum: 0
+        technology_update_enabled:
+          type: boolean
+        feature_access:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserFeatureAccessDTO'
+        counts:
+          $ref: '#/components/schemas/AdminUserAggregateCountsDTO'
+    AdminUserStatusDTO:
+      type: object
+      additionalProperties: false
+      required: [status, reason]
+      properties:
+        status:
+          $ref: '#/components/schemas/AdminUserStatus'
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 300
+          description: Mandatory audit reason (3..300 Unicode code points; no NUL or unpaired surrogates).
+    FeatureControlDTO:
+      type: object
+      additionalProperties: false
+      required: [feature_key, enabled, updated_at, updated_by]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/AdminFeatureKey'
+        enabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+          format: uuid
+          nullable: true
+    FeatureToggleDTO:
+      type: object
+      additionalProperties: false
+      required: [feature_key, enabled]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/AdminFeatureKey'
+        enabled:
+          type: boolean
+    UserFeatureToggleDTO:
+      type: object
+      additionalProperties: false
+      required: [feature_key, enabled]
+      properties:
+        feature_key:
+          $ref: '#/components/schemas/AdminFeatureKey'
+        enabled:
+          type: boolean
+          nullable: true
+          description: Boolean override or explicit null to delete user_access_overrides row and inherit default.
+    AuditLogDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - actor_id
+        - action
+        - target_type
+        - target_id
+        - before
+        - after
+        - request_id
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor_id:
+          type: string
+          format: uuid
+          nullable: true
+        action:
+          type: string
+          maxLength: 120
+        target_type:
+          type: string
+          nullable: true
+        target_id:
+          type: string
+          format: uuid
+          nullable: true
+        before:
+          type: object
+          additionalProperties: true
+          nullable: true
+        after:
+          type: object
+          additionalProperties: true
+          nullable: true
+        request_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    UsageSeriesBucketDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - requests
+        - estimated_cost_usd
+        - failures
+        - fallbacks_used
+        - input_units
+        - output_units
+      properties:
+        key:
+          type: string
+        requests:
+          type: integer
+          minimum: 0
+        estimated_cost_usd:
+          type: number
+          minimum: 0
+        failures:
+          type: integer
+          minimum: 0
+          nullable: true
+        fallbacks_used:
+          type: integer
+          minimum: 0
+          nullable: true
+        input_units:
+          type: integer
+          minimum: 0
+          nullable: true
+        output_units:
+          type: integer
+          minimum: 0
+          nullable: true
+    UsageByDayDTO:
+      type: object
+      additionalProperties: false
+      required:
+        - day
+        - requests
+        - failures
+        - fallbacks_used
+        - input_units
+        - output_units
+        - estimated_cost_usd
+      properties:
+        day:
+          type: string
+          format: date
+        requests:
+          type: integer
+          minimum: 0
+        failures:
+          type: integer
+          minimum: 0
+        fallbacks_used:
+          type: integer
+          minimum: 0
+        input_units:
+          type: integer
+          minimum: 0
+        output_units:
+          type: integer
+          minimum: 0
+        estimated_cost_usd:
+          type: number
+          minimum: 0
+    UsageByFeatureDTO:
+      type: object
+      additionalProperties: false
+      required: [feature_key, requests, estimated_cost_usd]
+      properties:
+        feature_key:
+          type: string
+        requests:
+          type: integer
+          minimum: 0
+        estimated_cost_usd:
+          type: number
+          minimum: 0
+    UsageByProviderDTO:
+      type: object
+      additionalProperties: false
+      required: [provider_id, requests, estimated_cost_usd]
+      properties:
+        provider_id:
+          type: string
+        requests:
+          type: integer
+          minimum: 0
+        estimated_cost_usd:
+          type: number
+          minimum: 0
+    UsageSummaryDTO:
+      type: object
+      additionalProperties: false
+      required: [range, series, users, counts, ai]
+      properties:
+        range:
+          type: object
+          required: [from, to]
+          properties:
+            from:
+              type: string
+              format: date
+            to:
+              type: string
+              format: date
+        series:
+          type: object
+          required: [group_by, buckets]
+          properties:
+            group_by:
+              $ref: '#/components/schemas/AdminUsageGroupBy'
+            buckets:
+              type: array
+              items:
+                $ref: '#/components/schemas/UsageSeriesBucketDTO'
+        users:
+          type: object
+          required: [total, active_last_7_days]
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            active_last_7_days:
+              type: integer
+              minimum: 0
+        counts:
+          type: object
+          required:
+            - roadmaps_locked
+            - quizzes_submitted
+            - mentor_messages
+            - technology_updates_generated
+          properties:
+            roadmaps_locked:
+              type: integer
+              minimum: 0
+            quizzes_submitted:
+              type: integer
+              minimum: 0
+            mentor_messages:
+              type: integer
+              minimum: 0
+            technology_updates_generated:
+              type: integer
+              minimum: 0
+        ai:
+          type: object
+          required:
+            - requests
+            - failures
+            - fallbacks_used
+            - usage_units
+            - estimated_cost_usd
+            - by_day
+            - by_feature
+            - by_provider
+          properties:
+            requests:
+              type: integer
+              minimum: 0
+            failures:
+              type: integer
+              minimum: 0
+            fallbacks_used:
+              type: integer
+              minimum: 0
+            usage_units:
+              type: object
+              required: [input, output]
+              properties:
+                input:
+                  type: integer
+                  minimum: 0
+                output:
+                  type: integer
+                  minimum: 0
+            estimated_cost_usd:
+              type: number
+              minimum: 0
+            by_day:
+              type: array
+              items:
+                $ref: '#/components/schemas/UsageByDayDTO'
+            by_feature:
+              type: array
+              items:
+                $ref: '#/components/schemas/UsageByFeatureDTO'
+            by_provider:
+              type: array
+              items:
+                $ref: '#/components/schemas/UsageByProviderDTO'
+    PaginatedAdminUsersResponseDTOEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserSummaryDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    AdminUserDetailDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/AdminUserDetailDTO'
+    FeatureControlListDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeatureControlDTO'
+    FeatureControlDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/FeatureControlDTO'
+    PaginatedAdminAuditLogsResponseDTOEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogDTO'
+        meta:
+          $ref: '#/components/schemas/PageMetaDTO'
+    UsageSummaryDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/UsageSummaryDTO'

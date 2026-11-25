@@ -7,6 +7,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AccountModule } from './account/account.module.js';
+import { AdminModule } from './admin/admin.module.js';
 import { AiModule } from './ai/ai.module.js';
 import { CareerModule } from './career/career.module.js';
 import { FeedbackModule } from './feedback/feedback.module.js';
@@ -58,6 +59,7 @@ import { TechnologyUpdateModule } from './technology-update/technology-update.mo
     MentorModule,
     TechnologyUpdateModule,
     FeedbackModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -139,6 +139,41 @@ const QUICK_SEARCH_ROUTES: readonly QuickSearchRoute[] = [
   },
 ];
 
+const ADMIN_QUICK_SEARCH_ROUTES: readonly QuickSearchRoute[] = [
+  {
+    href: '/admin',
+    label: 'Admin Dashboard',
+    keywords: 'admin dashboard usage telemetry cost audit logs',
+    restrictedWhenSuspended: true,
+    labelLower: 'admin dashboard',
+    hrefLower: '/admin',
+  },
+  {
+    href: '/admin/users',
+    label: 'Admin Users',
+    keywords: 'admin users suspend reactivate search accounts',
+    restrictedWhenSuspended: true,
+    labelLower: 'admin users',
+    hrefLower: '/admin/users',
+  },
+  {
+    href: '/admin/features',
+    label: 'Admin Feature Controls',
+    keywords: 'admin features flags overrides technology update',
+    restrictedWhenSuspended: true,
+    labelLower: 'admin feature controls',
+    hrefLower: '/admin/features',
+  },
+  {
+    href: '/admin/audit-logs',
+    label: 'Admin Audit Logs',
+    keywords: 'admin audit logs history actions trail',
+    restrictedWhenSuspended: true,
+    labelLower: 'admin audit logs',
+    hrefLower: '/admin/audit-logs',
+  },
+];
+
 function subscribe(cb: () => void) {
   window.addEventListener('online', cb);
   window.addEventListener('offline', cb);
@@ -328,6 +363,7 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
   cardRef,
   userMenuId,
   isOpen,
+  isAdmin,
   displayName,
   initials,
   roleLabel,
@@ -343,6 +379,7 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
   cardRef: RefObject<HTMLDivElement | null>;
   userMenuId: string;
   isOpen: boolean;
+  isAdmin: boolean;
   displayName: string;
   initials: string;
   roleLabel: string;
@@ -376,9 +413,11 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
           <span className="max-w-[150px] truncate text-sm font-semibold leading-tight text-slate-800 dark:text-slate-100">
             {displayName}
           </span>
-          <span className="max-w-[150px] truncate text-xs leading-tight text-slate-500 dark:text-slate-400">
-            {roleLabel}
-          </span>
+          {!isAdmin && (
+            <span className="max-w-[150px] truncate text-xs leading-tight text-slate-500 dark:text-slate-400">
+              {roleLabel}
+            </span>
+          )}
         </span>
         <ChevronDownIcon
           className={cn(
@@ -398,10 +437,10 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
           className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-slate-200/80 bg-white py-2 shadow-lg ring-1 ring-slate-900/5 dark:border-slate-800 dark:bg-slate-900"
         >
           <div className="border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:text-slate-400">
-            Welcome back 👋!
+            {isAdmin ? 'Admin' : 'Welcome back 👋!'}
           </div>
 
-          {!isSuspended && (
+          {!isAdmin && !isSuspended && (
             <Link
               href="/profile"
               role="menuitem"
@@ -413,20 +452,24 @@ const HeaderUserMenu = memo(function HeaderUserMenu({
             </Link>
           )}
 
-          <Link
-            href="/settings"
-            role="menuitem"
-            onClick={onClose}
-            className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/80 dark:hover:text-white cursor-pointer"
-          >
-            <SettingsIcon className="h-4 w-4 shrink-0 text-slate-400" />
-            <span>Account Settings</span>
-          </Link>
+          {!isAdmin && (
+            <Link
+              href="/settings"
+              role="menuitem"
+              onClick={onClose}
+              className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/80 dark:hover:text-white cursor-pointer"
+            >
+              <SettingsIcon className="h-4 w-4 shrink-0 text-slate-400" />
+              <span>Account Settings</span>
+            </Link>
+          )}
 
-          <div
-            role="separator"
-            className="my-1.5 border-t border-slate-100 dark:border-slate-800"
-          />
+          {!isAdmin && (
+            <div
+              role="separator"
+              className="my-1.5 border-t border-slate-100 dark:border-slate-800"
+            />
+          )}
 
           <form action={signOutAction} className="px-1">
             <button
@@ -524,10 +567,17 @@ export const Header = memo(function Header({
     [hasUser, userFullName, userCurrentRole, userEmail, userPhone],
   );
 
+  const isAdminVariant = variant === 'admin';
+  const effectiveDisplayName = isAdminVariant ? 'Admin' : displayName;
+  const effectiveInitials = isAdminVariant ? 'AD' : initials;
+  const effectiveRoleLabel = isAdminVariant ? '' : roleLabel;
+
   const filteredRoutes = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
-    return QUICK_SEARCH_ROUTES.filter((item) => {
+    const routes =
+      variant === 'admin' ? ADMIN_QUICK_SEARCH_ROUTES : QUICK_SEARCH_ROUTES;
+    return routes.filter((item) => {
       if (isSuspended && item.restrictedWhenSuspended) return false;
       return (
         item.labelLower.includes(q) ||
@@ -535,7 +585,7 @@ export const Header = memo(function Header({
         item.keywords.includes(q)
       );
     });
-  }, [searchQuery, isSuspended]);
+  }, [searchQuery, isSuspended, variant]);
 
   useEffect(() => {
     if (!isUserMenuOpen && !isNotificationsOpen && !isSearchOpen) {
@@ -728,18 +778,22 @@ export const Header = memo(function Header({
 
         {/* Right Utility & User Profile Area */}
         <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
-          <HeaderNotifications
-            containerRef={notificationsContainerRef}
-            triggerRef={notificationsTriggerRef}
-            notificationsId={notificationsId}
-            isOpen={isNotificationsOpen}
-            onToggle={handleToggleNotifications}
-          />
+          {!isAdminVariant && (
+            <>
+              <HeaderNotifications
+                containerRef={notificationsContainerRef}
+                triggerRef={notificationsTriggerRef}
+                notificationsId={notificationsId}
+                isOpen={isNotificationsOpen}
+                onToggle={handleToggleNotifications}
+              />
 
-          <span
-            aria-hidden="true"
-            className="h-6 w-px bg-slate-200 dark:bg-slate-800"
-          />
+              <span
+                aria-hidden="true"
+                className="h-6 w-px bg-slate-200 dark:bg-slate-800"
+              />
+            </>
+          )}
 
           {/* User Profile Trigger & Dropdown Menu */}
           <HeaderUserMenu
@@ -748,9 +802,10 @@ export const Header = memo(function Header({
             cardRef={userMenuCardRef}
             userMenuId={userMenuId}
             isOpen={isUserMenuOpen}
-            displayName={displayName}
-            initials={initials}
-            roleLabel={roleLabel}
+            isAdmin={isAdminVariant}
+            displayName={effectiveDisplayName}
+            initials={effectiveInitials}
+            roleLabel={effectiveRoleLabel}
             isSuspended={isSuspended}
             signOutAction={signOutAction}
             onToggle={handleToggleUserMenu}

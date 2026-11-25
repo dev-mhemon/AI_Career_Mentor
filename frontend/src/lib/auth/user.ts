@@ -247,3 +247,25 @@ export async function hasAuthenticatedAppSession(): Promise<boolean> {
   const result = await getAppSessionStateResult();
   return result.status === 'authenticated';
 }
+
+/**
+ * Resolves the post-authentication home route from server-verified EP-A13 (`GET /api/v1/auth/me`):
+ * - Active `ADMIN` -> `'/admin'` (strictly isolated admin workspace, bypassing learner routes)
+ * - Authenticated learner -> `'/dashboard'`
+ * - Unauthenticated or transient error -> `null`
+ */
+export async function getAuthenticatedHomeDestination(): Promise<
+  '/admin' | '/dashboard' | null
+> {
+  const result = await getAppSessionStateResult();
+  if (result.status !== 'authenticated') {
+    return null;
+  }
+  if (
+    result.data.user.role === 'ADMIN' &&
+    result.data.user.status === 'active'
+  ) {
+    return '/admin';
+  }
+  return '/dashboard';
+}

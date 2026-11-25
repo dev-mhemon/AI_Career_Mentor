@@ -319,6 +319,30 @@ const SAFE_CODE_ERRORS: Readonly<
     tone: 'info',
     retryable: false,
   },
+  ADMIN_REQUIRED: {
+    message:
+      'Administrator access is required to perform this action.',
+    tone: 'error',
+    retryable: false,
+  },
+  CANNOT_MODIFY_ADMIN: {
+    message:
+      'Administrator accounts cannot be suspended or modified from this screen.',
+    tone: 'warning',
+    retryable: false,
+  },
+  STATUS_UNCHANGED: {
+    message:
+      'This account is already in the requested status. Refresh to view the latest state.',
+    tone: 'info',
+    retryable: false,
+  },
+  UNKNOWN_FEATURE: {
+    message:
+      'The selected feature key is not recognized. Reload the feature list and try again.',
+    tone: 'warning',
+    retryable: false,
+  },
 };
 
 /**
