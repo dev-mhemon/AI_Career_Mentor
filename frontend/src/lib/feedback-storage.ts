@@ -54,6 +54,7 @@ export type SaveStoredRatingResult = {
 const snapshotCache = new Map<string, CachedSnapshot>();
 const memoryOverlay = new Map<string, StoredFeedbackEntry>();
 const keyListeners = new Map<string, Set<() => void>>();
+const ratingSubmissionChains = new Map<string, Promise<void>>();
 let nextRatingWriteSeq = 0;
 const latestAcceptedRatingWriteSeq = new Map<string, number>();
 
@@ -288,6 +289,37 @@ function subscribeKey(key: string | null, listener: () => void): () => void {
 export function beginRatingWrite(): number {
   nextRatingWriteSeq += 1;
   return nextRatingWriteSeq;
+}
+
+/**
+ * Serializes overlapping `EP-F01` rating requests targeting the same
+ * `(userScope, targetType, targetId)` in client submission order so a newer
+ * request waits for the prior in-flight POST to settle before sending, ensuring
+ * server state and local persisted feedback always converge on the final submission.
+ */
+export function enqueueSerializedRatingWrite<T>(
+  accessToken: string,
+  targetType: RatingTarget,
+  targetId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const key = buildFeedbackStorageKey(accessToken, targetType, targetId);
+  if (!key) {
+    return task();
+  }
+  const previous = ratingSubmissionChains.get(key);
+  const resultPromise = previous ? previous.then(() => task()) : task();
+  const tail = resultPromise.then(
+    () => undefined,
+    () => undefined,
+  );
+  ratingSubmissionChains.set(key, tail);
+  tail.finally(() => {
+    if (ratingSubmissionChains.get(key) === tail) {
+      ratingSubmissionChains.delete(key);
+    }
+  });
+  return resultPromise;
 }
 
 export function saveStoredRating(

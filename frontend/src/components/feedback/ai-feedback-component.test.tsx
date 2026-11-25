@@ -16,7 +16,11 @@ import {
   type RatingResponseDTO,
   type ReportResponseDTO,
 } from '@/lib/api/client';
-import { buildFeedbackStorageKey } from '@/lib/feedback-storage';
+import {
+  beginRatingWrite,
+  buildFeedbackStorageKey,
+  saveStoredRating,
+} from '@/lib/feedback-storage';
 import { AIFeedbackComponent } from './ai-feedback-component';
 
 vi.mock('@/lib/api/client', async (importOriginal) => {
@@ -802,14 +806,14 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     ).not.toBeDisabled();
     view3.unmount();
 
-    // 4. Delayed older rating (2 stars) arriving AFTER newer rating (5 stars) across sibling instances MUST NOT overwrite 5
+    // 4. Overlapping sibling ratings serialize in client submission order (2 then 5) so server & store converge on 5
     const seqJwt1 = makeFakeJwt('seq-user', 's1');
     const seqJwt2 = makeFakeJwt('seq-user', 's2');
-    let resolveOld2!: (res: RatingResponseDTO) => void;
+    let resolveFirst2!: (res: RatingResponseDTO) => void;
     vi.mocked(submitRating)
       .mockReturnValueOnce(
         new Promise((resolve) => {
-          resolveOld2 = resolve;
+          resolveFirst2 = resolve;
         }),
       )
       .mockResolvedValueOnce({
@@ -837,29 +841,42 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     const seqA = screen.getByTestId('seq-a');
     const seqB = screen.getByTestId('seq-b');
 
+    const callsBefore = vi.mocked(submitRating).mock.calls.length;
+
     fireEvent.click(within(seqA).getByRole('radio', { name: '2 stars' }));
     fireEvent.click(
       within(seqA).getByRole('button', { name: /Submit rating/i }),
     );
+    expect(vi.mocked(submitRating).mock.calls.length).toBe(callsBefore + 1);
 
-    // Newer sibling submits 5 stars (completes FIRST)
+    // Sibling B submits 5 stars while A is still in flight -> queued behind A so server never sees out-of-order 5-then-2
     fireEvent.click(within(seqB).getByRole('radio', { name: '5 stars' }));
     fireEvent.click(
       within(seqB).getByRole('button', { name: /Submit rating/i }),
     );
-    expect(
-      await within(seqB).findByTestId('ai-feedback-score'),
-    ).toHaveTextContent('(5)');
+    expect(vi.mocked(submitRating).mock.calls.length).toBe(callsBefore + 1);
 
-    // Delayed 2-star response settles LAST -> storage MUST keep 5 stars
+    // First request (2) settles -> queued second request (5) dispatches immediately and commits last
     await act(async () => {
-      resolveOld2({
+      resolveFirst2({
         target_type: 'topic_content',
         target_id: 'top-seq',
         score: 2,
       });
       await Promise.resolve();
     });
+    await waitFor(() => {
+      expect(vi.mocked(submitRating).mock.calls.length).toBe(callsBefore + 2);
+      expect(within(seqB).getByTestId('ai-feedback-score')).toHaveTextContent(
+        '(5)',
+      );
+    });
+    expect(
+      vi.mocked(submitRating).mock.calls[callsBefore]?.[1],
+    ).toMatchObject({ score: 2 });
+    expect(
+      vi.mocked(submitRating).mock.calls[callsBefore + 1]?.[1],
+    ).toMatchObject({ score: 5 });
     view4.unmount();
 
     const view4Remount = render(
@@ -1009,44 +1026,27 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     ).toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('clears pending state without toast or onRated when an outdated sibling rating response is superseded', async () => {
+  it('clears pending state without toast or onRated when an outdated rating response is superseded by a newer store write', async () => {
     let resolveSlowA!: (res: RatingResponseDTO) => void;
-    vi.mocked(submitRating)
-      .mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveSlowA = resolve;
-        }),
-      )
-      .mockResolvedValueOnce({
-        target_type: 'topic_content',
-        target_id: 'top-superseded',
-        score: 5,
-      });
+    vi.mocked(submitRating).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSlowA = resolve;
+      }),
+    );
 
     const onRatedA = vi.fn();
-    const onRatedB = vi.fn();
 
     render(
-      <div>
-        <div data-testid="sup-a">
-          <AIFeedbackComponent
-            accessToken="tok-sup"
-            ratingTarget={{ type: 'topic_content', id: 'top-superseded' }}
-            onRated={onRatedA}
-          />
-        </div>
-        <div data-testid="sup-b">
-          <AIFeedbackComponent
-            accessToken="tok-sup"
-            ratingTarget={{ type: 'topic_content', id: 'top-superseded' }}
-            onRated={onRatedB}
-          />
-        </div>
+      <div data-testid="sup-a">
+        <AIFeedbackComponent
+          accessToken="tok-sup"
+          ratingTarget={{ type: 'topic_content', id: 'top-superseded' }}
+          onRated={onRatedA}
+        />
       </div>,
     );
 
     const instA = screen.getByTestId('sup-a');
-    const instB = screen.getByTestId('sup-b');
 
     // Instance A starts slower 2-star submit (writeSeq N)
     fireEvent.click(within(instA).getByRole('radio', { name: '2 stars' }));
@@ -1054,16 +1054,20 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       within(instA).getByRole('button', { name: /Submit rating/i }),
     );
 
-    // Instance B starts & finishes newer 5-star submit (writeSeq N+1)
-    fireEvent.click(within(instB).getByRole('radio', { name: '5 stars' }));
-    fireEvent.click(
-      within(instB).getByRole('button', { name: /Submit rating/i }),
+    // A newer write (writeSeq N+1) commits 5 stars to the shared store before A resolves
+    act(() => {
+      const newerSeq = beginRatingWrite();
+      saveStoredRating(
+        'tok-sup',
+        'topic_content',
+        'top-superseded',
+        { score: 5 },
+        newerSeq,
+      );
+    });
+    expect(within(instA).getByTestId('ai-feedback-score')).toHaveTextContent(
+      '(5)',
     );
-    expect(
-      await within(instB).findByTestId('ai-feedback-score'),
-    ).toHaveTextContent('(5)');
-    expect(onRatedB).toHaveBeenCalledTimes(1);
-    expect(onRatedB).toHaveBeenCalledWith(5);
 
     // Now Instance A's older 2-star request resolves -> superseded!
     await act(async () => {
@@ -1542,7 +1546,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     );
     dualView.unmount();
 
-    // 2. Request A starts (seq 1) in sibling A, Request B starts (seq 2) in sibling B and FAILS -> A's 200 MUST still persist!
+    // 2. Request A starts (seq 1) in sibling A, Request B queues behind A and FAILS -> A's accepted 4-star rating stays persisted, and a failing earlier request never blocks a queued newer rating!
     const wmJwt1 = makeFakeJwt('wm-user', 'w1');
     const wmJwt2 = makeFakeJwt('wm-user', 'w2');
     let resolveA!: (res: RatingResponseDTO) => void;
@@ -1578,12 +1582,11 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     fireEvent.click(within(wmA).getByRole('radio', { name: '4 stars' }));
     fireEvent.click(within(wmA).getByRole('button', { name: /Submit rating/i }));
 
-    // Sibling B submits and fails
+    // Sibling B queues behind A
     fireEvent.click(within(wmB).getByRole('radio', { name: '2 stars' }));
     fireEvent.click(within(wmB).getByRole('button', { name: /Submit rating/i }));
-    expect(await within(wmB).findByRole('alert')).toBeInTheDocument();
 
-    // Now Request A succeeds -> B's failure MUST NOT have poisoned A's accepted write!
+    // Request A succeeds -> B runs next and fails -> A's accepted 4-star write MUST remain persisted!
     await act(async () => {
       resolveA({
         target_type: 'topic_content',
@@ -1592,6 +1595,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       });
       await Promise.resolve();
     });
+    expect(await within(wmB).findByRole('alert')).toBeInTheDocument();
     expect(within(wmA).getByTestId('ai-feedback-score')).toHaveTextContent(
       '(4)',
     );

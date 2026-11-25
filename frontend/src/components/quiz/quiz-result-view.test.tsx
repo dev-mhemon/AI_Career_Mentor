@@ -138,11 +138,13 @@ const SAMPLE_FEEDBACK: PracticeFeedbackDTO = {
 describe('QuizResultView & QuizCard R34 Feedback Integration (Screen 18)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     vi.mocked(getPracticeReviewFeedback).mockResolvedValue(SAMPLE_FEEDBACK);
   });
 
   afterEach(() => {
     cleanup();
+    window.localStorage.clear();
   });
 
   it('exposes report-only capabilities for quiz_question and practice_review (defaulting to unfair_scoring), hydrates alreadyReported, and renders ZERO star ratings (R34)', async () => {
@@ -255,5 +257,163 @@ describe('QuizResultView & QuizCard R34 Feedback Integration (Screen 18)', () =>
     expect(
       screen.getByRole('button', { name: /report issue/i }),
     ).toBeInTheDocument();
+  });
+
+  it('offers quiz_question report when free-response review is pending or failed and preserves alreadyReported from questionReportable', async () => {
+    vi.mocked(submitReport).mockResolvedValueOnce({
+      report_id: 'rep-pending-q',
+      status: 'received',
+    });
+
+    const pendingAndFailedQuestions: QuizQuestionDTO[] = [
+      {
+        question_id: 'q-fr-pending',
+        type: 'free_response',
+        difficulty: 'analysis',
+        prompt: 'Pending review prompt',
+        options: null,
+        response_hint: null,
+        max_length: 2000,
+        allow_i_dont_know: true,
+      },
+      {
+        question_id: 'q-fr-failed',
+        type: 'free_response',
+        difficulty: 'analysis',
+        prompt: 'Failed review prompt',
+        options: null,
+        response_hint: null,
+        max_length: 2000,
+        allow_i_dont_know: true,
+      },
+    ];
+
+    const pendingAndFailedResult: QuizResultDTO = {
+      attempt_id: 'att-pf',
+      status: 'submitted',
+      attempt_no: 1,
+      mcq_score: { correct: 0, total: 0 },
+      performance_level: null,
+      questions: [
+        {
+          question_id: 'q-fr-pending',
+          type: 'free_response',
+          user_answer: 'My pending answer',
+          explanation: null,
+          practice_review_id: 'rev-pending',
+          review_status: 'pending',
+          reportable: true,
+        },
+        {
+          question_id: 'q-fr-failed',
+          type: 'free_response',
+          user_answer: 'My failed answer',
+          explanation: null,
+          practice_review_id: 'rev-failed',
+          review_status: 'failed',
+          reportable: false,
+        },
+      ],
+      improvement_recommendations: [],
+      progress_change: null,
+      retry_available: false,
+    };
+
+    render(
+      <QuizResultView
+        accessToken="tok-quiz"
+        attemptId="att-pf"
+        questions={pendingAndFailedQuestions}
+        initialResult={pendingAndFailedResult}
+      />,
+    );
+
+    const pendingCard = document.querySelector(
+      '[data-review-id="rev-pending"]',
+    ) as HTMLElement;
+    const failedCard = document.querySelector(
+      '[data-review-id="rev-failed"]',
+    ) as HTMLElement;
+    expect(pendingCard).not.toBeNull();
+    expect(failedCard).not.toBeNull();
+
+    // Failed question with questionReportable=false shows disabled Reported badge
+    expect(
+      within(failedCard).getByText('Reported').closest('[aria-disabled]'),
+    ).toHaveAttribute('aria-disabled', 'true');
+
+    // Pending question submits quiz_question report (NOT practice_review)
+    fireEvent.click(
+      within(pendingCard).getByRole('button', { name: /report issue/i }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: /Report content issue/i,
+    });
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(submitReport).toHaveBeenCalledWith(
+        'tok-quiz',
+        {
+          target_type: 'quiz_question',
+          target_id: 'q-fr-pending',
+          reason: 'incorrect',
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
+  });
+
+  it('does not infer practice_review Reported state from question-level fr.reportable before PracticeFeedbackDTO loads', async () => {
+    let resolveFeedback!: (fb: PracticeFeedbackDTO) => void;
+    vi.mocked(getPracticeReviewFeedback).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFeedback = resolve;
+      }),
+    );
+
+    const reviewedWithReportedQuestion: QuizResultDTO = {
+      ...SAMPLE_RESULT,
+      questions: [
+        {
+          question_id: 'q-fr-1',
+          type: 'free_response',
+          user_answer: 'My reviewed answer',
+          explanation: 'Ref explanation',
+          practice_review_id: 'rev-1',
+          review_status: 'reviewed',
+          // Question itself was already reported, but practice_review feedback has NOT loaded yet
+          reportable: false,
+        },
+      ],
+    };
+
+    render(
+      <QuizResultView
+        accessToken="tok-quiz"
+        attemptId="att-1"
+        questions={[SAMPLE_QUESTIONS[2]!]}
+        initialResult={reviewedWithReportedQuestion}
+      />,
+    );
+
+    const reviewCard = document.querySelector(
+      '[data-review-id="rev-1"]',
+    ) as HTMLElement;
+    expect(reviewCard).not.toBeNull();
+
+    // While PracticeFeedbackDTO is still loading, MUST NOT render a false "Reported" badge from fr.reportable
+    expect(within(reviewCard).queryByText('Reported')).not.toBeInTheDocument();
+    expect(
+      within(reviewCard).queryByRole('button', { name: /report issue/i }),
+    ).not.toBeInTheDocument();
+
+    // Once PracticeFeedbackDTO resolves with reportable: true, practice_review report button appears enabled
+    resolveFeedback({ ...SAMPLE_FEEDBACK, reportable: true });
+    expect(
+      await within(reviewCard).findByRole('button', { name: /report issue/i }),
+    ).toBeEnabled();
+    expect(within(reviewCard).queryByText('Reported')).not.toBeInTheDocument();
   });
 });

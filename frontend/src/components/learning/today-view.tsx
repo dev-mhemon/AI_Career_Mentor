@@ -115,18 +115,24 @@ export function TodayView({
   const [seedTracker, setSeedTracker] = useState<{
     today: TodayResponseDTO | null | undefined;
     ownerToken: string;
+    seedCycle: number;
   }>(() => ({
     today: initialToday,
     ownerToken: accessToken,
+    seedCycle: 0,
   }));
   if (seedTracker.today !== initialToday) {
-    setSeedTracker({ today: initialToday, ownerToken: accessToken });
+    setSeedTracker((prev) => ({
+      today: initialToday,
+      ownerToken: accessToken,
+      seedCycle: prev.seedCycle + 1,
+    }));
   }
   const isSeedValidForToken =
     Boolean(initialToday) &&
     seedTracker.today === initialToday &&
     seedTracker.ownerToken === accessToken;
-  const requestKey = `${accessToken}:${reloadTick}`;
+  const requestKey = `${accessToken}:${reloadTick}:${seedTracker.seedCycle}`;
   const seededToday =
     reloadTick === 0 && isSeedValidForToken ? initialToday : null;
 

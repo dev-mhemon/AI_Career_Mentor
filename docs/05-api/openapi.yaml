@@ -10323,6 +10323,12 @@ components:
         lowercases input before validating against canonical ReportReason values (incorrect,
         unclear, unfair_scoring, outdated, inappropriate, other).
       pattern: '^\s*([Ii][Nn][Cc][Oo][Rr][Rr][Ee][Cc][Tt]|[Uu][Nn][Cc][Ll][Ee][Aa][Rr]|[Uu][Nn][Ff][Aa][Ii][Rr]_[Ss][Cc][Oo][Rr][Ii][Nn][Gg]|[Oo][Uu][Tt][Dd][Aa][Tt][Ee][Dd]|[Ii][Nn][Aa][Pp][Pp][Rr][Oo][Pp][Rr][Ii][Aa][Tt][Ee]|[Oo][Tt][Hh][Ee][Rr])\s*$'
+    TrimmedUuid:
+      type: string
+      description: >-
+        Request-accepted UUID string. Per C05 string normalization, the server trims leading and
+        trailing whitespace and lowercases input before UUID validation.
+      pattern: '^\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*$'
     RatingRequestDTO:
       type: object
       additionalProperties: false
@@ -10331,8 +10337,7 @@ components:
         target_type:
           $ref: '#/components/schemas/RatingTargetInput'
         target_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/TrimmedUuid'
         score:
           type: integer
           minimum: 1
@@ -10362,8 +10367,7 @@ components:
         target_type:
           $ref: '#/components/schemas/ReportTargetInput'
         target_id:
-          type: string
-          format: uuid
+          $ref: '#/components/schemas/TrimmedUuid'
         reason:
           $ref: '#/components/schemas/ReportReasonInput'
         comment:

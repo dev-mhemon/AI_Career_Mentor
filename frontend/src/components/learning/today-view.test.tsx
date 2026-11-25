@@ -772,4 +772,48 @@ describe('TodayView', () => {
     expect(screen.getByText('Recovered Seeded Topic')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  it('clears stale fetch error while refetching after a valid seed is removed for the same token', async () => {
+    let resolveRefetch!: (today: TodayResponseDTO) => void;
+    vi.mocked(getToday)
+      .mockRejectedValueOnce(
+        new ApiError(503, 'Temporary outage', 'SERVICE_UNAVAILABLE'),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRefetch = resolve;
+        }),
+      );
+    vi.mocked(listLearningResources).mockResolvedValue({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    // 1. Initial fetch fails for token-cycle
+    const { rerender } = render(<TodayView accessToken="token-cycle" />);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    // 2. Valid seed arrives and hides the error
+    const seeded = makeReadyToday();
+    seeded.topic = { ...seeded.topic!, title: 'Temporary Seed Topic' };
+    rerender(<TodayView accessToken="token-cycle" initialToday={seeded} />);
+    expect(screen.getByText('Temporary Seed Topic')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // 3. Seed is removed -> new fetch starts; stale error from step 1 MUST NOT resurface while loading
+    rerender(<TodayView accessToken="token-cycle" initialToday={undefined} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('Temporary Seed Topic')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(getToday).toHaveBeenCalledTimes(2);
+    });
+
+    // 4. Fresh fetch resolves and displays loaded topic
+    const fresh = makeReadyToday();
+    fresh.topic = { ...fresh.topic!, title: 'Fresh Refetched Topic' };
+    resolveRefetch(fresh);
+    expect(
+      await screen.findByText('Fresh Refetched Topic'),
+    ).toBeInTheDocument();
+  });
 });

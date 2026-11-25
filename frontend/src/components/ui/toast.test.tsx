@@ -213,7 +213,19 @@ describe('Toast (#11) with countdown progress bar', () => {
     const dismissBtn = screen.getByRole('button', {
       name: 'Dismiss notification',
     });
-    expect(dismissBtn).toHaveClass('absolute', 'top-2', 'right-2');
+    expect(dismissBtn).toHaveClass(
+      'absolute',
+      'top-2',
+      'right-2',
+      'h-8',
+      'w-8',
+      'min-h-8',
+      'min-w-8',
+    );
+    expect(dismissBtn).not.toHaveClass('h-11');
+    expect(dismissBtn).not.toHaveClass('w-11');
+    expect(dismissBtn).not.toHaveClass('min-h-11');
+    expect(dismissBtn).not.toHaveClass('min-w-11');
     expect(dismissBtn).not.toHaveClass('top-1/2');
     expect(dismissBtn).not.toHaveClass('-translate-y-1/2');
 

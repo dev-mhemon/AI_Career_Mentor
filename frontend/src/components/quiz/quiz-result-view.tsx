@@ -842,7 +842,6 @@ export function QuizResultView({
                   accessToken={accessToken}
                   questionId={fr.question_id}
                   questionReportable={fr.reportable}
-                  reviewReportable={fr.reportable}
                   onRetryReview={handleRetryPracticeReview}
                   onRetryFeedbackLoad={handleRetryFeedbackLoad}
                 />

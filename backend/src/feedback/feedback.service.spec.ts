@@ -254,11 +254,12 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       },
     );
 
-    it('enforces approved status AND canonical (skill_id, slug, career_level) lineage exposure on topic_content ratings (v2+ regenerated topics)', async () => {
+    it('enforces approved status, FOR SHARE row lock on public.topics, AND canonical (skill_id, slug, career_level) lineage exposure on topic_content ratings (v2+ regenerated topics)', async () => {
       const topicV2Id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
       const { database, executedStatements } = createMockDb((sql) => {
         if (sql.includes('FROM public.topics t')) {
           expect(sql).toContain("t.status = 'approved'::public.content_status");
+          expect(sql).toContain('FOR SHARE OF t');
           expect(sql).toContain('t_ri.skill_id = t.skill_id');
           expect(sql).toContain('t_ri.slug = t.slug');
           expect(sql).toContain('t_ri.career_level = t.career_level');
@@ -531,6 +532,9 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           if (sql.includes('pg_advisory_xact_lock(hashtextextended')) {
             return [{ pg_advisory_xact_lock: '' }];
           }
+          if (sql.includes('UPDATE public.system_configurations')) {
+            return [];
+          }
           if (sql.includes('INSERT INTO public.content_reports')) {
             return [{ id: REPORT_ID }];
           }
@@ -755,38 +759,88 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       ]);
     });
 
-    it('never writes to public.system_configurations during learner report requests (R26)', async () => {
-      const { database, executedStatements } = createMockDb((sql) => {
-        if (sql.includes('FROM public.practice_reviews pr')) {
-          return [{ id: TARGET_ID }];
-        }
-        if (sql.includes('pg_advisory_xact_lock')) {
-          return [{}];
-        }
-        if (sql.includes('INSERT INTO public.content_reports')) {
-          return [{ id: REPORT_ID }];
-        }
-        throw new Error(`Unexpected SQL: ${sql}`);
-      });
+    it.each([
+      ['canonical integer 2', '2', 'topic_content', 'FROM public.topics t'],
+      [
+        'non-canonical whole-number 2.0 on shared topic_content',
+        '2.0',
+        'topic_content',
+        'FROM public.topics t',
+      ],
+      [
+        'non-canonical whole-number 2.0 on private practice_review',
+        '2.0',
+        'practice_review',
+        'FROM public.practice_reviews pr',
+      ],
+    ] as const)(
+      'normalizes %s threshold JSONB before INSERT so frozen trigger ::integer cast never fails',
+      async (_label, initialRawJsonText, targetType, exposureSqlFragment) => {
+        let storedConfigText: string = initialRawJsonText;
+        let normalizedRowsUpdated = 0;
 
-      const service = new FeedbackService(
-        database,
-        new SharedContentQualityService(database),
-      );
+        const { database, executedStatements } = createMockDb((sql) => {
+          if (sql.includes(exposureSqlFragment)) {
+            return [{ id: TARGET_ID }];
+          }
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{}];
+          }
+          if (sql.includes('UPDATE public.system_configurations')) {
+            expect(sql).toContain(
+              "config_key = 'quality.report_auto_hide_threshold'",
+            );
+            expect(sql).toContain(
+              "to_jsonb((config_value #>> '{}')::numeric::integer)",
+            );
+            if (
+              /^[0-9]+\.[0-9]+$/.test(storedConfigText) &&
+              Number(storedConfigText) === Math.trunc(Number(storedConfigText))
+            ) {
+              storedConfigText = String(Math.trunc(Number(storedConfigText)));
+              normalizedRowsUpdated += 1;
+            }
+            return [];
+          }
+          if (sql.includes('INSERT INTO public.content_reports')) {
+            // Simulate frozen trigger 020_gaps_and_alignment.sql strict (config_value #>> '{}')::integer cast
+            if (!/^[0-9]+$/.test(storedConfigText)) {
+              throw new Error(
+                `invalid input syntax for type integer: "${storedConfigText}"`,
+              );
+            }
+            return [{ id: REPORT_ID }];
+          }
+          throw new Error(`Unexpected SQL: ${sql}`);
+        });
 
-      const res = await service.submitReport(USER_A, {
-        target_type: 'practice_review',
-        target_id: TARGET_ID,
-        reason: 'unfair_scoring',
-      });
+        const service = new FeedbackService(
+          database,
+          new SharedContentQualityService(database),
+        );
 
-      expect(res).toEqual({ report_id: REPORT_ID, status: 'received' });
-      expect(
-        executedStatements.some((s) =>
-          s.sql.toLowerCase().includes('system_configurations'),
-        ),
-      ).toBe(false);
-    });
+        const res = await service.submitReport(USER_A, {
+          target_type: targetType,
+          target_id: TARGET_ID,
+          reason: 'incorrect',
+        });
+
+        expect(res).toEqual({ report_id: REPORT_ID, status: 'received' });
+        expect(storedConfigText).toBe('2');
+        expect(normalizedRowsUpdated).toBe(
+          initialRawJsonText.includes('.') ? 1 : 0,
+        );
+
+        const normalizeIndex = executedStatements.findIndex((s) =>
+          s.sql.includes('UPDATE public.system_configurations'),
+        );
+        const insertIndex = executedStatements.findIndex((s) =>
+          s.sql.includes('INSERT INTO public.content_reports'),
+        );
+        expect(normalizeIndex).toBeGreaterThanOrEqual(0);
+        expect(insertIndex).toBeGreaterThan(normalizeIndex);
+      },
+    );
 
     it('serializes two concurrent sessions at non-default threshold=2, blocks duplicate-user double-counting, and ignores rolled-back inserts', async () => {
       // Simulated PostgreSQL state with advisory xact lock mutex + READ COMMITTED snapshot + trigger

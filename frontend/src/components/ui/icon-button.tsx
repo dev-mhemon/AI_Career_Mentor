@@ -2,13 +2,20 @@ import type { ButtonHTMLAttributes, Ref } from 'react';
 import { cn } from './cn';
 
 export type IconButtonVariant = 'ghost' | 'outline' | 'danger';
+export type IconButtonSize = 'default' | 'compact';
 
 export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label'> {
   'aria-label': string;
   variant?: IconButtonVariant;
+  size?: IconButtonSize;
   ref?: Ref<HTMLButtonElement>;
 }
+
+const sizes: Record<IconButtonSize, string> = {
+  default: 'h-11 w-11 min-h-11 min-w-11',
+  compact: 'h-8 w-8 min-h-8 min-w-8',
+};
 
 const variants: Record<IconButtonVariant, string> = {
   ghost:
@@ -21,6 +28,7 @@ const variants: Record<IconButtonVariant, string> = {
 
 export function IconButton({
   variant = 'ghost',
+  size = 'default',
   type = 'button',
   className,
   children,
@@ -32,7 +40,8 @@ export function IconButton({
       ref={ref}
       type={type}
       className={cn(
-        'inline-flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-md',
+        'inline-flex items-center justify-center rounded-md',
+        sizes[size],
         'cursor-pointer transition-colors duration-(--duration-fast) ease-standard disabled:cursor-not-allowed',
         variants[variant],
         className,

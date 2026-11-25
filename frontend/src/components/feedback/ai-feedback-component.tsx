@@ -21,6 +21,7 @@ import {
   beginRatingWrite,
   canonicalizeFeedbackTargetId,
   deriveFeedbackUserScope,
+  enqueueSerializedRatingWrite,
   saveStoredRating,
   saveStoredReport,
   useStoredFeedback,
@@ -421,15 +422,23 @@ function AIFeedbackInner({
     }));
 
     try {
-      const res = await submitRating(
+      const res = await enqueueSerializedRatingWrite(
         requestToken,
-        {
-          target_type: targetType,
-          target_id: targetId,
-          score: scoreToSubmit,
-          ...(trimmedComment.length > 0 ? { comment: trimmedComment } : {}),
-        },
-        { timeoutMs: FEEDBACK_REQUEST_TIMEOUT_MS },
+        targetType,
+        targetId,
+        () =>
+          submitRating(
+            requestToken,
+            {
+              target_type: targetType,
+              target_id: targetId,
+              score: scoreToSubmit,
+              ...(trimmedComment.length > 0
+                ? { comment: trimmedComment }
+                : {}),
+            },
+            { timeoutMs: FEEDBACK_REQUEST_TIMEOUT_MS },
+          ),
       );
 
       // Persist accepted rating with monotonic sequence guard (watermark advances only on 200 OK).

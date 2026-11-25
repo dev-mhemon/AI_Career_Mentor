@@ -121,8 +121,9 @@ export const Toast = memo(function Toast({
         {onDismiss && (
           <IconButton
             aria-label="Dismiss notification"
+            size="compact"
             onClick={onDismiss}
-            className="absolute top-2 right-2 h-7 w-7 min-h-0 min-w-0 rounded-md p-1"
+            className="absolute top-2 right-2 rounded-md p-1"
           >
             <CloseIcon className="h-4 w-4" />
           </IconButton>
