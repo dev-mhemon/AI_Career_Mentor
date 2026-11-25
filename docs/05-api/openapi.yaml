@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence & Admin Operations Contract (M13)
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence, Quality Feedback & Admin Operations Contract (M13)
   version: 0.6.0
   description: >-
-    Synchronized through M13-01, 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
-    6e5e108671bf24c1ed6466f4df64670875c3d2c3. Canonical auth operations (EP-A01..EP-A13), account deletion and
+    Synchronized through M13-01 (merged with M12-01), 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
+    f7b6aea43a47c22e3352655be0b6a536691f69c5. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
@@ -14,8 +14,9 @@ info:
     One-Step Undo APIs (EP-R01..EP-R15), M07 Learning APIs (EP-L01..EP-L07), M08 Quiz, AI Practice Review, and
     Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that EP-G04 EvidenceService.record is
     strictly internal-only with no HTTP route), M10 Contextual AI Mentor APIs (EP-M01..EP-M04, R08, R11, R15, N02),
-    M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01), and M13 Admin Operations,
-    Feature Controls & Usage Telemetry APIs (EP-AD01..EP-AD08, R10, R11, R16, R30) are documented here.
+    M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01), M12 Quality Feedback &
+    Shared-Content Safety APIs (EP-F01..EP-F02, R11, R24, R26, R27, R34), and M13 Admin Operations, Feature
+    Controls & Usage Telemetry APIs (EP-AD01..EP-AD08, R10, R11, R16, R30) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -43,9 +44,11 @@ tags:
     description: C05 14.10 Contextual AI Career Mentor API (EP-M01..EP-M04); owner-only conversations, default 201 JSON / opt-in R15 SSE, and 90-day history.
   - name: Technology Intelligence
     description: C05 14.11 Personalized Daily Technology Intelligence API (EP-T01..EP-T03); default-OFF read gate (technology_update), R25 local-date today_state resolution, and R24 foreground view tracking.
+  - name: Feedback
+    description: C05 14.12 Quality Feedback & Shared-Content Safety API (EP-F01..EP-F02); R34 target-specific rating upsert and append-only report submission with R27 READ COMMITTED lock-before-insert threshold concurrency.
   - name: Admin
     description: C05 14.14 Admin API (EP-AD01..EP-AD08); server-verified AZ-ADMIN (public.admin_users, zero JWT-role trust), user management, global & per-user feature controls (R10), immutable append-only audit logs, and aggregate-only usage/cost series (R30, PRD §50–51).
-x-source: API-Specification.md sections 13, 13.5-6, 14.1-11, 14.13-14, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R10/R11/R12/R13/R14/R15/R16/R17/R18/R24/R25/R26/R28/R29/R30/R31/R35/N01/N02
+x-source: API-Specification.md sections 13, 13.5-6, 14.1-14, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R10/R11/R12/R13/R14/R15/R16/R17/R18/R24/R25/R26/R27/R28/R29/R30/R31/R34/R35/N01/N02
 x-contract-notes:
   - >-
     H-PUB has no Authorization; H-AUTH uses Bearer Supabase JWT; H-IDEM supplies Idempotency-Key (UUID, 24h TTL)
@@ -6344,6 +6347,136 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /ratings:
+    post:
+      tags:
+        - Feedback
+      operationId: submitRating
+      x-endpoint-id: EP-F01
+      x-implementation-status: implemented
+      x-authorization: AZ-USER
+      x-feature-gate: none
+      summary: Submit or update 1..5 quality rating (C05 EP-F01)
+      description: >-
+        Upserts a 1..5 rating for an authorized ratable target (roadmap_draft -> roadmap_versions.id,
+        roadmap_merge -> roadmap_merges.id, topic_content -> approved topics.id with prior exposure,
+        technology_update -> delivered technology_updates.id). Explicitly rejects non-ratable domain
+        targets (quiz_question, practice_review, roadmap_content, mentor, mentor_reply, mentor_message,
+        conversation) with 422 TARGET_NOT_RATABLE (C05 §14.12 / R34). Records coalesced R24 foreground
+        activity and never logs raw comment text (R11).
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingRequestDTO'
+      responses:
+        '200':
+          description: C05 EP-F01 success; returns RatingResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RatingResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '404':
+          description: TARGET_NOT_FOUND (missing, foreign, undelivered, or non-approved ratable target; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: TARGET_NOT_RATABLE (non-ratable domain target) or VALIDATION_FAILED (malformed target_id UUID, score outside 1..5, or comment > 500 Unicode code points / NUL / unpaired surrogates; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /reports:
+    post:
+      tags:
+        - Feedback
+      operationId: submitReport
+      x-endpoint-id: EP-F02
+      x-implementation-status: implemented
+      x-authorization: AZ-USER
+      x-feature-gate: none
+      summary: Submit content quality report (C05 EP-F02)
+      description: >-
+        Inserts an append-only user report for an authorized reportable target (roadmap_content -> roadmaps.id,
+        topic_content -> non-draft topics.id with prior exposure including hidden/superseded lineage,
+        quiz_question -> quiz_questions.id from learner's attempt including hidden questions,
+        practice_review -> owned practice_reviews.id). Acquires R27 target advisory lock in a preceding
+        READ COMMITTED statement before INSERT so trg_content_reports_threshold evaluates independent-user
+        auto-hide thresholds atomically without leaking threshold or hidden status in client responses.
+        Uses ON CONFLICT DO NOTHING RETURNING id to map duplicate reports to 409 REPORT_ALREADY_SUBMITTED
+        without logging raw comment parameters (R11). Records coalesced R24 foreground activity.
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportRequestDTO'
+      responses:
+        '201':
+          description: C05 EP-F02 success; returns ReportResponseDTO envelope.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseDTOEnvelope'
+        '401':
+          description: AUTH_REQUIRED, INVALID_TOKEN, TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '403':
+          description: ACCOUNT_SUSPENDED, UNVERIFIED_ACCOUNT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '404':
+          description: TARGET_NOT_FOUND (missing, foreign, or unexposed target; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '409':
+          description: REPORT_ALREADY_SUBMITTED (caller already reported this target; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
+        '422':
+          description: VALIDATION_FAILED (invalid target_type/reason, malformed target_id UUID, or comment > 1000 Unicode code points / NUL / unpaired surrogates; error.retryAfterSeconds is null)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedErrorEnvelope'
   /admin/users:
     get:
       operationId: EP-AD01
@@ -10683,6 +10816,133 @@ components:
           enum: [true]
         data:
           $ref: '#/components/schemas/TechnologyUpdateViewedDTO'
+    RatingTarget:
+      type: string
+      description: C05 §15.11 / R34 ratable target types (never interchangeable with ReportTarget).
+      enum:
+        - roadmap_draft
+        - roadmap_merge
+        - topic_content
+        - technology_update
+    ReportTarget:
+      type: string
+      description: C05 §15.11 / R34 reportable target types (never interchangeable with RatingTarget).
+      enum:
+        - roadmap_content
+        - topic_content
+        - quiz_question
+        - practice_review
+    ReportReason:
+      type: string
+      description: C05 §15.11 / DMS public.report_reason enum.
+      enum:
+        - incorrect
+        - unclear
+        - unfair_scoring
+        - outdated
+        - inappropriate
+        - other
+    RatingTargetInput:
+      type: string
+      description: >-
+        Request-accepted RatingTarget string. The server trims leading/trailing whitespace and
+        lowercases input before validating against canonical RatingTarget values (roadmap_draft,
+        roadmap_merge, topic_content, technology_update); known non-ratable domain targets return
+        422 TARGET_NOT_RATABLE.
+      pattern: '^\s*([Rr][Oo][Aa][Dd][Mm][Aa][Pp]_[Dd][Rr][Aa][Ff][Tt]|[Rr][Oo][Aa][Dd][Mm][Aa][Pp]_[Mm][Ee][Rr][Gg][Ee]|[Tt][Oo][Pp][Ii][Cc]_[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Tt][Ee][Cc][Hh][Nn][Oo][Ll][Oo][Gg][Yy]_[Uu][Pp][Dd][Aa][Tt][Ee])\s*$'
+    ReportTargetInput:
+      type: string
+      description: >-
+        Request-accepted ReportTarget string. The server trims leading/trailing whitespace and
+        lowercases input before validating against canonical ReportTarget values (roadmap_content,
+        topic_content, quiz_question, practice_review).
+      pattern: '^\s*([Rr][Oo][Aa][Dd][Mm][Aa][Pp]_[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Tt][Oo][Pp][Ii][Cc]_[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Qq][Uu][Ii][Zz]_[Qq][Uu][Ee][Ss][Tt][Ii][Oo][Nn]|[Pp][Rr][Aa][Cc][Tt][Ii][Cc][Ee]_[Rr][Ee][Vv][Ii][Ee][Ww])\s*$'
+    ReportReasonInput:
+      type: string
+      description: >-
+        Request-accepted ReportReason string. The server trims leading/trailing whitespace and
+        lowercases input before validating against canonical ReportReason values (incorrect,
+        unclear, unfair_scoring, outdated, inappropriate, other).
+      pattern: '^\s*([Ii][Nn][Cc][Oo][Rr][Rr][Ee][Cc][Tt]|[Uu][Nn][Cc][Ll][Ee][Aa][Rr]|[Uu][Nn][Ff][Aa][Ii][Rr]_[Ss][Cc][Oo][Rr][Ii][Nn][Gg]|[Oo][Uu][Tt][Dd][Aa][Tt][Ee][Dd]|[Ii][Nn][Aa][Pp][Pp][Rr][Oo][Pp][Rr][Ii][Aa][Tt][Ee]|[Oo][Tt][Hh][Ee][Rr])\s*$'
+    TrimmedUuid:
+      type: string
+      description: >-
+        Request-accepted UUID string. Per C05 string normalization, the server trims leading and
+        trailing whitespace and lowercases input before UUID validation.
+      pattern: '^\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*$'
+    RatingRequestDTO:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id, score]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/RatingTargetInput'
+        target_id:
+          $ref: '#/components/schemas/TrimmedUuid'
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          description: Optional learner comment. The server trims leading and trailing whitespace and enforces a maximum of 500 Unicode code points after trimming (NUL bytes and unpaired surrogates rejected).
+    RatingResponseDTO:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id, score]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/RatingTarget'
+        target_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+    ReportRequestDTO:
+      type: object
+      additionalProperties: false
+      required: [target_type, target_id, reason]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/ReportTargetInput'
+        target_id:
+          $ref: '#/components/schemas/TrimmedUuid'
+        reason:
+          $ref: '#/components/schemas/ReportReasonInput'
+        comment:
+          type: string
+          description: Optional learner report details. The server trims leading and trailing whitespace and enforces a maximum of 1,000 Unicode code points after trimming (NUL bytes and unpaired surrogates rejected).
+    ReportResponseDTO:
+      type: object
+      additionalProperties: false
+      required: [report_id, status]
+      properties:
+        report_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [received]
+    RatingResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/RatingResponseDTO'
+    ReportResponseDTOEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          $ref: '#/components/schemas/ReportResponseDTO'
     AdminUserStatus:
       type: string
       enum: [active, suspended]

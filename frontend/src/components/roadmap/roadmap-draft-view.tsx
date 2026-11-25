@@ -34,6 +34,7 @@ import {
   SparklesIcon,
   WarningIcon,
 } from '@/components/ui/icons';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { HoursPromptModal } from '@/components/learning/hours-prompt-modal';
 
 function ArrowLeftIcon({ className }: { className?: string }) {
@@ -1137,6 +1138,16 @@ export function RoadmapDraftView({
             </ul>
           </div>
         )}
+
+        {/* R34 Screen 12: Draft rating uses roadmap_versions.id; content report uses roadmaps.id */}
+        <div className="mt-5 border-t border-border-subtle">
+          <AIFeedbackComponent
+            accessToken={accessToken}
+            ratingTarget={{ type: 'roadmap_draft', id: draft.version_id }}
+            reportTarget={{ type: 'roadmap_content', id: draft.id }}
+            compact
+          />
+        </div>
       </section>
 
       {draft.level_outline.length > 0 && (

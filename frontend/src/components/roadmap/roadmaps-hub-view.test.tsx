@@ -131,7 +131,7 @@ describe('RoadmapsHubView', () => {
 
     expect(await screen.findByText('Backend Developer')).toBeInTheDocument();
     expect(screen.getByText('QA Automation Engineer')).toBeInTheDocument();
-    expect(screen.getByText('Focus Roadmap')).toBeInTheDocument();
+    expect(screen.getByText('Focused Roadmap')).toBeInTheDocument();
     expect(screen.getByText('Stale Draft')).toBeInTheDocument();
     const openMergeLink = screen.getByRole('link', {
       name: 'Open Merge Proposal',
@@ -318,8 +318,10 @@ describe('RoadmapsHubView', () => {
       screen.getByRole('button', { name: 'Create Daily Plan' }),
     ).toBeInTheDocument();
 
-    const archiveButtons = screen.getAllByRole('button', { name: 'Archive' });
-    fireEvent.click(archiveButtons[1]);
+    const frontendCard = screen
+      .getByText('Frontend Developer')
+      .closest('li') as HTMLElement;
+    fireEvent.click(within(frontendCard).getByRole('button', { name: 'Archive' }));
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
@@ -390,6 +392,90 @@ describe('RoadmapsHubView', () => {
     });
 
     expect(screen.queryByTestId('toast-container')).not.toBeInTheDocument();
+  });
+
+  it('deterministically sorts roadmaps: Focused -> Draft -> Other Locked -> Archived with newest updated_at first per bucket', async () => {
+    const archivedNew = makeSummary({
+      id: 'rm-arch-new',
+      role_name: 'Archived Newer',
+      status: 'archived',
+      is_focus: false,
+      updated_at: '2026-11-24T12:00:00.000Z',
+    });
+    const archivedOld = makeSummary({
+      id: 'rm-arch-old',
+      role_name: 'Archived Older',
+      status: 'archived',
+      is_focus: false,
+      updated_at: '2026-11-20T12:00:00.000Z',
+    });
+    const lockedOtherOld = makeSummary({
+      id: 'rm-lock-old',
+      role_name: 'Locked Older',
+      status: 'locked',
+      is_focus: false,
+      updated_at: '2026-11-21T12:00:00.000Z',
+    });
+    const lockedOtherNew = makeSummary({
+      id: 'rm-lock-new',
+      role_name: 'Locked Newer',
+      status: 'locked',
+      is_focus: false,
+      updated_at: '2026-11-23T12:00:00.000Z',
+    });
+    const draftOld = makeSummary({
+      id: 'rm-draft-old',
+      role_name: 'Draft Older',
+      status: 'draft',
+      is_focus: false,
+      updated_at: '2026-11-18T12:00:00.000Z',
+    });
+    const draftNew = makeSummary({
+      id: 'rm-draft-new',
+      role_name: 'Draft Newer',
+      status: 'draft',
+      is_focus: false,
+      updated_at: '2026-11-22T12:00:00.000Z',
+    });
+    const focused = makeSummary({
+      id: 'rm-focused',
+      role_name: 'Focused Primary',
+      status: 'locked',
+      is_focus: true,
+      updated_at: '2026-11-15T12:00:00.000Z',
+    });
+
+    render(
+      <RoadmapsHubView
+        accessToken="token-1"
+        initialPage={{
+          items: [
+            archivedOld,
+            lockedOtherOld,
+            draftOld,
+            archivedNew,
+            lockedOtherNew,
+            focused,
+            draftNew,
+          ],
+          meta: { limit: 20, next_cursor: null },
+        }}
+      />,
+    );
+
+    const orderedHeadings = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent);
+
+    expect(orderedHeadings).toEqual([
+      'Focused Primary',
+      'Draft Newer',
+      'Draft Older',
+      'Locked Newer',
+      'Locked Older',
+      'Archived Newer',
+      'Archived Older',
+    ]);
   });
 
   it('renders clean empty state on 200 empty list and links Manage Goals & Profile to /career-profile', async () => {

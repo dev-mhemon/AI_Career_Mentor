@@ -15,7 +15,6 @@ import { APP_GUARD, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AppModule } from '../app.module.js';
 import { AccessGuard } from '../auth/guards/access.guard.js';
 import type { AccessPolicy } from '../auth/policy.js';
 import { DatabaseService } from '../auth/services/database.service.js';
@@ -229,11 +228,36 @@ class StubSupabaseAuthGuard implements CanActivate {
 
 describe('AdminController (EP-AD01..EP-AD08 & AZ-ADMIN Global Guards)', () => {
   describe('route metadata, AppModule registration, and zero duplicate @UseGuards', () => {
-    it('registers AdminModule in AppModule and declares @Policy({ admin: true }) with zero @UseGuards on AdminController', () => {
-      const appImports = Reflect.getMetadata(
-        MODULE_METADATA.IMPORTS,
-        AppModule,
-      ) as unknown[];
+    it('registers AdminModule in AppModule and declares @Policy({ admin: true }) with zero @UseGuards on AdminController', async () => {
+      const prevEnv = { ...process.env };
+      process.env.NODE_ENV = 'test';
+      process.env.DB_HOST = '127.0.0.1';
+      process.env.DB_PORT = '54322';
+      process.env.DB_USER = 'postgres';
+      process.env.DB_PASSWORD = 'postgres';
+      process.env.DB_NAME = 'postgres';
+      process.env.SUPABASE_URL = 'http://127.0.0.1:54321';
+      process.env.SUPABASE_ANON_KEY =
+        'sb_publishable_test_anon_key_for_di_compile';
+      process.env.SUPABASE_JWT_SECRET =
+        'super-secret-jwt-token-with-at-least-32-characters-long';
+      process.env.AUTH_OTP_HMAC_SECRET =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      process.env.DELETION_RECEIPT_SECRET =
+        'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+      process.env.PROVIDER_CLEANUP_ENCRYPTION_KEY =
+        '1111111111111111111111111111111111111111111111111111111111111111';
+
+      let appImports: unknown[];
+      try {
+        const { AppModule } = await import('../app.module.js');
+        appImports = Reflect.getMetadata(
+          MODULE_METADATA.IMPORTS,
+          AppModule,
+        ) as unknown[];
+      } finally {
+        process.env = prevEnv;
+      }
       expect(appImports).toContain(AdminModule);
 
       const reflector = new Reflector();
@@ -303,7 +327,7 @@ describe('AdminController (EP-AD01..EP-AD08 & AZ-ADMIN Global Guards)', () => {
           Reflect.getMetadata(GUARDS_METADATA, route.handler),
         ).toBeUndefined();
       }
-    });
+    }, 15_000);
   });
 
   describe('HTTP contract, real AccessGuard server-side enforcement, and DTO validation', () => {

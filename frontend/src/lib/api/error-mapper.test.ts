@@ -628,6 +628,40 @@ describe("mapApiError", () => {
     expect(techNotFound.message).toMatch(/technology update could not be found/i);
   });
 
+  it("maps M12 feedback error codes (TARGET_NOT_RATABLE, TARGET_NOT_FOUND, REPORT_ALREADY_SUBMITTED) cleanly without leaking server internals", () => {
+    const rawInternalLeak = "postgres 23505 uq_content_reports_user_target threshold=5";
+
+    const notRatable = mapApiError(
+      new ApiError(422, rawInternalLeak, "TARGET_NOT_RATABLE", "req-m12-1"),
+    );
+    expect(notRatable.code).toBe("TARGET_NOT_RATABLE");
+    expect(notRatable.status).toBe(422);
+    expect(notRatable.tone).toBe("warning");
+    expect(notRatable.retryable).toBe(false);
+    expect(notRatable.message).toMatch(/cannot be rated with stars/i);
+    expect(notRatable.message).not.toMatch(/postgres|23505|threshold/i);
+
+    const notFound = mapApiError(
+      new ApiError(404, rawInternalLeak, "TARGET_NOT_FOUND", "req-m12-2"),
+    );
+    expect(notFound.code).toBe("TARGET_NOT_FOUND");
+    expect(notFound.status).toBe(404);
+    expect(notFound.tone).toBe("warning");
+    expect(notFound.retryable).toBe(false);
+    expect(notFound.message).toMatch(/could not be found/i);
+    expect(notFound.message).not.toMatch(/postgres|23505|threshold/i);
+
+    const dupReport = mapApiError(
+      new ApiError(409, rawInternalLeak, "REPORT_ALREADY_SUBMITTED", "req-m12-3"),
+    );
+    expect(dupReport.code).toBe("REPORT_ALREADY_SUBMITTED");
+    expect(dupReport.status).toBe(409);
+    expect(dupReport.tone).toBe("info");
+    expect(dupReport.retryable).toBe(false);
+    expect(dupReport.message).toMatch(/already submitted a report/i);
+    expect(dupReport.message).not.toMatch(/postgres|23505|threshold/i);
+  });
+
   it("maps M13 admin error codes cleanly without echoing raw server internals", () => {
     const rawInternalLeak = "postgres admin_users detail stack trace";
     const cases: Array<{

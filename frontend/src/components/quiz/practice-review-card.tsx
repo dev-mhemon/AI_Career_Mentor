@@ -6,6 +6,7 @@ import type {
   ReviewDimensionScore,
   ReviewStatus,
 } from '@/lib/api/client';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
 import {
@@ -30,6 +31,9 @@ export interface PracticeReviewCardProps {
   retryErrorMessage?: string | null;
   feedbackLoadError?: string | null;
   isRawTextExpired?: boolean;
+  accessToken?: string;
+  questionId?: string;
+  questionReportable?: boolean;
   onRetryReview?: (reviewId: string) => void;
   onRetryFeedbackLoad?: (reviewId: string) => void;
   className?: string;
@@ -114,6 +118,9 @@ export function PracticeReviewCard({
   retryErrorMessage = null,
   feedbackLoadError = null,
   isRawTextExpired = false,
+  accessToken,
+  questionId,
+  questionReportable,
   onRetryReview,
   onRetryFeedbackLoad,
   className,
@@ -412,6 +419,48 @@ export function PracticeReviewCard({
           </div>
         </div>
       )}
+
+      {/* R34 Screen 18:
+          - reviewed / not_evidence: practice_review report ONLY, hydrated strictly from PracticeFeedbackDTO.reportable (never fr.reportable)
+          - pending / failed / no reviewId: quiz_question report ONLY, hydrated from questionReportable */}
+      {(() => {
+        if (!accessToken) {
+          return null;
+        }
+        const isReviewReportableState =
+          Boolean(reviewId) &&
+          (effectiveStatus === 'reviewed' ||
+            effectiveStatus === 'not_evidence');
+        if (isReviewReportableState) {
+          if (!reviewId || !feedback) {
+            return null;
+          }
+          return (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <AIFeedbackComponent
+                accessToken={accessToken}
+                reportTarget={{ type: 'practice_review', id: reviewId }}
+                defaultReportReason="unfair_scoring"
+                alreadyReported={!feedback.reportable}
+                compact
+              />
+            </div>
+          );
+        }
+        if (!questionId) {
+          return null;
+        }
+        return (
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            <AIFeedbackComponent
+              accessToken={accessToken}
+              reportTarget={{ type: 'quiz_question', id: questionId }}
+              alreadyReported={questionReportable === false}
+              compact
+            />
+          </div>
+        );
+      })()}
     </article>
   );
 }

@@ -10,6 +10,7 @@ import { AccountModule } from './account/account.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { AiModule } from './ai/ai.module.js';
 import { CareerModule } from './career/career.module.js';
+import { FeedbackModule } from './feedback/feedback.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { LearningModule } from './learning/learning.module.js';
 import { MentorModule } from './mentor/mentor.module.js';
@@ -57,6 +58,7 @@ import { TechnologyUpdateModule } from './technology-update/technology-update.mo
     PracticeReviewModule,
     MentorModule,
     TechnologyUpdateModule,
+    FeedbackModule,
     AdminModule,
   ],
   controllers: [AppController],

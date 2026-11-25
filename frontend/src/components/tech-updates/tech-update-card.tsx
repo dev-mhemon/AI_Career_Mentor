@@ -6,6 +6,7 @@ import type {
   TechnologyRelevanceLevel,
   TechnologyUpdateDTO,
 } from '@/lib/api/client';
+import { AIFeedbackComponent } from '@/components/feedback/ai-feedback-component';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
 import {
@@ -19,6 +20,9 @@ import {
 
 export type TechUpdateCardProps = {
   update: TechnologyUpdateDTO;
+  accessToken?: string;
+  currentRatingScore?: number;
+  onRated?: (score: number) => void;
   isTodayHighlight?: boolean;
   isMarkingViewed?: boolean;
   onInspectDetail?: (
@@ -129,6 +133,9 @@ export function formatTechUpdateTimestamp(isoString: string): string {
  */
 export function TechUpdateCard({
   update,
+  accessToken,
+  currentRatingScore,
+  onRated,
   isTodayHighlight = false,
   isMarkingViewed = false,
   onInspectDetail,
@@ -306,6 +313,19 @@ export function TechUpdateCard({
           )}
         </div>
       </div>
+
+      {/* R34: Technology Updates support rating_1_5 ONLY — strictly omits reportTarget */}
+      {accessToken && (
+        <div className="border-t border-slate-100 dark:border-slate-800">
+          <AIFeedbackComponent
+            accessToken={accessToken}
+            ratingTarget={{ type: 'technology_update', id: update.id }}
+            currentScore={currentRatingScore}
+            onRated={onRated}
+            compact
+          />
+        </div>
+      )}
     </article>
   );
 }

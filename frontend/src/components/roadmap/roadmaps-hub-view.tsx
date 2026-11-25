@@ -28,6 +28,32 @@ import { Modal } from '@/components/ui/modal';
 import { Toast } from '@/components/ui/toast';
 import { HoursPromptModal } from '@/components/learning/hours-prompt-modal';
 
+function roadmapSortBucket(roadmap: RoadmapSummaryDTO): number {
+  if (roadmap.status !== 'archived' && roadmap.is_focus) return 0;
+  if (roadmap.status === 'draft') return 1;
+  if (roadmap.status === 'locked') return 2;
+  return 3;
+}
+
+function parseTimestampMs(value: string | null | undefined): number {
+  if (!value) return 0;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+export function sortRoadmapsForHub(
+  roadmaps: readonly RoadmapSummaryDTO[],
+): RoadmapSummaryDTO[] {
+  return [...roadmaps].sort((a, b) => {
+    const bucketDiff = roadmapSortBucket(a) - roadmapSortBucket(b);
+    if (bucketDiff !== 0) return bucketDiff;
+    const timeA = parseTimestampMs(a.updated_at || a.created_at);
+    const timeB = parseTimestampMs(b.updated_at || b.created_at);
+    if (timeB !== timeA) return timeB - timeA;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 function SlidersHorizontalIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -503,6 +529,7 @@ export function RoadmapsHubView({
 
   const isLoading = activeState === null;
   const items = activeState?.status === 'loaded' ? activeState.items : [];
+  const displayedItems = sortRoadmapsForHub(items);
   const nextCursor =
     activeState?.status === 'loaded' ? activeState.nextCursor : null;
   const loadError = activeState?.status === 'error' ? activeState.error : null;
@@ -905,7 +932,7 @@ export function RoadmapsHubView({
         ) : (
           <>
             <ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {items.map((roadmap) => {
+              {displayedItems.map((roadmap) => {
                 const isDraft = roadmap.status === 'draft';
                 const isLocked = roadmap.status === 'locked';
                 const isArchived = roadmap.status === 'archived';
@@ -977,7 +1004,7 @@ export function RoadmapsHubView({
                               className="block h-3.5 w-3.5 shrink-0 text-feedback-success-icon"
                               aria-hidden="true"
                             />
-                            <span>Focus Roadmap</span>
+                            <span>Focused Roadmap</span>
                           </span>
                         )}
 
