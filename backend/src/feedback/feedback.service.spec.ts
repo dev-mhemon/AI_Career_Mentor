@@ -624,6 +624,15 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
             "t.status = 'approved'::public.content_status",
           );
           expect(sql).toContain("t.status <> 'draft'::public.content_status");
+          // Verify caller-ownership bindings across roadmap_items, daily_plan_items, and quiz_attempts
+          const bindsCallerExposure =
+            sql.includes('ri.user_id = $1') &&
+            sql.includes('dpi.user_id = $1') &&
+            sql.includes('qa.user_id = $1');
+          expect(bindsCallerExposure).toBe(true);
+          if (!bindsCallerExposure) {
+            return [];
+          }
           const [uId, tId] = params as [string, string];
           return exposedTopicsByUser.get(uId)?.has(tId) ? [{ id: tId }] : [];
         }
@@ -631,6 +640,11 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           // Must NOT filter out hidden_at IS NOT NULL on EP-F02!
           expect(sql).not.toContain('hidden_at IS NULL');
           expect(sql).toContain('qq.id = ANY(qa.question_ids)');
+          const bindsCallerAttempt = sql.includes('qa.user_id = $1');
+          expect(bindsCallerAttempt).toBe(true);
+          if (!bindsCallerAttempt) {
+            return [];
+          }
           const [uId, qId] = params as [string, string];
           return exposedQuestionsByUser.get(uId)?.has(qId) ? [{ id: qId }] : [];
         }

@@ -115,7 +115,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     });
     const stars = within(radioGroup).getAllByRole('radio');
 
-    // Initially all unfilled -> text-slate-300 + transparent SVG fill + responsive h-5 w-5 sm:h-6 sm:w-6
+    // Initially all unfilled -> text-slate-300 + transparent SVG fill + responsive h-5 w-5 sm:h-6 sm:w-6 + full-opacity focus ring
     for (const star of stars) {
       expect(star).toHaveClass(
         'text-slate-300',
@@ -125,7 +125,9 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
         'ease-out',
         'hover:scale-110',
         'active:scale-95',
+        'focus-visible:ring-teal-600',
       );
+      expect(star).not.toHaveClass('focus-visible:ring-teal-600/40');
       const svg = star.querySelector('svg');
       expect(svg).toHaveAttribute('fill', 'transparent');
       expect(svg).toHaveClass(
@@ -380,16 +382,16 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       'break-words',
     );
 
-    // Verify raw JWT and its signature are never stored in localStorage keys or values
+    // Verify ratings and reports are stored under separate keys and raw JWT/signature are never stored
     const jwtSignature = jwt.split('.')[2]!;
     const storedKeys = Object.keys(window.localStorage);
-    expect(storedKeys.length).toBe(1);
-    expect(storedKeys[0]).not.toContain(jwt);
-    expect(storedKeys[0]).not.toContain(jwtSignature);
-    expect(window.localStorage.getItem(storedKeys[0])).not.toContain(jwt);
-    expect(window.localStorage.getItem(storedKeys[0])).not.toContain(
-      jwtSignature,
-    );
+    expect(storedKeys.length).toBe(2);
+    for (const storedKey of storedKeys) {
+      expect(storedKey).not.toContain(jwt);
+      expect(storedKey).not.toContain(jwtSignature);
+      expect(window.localStorage.getItem(storedKey)).not.toContain(jwt);
+      expect(window.localStorage.getItem(storedKey)).not.toContain(jwtSignature);
+    }
 
     // Simulate full page refresh (unmount + remount with a genuinely different refreshed JWT for same user sub)
     unmount();
@@ -430,6 +432,54 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     expect(
       within(persistedReport).getByText('Mentions deprecated API flag.'),
     ).toBeInTheDocument();
+
+    // Cold-read case: seed localStorage directly under fresh keys WITHOUT calling save helpers
+    // so snapshotCache is guaranteed cold and parseStoredEntry is genuinely exercised.
+    cleanup();
+    const coldJwt = makeFakeJwt('cold-read-user', 'cold-sig');
+    const coldRatingKey = buildFeedbackStorageKey(
+      coldJwt,
+      'topic_content',
+      'top-cold-read',
+      'rating',
+    )!;
+    const coldReportKey = buildFeedbackStorageKey(
+      coldJwt,
+      'topic_content',
+      'top-cold-read',
+      'report',
+    )!;
+    window.localStorage.setItem(
+      coldRatingKey,
+      JSON.stringify({
+        rating: { score: 5, comment: 'Cold-read persisted review' },
+      }),
+    );
+    window.localStorage.setItem(
+      coldReportKey,
+      JSON.stringify({
+        report: {
+          reported: true,
+          reason: 'incorrect',
+          comment: 'Cold-read persisted report',
+        },
+      }),
+    );
+
+    render(
+      <AIFeedbackComponent
+        accessToken={coldJwt}
+        ratingTarget={{ type: 'topic_content', id: 'top-cold-read' }}
+        reportTarget={{ type: 'topic_content', id: 'top-cold-read' }}
+      />,
+    );
+    expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(5)');
+    expect(screen.getByTestId('ai-feedback-review-preview')).toHaveTextContent(
+      'Cold-read persisted review',
+    );
+    expect(screen.getByTestId('ai-feedback-report-preview')).toHaveTextContent(
+      'Cold-read persisted report',
+    );
   });
 
   it('opens compound Report modal, validates 1000 Unicode code points, preserves input on error, restores focus on Escape, and renders red Reported badge + toast + report preview on success', async () => {
@@ -1234,10 +1284,10 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
         'tok-overlay',
         'topic_content',
         'top-overlay',
+        'rating',
       )!;
       const externalPayload = JSON.stringify({
         rating: { score: 3, comment: 'External tab review' },
-        report: { reported: true, reason: 'unclear' },
       });
       window.localStorage.setItem(storageKey, externalPayload);
       act(() => {
@@ -1252,6 +1302,10 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       expect(
         screen.getByTestId('ai-feedback-review-preview'),
       ).toHaveTextContent('External tab review');
+      // Separate report key stays intact when rating key receives external update!
+      expect(
+        screen.getByText('Reported').closest('[aria-disabled]'),
+      ).toHaveAttribute('aria-disabled', 'true');
 
       // Subsequent durable write succeeds and updates localStorage cleanly
       fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
@@ -1603,5 +1657,86 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       '(4)',
     );
     wmView.unmount();
+  });
+
+  it('does not resurrect stale instance-local fallback ratings after cross-tab storage clear and returns keyboard focus to star on Cancel', async () => {
+    vi.mocked(submitRating)
+      .mockResolvedValueOnce({
+        target_type: 'topic_content',
+        target_id: 'top-clear-check',
+        score: 3,
+      })
+      .mockResolvedValueOnce({
+        target_type: 'topic_content',
+        target_id: 'top-clear-check',
+        score: 5,
+      });
+
+    render(
+      <div>
+        <div data-testid="clr-a">
+          <AIFeedbackComponent
+            accessToken="tok-clear"
+            ratingTarget={{ type: 'topic_content', id: 'top-clear-check' }}
+            compact
+          />
+        </div>
+        <div data-testid="clr-b">
+          <AIFeedbackComponent
+            accessToken="tok-clear"
+            ratingTarget={{ type: 'topic_content', id: 'top-clear-check' }}
+            compact
+          />
+        </div>
+      </div>,
+    );
+
+    const clrA = screen.getByTestId('clr-a');
+    const clrB = screen.getByTestId('clr-b');
+
+    // A saves 3, then B saves 5
+    fireEvent.click(within(clrA).getByRole('radio', { name: '3 stars' }));
+    fireEvent.click(within(clrA).getByRole('button', { name: /Submit rating/i }));
+    expect(
+      await within(clrA).findByTestId('ai-feedback-score'),
+    ).toHaveTextContent('(3)');
+
+    fireEvent.click(within(clrB).getByRole('radio', { name: '5 stars' }));
+    fireEvent.click(within(clrB).getByRole('button', { name: /Update rating/i }));
+    await waitFor(() => {
+      expect(within(clrA).getByTestId('ai-feedback-score')).toHaveTextContent(
+        '(5)',
+      );
+    });
+
+    // Open rating form on A via star click, then click Cancel -> focus returns to selected star (5 stars)
+    fireEvent.click(within(clrA).getByRole('radio', { name: '4 stars' }));
+    const cancelBtn = within(clrA).getByRole('button', { name: 'Cancel' });
+    cancelBtn.focus();
+    fireEvent.click(cancelBtn);
+    expect(document.activeElement).toBe(
+      within(clrA).getByRole('radio', { name: '5 stars' }),
+    );
+
+    // Cross-tab storage clear -> NEITHER A nor B resurrects stale local scores (3 or 5)
+    window.localStorage.clear();
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: null }));
+    });
+    expect(
+      within(clrA).queryByTestId('ai-feedback-score'),
+    ).not.toBeInTheDocument();
+    expect(
+      within(clrB).queryByTestId('ai-feedback-score'),
+    ).not.toBeInTheDocument();
+
+    // Open form when no rating is selected and click Cancel -> focus returns to first star (1 star)
+    fireEvent.click(within(clrA).getByRole('radio', { name: '2 stars' }));
+    const cancelUnrated = within(clrA).getByRole('button', { name: 'Cancel' });
+    cancelUnrated.focus();
+    fireEvent.click(cancelUnrated);
+    expect(document.activeElement).toBe(
+      within(clrA).getByRole('radio', { name: '1 star' }),
+    );
   });
 });

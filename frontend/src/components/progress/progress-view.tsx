@@ -48,6 +48,8 @@ export interface ProgressViewProps {
   initialRoadmaps?: RoadmapSummaryDTO[];
 }
 
+const ROADMAPS_REQUEST_TIMEOUT_MS = 15_000;
+
 const PROGRESS_TABS: ReadonlyArray<{
   key: ProgressTabKey;
   label: string;
@@ -258,7 +260,7 @@ export function ProgressView({
     listRoadmaps(
       accessToken,
       { status: 'locked', limit: 20 },
-      { signal: controller.signal },
+      { signal: controller.signal, timeoutMs: ROADMAPS_REQUEST_TIMEOUT_MS },
     )
       .then((res) => {
         if (!active || controller.signal.aborted) {
@@ -436,8 +438,9 @@ export function ProgressView({
     );
   const isLoadingInitialFilterBar =
     !initialProgress &&
-    ((isLoadingRoadmaps && roadmapsReloadTick === 0) ||
-      (isLoadingProgress && !hasActiveFilters && !hasSettledProgressForToken));
+    isLoadingProgress &&
+    !hasActiveFilters &&
+    !hasSettledProgressForToken;
 
   const activeHistoryData =
     historyState && historyState.key === historyQueryKey

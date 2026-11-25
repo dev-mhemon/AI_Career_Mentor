@@ -24,6 +24,8 @@ export type FeedbackStorageTarget = {
   id: string;
 };
 
+export type FeedbackStorageKind = 'rating' | 'report';
+
 const STORAGE_PREFIX = 'acm:feedback:v1';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -128,13 +130,14 @@ export function buildFeedbackStorageKey(
   accessToken: string,
   targetType: RatingTarget | ReportTarget,
   targetId: string,
+  kind: FeedbackStorageKind = 'rating',
 ): string | null {
   const userScope = deriveFeedbackUserScope(accessToken);
   const cleanId = canonicalizeFeedbackTargetId(targetId);
   if (!userScope || !cleanId) {
     return null;
   }
-  return `${STORAGE_PREFIX}:${userScope}:${targetType}:${cleanId}`;
+  return `${STORAGE_PREFIX}:${kind}:${userScope}:${targetType}:${cleanId}`;
 }
 
 function parseStoredEntry(raw: string | null): StoredFeedbackEntry | null {
@@ -303,7 +306,12 @@ export function enqueueSerializedRatingWrite<T>(
   targetId: string,
   task: () => Promise<T>,
 ): Promise<T> {
-  const key = buildFeedbackStorageKey(accessToken, targetType, targetId);
+  const key = buildFeedbackStorageKey(
+    accessToken,
+    targetType,
+    targetId,
+    'rating',
+  );
   if (!key) {
     return task();
   }
@@ -329,7 +337,12 @@ export function saveStoredRating(
   rating: StoredRatingFeedback,
   writeSeq?: number,
 ): SaveStoredRatingResult {
-  const key = buildFeedbackStorageKey(accessToken, targetType, targetId);
+  const key = buildFeedbackStorageKey(
+    accessToken,
+    targetType,
+    targetId,
+    'rating',
+  );
   if (!key) {
     return { status: 'saved' };
   }
@@ -340,10 +353,8 @@ export function saveStoredRating(
     }
     latestAcceptedRatingWriteSeq.set(key, writeSeq);
   }
-  const existing = readFeedbackSnapshot(key);
   const trimmedComment = rating.comment?.trim();
   const nextEntry: StoredFeedbackEntry = {
-    ...(existing ?? {}),
     rating: {
       score: rating.score,
       ...(trimmedComment ? { comment: trimmedComment } : {}),
@@ -367,7 +378,12 @@ export function saveStoredReport(
   targetId: string,
   report: { reason?: ReportReason; comment?: string },
 ): void {
-  const key = buildFeedbackStorageKey(accessToken, targetType, targetId);
+  const key = buildFeedbackStorageKey(
+    accessToken,
+    targetType,
+    targetId,
+    'report',
+  );
   if (!key) {
     return;
   }
@@ -381,7 +397,6 @@ export function saveStoredReport(
       : existingReport?.comment;
 
   const nextEntry: StoredFeedbackEntry = {
-    ...(existing ?? {}),
     report: {
       reported: true,
       ...(resolvedReason ? { reason: resolvedReason } : {}),
@@ -401,15 +416,18 @@ export function saveStoredReport(
 
 /**
  * SSR-safe React 19 `useSyncExternalStore` hook returning persisted client-side
- * feedback state for `(userScope, target.type, target.id)`.
+ * feedback state for `(kind, userScope, target.type, target.id)`. Ratings and
+ * reports live under separate storage keys so concurrent cross-tab writes cannot
+ * overwrite one another.
  */
 export function useStoredFeedback(
   accessToken: string,
   target: FeedbackStorageTarget | undefined,
+  kind: FeedbackStorageKind = 'rating',
 ): StoredFeedbackEntry | null {
   const key =
     target && target.id.trim().length > 0
-      ? buildFeedbackStorageKey(accessToken, target.type, target.id)
+      ? buildFeedbackStorageKey(accessToken, target.type, target.id, kind)
       : null;
 
   const subscribe = useCallback(

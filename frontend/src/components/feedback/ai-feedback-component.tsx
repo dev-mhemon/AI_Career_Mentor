@@ -19,6 +19,7 @@ import {
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import {
   beginRatingWrite,
+  buildFeedbackStorageKey,
   canonicalizeFeedbackTargetId,
   deriveFeedbackUserScope,
   enqueueSerializedRatingWrite,
@@ -228,8 +229,25 @@ function AIFeedbackInner({
   const hasReport = Boolean(reportTarget?.id?.trim());
 
   const seededScore = normalizeValidScore(currentScore);
-  const storedRatingEntry = useStoredFeedback(accessToken, ratingTarget);
-  const storedReportEntry = useStoredFeedback(accessToken, reportTarget);
+  const hasRatingStorageKey = Boolean(
+    ratingTarget &&
+      buildFeedbackStorageKey(
+        accessToken,
+        ratingTarget.type,
+        ratingTarget.id,
+        'rating',
+      ),
+  );
+  const storedRatingEntry = useStoredFeedback(
+    accessToken,
+    ratingTarget,
+    'rating',
+  );
+  const storedReportEntry = useStoredFeedback(
+    accessToken,
+    reportTarget,
+    'report',
+  );
   const persistedRating = storedRatingEntry?.rating ?? null;
   const persistedReport = storedReportEntry?.report ?? null;
 
@@ -267,8 +285,10 @@ function AIFeedbackInner({
   const toastCounterRef = useRef(0);
   const reportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const fallbackFocusRef = useRef<HTMLDivElement | null>(null);
+  const starContainerRef = useRef<HTMLDivElement | null>(null);
   const ratingCommentRef = useRef<HTMLTextAreaElement | null>(null);
   const focusRatingCommentOnMountRef = useRef(false);
+  const focusStarOnCloseRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -286,19 +306,17 @@ function AIFeedbackInner({
     });
   }, []);
 
-  // Coherent accepted rating source: shared persisted store wins over local fallback so sibling
-  // mounted instances immediately stay synchronized without shadowing newer updates.
-  const resolvedSavedScore =
-    persistedRating?.score ??
-    ratingState.fallbackSavedScore ??
-    seededScore ??
-    null;
-  const resolvedSavedComment =
-    persistedRating !== null
-      ? (persistedRating.comment ?? null)
-      : ratingState.fallbackSavedScore !== null
-        ? ratingState.fallbackSavedComment
-        : null;
+  // Coherent accepted rating source: when a target has a storage key, the shared store is the sole
+  // client-side source (including in-memory overlay on setItem failure), so cross-tab storage clears
+  // never resurrect stale instance-local scores. Keep local fallback only when no storage key exists.
+  const resolvedSavedScore = hasRatingStorageKey
+    ? (persistedRating?.score ?? seededScore ?? null)
+    : (ratingState.fallbackSavedScore ?? seededScore ?? null);
+  const resolvedSavedComment = hasRatingStorageKey
+    ? (persistedRating?.comment ?? null)
+    : ratingState.fallbackSavedScore !== null
+      ? ratingState.fallbackSavedComment
+      : null;
 
   const ratingCodePoints = Array.from(ratingState.comment.trim()).length;
   const ratingOverLimit = ratingCodePoints > MAX_RATING_COMMENT_CODEPOINTS;
@@ -390,6 +408,16 @@ function AIFeedbackInner({
     if (showRatingForm && focusRatingCommentOnMountRef.current) {
       focusRatingCommentOnMountRef.current = false;
       ratingCommentRef.current?.focus();
+    } else if (!showRatingForm && focusStarOnCloseRef.current) {
+      focusStarOnCloseRef.current = false;
+      const starTarget =
+        starContainerRef.current?.querySelector<HTMLButtonElement>(
+          '[role="radio"][aria-checked="true"]',
+        ) ??
+        starContainerRef.current?.querySelector<HTMLButtonElement>(
+          '[role="radio"]',
+        );
+      starTarget?.focus();
     }
   }, [showRatingForm]);
 
@@ -678,6 +706,7 @@ function AIFeedbackInner({
         {/* Independent Rating Capability (EP-F01) */}
         {hasRating && ratingTarget && (
           <div
+            ref={starContainerRef}
             data-rating-target-type={ratingTarget.type}
             data-rating-target-id={ratingTarget.id}
             className="flex flex-wrap items-center gap-1.5"
@@ -886,15 +915,16 @@ function AIFeedbackInner({
                 variant="ghost"
                 size="sm"
                 disabled={ratingState.submitting}
-                onClick={() =>
+                onClick={() => {
+                  focusStarOnCloseRef.current = true;
                   setRatingState((prev) => ({
                     ...prev,
                     draftScore: null,
                     comment: '',
                     commentPanelOpen: false,
                     error: null,
-                  }))
-                }
+                  }));
+                }}
                 className="min-h-11"
               >
                 <span>Cancel</span>

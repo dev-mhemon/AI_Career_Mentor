@@ -138,7 +138,7 @@ export function StarRating({
             onClick={() => handleSelect(star)}
             onKeyDown={(e) => handleKeyDown(e, star)}
             className={cn(
-              'inline-flex cursor-pointer items-center justify-center rounded-lg transition-[color,transform] duration-200 ease-out hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/40 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100 disabled:active:scale-100',
+              'inline-flex cursor-pointer items-center justify-center rounded-lg transition-[color,transform] duration-200 ease-out hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:focus-visible:ring-teal-400 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100 disabled:active:scale-100',
               buttonPaddingClass,
               isFilled ? activeColorClass : UNFILLED_STAR_CLASS,
             )}

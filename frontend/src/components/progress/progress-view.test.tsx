@@ -592,4 +592,45 @@ describe('ProgressView (Screen 19 — EP-G01, EP-G02, EP-G03, tabs, filters & Sk
       screen.getByRole('button', { name: /^Load More Skills$/i }),
     ).toBeInTheDocument();
   });
+
+  it('bounds listRoadmaps with finite timeoutMs, keeps career-level & mastery filters usable while roadmaps load, and exposes Retry roadmaps on timeout', async () => {
+    let rejectRoadmaps!: (err: Error) => void;
+    vi.mocked(listRoadmaps).mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectRoadmaps = reject;
+      }),
+    );
+    vi.mocked(getProgress).mockResolvedValue({
+      progress: SAMPLE_PROGRESS,
+      meta: { limit: 20, next_cursor: null },
+    });
+    vi.mocked(getProgressHistory).mockResolvedValue({
+      items: SAMPLE_HISTORY,
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    render(<ProgressView accessToken="tok-timeout-rm" />);
+
+    // Progress settles while listRoadmaps is STILL pending -> Career Level & Mastery State filters are usable, Roadmap select disabled
+    expect(
+      await screen.findByLabelText(/Filter by career level/i),
+    ).toBeEnabled();
+    expect(screen.getByLabelText(/Filter by mastery state/i)).toBeEnabled();
+    expect(screen.getByLabelText(/Filter by roadmap/i)).toBeDisabled();
+    expect(listRoadmaps).toHaveBeenCalledWith(
+      'tok-timeout-rm',
+      { status: 'locked', limit: 20 },
+      expect.objectContaining({ timeoutMs: 15_000 }),
+    );
+
+    // Timeout rejects listRoadmaps -> filter bar stays visible with Retry roadmaps recovery button
+    await act(async () => {
+      rejectRoadmaps(new Error('Request timed out'));
+      await Promise.resolve();
+    });
+    expect(
+      await screen.findByRole('button', { name: /Retry roadmaps/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Filter by career level/i)).toBeEnabled();
+  });
 });
