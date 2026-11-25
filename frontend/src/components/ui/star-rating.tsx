@@ -102,7 +102,8 @@ export function StarRating({
     }
   };
 
-  const buttonPaddingClass = size === 'sm' ? 'p-1' : 'p-1 sm:p-1.5';
+  const buttonPaddingClass =
+    size === 'sm' ? 'min-h-11 min-w-11 p-2' : 'min-h-11 min-w-11 p-2 sm:p-2.5';
   const iconSizeClass =
     size === 'sm' ? 'h-5 w-5' : 'h-5 w-5 sm:h-6 sm:w-6';
 
@@ -111,7 +112,7 @@ export function StarRating({
       role="radiogroup"
       aria-label={ariaLabel}
       onMouseLeave={() => setHoveredStar(null)}
-      className={cn('inline-flex items-center gap-0.5', className)}
+      className={cn('inline-flex items-center gap-1', className)}
     >
       {STAR_VALUES.map((star, idx) => {
         const isSelected = value === star;

@@ -286,6 +286,7 @@ function AIFeedbackInner({
   const reportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const fallbackFocusRef = useRef<HTMLDivElement | null>(null);
   const starContainerRef = useRef<HTMLDivElement | null>(null);
+  const ratingFormRef = useRef<HTMLFormElement | null>(null);
   const ratingCommentRef = useRef<HTMLTextAreaElement | null>(null);
   const focusRatingCommentOnMountRef = useRef(false);
   const focusStarOnCloseRef = useRef(false);
@@ -437,6 +438,11 @@ function AIFeedbackInner({
     const targetId = ratingTarget.id.trim();
     const trimmedComment = ratingState.comment.trim();
     const scoreToSubmit = resolvedSelectedScore;
+    const activeAtSubmit =
+      typeof document !== 'undefined' ? document.activeElement : null;
+    const focusWasInForm = Boolean(
+      activeAtSubmit && ratingFormRef.current?.contains(activeAtSubmit),
+    );
     ratingRequestIdRef.current += 1;
     const requestId = ratingRequestIdRef.current;
     const writeSeq = beginRatingWrite();
@@ -501,6 +507,17 @@ function AIFeedbackInner({
           };
         });
         return;
+      }
+
+      const currentActive =
+        typeof document !== 'undefined' ? document.activeElement : null;
+      const userMovedFocusElsewhere =
+        currentActive !== null &&
+        currentActive !== document.body &&
+        currentActive !== document.documentElement &&
+        !ratingFormRef.current?.contains(currentActive);
+      if (focusWasInForm && !userMovedFocusElsewhere) {
+        focusStarOnCloseRef.current = true;
       }
 
       setRatingState((prev) => {
@@ -835,6 +852,7 @@ function AIFeedbackInner({
       {/* Expandable / Standard Rating Comment + Submit Form */}
       {hasRating && ratingTarget && showRatingForm && (
         <form
+          ref={ratingFormRef}
           onSubmit={handleRatingSubmit}
           className="flex flex-col gap-2.5 border-t border-slate-100 pt-3 dark:border-slate-800/80"
         >

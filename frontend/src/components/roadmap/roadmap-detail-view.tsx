@@ -2545,7 +2545,11 @@ export function RoadmapDetailView({
             {currentRoadmap.status === 'locked' && (
               <>
                 <Link
-                  href="/today"
+                  href={
+                    currentRoadmap.is_focus
+                      ? '/today'
+                      : `/daily-plan?roadmap_id=${encodeURIComponent(currentRoadmap.id)}`
+                  }
                   className={cn(
                     'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium leading-none whitespace-nowrap transition-colors',
                     currentRoadmap.is_focus

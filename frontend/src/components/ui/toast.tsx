@@ -33,7 +33,7 @@ const COUNTDOWN_KEYFRAMES_CSS =
   '.agy-toast-bar{animation:agy-toast-countdown var(--toast-duration,6000ms) linear forwards}' +
   '@media(prefers-reduced-motion:reduce){.agy-toast-bar{animation:none}}';
 
-export interface ToastProps extends Omit<AlertProps, 'className'> {
+export interface ToastProps extends Omit<AlertProps, 'className' | 'dense'> {
   onDismiss?: () => void;
   /** Auto-dismiss ms. Ignored for error_retryable (needs user action). */
   autoDismissMs?: number;

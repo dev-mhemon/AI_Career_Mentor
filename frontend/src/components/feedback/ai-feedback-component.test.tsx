@@ -20,6 +20,7 @@ import {
   beginRatingWrite,
   buildFeedbackStorageKey,
   saveStoredRating,
+  saveStoredReport,
 } from '@/lib/feedback-storage';
 import { AIFeedbackComponent } from './ai-feedback-component';
 
@@ -66,7 +67,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     const radioGroup = screen.getByRole('radiogroup', {
       name: 'Rate this content',
     });
-    expect(radioGroup).toHaveClass('gap-0.5');
+    expect(radioGroup).toHaveClass('gap-1');
     expect(within(radioGroup).getAllByRole('radio')).toHaveLength(5);
     expect(
       screen.queryByRole('button', { name: /report issue/i }),
@@ -115,12 +116,14 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     });
     const stars = within(radioGroup).getAllByRole('radio');
 
-    // Initially all unfilled -> text-slate-300 + transparent SVG fill + responsive h-5 w-5 sm:h-6 sm:w-6 + full-opacity focus ring
+    // Initially all unfilled -> text-slate-300 + transparent SVG fill + 44x44 min touch targets + full-opacity focus ring
     for (const star of stars) {
       expect(star).toHaveClass(
         'text-slate-300',
-        'p-1',
-        'sm:p-1.5',
+        'min-h-11',
+        'min-w-11',
+        'p-2',
+        'sm:p-2.5',
         'duration-200',
         'ease-out',
         'hover:scale-110',
@@ -1737,6 +1740,206 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     fireEvent.click(cancelUnrated);
     expect(document.activeElement).toBe(
       within(clrA).getByRole('radio', { name: '1 star' }),
+    );
+  });
+
+  it('restores keyboard focus to selected star after rating submit when focus came from form, without stealing focus if user moved elsewhere', async () => {
+    let resolveDelayed!: (res: RatingResponseDTO) => void;
+    vi.mocked(submitRating)
+      .mockResolvedValueOnce({
+        target_type: 'topic_content',
+        target_id: 'top-focus-submit',
+        score: 4,
+      })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveDelayed = resolve;
+        }),
+      );
+
+    render(
+      <div>
+        <button type="button" data-testid="outside-btn">
+          Outside control
+        </button>
+        <AIFeedbackComponent
+          accessToken="tok-focus-submit"
+          ratingTarget={{ type: 'topic_content', id: 'top-focus-submit' }}
+        />
+      </div>,
+    );
+
+    // 1. Focus originates inside rating form -> submit moves focus to newly selected star (4 stars)
+    fireEvent.click(screen.getByRole('radio', { name: '4 stars' }));
+    const submitBtn = screen.getByRole('button', { name: /Submit rating/i });
+    submitBtn.focus();
+    fireEvent.click(submitBtn);
+    expect(await screen.findByTestId('ai-feedback-score')).toHaveTextContent(
+      '(4)',
+    );
+    expect(document.activeElement).toBe(
+      screen.getByRole('radio', { name: '4 stars' }),
+    );
+
+    // 2. Focus starts inside form, but user moves focus to outside button while request is pending -> must NOT steal focus
+    fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
+    const updateBtn = screen.getByRole('button', { name: /Update rating/i });
+    updateBtn.focus();
+    fireEvent.click(updateBtn);
+
+    const outsideBtn = screen.getByTestId('outside-btn');
+    outsideBtn.focus();
+    expect(document.activeElement).toBe(outsideBtn);
+
+    await act(async () => {
+      resolveDelayed({
+        target_type: 'topic_content',
+        target_id: 'top-focus-submit',
+        score: 5,
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(5)');
+    expect(document.activeElement).toBe(outsideBtn);
+  });
+
+  it('keeps failed-write overlay synchronized with cross-tab storage events while unmounted and isolates duplicate-report markers from accepted details', async () => {
+    // 1. Unmounted overlay reconciliation: fail setItem (overlay=4) -> unmount -> cross-tab event writes 5 -> remount reads 5
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new Error('QuotaExceededError');
+      });
+
+    vi.mocked(submitRating).mockResolvedValueOnce({
+      target_type: 'topic_content',
+      target_id: 'top-unmounted-overlay',
+      score: 4,
+    });
+
+    try {
+      const { unmount } = render(
+        <AIFeedbackComponent
+          accessToken="tok-unmounted-ov"
+          ratingTarget={{
+            type: 'topic_content',
+            id: 'top-unmounted-overlay',
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByRole('radio', { name: '4 stars' }));
+      fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+      expect(await screen.findByTestId('ai-feedback-score')).toHaveTextContent(
+        '(4)',
+      );
+
+      // Unmount so ZERO component subscriptions are mounted
+      unmount();
+
+      // Another tab durably writes 5 stars while unmounted
+      setItemSpy.mockRestore();
+      const ratingKey = buildFeedbackStorageKey(
+        'tok-unmounted-ov',
+        'topic_content',
+        'top-unmounted-overlay',
+        'rating',
+      )!;
+      const newerPayload = JSON.stringify({
+        rating: { score: 5, comment: 'Saved from another tab while unmounted' },
+      });
+      window.localStorage.setItem(ratingKey, newerPayload);
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: ratingKey,
+          newValue: newerPayload,
+        }),
+      );
+
+      // Remounting MUST see 5 stars from durable storage, NOT stale overlay 4
+      const remounted = render(
+        <AIFeedbackComponent
+          accessToken="tok-unmounted-ov"
+          ratingTarget={{
+            type: 'topic_content',
+            id: 'top-unmounted-overlay',
+          }}
+        />,
+      );
+      expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(5)');
+      expect(screen.getByTestId('ai-feedback-review-preview')).toHaveTextContent(
+        'Saved from another tab while unmounted',
+      );
+      remounted.unmount();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+
+    // 2. Duplicate 409 marker writes to separate report_marker key and NEVER overwrites accepted details on report key
+    const detailsKey = buildFeedbackStorageKey(
+      'tok-dup-safe',
+      'topic_content',
+      'top-dup-safe',
+      'report',
+    )!;
+    window.localStorage.setItem(
+      detailsKey,
+      JSON.stringify({
+        report: {
+          reported: true,
+          reason: 'outdated',
+          comment: 'Accepted report details from Tab A',
+        },
+      }),
+    );
+
+    vi.mocked(submitReport).mockRejectedValueOnce(
+      new ApiError(
+        409,
+        'Duplicate report',
+        'REPORT_ALREADY_SUBMITTED',
+        'req-dup-409',
+      ),
+    );
+
+    // Simulate Tab B reconciling 409 -> writes marker key only, never touches detailsKey
+    render(
+      <AIFeedbackComponent
+        accessToken="tok-dup-safe"
+        reportTarget={{ type: 'topic_content', id: 'top-dup-only' }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /report issue/i }));
+    const dupDialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(dupDialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(
+      window.localStorage.getItem(
+        buildFeedbackStorageKey(
+          'tok-dup-safe',
+          'topic_content',
+          'top-dup-only',
+          'report_marker',
+        )!,
+      ),
+    ).toContain('"reported":true');
+    // Duplicate marker write on the SAME target NEVER overwrites accepted details on detailsKey
+    saveStoredReport('tok-dup-safe', 'topic_content', 'top-dup-safe', {});
+    expect(window.localStorage.getItem(detailsKey)).toContain(
+      'Accepted report details from Tab A',
+    );
+    cleanup();
+    render(
+      <AIFeedbackComponent
+        accessToken="tok-dup-safe"
+        reportTarget={{ type: 'topic_content', id: 'top-dup-safe' }}
+      />,
+    );
+    expect(screen.getByTestId('ai-feedback-report-preview')).toHaveTextContent(
+      'Accepted report details from Tab A',
     );
   });
 });

@@ -200,7 +200,6 @@ export class FeedbackService {
             WHERE tu.id = $2
               AND udh.user_id = $1
               AND udh.state = 'available'::public.update_state
-              AND private.effective_feature_access($1, 'technology_update'::public.feature_key) = true
             LIMIT 1`,
           [userId, targetId],
         );
@@ -435,18 +434,35 @@ export class FeedbackService {
           [targetType, targetId],
         );
 
-        // Self-heal valid integral decimal JSONB representations (e.g. 2.0) to canonical JSONB
-        // integer before INSERT so frozen trigger trg_content_reports_threshold's ::integer cast
-        // never fails (including on private practice_review reports); matches 0 rows (zero row
-        // locks) when already canonical integer.
-        await db.query(
-          `UPDATE public.system_configurations
-              SET config_value = to_jsonb((config_value #>> '{}')::numeric::integer)
+        // Lock the threshold configuration row FOR UPDATE (held until commit) so concurrent
+        // threshold writes cannot introduce a non-canonical integral decimal (e.g. 2.0) between
+        // normalization and INSERT into public.content_reports (avoids FOR SHARE -> UPDATE
+        // lock-upgrade deadlocks when two concurrent reports observe 2.0).
+        const thresholdRows = await db.query<
+          Array<{ raw_value: string | null }>
+        >(
+          `SELECT config_value #>> '{}' AS raw_value
+             FROM public.system_configurations
             WHERE config_key = 'quality.report_auto_hide_threshold'
-              AND jsonb_typeof(config_value) = 'number'
-              AND (config_value #>> '{}') ~ '^[0-9]+\\.[0-9]+$'
-              AND ((config_value #>> '{}')::numeric = trunc((config_value #>> '{}')::numeric))`,
+              FOR UPDATE`,
         );
+        const rawThresholdValue = Array.isArray(thresholdRows)
+          ? thresholdRows[0]?.raw_value
+          : undefined;
+        if (
+          typeof rawThresholdValue === 'string' &&
+          /^[0-9]+\.[0-9]+$/.test(rawThresholdValue) &&
+          Number(rawThresholdValue) === Math.trunc(Number(rawThresholdValue))
+        ) {
+          await db.query(
+            `UPDATE public.system_configurations
+                SET config_value = to_jsonb((config_value #>> '{}')::numeric::integer)
+              WHERE config_key = 'quality.report_auto_hide_threshold'
+                AND jsonb_typeof(config_value) = 'number'
+                AND (config_value #>> '{}') ~ '^[0-9]+\\.[0-9]+$'
+                AND ((config_value #>> '{}')::numeric = trunc((config_value #>> '{}')::numeric))`,
+          );
+        }
 
         let raw: unknown;
         try {

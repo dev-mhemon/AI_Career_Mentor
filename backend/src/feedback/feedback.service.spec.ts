@@ -100,11 +100,7 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       [
         'technology_update',
         'FROM public.technology_updates tu',
-        [
-          'udh.user_id = $1',
-          "udh.state = 'available'::public.update_state",
-          "private.effective_feature_access($1, 'technology_update'::public.feature_key) = true",
-        ],
+        ['udh.user_id = $1', "udh.state = 'available'::public.update_state"],
       ],
     ] as const)(
       'accepts exposed/owned %s target, runs with foreground=true, normalizes whitespace comment to null, and returns 200 DTO',
@@ -201,14 +197,10 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       [
         'technology_update',
         'FROM public.technology_updates tu',
-        [
-          'udh.user_id = $1',
-          "udh.state = 'available'::public.update_state",
-          "private.effective_feature_access($1, 'technology_update'::public.feature_key) = true",
-        ],
+        ['udh.user_id = $1', "udh.state = 'available'::public.update_state"],
       ],
     ] as const)(
-      'rejects foreign, undelivered, feature-disabled, or unapproved %s target with 404 TARGET_NOT_FOUND',
+      'rejects foreign, undelivered, or unapproved %s target with 404 TARGET_NOT_FOUND',
       async (targetType, expectedSqlFragment, requiredPredicates) => {
         // Target belongs exclusively to USER_A; calling as foreign tenant USER_B must fail 404
         // when the ownership/exposure predicates are present and bound to USER_B.
@@ -294,13 +286,12 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       expect(executedStatements).toHaveLength(2);
     });
 
-    it('enforces effective_feature_access(user, technology_update) = true and state = available on technology_update ratings', async () => {
+    it('rates delivered technology_update based strictly on caller delivery and available state without requiring current feature entitlement (C05 Gate: none)', async () => {
       const { database } = createMockDb((sql) => {
         if (sql.includes('FROM public.technology_updates tu')) {
           expect(sql).toContain("udh.state = 'available'::public.update_state");
-          expect(sql).toContain(
-            "private.effective_feature_access($1, 'technology_update'::public.feature_key) = true",
-          );
+          expect(sql).toContain('udh.user_id = $1');
+          expect(sql).not.toContain('effective_feature_access');
           return [];
         }
         return [];
@@ -531,6 +522,12 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           }
           if (sql.includes('pg_advisory_xact_lock(hashtextextended')) {
             return [{ pg_advisory_xact_lock: '' }];
+          }
+          if (
+            sql.includes('FROM public.system_configurations') &&
+            sql.includes('FOR UPDATE')
+          ) {
+            return [{ raw_value: '5' }];
           }
           if (sql.includes('UPDATE public.system_configurations')) {
             return [];
@@ -774,6 +771,7 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
     });
 
     it.each([
+      ['canonical integer 5', '5', 'topic_content', 'FROM public.topics t'],
       ['canonical integer 2', '2', 'topic_content', 'FROM public.topics t'],
       [
         'non-canonical whole-number 2.0 on shared topic_content',
@@ -788,7 +786,7 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
         'FROM public.practice_reviews pr',
       ],
     ] as const)(
-      'normalizes %s threshold JSONB before INSERT so frozen trigger ::integer cast never fails',
+      'acquires FOR UPDATE lock on quality.report_auto_hide_threshold before conditional normalization and INSERT for %s',
       async (_label, initialRawJsonText, targetType, exposureSqlFragment) => {
         let storedConfigText: string = initialRawJsonText;
         let normalizedRowsUpdated = 0;
@@ -799,6 +797,16 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           }
           if (sql.includes('pg_advisory_xact_lock')) {
             return [{}];
+          }
+          if (
+            sql.includes('FROM public.system_configurations') &&
+            sql.includes('FOR UPDATE')
+          ) {
+            expect(sql).toContain(
+              "config_key = 'quality.report_auto_hide_threshold'",
+            );
+            expect(sql).not.toContain('FOR SHARE');
+            return [{ raw_value: storedConfigText }];
           }
           if (sql.includes('UPDATE public.system_configurations')) {
             expect(sql).toContain(
@@ -840,19 +848,38 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
         });
 
         expect(res).toEqual({ report_id: REPORT_ID, status: 'received' });
-        expect(storedConfigText).toBe('2');
+        const expectedCanonical = initialRawJsonText.includes('.')
+          ? String(Math.trunc(Number(initialRawJsonText)))
+          : initialRawJsonText;
+        expect(storedConfigText).toBe(expectedCanonical);
         expect(normalizedRowsUpdated).toBe(
           initialRawJsonText.includes('.') ? 1 : 0,
         );
 
+        const advisoryLockIndex = executedStatements.findIndex((s) =>
+          s.sql.includes('pg_advisory_xact_lock'),
+        );
+        const configLockIndex = executedStatements.findIndex(
+          (s) =>
+            s.sql.includes('FROM public.system_configurations') &&
+            s.sql.includes('FOR UPDATE'),
+        );
         const normalizeIndex = executedStatements.findIndex((s) =>
           s.sql.includes('UPDATE public.system_configurations'),
         );
         const insertIndex = executedStatements.findIndex((s) =>
           s.sql.includes('INSERT INTO public.content_reports'),
         );
-        expect(normalizeIndex).toBeGreaterThanOrEqual(0);
-        expect(insertIndex).toBeGreaterThan(normalizeIndex);
+
+        expect(advisoryLockIndex).toBeGreaterThanOrEqual(0);
+        expect(configLockIndex).toBeGreaterThan(advisoryLockIndex);
+        expect(insertIndex).toBeGreaterThan(configLockIndex);
+        if (initialRawJsonText.includes('.')) {
+          expect(normalizeIndex).toBeGreaterThan(configLockIndex);
+          expect(insertIndex).toBeGreaterThan(normalizeIndex);
+        } else {
+          expect(normalizeIndex).toBe(-1);
+        }
       },
     );
 

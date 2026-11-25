@@ -1466,4 +1466,29 @@ describe('RoadmapDetailView (Screen 15)', () => {
     expect(actionLabels[0]).toBe('Daily Plan');
     expect(actionLabels[actionLabels.length - 1]).toBe('Ask Mentor');
   });
+
+  it('routes locked non-focus roadmap Daily Plan header link to /daily-plan?roadmap_id=<id>', () => {
+    const nonFocus = makeDetail({
+      id: 'rm-secondary-42',
+      status: 'locked',
+      is_focus: false,
+    });
+
+    render(
+      <RoadmapDetailView
+        accessToken="token-1"
+        roadmapId="rm-secondary-42"
+        initialRoadmap={nonFocus}
+      />,
+    );
+
+    const header = screen.getByRole('banner');
+    const dailyPlanLink = within(header).getByRole('link', {
+      name: 'Daily Plan',
+    });
+    expect(dailyPlanLink).toHaveAttribute(
+      'href',
+      '/daily-plan?roadmap_id=rm-secondary-42',
+    );
+  });
 });

@@ -24,7 +24,7 @@ export type FeedbackStorageTarget = {
   id: string;
 };
 
-export type FeedbackStorageKind = 'rating' | 'report';
+export type FeedbackStorageKind = 'rating' | 'report' | 'report_marker';
 
 const STORAGE_PREFIX = 'acm:feedback:v1';
 const UUID_PATTERN =
@@ -53,10 +53,16 @@ export type SaveStoredRatingResult = {
   status: 'saved' | 'superseded';
 };
 
+type OverlayEntry = {
+  value: StoredFeedbackEntry;
+  baselineRaw: string | null;
+};
+
 const snapshotCache = new Map<string, CachedSnapshot>();
-const memoryOverlay = new Map<string, StoredFeedbackEntry>();
+const memoryOverlay = new Map<string, OverlayEntry>();
 const keyListeners = new Map<string, Set<() => void>>();
 const ratingSubmissionChains = new Map<string, Promise<void>>();
+let overlayStorageListenerAttached = false;
 let nextRatingWriteSeq = 0;
 const latestAcceptedRatingWriteSeq = new Map<string, number>();
 
@@ -224,13 +230,76 @@ function safeWriteRaw(key: string, raw: string): boolean {
   }
 }
 
+function handleGlobalOverlayStorageEvent(event: StorageEvent): void {
+  if (memoryOverlay.size === 0) {
+    detachOverlayStorageListenerIfIdle();
+    return;
+  }
+  if (event.key === null) {
+    const affectedKeys = Array.from(memoryOverlay.keys());
+    memoryOverlay.clear();
+    for (const k of affectedKeys) {
+      snapshotCache.delete(k);
+      notifyKeyListeners(k);
+    }
+    detachOverlayStorageListenerIfIdle();
+    return;
+  }
+  const overlay = memoryOverlay.get(event.key);
+  if (!overlay) {
+    return;
+  }
+  const nextRaw = event.newValue ?? safeReadRaw(event.key);
+  if (nextRaw !== overlay.baselineRaw) {
+    memoryOverlay.delete(event.key);
+    snapshotCache.delete(event.key);
+    notifyKeyListeners(event.key);
+    detachOverlayStorageListenerIfIdle();
+  }
+}
+
+function attachOverlayStorageListener(): void {
+  if (overlayStorageListenerAttached || typeof window === 'undefined') {
+    return;
+  }
+  window.addEventListener('storage', handleGlobalOverlayStorageEvent);
+  overlayStorageListenerAttached = true;
+}
+
+function detachOverlayStorageListenerIfIdle(): void {
+  if (
+    !overlayStorageListenerAttached ||
+    memoryOverlay.size > 0 ||
+    typeof window === 'undefined'
+  ) {
+    return;
+  }
+  window.removeEventListener('storage', handleGlobalOverlayStorageEvent);
+  overlayStorageListenerAttached = false;
+}
+
+function setMemoryOverlay(key: string, value: StoredFeedbackEntry): void {
+  memoryOverlay.set(key, { value, baselineRaw: safeReadRaw(key) });
+  attachOverlayStorageListener();
+}
+
+function deleteMemoryOverlay(key: string): void {
+  memoryOverlay.delete(key);
+  detachOverlayStorageListenerIfIdle();
+}
+
 function readFeedbackSnapshot(key: string | null): StoredFeedbackEntry | null {
   if (!key || typeof window === 'undefined') {
     return null;
   }
   const overlaid = memoryOverlay.get(key);
   if (overlaid !== undefined) {
-    return overlaid;
+    const currentRaw = safeReadRaw(key);
+    if (currentRaw === overlaid.baselineRaw) {
+      return overlaid.value;
+    }
+    // Durable storage changed since the failed write; reconcile with durable state.
+    deleteMemoryOverlay(key);
   }
   const raw = safeReadRaw(key);
   const cached = snapshotCache.get(key);
@@ -267,8 +336,20 @@ function subscribeKey(key: string | null, listener: () => void): () => void {
   listeners.add(listener);
 
   const onStorage = (event: StorageEvent) => {
-    if (event.key === null || event.key === key) {
-      memoryOverlay.delete(key);
+    if (event.key === null) {
+      deleteMemoryOverlay(key);
+      snapshotCache.delete(key);
+      listener();
+      return;
+    }
+    if (event.key === key) {
+      const overlay = memoryOverlay.get(key);
+      if (overlay) {
+        const nextRaw = event.newValue ?? safeReadRaw(key);
+        if (nextRaw !== overlay.baselineRaw) {
+          deleteMemoryOverlay(key);
+        }
+      }
       snapshotCache.delete(key);
       listener();
     }
@@ -362,10 +443,10 @@ export function saveStoredRating(
   };
   const raw = JSON.stringify(nextEntry);
   if (safeWriteRaw(key, raw)) {
-    memoryOverlay.delete(key);
+    deleteMemoryOverlay(key);
     snapshotCache.set(key, { raw, value: nextEntry });
   } else {
-    memoryOverlay.set(key, nextEntry);
+    setMemoryOverlay(key, nextEntry);
     snapshotCache.delete(key);
   }
   notifyKeyListeners(key);
@@ -378,6 +459,39 @@ export function saveStoredReport(
   targetId: string,
   report: { reason?: ReportReason; comment?: string },
 ): void {
+  const trimmedComment = report.comment?.trim();
+  const hasDetails =
+    report.reason !== undefined ||
+    (trimmedComment !== undefined && trimmedComment.length > 0);
+
+  // Store duplicate-only reconciliation markers under a separate key so a 409
+  // reconciliation in one tab can NEVER overwrite accepted reason/comment details
+  // written concurrently by another tab.
+  if (!hasDetails) {
+    const markerKey = buildFeedbackStorageKey(
+      accessToken,
+      targetType,
+      targetId,
+      'report_marker',
+    );
+    if (!markerKey) {
+      return;
+    }
+    const markerEntry: StoredFeedbackEntry = {
+      report: { reported: true },
+    };
+    const rawMarker = JSON.stringify(markerEntry);
+    if (safeWriteRaw(markerKey, rawMarker)) {
+      deleteMemoryOverlay(markerKey);
+      snapshotCache.set(markerKey, { raw: rawMarker, value: markerEntry });
+    } else {
+      setMemoryOverlay(markerKey, markerEntry);
+      snapshotCache.delete(markerKey);
+    }
+    notifyKeyListeners(markerKey);
+    return;
+  }
+
   const key = buildFeedbackStorageKey(
     accessToken,
     targetType,
@@ -390,7 +504,6 @@ export function saveStoredReport(
   const existing = readFeedbackSnapshot(key);
   const existingReport = existing?.report;
   const resolvedReason = report.reason ?? existingReport?.reason;
-  const trimmedComment = report.comment?.trim();
   const resolvedComment =
     report.comment !== undefined
       ? trimmedComment || undefined
@@ -405,10 +518,10 @@ export function saveStoredReport(
   };
   const raw = JSON.stringify(nextEntry);
   if (safeWriteRaw(key, raw)) {
-    memoryOverlay.delete(key);
+    deleteMemoryOverlay(key);
     snapshotCache.set(key, { raw, value: nextEntry });
   } else {
-    memoryOverlay.set(key, nextEntry);
+    setMemoryOverlay(key, nextEntry);
     snapshotCache.delete(key);
   }
   notifyKeyListeners(key);
@@ -416,9 +529,9 @@ export function saveStoredReport(
 
 /**
  * SSR-safe React 19 `useSyncExternalStore` hook returning persisted client-side
- * feedback state for `(kind, userScope, target.type, target.id)`. Ratings and
- * reports live under separate storage keys so concurrent cross-tab writes cannot
- * overwrite one another.
+ * feedback state for `(kind, userScope, target.type, target.id)`. Ratings, accepted
+ * report details, and duplicate-report markers live under separate storage keys so
+ * concurrent cross-tab writes cannot overwrite one another.
  */
 export function useStoredFeedback(
   accessToken: string,
@@ -429,12 +542,37 @@ export function useStoredFeedback(
     target && target.id.trim().length > 0
       ? buildFeedbackStorageKey(accessToken, target.type, target.id, kind)
       : null;
+  const reportMarkerKey =
+    kind === 'report' && target && target.id.trim().length > 0
+      ? buildFeedbackStorageKey(
+          accessToken,
+          target.type,
+          target.id,
+          'report_marker',
+        )
+      : null;
 
   const subscribe = useCallback(
-    (listener: () => void) => subscribeKey(key, listener),
-    [key],
+    (listener: () => void) => {
+      const unsubPrimary = subscribeKey(key, listener);
+      if (!reportMarkerKey) {
+        return unsubPrimary;
+      }
+      const unsubMarker = subscribeKey(reportMarkerKey, listener);
+      return () => {
+        unsubPrimary();
+        unsubMarker();
+      };
+    },
+    [key, reportMarkerKey],
   );
-  const getSnapshot = useCallback(() => readFeedbackSnapshot(key), [key]);
+  const getSnapshot = useCallback(() => {
+    const primary = readFeedbackSnapshot(key);
+    if (primary || !reportMarkerKey) {
+      return primary;
+    }
+    return readFeedbackSnapshot(reportMarkerKey);
+  }, [key, reportMarkerKey]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
