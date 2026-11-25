@@ -25,6 +25,13 @@ export type FeedbackStorageTarget = {
 };
 
 const STORAGE_PREFIX = 'acm:feedback:v1';
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function canonicalizeFeedbackTargetId(targetId: string): string {
+  const cleanId = targetId.trim();
+  return UUID_PATTERN.test(cleanId) ? cleanId.toLowerCase() : cleanId;
+}
 
 const VALID_REPORT_REASONS = new Set<ReportReason>([
   'incorrect',
@@ -122,7 +129,7 @@ export function buildFeedbackStorageKey(
   targetId: string,
 ): string | null {
   const userScope = deriveFeedbackUserScope(accessToken);
-  const cleanId = targetId.trim();
+  const cleanId = canonicalizeFeedbackTargetId(targetId);
   if (!userScope || !cleanId) {
     return null;
   }

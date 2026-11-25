@@ -214,7 +214,8 @@ describe('Toast (#11) with countdown progress bar', () => {
       name: 'Dismiss notification',
     });
     expect(dismissBtn).toHaveClass('absolute', 'top-2', 'right-2');
-    expect(dismissBtn).not.toHaveClass('top-1/2', '-translate-y-1/2');
+    expect(dismissBtn).not.toHaveClass('top-1/2');
+    expect(dismissBtn).not.toHaveClass('-translate-y-1/2');
 
     const titleEl = screen.getByText('Rating saved');
     expect(titleEl).toHaveClass('leading-5');

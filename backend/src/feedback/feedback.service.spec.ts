@@ -82,18 +82,47 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
 
   describe('EP-F01 submitRating — R34 visibility/exposure, upsert & R24 foreground activity', () => {
     it.each([
-      ['roadmap_draft', 'FROM public.roadmap_versions rv'],
-      ['roadmap_merge', 'FROM public.roadmap_merges rm'],
-      ['topic_content', 'FROM public.topics t'],
-      ['technology_update', 'FROM public.technology_updates tu'],
+      [
+        'roadmap_draft',
+        'FROM public.roadmap_versions rv',
+        ['r.user_id = $1', 'rv.user_id = $1'],
+      ],
+      [
+        'roadmap_merge',
+        'FROM public.roadmap_merges rm',
+        ['r.user_id = $1', 'rm.user_id = $1'],
+      ],
+      [
+        'topic_content',
+        'FROM public.topics t',
+        ["t.status = 'approved'::public.content_status", 'ri.user_id = $1'],
+      ],
+      [
+        'technology_update',
+        'FROM public.technology_updates tu',
+        [
+          'udh.user_id = $1',
+          "udh.state = 'available'::public.update_state",
+          "private.effective_feature_access($1, 'technology_update'::public.feature_key) = true",
+        ],
+      ],
     ] as const)(
       'accepts exposed/owned %s target, runs with foreground=true, normalizes whitespace comment to null, and returns 200 DTO',
-      async (targetType, expectedSqlFragment) => {
+      async (targetType, expectedSqlFragment, requiredPredicates) => {
         const { database, txCalls, executedStatements } = createMockDb(
           (sql, params) => {
             if (sql.includes(expectedSqlFragment)) {
-              expect(params).toEqual([USER_A, TARGET_ID]);
-              return [{ id: TARGET_ID }];
+              const hasAllPredicates = requiredPredicates.every((pred) =>
+                sql.includes(pred),
+              );
+              if (
+                hasAllPredicates &&
+                params?.[0] === USER_A &&
+                params?.[1] === TARGET_ID
+              ) {
+                return [{ id: TARGET_ID }];
+              }
+              return [];
             }
             if (sql.includes('INSERT INTO public.user_ratings')) {
               return [
@@ -132,6 +161,14 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           },
         ]);
 
+        const visibilityCall = executedStatements.find((s) =>
+          s.sql.includes(expectedSqlFragment),
+        );
+        expect(visibilityCall?.params).toEqual([USER_A, TARGET_ID]);
+        for (const pred of requiredPredicates) {
+          expect(visibilityCall?.sql).toContain(pred);
+        }
+
         const insertCall = executedStatements.find((s) =>
           s.sql.includes('INSERT INTO public.user_ratings'),
         );
@@ -146,19 +183,54 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
     );
 
     it.each([
-      'roadmap_draft',
-      'roadmap_merge',
-      'topic_content',
-      'technology_update',
+      [
+        'roadmap_draft',
+        'FROM public.roadmap_versions rv',
+        ['r.user_id = $1', 'rv.user_id = $1'],
+      ],
+      [
+        'roadmap_merge',
+        'FROM public.roadmap_merges rm',
+        ['r.user_id = $1', 'rm.user_id = $1'],
+      ],
+      [
+        'topic_content',
+        'FROM public.topics t',
+        ["t.status = 'approved'::public.content_status", 'ri.user_id = $1'],
+      ],
+      [
+        'technology_update',
+        'FROM public.technology_updates tu',
+        [
+          'udh.user_id = $1',
+          "udh.state = 'available'::public.update_state",
+          "private.effective_feature_access($1, 'technology_update'::public.feature_key) = true",
+        ],
+      ],
     ] as const)(
       'rejects foreign, undelivered, feature-disabled, or unapproved %s target with 404 TARGET_NOT_FOUND',
-      async (targetType) => {
-        const { database, executedStatements } = createMockDb(() => []);
+      async (targetType, expectedSqlFragment, requiredPredicates) => {
+        // Target belongs exclusively to USER_A; calling as foreign tenant USER_B must fail 404
+        // when the ownership/exposure predicates are present and bound to USER_B.
+        const { database, executedStatements } = createMockDb((sql, params) => {
+          if (sql.includes(expectedSqlFragment)) {
+            const enforcesTenantAndVisibility = requiredPredicates.every(
+              (pred) => sql.includes(pred),
+            );
+            if (!enforcesTenantAndVisibility) {
+              return [{ id: TARGET_ID }];
+            }
+            return params?.[0] === USER_A && params?.[1] === TARGET_ID
+              ? [{ id: TARGET_ID }]
+              : [];
+          }
+          return [];
+        });
         const quality = new SharedContentQualityService(database);
         const service = new FeedbackService(database, quality);
 
         await expectContractError(
-          service.submitRating(USER_A, {
+          service.submitRating(USER_B, {
             target_type: targetType,
             target_id: TARGET_ID,
             score: 4,
@@ -167,6 +239,13 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           'TARGET_NOT_FOUND',
         );
 
+        const visibilityCall = executedStatements.find((s) =>
+          s.sql.includes(expectedSqlFragment),
+        );
+        expect(visibilityCall?.params).toEqual([USER_B, TARGET_ID]);
+        for (const pred of requiredPredicates) {
+          expect(visibilityCall?.sql).toContain(pred);
+        }
         expect(
           executedStatements.some((s) =>
             s.sql.includes('INSERT INTO public.user_ratings'),
@@ -452,9 +531,6 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
           if (sql.includes('pg_advisory_xact_lock(hashtextextended')) {
             return [{ pg_advisory_xact_lock: '' }];
           }
-          if (sql.includes('UPDATE public.system_configurations')) {
-            return [];
-          }
           if (sql.includes('INSERT INTO public.content_reports')) {
             return [{ id: REPORT_ID }];
           }
@@ -679,88 +755,38 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       ]);
     });
 
-    it.each([
-      ['canonical integer 2', '2', 'topic_content', 'FROM public.topics t'],
-      [
-        'non-canonical whole-number 2.0 on shared topic_content',
-        '2.0',
-        'topic_content',
-        'FROM public.topics t',
-      ],
-      [
-        'non-canonical whole-number 2.0 on private practice_review',
-        '2.0',
-        'practice_review',
-        'FROM public.practice_reviews pr',
-      ],
-    ] as const)(
-      'normalizes %s threshold JSONB before INSERT so frozen trigger ::integer cast never fails',
-      async (_label, initialRawJsonText, targetType, exposureSqlFragment) => {
-        let storedConfigText: string = initialRawJsonText;
-        let normalizedRowsUpdated = 0;
+    it('never writes to public.system_configurations during learner report requests (R26)', async () => {
+      const { database, executedStatements } = createMockDb((sql) => {
+        if (sql.includes('FROM public.practice_reviews pr')) {
+          return [{ id: TARGET_ID }];
+        }
+        if (sql.includes('pg_advisory_xact_lock')) {
+          return [{}];
+        }
+        if (sql.includes('INSERT INTO public.content_reports')) {
+          return [{ id: REPORT_ID }];
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      });
 
-        const { database, executedStatements } = createMockDb((sql) => {
-          if (sql.includes(exposureSqlFragment)) {
-            return [{ id: TARGET_ID }];
-          }
-          if (sql.includes('pg_advisory_xact_lock')) {
-            return [{}];
-          }
-          if (sql.includes('UPDATE public.system_configurations')) {
-            expect(sql).toContain(
-              "config_key = 'quality.report_auto_hide_threshold'",
-            );
-            expect(sql).toContain(
-              "to_jsonb((config_value #>> '{}')::numeric::integer)",
-            );
-            if (
-              /^[0-9]+\.[0-9]+$/.test(storedConfigText) &&
-              Number(storedConfigText) === Math.trunc(Number(storedConfigText))
-            ) {
-              storedConfigText = String(Math.trunc(Number(storedConfigText)));
-              normalizedRowsUpdated += 1;
-            }
-            return [];
-          }
-          if (sql.includes('INSERT INTO public.content_reports')) {
-            // Simulate frozen trigger 020_gaps_and_alignment.sql strict (config_value #>> '{}')::integer cast
-            if (!/^[0-9]+$/.test(storedConfigText)) {
-              throw new Error(
-                `invalid input syntax for type integer: "${storedConfigText}"`,
-              );
-            }
-            return [{ id: REPORT_ID }];
-          }
-          return [];
-        });
+      const service = new FeedbackService(
+        database,
+        new SharedContentQualityService(database),
+      );
 
-        const service = new FeedbackService(
-          database,
-          new SharedContentQualityService(database),
-        );
+      const res = await service.submitReport(USER_A, {
+        target_type: 'practice_review',
+        target_id: TARGET_ID,
+        reason: 'unfair_scoring',
+      });
 
-        const res = await service.submitReport(USER_A, {
-          target_type: targetType,
-          target_id: TARGET_ID,
-          reason: 'incorrect',
-        });
-
-        expect(res).toEqual({ report_id: REPORT_ID, status: 'received' });
-        expect(storedConfigText).toBe('2');
-        expect(normalizedRowsUpdated).toBe(
-          initialRawJsonText.includes('.') ? 1 : 0,
-        );
-
-        const normalizeIndex = executedStatements.findIndex((s) =>
-          s.sql.includes('UPDATE public.system_configurations'),
-        );
-        const insertIndex = executedStatements.findIndex((s) =>
-          s.sql.includes('INSERT INTO public.content_reports'),
-        );
-        expect(normalizeIndex).toBeGreaterThanOrEqual(0);
-        expect(insertIndex).toBeGreaterThan(normalizeIndex);
-      },
-    );
+      expect(res).toEqual({ report_id: REPORT_ID, status: 'received' });
+      expect(
+        executedStatements.some((s) =>
+          s.sql.toLowerCase().includes('system_configurations'),
+        ),
+      ).toBe(false);
+    });
 
     it('serializes two concurrent sessions at non-default threshold=2, blocks duplicate-user double-counting, and ignores rolled-back inserts', async () => {
       // Simulated PostgreSQL state with advisory xact lock mutex + READ COMMITTED snapshot + trigger
@@ -992,6 +1018,37 @@ describe('FeedbackService & SharedContentQualityService (M12-A)', () => {
       expect(queryCount).toBe(3);
       expect(await service.hasReachedAutoHideThreshold(6)).toBe(false);
       expect(await service.hasReachedAutoHideThreshold(7)).toBe(true);
+    });
+
+    it('measures cache expiry using monotonic elapsed time so backward wall-clock jumps cannot extend R26 5s TTL', async () => {
+      let currentDbValue = 2;
+      let queryCount = 0;
+      let monotonicMs = 1_000;
+      let wallClockMs = Date.parse('2026-11-24T12:00:00.000Z');
+
+      vi.spyOn(performance, 'now').mockImplementation(() => monotonicMs);
+      vi.spyOn(Date, 'now').mockImplementation(() => wallClockMs);
+
+      const { database } = createMockDb((sql) => {
+        if (sql.includes('FROM public.system_configurations')) {
+          queryCount += 1;
+          return [{ config_value: currentDbValue }];
+        }
+        return [];
+      });
+
+      const service = new SharedContentQualityService(database);
+      expect(await service.getReportAutoHideThreshold()).toBe(2);
+      expect(queryCount).toBe(1);
+
+      // Wall-clock jumps backwards by 10 seconds while 6 seconds of monotonic time elapse
+      currentDbValue = 8;
+      wallClockMs -= 10_000;
+      monotonicMs += 6_000;
+
+      // Monotonic clock detects expiry immediately despite backward Date.now() jump
+      expect(await service.getReportAutoHideThreshold()).toBe(8);
+      expect(queryCount).toBe(2);
     });
 
     it('bypasses shared cache lookup and write when caller passes a transactional executor', async () => {

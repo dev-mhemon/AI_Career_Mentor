@@ -664,10 +664,32 @@ describe('TodayView', () => {
       );
     });
 
-    // Report capability is also exposed on approved topic_content
-    expect(
-      within(explanationSection).getByRole('button', { name: /report issue/i }),
-    ).toBeInTheDocument();
+    // Report capability is also exposed on approved topic_content and submits topic_content for top-1
+    const reportBtn = within(explanationSection).getByRole('button', {
+      name: /report issue/i,
+    });
+    expect(reportBtn).toBeInTheDocument();
+    fireEvent.click(reportBtn);
+    const reportDialog = await screen.findByRole('dialog', {
+      name: /Report content issue/i,
+    });
+    fireEvent.click(
+      within(reportDialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(submitReport).toHaveBeenCalledWith(
+        'token-1',
+        {
+          target_type: 'topic_content',
+          target_id: 'top-1',
+          reason: 'incorrect',
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
 
     // When report_allowed === false, renders disabled "Reported" state while preserving rating
     const alreadyReportedToday = makeReadyToday();
@@ -724,5 +746,30 @@ describe('TodayView', () => {
       expect(getToday).toHaveBeenCalledWith('token-C', expect.any(Object));
     });
     expect(await screen.findByText('Topic For Account C')).toBeInTheDocument();
+  });
+
+  it('replaces a stale same-token fetch error when a valid initialToday seed arrives for that token', async () => {
+    vi.mocked(getToday).mockRejectedValueOnce(
+      new ApiError(503, 'Temporary outage', 'SERVICE_UNAVAILABLE'),
+    );
+    vi.mocked(listLearningResources).mockResolvedValue({
+      items: [],
+      meta: { limit: 20, next_cursor: null },
+    });
+
+    const { rerender } = render(<TodayView accessToken="token-same" />);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    const recoveredSeed = makeReadyToday();
+    recoveredSeed.topic = {
+      ...recoveredSeed.topic!,
+      title: 'Recovered Seeded Topic',
+    };
+
+    rerender(
+      <TodayView accessToken="token-same" initialToday={recoveredSeed} />,
+    );
+    expect(screen.getByText('Recovered Seeded Topic')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

@@ -10301,13 +10301,35 @@ components:
         - outdated
         - inappropriate
         - other
+    RatingTargetInput:
+      type: string
+      description: >-
+        Request-accepted RatingTarget string. The server trims leading/trailing whitespace and
+        lowercases input before validating against canonical RatingTarget values (roadmap_draft,
+        roadmap_merge, topic_content, technology_update); known non-ratable domain targets return
+        422 TARGET_NOT_RATABLE.
+      pattern: '^\s*([Rr][Oo][Aa][Dd][Mm][Aa][Pp]_[Dd][Rr][Aa][Ff][Tt]|[Rr][Oo][Aa][Dd][Mm][Aa][Pp]_[Mm][Ee][Rr][Gg][Ee]|[Tt][Oo][Pp][Ii][Cc]_[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Tt][Ee][Cc][Hh][Nn][Oo][Ll][Oo][Gg][Yy]_[Uu][Pp][Dd][Aa][Tt][Ee])\s*$'
+    ReportTargetInput:
+      type: string
+      description: >-
+        Request-accepted ReportTarget string. The server trims leading/trailing whitespace and
+        lowercases input before validating against canonical ReportTarget values (roadmap_content,
+        topic_content, quiz_question, practice_review).
+      pattern: '^\s*([Rr][Oo][Aa][Dd][Mm][Aa][Pp]_[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Tt][Oo][Pp][Ii][Cc]_[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Qq][Uu][Ii][Zz]_[Qq][Uu][Ee][Ss][Tt][Ii][Oo][Nn]|[Pp][Rr][Aa][Cc][Tt][Ii][Cc][Ee]_[Rr][Ee][Vv][Ii][Ee][Ww])\s*$'
+    ReportReasonInput:
+      type: string
+      description: >-
+        Request-accepted ReportReason string. The server trims leading/trailing whitespace and
+        lowercases input before validating against canonical ReportReason values (incorrect,
+        unclear, unfair_scoring, outdated, inappropriate, other).
+      pattern: '^\s*([Ii][Nn][Cc][Oo][Rr][Rr][Ee][Cc][Tt]|[Uu][Nn][Cc][Ll][Ee][Aa][Rr]|[Uu][Nn][Ff][Aa][Ii][Rr]_[Ss][Cc][Oo][Rr][Ii][Nn][Gg]|[Oo][Uu][Tt][Dd][Aa][Tt][Ee][Dd]|[Ii][Nn][Aa][Pp][Pp][Rr][Oo][Pp][Rr][Ii][Aa][Tt][Ee]|[Oo][Tt][Hh][Ee][Rr])\s*$'
     RatingRequestDTO:
       type: object
       additionalProperties: false
       required: [target_type, target_id, score]
       properties:
         target_type:
-          $ref: '#/components/schemas/RatingTarget'
+          $ref: '#/components/schemas/RatingTargetInput'
         target_id:
           type: string
           format: uuid
@@ -10338,12 +10360,12 @@ components:
       required: [target_type, target_id, reason]
       properties:
         target_type:
-          $ref: '#/components/schemas/ReportTarget'
+          $ref: '#/components/schemas/ReportTargetInput'
         target_id:
           type: string
           format: uuid
         reason:
-          $ref: '#/components/schemas/ReportReason'
+          $ref: '#/components/schemas/ReportReasonInput'
         comment:
           type: string
           description: Optional learner report details. The server trims leading and trailing whitespace and enforces a maximum of 1,000 Unicode code points after trimming (NUL bytes and unpaired surrogates rejected).

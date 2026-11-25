@@ -19,6 +19,8 @@ import {
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
 import {
   beginRatingWrite,
+  canonicalizeFeedbackTargetId,
+  deriveFeedbackUserScope,
   saveStoredRating,
   saveStoredReport,
   useStoredFeedback,
@@ -190,13 +192,15 @@ export function AIFeedbackComponent(props: AIFeedbackComponentProps) {
     return null;
   }
 
+  const accountScope =
+    deriveFeedbackUserScope(props.accessToken) ?? props.accessToken;
   const instanceKey = [
-    props.accessToken,
+    accountScope,
     hasRating && props.ratingTarget
-      ? `${props.ratingTarget.type}:${props.ratingTarget.id.trim()}`
+      ? `${props.ratingTarget.type}:${canonicalizeFeedbackTargetId(props.ratingTarget.id)}`
       : '',
     hasReport && props.reportTarget
-      ? `${props.reportTarget.type}:${props.reportTarget.id.trim()}`
+      ? `${props.reportTarget.type}:${canonicalizeFeedbackTargetId(props.reportTarget.id)}`
       : '',
   ].join('|');
 
@@ -262,6 +266,8 @@ function AIFeedbackInner({
   const toastCounterRef = useRef(0);
   const reportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const fallbackFocusRef = useRef<HTMLDivElement | null>(null);
+  const ratingCommentRef = useRef<HTMLTextAreaElement | null>(null);
+  const focusRatingCommentOnMountRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -363,6 +369,7 @@ function AIFeedbackInner({
     if (ratingState.submitting) {
       return;
     }
+    focusRatingCommentOnMountRef.current = true;
     setRatingState((prev) => ({
       ...prev,
       draftScore:
@@ -377,6 +384,13 @@ function AIFeedbackInner({
       error: null,
     }));
   };
+
+  useEffect(() => {
+    if (showRatingForm && focusRatingCommentOnMountRef.current) {
+      focusRatingCommentOnMountRef.current = false;
+      ratingCommentRef.current?.focus();
+    }
+  }, [showRatingForm]);
 
   const handleRatingSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -806,6 +820,7 @@ function AIFeedbackInner({
               </span>
             </div>
             <textarea
+              ref={ratingCommentRef}
               id={ratingCommentId}
               rows={2}
               dir="auto"

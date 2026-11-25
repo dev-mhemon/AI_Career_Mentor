@@ -434,18 +434,6 @@ export class FeedbackService {
           [targetType, targetId],
         );
 
-        // Self-heal valid non-canonical whole-number JSONB values (e.g. 2.0) to canonical JSONB
-        // integer before INSERT so frozen trigger trg_content_reports_threshold's ::integer cast
-        // never fails; matches 0 rows (zero row locks) when already canonical.
-        await db.query(
-          `UPDATE public.system_configurations
-              SET config_value = to_jsonb((config_value #>> '{}')::numeric::integer)
-            WHERE config_key = 'quality.report_auto_hide_threshold'
-              AND jsonb_typeof(config_value) = 'number'
-              AND (config_value #>> '{}') ~ '^[0-9]+\\.[0-9]+$'
-              AND ((config_value #>> '{}')::numeric = trunc((config_value #>> '{}')::numeric))`,
-        );
-
         let raw: unknown;
         try {
           // ON CONFLICT DO NOTHING avoids raising a DB unique-violation error that could log bound

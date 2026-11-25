@@ -252,11 +252,11 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     expect(editBtn.querySelector('svg')).toHaveClass('h-3.5', 'w-3.5', 'block', 'shrink-0');
     expect(onRated).toHaveBeenCalledWith(4);
 
-    // Click Edit -> re-opens form pre-filled with saved comment; upsert to 5 stars
+    // Click Edit -> re-opens form pre-filled with saved comment AND moves focus into the rating comment textarea; upsert to 5 stars
     fireEvent.click(editBtn);
-    expect(screen.getByLabelText(/Rating comment/i)).toHaveValue(
-      validComment.trim(),
-    );
+    const editCommentInput = screen.getByLabelText(/Rating comment/i);
+    expect(editCommentInput).toHaveValue(validComment.trim());
+    expect(document.activeElement).toBe(editCommentInput);
     fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
     fireEvent.click(screen.getByRole('button', { name: /Update rating/i }));
     await waitFor(() => {
@@ -695,8 +695,9 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       await Promise.resolve();
     });
 
-    // Persisted via shared sub -> visible immediately under jwt2 (and after remount) without firing stale callback
-    expect(onRatedSameUser).not.toHaveBeenCalled();
+    // Persisted via shared sub and completes cleanly on live same-account instance under jwt2
+    expect(onRatedSameUser).toHaveBeenCalledTimes(1);
+    expect(onRatedSameUser).toHaveBeenCalledWith(5);
     expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(5)');
     unmount();
 
@@ -801,7 +802,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     ).not.toBeDisabled();
     view3.unmount();
 
-    // 4. Delayed older rating (2 stars) arriving AFTER newer rating (5 stars) across token refresh MUST NOT overwrite 5
+    // 4. Delayed older rating (2 stars) arriving AFTER newer rating (5 stars) across sibling instances MUST NOT overwrite 5
     const seqJwt1 = makeFakeJwt('seq-user', 's1');
     const seqJwt2 = makeFakeJwt('seq-user', 's2');
     let resolveOld2!: (res: RatingResponseDTO) => void;
@@ -818,26 +819,37 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       });
 
     const view4 = render(
-      <AIFeedbackComponent
-        accessToken={seqJwt1}
-        ratingTarget={{ type: 'topic_content', id: 'top-seq' }}
-      />,
+      <div>
+        <div data-testid="seq-a">
+          <AIFeedbackComponent
+            accessToken={seqJwt1}
+            ratingTarget={{ type: 'topic_content', id: 'top-seq' }}
+          />
+        </div>
+        <div data-testid="seq-b">
+          <AIFeedbackComponent
+            accessToken={seqJwt2}
+            ratingTarget={{ type: 'topic_content', id: 'top-seq' }}
+          />
+        </div>
+      </div>,
     );
-    fireEvent.click(screen.getByRole('radio', { name: '2 stars' }));
-    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+    const seqA = screen.getByTestId('seq-a');
+    const seqB = screen.getByTestId('seq-b');
 
-    // Refresh token & submit 5 stars (completes FIRST)
-    view4.rerender(
-      <AIFeedbackComponent
-        accessToken={seqJwt2}
-        ratingTarget={{ type: 'topic_content', id: 'top-seq' }}
-      />,
+    fireEvent.click(within(seqA).getByRole('radio', { name: '2 stars' }));
+    fireEvent.click(
+      within(seqA).getByRole('button', { name: /Submit rating/i }),
     );
-    fireEvent.click(screen.getByRole('radio', { name: '5 stars' }));
-    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
-    expect(await screen.findByTestId('ai-feedback-score')).toHaveTextContent(
-      '(5)',
+
+    // Newer sibling submits 5 stars (completes FIRST)
+    fireEvent.click(within(seqB).getByRole('radio', { name: '5 stars' }));
+    fireEvent.click(
+      within(seqB).getByRole('button', { name: /Submit rating/i }),
     );
+    expect(
+      await within(seqB).findByTestId('ai-feedback-score'),
+    ).toHaveTextContent('(5)');
 
     // Delayed 2-star response settles LAST -> storage MUST keep 5 stars
     await act(async () => {
@@ -1249,7 +1261,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     }
   });
 
-  it('follows standard WAI-ARIA radiogroup arrow directions (ArrowRight/ArrowDown next, ArrowLeft/ArrowUp previous with wraparound)', () => {
+  it('follows standard WAI-ARIA radiogroup arrow directions and moves focus across radios (ArrowRight/ArrowDown next, ArrowLeft/ArrowUp previous with wraparound)', () => {
     render(
       <AIFeedbackComponent
         accessToken="tok-aria"
@@ -1262,23 +1274,172 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     const star3 = screen.getByRole('radio', { name: '3 stars' });
     const star5 = screen.getByRole('radio', { name: '5 stars' });
 
-    // ArrowRight & ArrowDown advance
-    fireEvent.keyDown(star1, { key: 'ArrowRight' });
-    expect(star2).toHaveAttribute('aria-checked', 'true');
-    fireEvent.keyDown(star2, { key: 'ArrowDown' });
-    expect(star3).toHaveAttribute('aria-checked', 'true');
+    // Focus star1 before sending keys and dispatch each subsequent key to document.activeElement
+    star1.focus();
+    expect(document.activeElement).toBe(star1);
 
-    // ArrowUp & ArrowLeft decrement
-    fireEvent.keyDown(star3, { key: 'ArrowUp' });
+    // ArrowRight & ArrowDown advance selection and focus
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
     expect(star2).toHaveAttribute('aria-checked', 'true');
-    fireEvent.keyDown(star2, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(star2);
+
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(star3).toHaveAttribute('aria-checked', 'true');
+    expect(document.activeElement).toBe(star3);
+
+    // ArrowUp & ArrowLeft decrement selection and focus
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+    expect(star2).toHaveAttribute('aria-checked', 'true');
+    expect(document.activeElement).toBe(star2);
+
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
     expect(star1).toHaveAttribute('aria-checked', 'true');
+    expect(document.activeElement).toBe(star1);
 
     // Wraparound: ArrowUp on 1 -> 5; ArrowDown on 5 -> 1
-    fireEvent.keyDown(star1, { key: 'ArrowUp' });
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
     expect(star5).toHaveAttribute('aria-checked', 'true');
-    fireEvent.keyDown(star5, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(star5);
+
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
     expect(star1).toHaveAttribute('aria-checked', 'true');
+    expect(document.activeElement).toBe(star1);
+  });
+
+  it('preserves retryable report draft across same-account token refresh and uses refreshed token on retry while clearing on account switch', async () => {
+    const jwt1 = makeFakeJwt('draft-refresh-user', 't1');
+    const jwt2 = makeFakeJwt('draft-refresh-user', 't2');
+    const otherAccountJwt = makeFakeJwt('different-user', 't3');
+
+    let rejectFirstReport!: (err: Error) => void;
+    vi.mocked(submitReport)
+      .mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectFirstReport = reject;
+        }),
+      )
+      .mockResolvedValueOnce({
+        report_id: 'rep-after-refresh',
+        status: 'received',
+      });
+
+    const view = render(
+      <AIFeedbackComponent
+        accessToken={jwt1}
+        reportTarget={{ type: 'topic_content', id: 'top-refresh-draft' }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /report issue/i }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(dialog).getByRole('radio', { name: /Outdated content/i }),
+    );
+    fireEvent.change(within(dialog).getByLabelText(/Additional details/i), {
+      target: { value: 'Draft survives token refresh' },
+    });
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /Submit report/i }),
+    );
+
+    // Same account refreshes JWT while report is in flight
+    view.rerender(
+      <AIFeedbackComponent
+        accessToken={jwt2}
+        reportTarget={{ type: 'topic_content', id: 'top-refresh-draft' }}
+      />,
+    );
+
+    // First request times out -> dialog stays open with preserved reason & comment
+    await act(async () => {
+      rejectFirstReport(
+        new NetworkError('Request timed out or was aborted. Please try again.'),
+      );
+      await Promise.resolve();
+    });
+
+    const liveDialog = screen.getByRole('dialog');
+    expect(await within(liveDialog).findByRole('alert')).toBeInTheDocument();
+    expect(
+      within(liveDialog).getByRole('radio', { name: /Outdated content/i }),
+    ).toBeChecked();
+    expect(
+      within(liveDialog).getByLabelText(/Additional details/i),
+    ).toHaveValue('Draft survives token refresh');
+
+    // Retry uses the NEW refreshed jwt2 and succeeds
+    fireEvent.click(
+      within(liveDialog).getByRole('button', { name: /Submit report/i }),
+    );
+    await waitFor(() => {
+      expect(submitReport).toHaveBeenNthCalledWith(
+        2,
+        jwt2,
+        {
+          target_type: 'topic_content',
+          target_id: 'top-refresh-draft',
+          reason: 'outdated',
+          comment: 'Draft survives token refresh',
+        },
+        { timeoutMs: 15_000 },
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    // Switching to a different account resets state cleanly
+    view.rerender(
+      <AIFeedbackComponent
+        accessToken={otherAccountJwt}
+        reportTarget={{ type: 'topic_content', id: 'top-refresh-draft' }}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: /report issue/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('canonicalizes UUID target IDs for feedback storage keys while preserving case for non-UUID IDs', async () => {
+    const upperUuid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+    const lowerUuid = upperUuid.toLowerCase();
+
+    expect(
+      buildFeedbackStorageKey('tok-uuid', 'topic_content', upperUuid),
+    ).toBe(buildFeedbackStorageKey('tok-uuid', 'topic_content', lowerUuid));
+    expect(
+      buildFeedbackStorageKey('tok-uuid', 'topic_content', 'Custom-ID-1'),
+    ).not.toBe(
+      buildFeedbackStorageKey('tok-uuid', 'topic_content', 'custom-id-1'),
+    );
+
+    vi.mocked(submitRating).mockResolvedValueOnce({
+      target_type: 'topic_content',
+      target_id: lowerUuid,
+      score: 4,
+    });
+
+    const { unmount } = render(
+      <AIFeedbackComponent
+        accessToken="tok-uuid"
+        ratingTarget={{ type: 'topic_content', id: upperUuid }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: '4 stars' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+    expect(await screen.findByTestId('ai-feedback-score')).toHaveTextContent(
+      '(4)',
+    );
+    unmount();
+
+    // Reading back with lowercase UUID immediately finds the saved rating
+    render(
+      <AIFeedbackComponent
+        accessToken="tok-uuid"
+        ratingTarget={{ type: 'topic_content', id: lowerUuid }}
+      />,
+    );
+    expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(4)');
   });
 
   it('synchronizes accepted rating & comment across sibling mounted instances while preserving active drafts, and never lets a later failed submit poison an earlier accepted rating', async () => {
@@ -1381,7 +1542,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     );
     dualView.unmount();
 
-    // 2. Request A starts (seq 1), token refreshes, Request B starts (seq 2) and FAILS -> A's 200 MUST still persist!
+    // 2. Request A starts (seq 1) in sibling A, Request B starts (seq 2) in sibling B and FAILS -> A's 200 MUST still persist!
     const wmJwt1 = makeFakeJwt('wm-user', 'w1');
     const wmJwt2 = makeFakeJwt('wm-user', 'w2');
     let resolveA!: (res: RatingResponseDTO) => void;
@@ -1396,24 +1557,31 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       );
 
     const wmView = render(
-      <AIFeedbackComponent
-        accessToken={wmJwt1}
-        ratingTarget={{ type: 'topic_content', id: 'top-watermark' }}
-      />,
+      <div>
+        <div data-testid="wm-a">
+          <AIFeedbackComponent
+            accessToken={wmJwt1}
+            ratingTarget={{ type: 'topic_content', id: 'top-watermark' }}
+          />
+        </div>
+        <div data-testid="wm-b">
+          <AIFeedbackComponent
+            accessToken={wmJwt2}
+            ratingTarget={{ type: 'topic_content', id: 'top-watermark' }}
+          />
+        </div>
+      </div>,
     );
-    fireEvent.click(screen.getByRole('radio', { name: '4 stars' }));
-    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
+    const wmA = screen.getByTestId('wm-a');
+    const wmB = screen.getByTestId('wm-b');
 
-    // Token refreshes and Request B fails
-    wmView.rerender(
-      <AIFeedbackComponent
-        accessToken={wmJwt2}
-        ratingTarget={{ type: 'topic_content', id: 'top-watermark' }}
-      />,
-    );
-    fireEvent.click(screen.getByRole('radio', { name: '2 stars' }));
-    fireEvent.click(screen.getByRole('button', { name: /Submit rating/i }));
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    fireEvent.click(within(wmA).getByRole('radio', { name: '4 stars' }));
+    fireEvent.click(within(wmA).getByRole('button', { name: /Submit rating/i }));
+
+    // Sibling B submits and fails
+    fireEvent.click(within(wmB).getByRole('radio', { name: '2 stars' }));
+    fireEvent.click(within(wmB).getByRole('button', { name: /Submit rating/i }));
+    expect(await within(wmB).findByRole('alert')).toBeInTheDocument();
 
     // Now Request A succeeds -> B's failure MUST NOT have poisoned A's accepted write!
     await act(async () => {
@@ -1424,7 +1592,12 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       });
       await Promise.resolve();
     });
-    expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(4)');
+    expect(within(wmA).getByTestId('ai-feedback-score')).toHaveTextContent(
+      '(4)',
+    );
+    expect(within(wmB).getByTestId('ai-feedback-score')).toHaveTextContent(
+      '(4)',
+    );
     wmView.unmount();
   });
 });

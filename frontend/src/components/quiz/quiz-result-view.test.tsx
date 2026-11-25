@@ -79,6 +79,8 @@ const SAMPLE_QUESTIONS: QuizQuestionDTO[] = [
 
 const SAMPLE_RESULT: QuizResultDTO = {
   attempt_id: 'att-1',
+  status: 'feedback_available',
+  attempt_no: 1,
   mcq_score: { correct: 1, total: 2 },
   performance_level: 'good',
   questions: [

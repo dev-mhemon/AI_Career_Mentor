@@ -161,12 +161,11 @@ export function TodayView({
     };
   }, [accessToken, requestKey, seededToday]);
 
-  const activeState =
-    fetchState && fetchState.key === requestKey
+  const activeState = seededToday
+    ? { key: requestKey, status: 'loaded' as const, today: seededToday }
+    : fetchState && fetchState.key === requestKey
       ? fetchState
-      : seededToday
-        ? { key: requestKey, status: 'loaded' as const, today: seededToday }
-        : null;
+      : null;
 
   const isLoading = activeState === null;
   const today = activeState?.status === 'loaded' ? activeState.today : null;

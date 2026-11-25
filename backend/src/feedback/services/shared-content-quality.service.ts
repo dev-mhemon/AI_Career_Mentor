@@ -106,6 +106,10 @@ export class SharedContentQualityService {
     return DEFAULT_REPORT_AUTO_HIDE_THRESHOLD;
   }
 
+  private readMonotonicMs(): number {
+    return performance.now();
+  }
+
   /**
    * Reads `quality.report_auto_hide_threshold` (`R26`: integer `2..1000`, `<= 5s` TTL, fallback `5`).
    * Never exposed to client DTOs (`C05` §14.12).
@@ -113,7 +117,7 @@ export class SharedContentQualityService {
    * - Transactional reads (`db` supplied) bypass shared cache lookup/writes and propagate SQL errors
    *   so the caller can roll back an aborted PostgreSQL transaction cleanly.
    * - Standalone reads deduplicate concurrent refreshes per invalidation generation so an older
-   *   in-flight read can never overwrite a newer threshold.
+   *   in-flight read can never overwrite a newer threshold, and measure TTL via monotonic elapsed time.
    */
   async getReportAutoHideThreshold(
     db?: FeedbackQueryExecutor,
@@ -122,7 +126,7 @@ export class SharedContentQualityService {
       return this.readThresholdFromDb(db);
     }
 
-    const now = Date.now();
+    const now = this.readMonotonicMs();
     if (this.cachedThreshold && now < this.cachedThreshold.expiresAtMs) {
       return this.cachedThreshold.value;
     }
@@ -143,7 +147,7 @@ export class SharedContentQualityService {
       if (this.cacheGeneration === generation) {
         this.cachedThreshold = {
           value: resolved,
-          expiresAtMs: Date.now() + this.cacheTtlMs,
+          expiresAtMs: this.readMonotonicMs() + this.cacheTtlMs,
         };
       }
       return resolved;

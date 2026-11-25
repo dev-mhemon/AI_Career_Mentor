@@ -127,7 +127,7 @@ describe('FeedbackController (EP-F01 POST /ratings & EP-F02 POST /reports)', () 
       ).toBeUndefined();
     });
 
-    it('compiles FeedbackModule cleanly inside AppModule DI graph with global AuthModule guards', async () => {
+    it('resolves FeedbackController and FeedbackService via AppModule DI graph without controller-level guard metadata', async () => {
       const prevEnv = { ...process.env };
       process.env.NODE_ENV = 'test';
       process.env.DB_HOST = '127.0.0.1';
