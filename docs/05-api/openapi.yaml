@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence, Quality Feedback & Admin Operations Contract (M13)
-  version: 0.6.0
+  title: AI Career Mentor - Authentication, Account Deletion, Profile, Career Goals, Durable Jobs, AI Gateway, Roadmaps & Merges, Learning, Quizzes, Practice Review, Progress, AI Mentor, Technology Intelligence, Quality Feedback, Admin Operations & Health Contract (M14-A)
+  version: 0.7.0
   description: >-
-    Synchronized through M13-01 (merged with M12-01), 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
-    f7b6aea43a47c22e3352655be0b6a536691f69c5. Canonical auth operations (EP-A01..EP-A13), account deletion and
+    Synchronized through M14-A, 2026-11-25. Derived from adopted C05 v1.5.1. Source baseline:
+    bbf1eeca576430e1d54a817ab6c176df7bb55b76. Canonical auth operations (EP-A01..EP-A13), account deletion and
     retention/outbox workers (EP-X01/EP-X02, R05/R06/R08/R09/R35), user profile and skill alias resolution
     (EP-P01..EP-P05, R07, R29, ADR-019), dynamic career goals and synchronous AI goal interpretation
     (EP-C01..EP-C07, R07, R29), durable asynchronous job polling (EP-J01 GET /api/v1/jobs/{id}), Redis 24h H-IDEM
@@ -15,8 +15,9 @@ info:
     Progress APIs (EP-Q01..EP-Q07, EP-PR01..EP-PR03, EP-G01..EP-G03; note that EP-G04 EvidenceService.record is
     strictly internal-only with no HTTP route), M10 Contextual AI Mentor APIs (EP-M01..EP-M04, R08, R11, R15, N02),
     M11 Personalized Daily Technology Intelligence APIs (EP-T01..EP-T03, R24, R25, N01), M12 Quality Feedback &
-    Shared-Content Safety APIs (EP-F01..EP-F02, R11, R24, R26, R27, R34), and M13 Admin Operations, Feature
-    Controls & Usage Telemetry APIs (EP-AD01..EP-AD08, R10, R11, R16, R30) are documented here.
+    Shared-Content Safety APIs (EP-F01..EP-F02, R11, R24, R26, R27, R34), M13 Admin Operations, Feature
+    Controls & Usage Telemetry APIs (EP-AD01..EP-AD08, R10, R11, R16, R30), and M14-A unversioned Health readiness
+    endpoint (EP-H01 GET /health, C05 §14.14, SAD §12) are documented here.
 servers:
   - url: /api/v1
 tags:
@@ -48,6 +49,8 @@ tags:
     description: C05 14.12 Quality Feedback & Shared-Content Safety API (EP-F01..EP-F02); R34 target-specific rating upsert and append-only report submission with R27 READ COMMITTED lock-before-insert threshold concurrency.
   - name: Admin
     description: C05 14.14 Admin API (EP-AD01..EP-AD08); server-verified AZ-ADMIN (public.admin_users, zero JWT-role trust), user management, global & per-user feature controls (R10), immutable append-only audit logs, and aggregate-only usage/cost series (R30, PRD §50–51).
+  - name: Health
+    description: C05 14.14 Health API (EP-H01 GET /health); unversioned public readiness probe verifying database and durable queue status with zero secret or provider leakage.
 x-source: API-Specification.md sections 13, 13.5-6, 14.1-14, 15.1-12, 16, 17.1, 17.3-5 and accepted R05/R06/R07/R08/R10/R11/R12/R13/R14/R15/R16/R17/R18/R24/R25/R26/R27/R28/R29/R30/R31/R34/R35/N01/N02
 x-contract-notes:
   - >-
@@ -1726,6 +1729,87 @@ paths:
         - >-
           Shared HTTP formatter emits null retryAfterSeconds; normative ErrorDTO allows optional nonnegative
           integer.
+  /auth/resend-otp:
+    post:
+      operationId: resendOtpAlias
+      deprecated: true
+      tags:
+        - Email and session
+      summary: Compatibility alias for EP-A04 (POST /auth/resend-verification)
+      description: >-
+        Deprecated compatibility alias registered on AuthController delegating directly to
+        EmailRegistrationService.resend (canonical C05 EP-A04 POST /auth/resend-verification).
+        Outside the 81 canonical C05 catalog HTTP operations.
+      x-source: ../../backend/src/auth/controllers/auth.controller.ts
+      x-implementation-status: compatibility-alias
+      x-authorization-profile: AZ-PUB
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationDTO'
+      responses:
+        '200':
+          description: Same response as EP-A04.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationPendingDTOEnvelope'
+        '422':
+          description: VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /auth/verify-otp:
+    post:
+      operationId: verifyOtpAlias
+      deprecated: true
+      tags:
+        - Email and session
+      summary: Compatibility alias for EP-A02/EP-A03 OTP verification
+      description: >-
+        Deprecated compatibility alias registered on AuthController delegating directly to
+        AuthService.verifyOtp (canonical C05 EP-A02 POST /auth/verify-email and EP-A03
+        POST /auth/verify-phone). Outside the 81 canonical C05 catalog HTTP operations.
+      x-source: ../../backend/src/auth/controllers/auth.controller.ts
+      x-implementation-status: compatibility-alias
+      x-authorization-profile: AZ-PUB
+      security:
+        - {}
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+      responses:
+        '200':
+          description: Same response as EP-A02 / EP-A03.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionDTOEnvelope'
+        '422':
+          description: VERIFICATION_CODE_INVALID, VALIDATION_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /auth/sync:
     post:
       operationId: transitionalSync
@@ -5313,6 +5397,53 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /quiz/{id}/results:
+    get:
+      operationId: getQuizResultAlias
+      deprecated: true
+      tags:
+        - Quizzes
+      summary: Compatibility alias for EP-Q06 (GET /quiz/{id}/result)
+      description: >-
+        Deprecated compatibility alias registered on QuizController delegating directly to
+        QuizService.getResult (canonical C05 EP-Q06 GET /quiz/{id}/result).
+        Outside the 81 canonical C05 catalog HTTP operations. Gate: none.
+      x-source: ../../backend/src/quiz/controllers/quiz.controller.ts
+      x-implementation-status: compatibility-alias
+      x-authorization-profile: AZ-USER
+      x-feature-gate: none
+      security:
+        - SupabaseBearer: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Same response as EP-Q06 (QuizResultDTO envelope).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuizResultDTOEnvelope'
+        '404':
+          description: RESOURCE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: QUIZ_NOT_SUBMITTED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /quiz/{id}/retry:
     post:
       operationId: EP-Q07_retryQuizAttempt
@@ -7015,6 +7146,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObservedErrorEnvelope'
+  /health:
+    servers:
+      - url: /
+    get:
+      operationId: getHealth
+      tags:
+        - Health
+      summary: Service health and dependency readiness check (EP-H01)
+      description: >-
+        C05 EP-H01 (GET /health, unversioned outside /api/v1). Public AZ-PUB endpoint executing bounded
+        database (SELECT 1) and durable queue (public.ai_requests + PostgresJobQueueConsumer) checks.
+        Returns 200 with status=ok when all dependencies are healthy, or 503 with status=unavailable
+        when a dependency fails. Never leaks connection strings, SQL diagnostics, stack traces,
+        or AI provider details, and never writes R24 user activity.
+      x-endpoint-id: EP-H01
+      x-source: API-Specification.md sections 14.14, 17.5; SAD §12
+      x-implementation-status: implemented
+      x-authorization-profile: AZ-PUB
+      x-feature-gate: none
+      security: []
+      responses:
+        '200':
+          description: C05 EP-H01 healthy response (unwrapped HealthResponseDTO).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponseDTO'
+        '503':
+          description: C05 EP-H01 dependency unavailable response (unwrapped HealthResponseDTO, zero secret or provider details).
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponseDTO'
 components:
   securitySchemes:
     SupabaseBearer:
@@ -11435,3 +11605,29 @@ components:
           enum: [true]
         data:
           $ref: '#/components/schemas/UsageSummaryDTO'
+    HealthCheckStatus:
+      type: string
+      enum: [ok, error]
+    HealthResponseDTO:
+      type: object
+      additionalProperties: false
+      required: [status, version, time, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+        version:
+          type: string
+          example: '1.5.1'
+        time:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: false
+          required: [database, queue]
+          properties:
+            database:
+              $ref: '#/components/schemas/HealthCheckStatus'
+            queue:
+              $ref: '#/components/schemas/HealthCheckStatus'

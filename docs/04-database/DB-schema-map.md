@@ -1,11 +1,13 @@
-# Database Schema Map (`000`–`024`)
+# Database Schema Map (`000`–`027`)
 
-Derived from frozen SQL migrations [supabase/migrations](../../supabase/migrations/) (`000_extensions.sql`–`024_session_revocation.sql`), [DMS](DMS.md), [DIS](DIS.md), and [validation report](validation-report.md). All SQL migrations remain immutable; applied schema changes require separately reviewed forward migrations.
+Derived from frozen SQL migrations [supabase/migrations](../../supabase/migrations/) (`000_extensions.sql`–`027_seed_gemini_real_user_models.sql`), standalone [admin_bootstrap.sql](../../supabase/seeds/admin_bootstrap.sql), [DMS](DMS.md), [DIS](DIS.md), and [validation report](validation-report.md). All SQL migrations `000`–`027` remain immutable; applied schema changes require separately reviewed forward migrations.
 
 ## 1. Migration Inventory & Baseline Counts
 
-- **Core DMS (`000`–`020`):** `50` `public` tables, `45` `public` enums, `103` `idx_*` secondary indexes, `68` `public` triggers, `44` RLS policies, `22` `private` schema functions, and `0` write/delete grants on `public` tables to `anon`/`authenticated` (`ADR-019`).
-- **Session Approval Hardening (`022`–`024`):** Adds `private.approved_auth_sessions` and hardens `private.approve_auth_session` / `private.has_approved_session` (including `revoked_at` revocation check).
+- **Core DMS (`000`–`020`):** `50` `public` tables, `45` `public` enums, `103` `idx_*` secondary indexes, `68` `public` triggers, `44` RLS policies, `22` core `private` schema functions (`10` `SECURITY DEFINER` + `12` `SECURITY INVOKER`), and `0` write/delete grants on `public` tables to `anon`/`authenticated` (`ADR-019`).
+- **Session Approval Hardening (`022`–`024`):** Adds `1` private table (`private.approved_auth_sessions`) and hardens `private.approve_auth_session` / `private.has_approved_session` (including `revoked_at`/`updated_at` revocation checks).
+- **Catalog, Prompt & Approved Model Seeds (`025`–`027`):** Populates canonical `public.skills` catalog, the 9 frozen `public.prompt_versions` + synthetic model entry, and approved real-user Gemini model routing entries (`public.ai_models`).
+- **Standalone Out-of-Band Seed (`supabase/seeds/admin_bootstrap.sql`):** Not a migration; idempotent platform admin provisioning script with pre-registration hijack guard and documented SQL rotation/revocation blocks.
 
 | Migration | Responsibility | Key Objects Added |
 |---|---|---|
@@ -33,6 +35,10 @@ Derived from frozen SQL migrations [supabase/migrations](../../supabase/migratio
 | `022_session_approval_gate.sql` | Approved session table & policies | `private.approved_auth_sessions`, owner policy updates |
 | `023_session_gate_hardening.sql` | Dynamic SQL session check | Hardens `private.has_approved_session` |
 | `024_session_revocation.sql` | Explicit session revocation | Adds `revoked_at`/`updated_at` on `private.approved_auth_sessions` |
+| `025_seed_skills_catalog.sql` | Approved skills catalog seed | Canonical technology `public.skills` rows for profile/roadmap resolution |
+| `026_seed_ai_prompts_and_synthetic_model.sql` | Frozen prompt & synthetic model seed | 9 frozen `public.prompt_versions` (SHA-256 verified) + synthetic `public.ai_models` row |
+| `027_seed_gemini_real_user_models.sql` | Approved Gemini routing seed | Active `real_user_data_approved` Gemini entries in `public.ai_models` |
+| `supabase/seeds/admin_bootstrap.sql` | Standalone admin bootstrap (non-migration) | Idempotent `platform_admin` provisioning (`public.admin_users`) + documented rotation/revocation SQL |
 
 ## 2. Domain Table Mapping (50 Public Tables + 1 Private Auth Table)
 
@@ -60,3 +66,15 @@ Derived from frozen SQL migrations [supabase/migrations](../../supabase/migratio
 - **`public.ai_generations`:** Permanent content-free provenance (`request_id ON DELETE SET NULL`, `task`, `provider_key`, `model_id`, `prompt_version_id`, `output_schema_id`, `validation_status`, `fallback_used`, `language`, `input_units`, `output_units`, `total_units`, `cost_usd`, `latency_ms`, `output_hash`).
 - **`public.ai_models`:** Model routing table indexed by `idx_ai_models_routing (fallback_rank) WHERE is_active AND real_user_data_approved`.
 - **`public.prompt_versions`:** Registry storing `(task, name, version)` with SHA-256 `template_hash` and `output_schema_id` verified fail-closed by `PromptManagerService`.
+
+## 4. `E01` Approved 5-FK Exception Summary (`DMS.md`)
+
+Five nullable admin-actor foreign keys pointing to `public.admin_users(user_id)` deliberately retain `ON DELETE RESTRICT` (`E01`) rather than `ON DELETE SET NULL` to preserve administrative accountability trails:
+
+1. `public.users` (`fk_users_suspended_by` on `suspended_by`)
+2. `public.admin_users` (`admin_users_created_by_fkey` on `created_by`)
+3. `public.system_configurations` (`system_configurations_updated_by_fkey` on `updated_by`)
+4. `public.feature_controls` (`feature_controls_updated_by_fkey` on `updated_by`)
+5. `public.user_access_overrides` (`user_access_overrides_updated_by_fkey` on `updated_by`)
+
+See [deployment.md](../09-operations/deployment.md) for autovacuum tuning (`C06 §20`), `R22` disposable capacity procedures, and `R23` PITR read-only catalog smoke verification.

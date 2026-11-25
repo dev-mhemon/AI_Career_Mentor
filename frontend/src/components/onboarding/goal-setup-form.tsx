@@ -28,6 +28,7 @@ import { cn } from '@/components/ui/cn';
 import { CheckIcon, ChevronDownIcon } from '@/components/ui/icons';
 import { FieldShell, Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { trackEvent } from '@/lib/telemetry/telemetry';
 import { toneToAlertVariant } from '@/components/ui/multi-step-form-wrapper';
 import { validateDailyHours } from '@/lib/validation/profile-schemas';
 import { StepFrame } from './step-shell';
@@ -603,6 +604,13 @@ export function GoalSetupForm({
         setApiError(result.error); // input text, daily hours & target level are preserved for retry
         return;
       }
+      trackEvent({
+        event_name: 'career_goal_submitted',
+        feature_key:
+          draftScope === 'inline' ? 'roadmap_generator' : 'onboarding',
+        screen_name:
+          draftScope === 'inline' ? 'career_profile' : 'onboarding_goal',
+      });
       if (isTargetLevelExplicit) {
         writePendingGoalTargetLevel(result.data.id, targetLevel, userId);
       }

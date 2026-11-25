@@ -9,6 +9,10 @@ import {
   type ReactNode,
 } from 'react';
 import { cn } from './cn';
+import {
+  BottomNavigation,
+  type BottomNavFeatureKey,
+} from './bottom-navigation';
 import { Header } from './header';
 import { Sidebar } from './sidebar';
 import { useOptionalAppShellContext } from './app-shell-context';
@@ -45,31 +49,44 @@ function getFocusableDrawerElements(
   });
 }
 
-export interface AppShellProps {
+export type AppShellProps = {
   children: ReactNode;
-  variant?: 'authenticated' | 'admin';
+  variant?: 'authenticated' | 'learner' | 'admin';
   user?: ShellUserInfo | null;
   isSuspended?: boolean;
+  accountStatus?: 'active' | 'suspended';
   offline?: boolean;
+  todayReadyDot?: boolean;
+  effectiveAccess?: Partial<Record<BottomNavFeatureKey, boolean>>;
   signOutAction?: () => Promise<void> | void;
-}
+};
 
 /**
  * Authenticated workspace shell composing the collapsible light left sidebar,
- * sticky top header bar, quick search, user profile menu, and main content area.
+ * sticky top header bar, quick search, user profile menu, mobile learner bottom nav,
+ * and main content area.
  */
 export function AppShell({
   children,
   variant,
   user,
   isSuspended,
+  accountStatus,
   offline,
+  todayReadyDot = false,
+  effectiveAccess,
   signOutAction = logoutAction,
 }: AppShellProps) {
   const ctx = useOptionalAppShellContext();
   const effectiveVariant = variant ?? ctx?.variant ?? 'authenticated';
+  const chromeVariant: 'authenticated' | 'admin' =
+    effectiveVariant === 'admin' ? 'admin' : 'authenticated';
   const effectiveUser = user !== undefined ? user : (ctx?.user ?? null);
-  const effectiveSuspended = isSuspended ?? ctx?.isSuspended ?? false;
+  const effectiveSuspended =
+    isSuspended ??
+    (accountStatus !== undefined ? accountStatus === 'suspended' : undefined) ??
+    ctx?.isSuspended ??
+    false;
 
   const sidebarId = useId();
   const pathname = useSafePathname();
@@ -170,6 +187,8 @@ export function AppShell({
   }, []);
 
   const hideChrome = Boolean(ctx?.disabled);
+  const showBottomNav =
+    !hideChrome && chromeVariant !== 'admin' && !effectiveSuspended;
 
   return (
     <div
@@ -187,7 +206,7 @@ export function AppShell({
           isMobileOpen={isMobileOpen}
           onCloseMobile={handleCloseMobile}
           isSuspended={effectiveSuspended}
-          variant={effectiveVariant}
+          variant={chromeVariant}
           sidebarRef={sidebarRef}
           pathname={pathname}
         />
@@ -201,7 +220,7 @@ export function AppShell({
       >
         {!hideChrome && (
           <Header
-            variant={effectiveVariant}
+            variant={chromeVariant}
             user={effectiveUser}
             signOutAction={signOutAction}
             isSuspended={effectiveSuspended}
@@ -213,8 +232,23 @@ export function AppShell({
           />
         )}
 
-        <div className="flex flex-1 flex-col">{children}</div>
+        <div
+          className={cn(
+            'flex flex-1 flex-col',
+            showBottomNav && 'pb-24 md:pb-8',
+          )}
+        >
+          {children}
+        </div>
       </div>
+
+      {showBottomNav && (
+        <BottomNavigation
+          pathname={pathname}
+          todayReadyDot={todayReadyDot}
+          effectiveAccess={effectiveAccess}
+        />
+      )}
     </div>
   );
 }

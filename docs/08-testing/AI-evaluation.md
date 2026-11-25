@@ -184,3 +184,30 @@ Derived from [PRD §24 / §32](../01-product/PRD.md), [C05 §14.12 / §15.11 / `
 | **`R27` Lock-Before-Insert, Rollback & Duplicate Report Safety** | Preceding `READ COMMITTED` `pg_advisory_xact_lock(hashtextextended($1::text \|\| ':' \|\| $2::text, 0))` runs before `INSERT ... ON CONFLICT (user_id, target_type, target_id) DO NOTHING RETURNING id`; single-user duplicate returns `409 REPORT_ALREADY_SUBMITTED` without throwing a DB error that logs raw comments; rolled-back inserts never leave shared content hidden (`R27`, `R11`) | `feedback.service.spec.ts` (2-session lock-order, rollback, threshold=2 concurrent hide, and `ON CONFLICT DO NOTHING` specs). |
 | **`R26` Threshold Bounds & `R11` Privacy** | `SharedContentQualityService` enforces integer `2..1000` (fallback `5`), clamps TTL `<= 5,000ms`, deduplicates concurrent standalone refreshes per generation, bypasses shared cache & propagates SQL errors on caller transactions, and logs strictly `target_type`/`target_id`/`score`\|`reason` (zero raw comments, zero threshold leakage) | `feedback.service.spec.ts` (`SharedContentQualityService` suite). |
 | **6-Screen `R34` UI Matrix & Zero Feedback on `/mentor`** | Screen 12 (`roadmap_draft` + `roadmap_content`), Screen 15 Active (`roadmap_content` report only), Screen 15 Merge (`roadmap_merge` rating only), Screen 17 (`topic_content` rating + report), Screen 18 (`quiz_question` + `practice_review` report only, defaulting `unfair_scoring`), Screen 21 (`technology_update` rating only), and Screen 20 `/mentor` strictly zero rating/report controls | `roadmap-draft-view.test.tsx`, `roadmap-detail-view.test.tsx`, `roadmap-diff-viewer.test.tsx`, `today-view.test.tsx`, `quiz-result-view.test.tsx`, `tech-updates-view.test.tsx`, `mentor-chat-view.test.tsx`. |
+
+## 13. M14 Consolidated 9-Task AI Qualification, Cross-Cutting Safety & Queue Readiness
+
+Derived from [C01 §25/§47/§56](../01-product/PRD.md), [C05 `EP-H01` / §17.6](../05-api/API-Specification.md), [C08 §13–§19](../02-architecture/AI-System-Design.md), and `M14-A`..`M14-C` qualification suites.
+
+### 13.1 Complete 9-Task MVP AI Coverage Summary
+
+All 9 `public.ai_task` workflows seeded in `026_seed_ai_prompts_and_synthetic_model.sql` (and real-user approved Gemini mappings in `027_seed_gemini_real_user_models.sql`) are implemented behind the internal-only `AiModule` (`zero` HTTP routes verified in `m14-cross-cutting.spec.ts`):
+
+| # | `public.ai_task` | Execution Mode | Primary Milestone | Offline Synthetic / Adversarial Gate | Staging 8-Role × 3-Language Live Gate |
+|---|---|---|---|---|---|
+| 1 | `goal_interpretation` | Sync (`<10s`) | M05 | `EXECUTED` (`career-goal.service.spec.ts`, `ai-gateway.service.spec.ts`) | `PENDING` (staging provider credentials) |
+| 2 | `roadmap_generate` | Async (`EP-J01`) | M06 | `EXECUTED` (`roadmap-job.handler.spec.ts`, `output-validator.service.spec.ts`) | `PENDING` |
+| 3 | `roadmap_revision` | Async (`EP-J01`) | M06 | `EXECUTED` (`roadmap-job.handler.spec.ts`, `output-validator.service.spec.ts`) | `PENDING` |
+| 4 | `merge_proposal` | Async (`EP-J01`) | M09 | `EXECUTED` (`merge-proposal-job.handler.spec.ts`, `roadmap-merge.service.spec.ts`) | `PENDING` |
+| 5 | `topic_content` | Async (`EP-J01`) | M07 | `EXECUTED` (`topic-content-job.handler.spec.ts`, `learning.service.spec.ts`) | `PENDING` |
+| 6 | `quiz_generate` | Async (`EP-J01`) | M08 | `EXECUTED` (`quiz-generate-job.handler.spec.ts`, `quiz.service.spec.ts`) | `PENDING` |
+| 7 | `practice_review` | Async (`EP-J01`) | M08 | `EXECUTED` (`practice-review-job.handler.spec.ts`, `practice-review.service.spec.ts`) | `PENDING` |
+| 8 | `mentor_chat` | Sync + `R15` SSE | M10 | `EXECUTED` (`mentor-adversarial.spec.ts`, `output-validator.service.spec.ts`) | `PENDING` |
+| 9 | `technology_update` | `R25` Scheduler | M11 | `EXECUTED` (`technology-update-scheduler.service.spec.ts`, `output-validator.service.spec.ts`) | `PENDING` |
+
+### 13.2 M14 Cross-Cutting Safety, Zero-PII & Queue Readiness Checks
+
+- **Zero Direct AI Gateway Exposure (`ADR-008`):** `backend/src/common/m14-cross-cutting.spec.ts` boots the full `AppModule` and confirms `AiModule` registers zero HTTP controllers and internal endpoints (`EP-G04`) return `404`.
+- **Non-Guarantee, Prompt-Injection & Zero-PII Qualification:** `output-validator.service.spec.ts`, `prompt-security-privacy.spec.ts`, `mentor-adversarial.spec.ts`, and `frontend/src/components/ui/m14-pwa-a11y-qualification.test.tsx` verify zero `"Job Ready"`/employment guarantees, `<untrusted_data>` prompt isolation, zero secret/provider leakage on `EP-H01` `200`/`503`, and zero raw PII/user content in `C09 §7` telemetry.
+- **`EP-H01` Durable Queue Readiness Probe:** `AppService.getHealth()` probes both `SELECT 1` (DB) and `public.ai_requests` accessibility + `PostgresJobQueueConsumer.isReady()` (requiring active polling loop + registered handlers + post-probe recheck) under single-flight coalescing and `2,000ms` bounded timeouts (`app.controller.spec.ts`, `app.e2e-spec.ts`), returning `503` `status: 'unavailable'` without exposing model/provider metadata whenever the AI queue cannot accept/process work.
+- **Separate Acceptance Boundary:** Offline synthetic suites (`EXECUTED` locally) do not establish live real-user provider approval (`C01 §47`, `C08 §17`) or staging 24-cell (`8` roles × `bn`/`en`/`mixed`) human rubric sign-off (`ACCEPTED` remains pending).

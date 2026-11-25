@@ -2,7 +2,7 @@
 
 For agent task intake, the current maintenance task and evidence, use [START-HERE](../00-governance/START-HERE.md) and the [shared workflow](../00-governance/agent-workflow.md). Latest merged implementation is the [M01-03 A01/A04 email slice](../07-planning/current-phase/M01-03.md#post-merge-status-and-evidence-2026-10-26), PR #9, following the M01-02 shared helper. Its controller/service and synthetic tests are delivered; the production provider returns 503, while live email, A02/session integration and generic R14 idempotency remain incomplete. Separate PR-head and post-merge CI evidence is recorded in that addendum, not evidence of local service health or production readiness. Prefer explicit Git Bash for Windows agent terminal commands after confirming the actual runner; native Windows PowerShell service instructions below remain supported. Documentation-only work runs read-only verifiers/link/diff checks, not the installation/service/database lifecycle commands on this page.
 
-This is a local foundation runbook, not a production deployment guide. Start at the repository root. Required: Node >=24 (tested 24.19.0), npm (11.9.0), Python3, Docker daemon, Supabase CLI **2.121.0**. Official CLI installation: install the exact supabase npm dev tool in a separate tools directory or use the official release binary; put it on PATH or set SUPABASE_BIN to its executable. Use a writable npm cache. Do not replace application lockfiles.
+This is a local development and verification runbook. For environment topology, named release-ownership roles, rollout/rollback, `C06 §20` autovacuum tuning, `R22` disposable capacity checks, `R23` PITR recovery drills, and `E01` constraints, see [deployment.md](deployment.md) (no live deployment is authorized without separate owner sign-off). Start at the repository root. Required: Node >=24 (tested 24.19.0), npm (11.9.0), Python3, Docker daemon, Supabase CLI **2.121.0**. Official CLI installation: install the exact supabase npm dev tool in a separate tools directory or use the official release binary; put it on PATH or set SUPABASE_BIN to its executable. Use a writable npm cache. Do not replace application lockfiles.
 
 ```bash
 bash scripts/foundation/install.sh
@@ -145,8 +145,16 @@ node scripts/foundation/local.mjs frontend
 
 Keep both application terminals open. Backend: `http://127.0.0.1:3200/health`;
 frontend: `http://127.0.0.1:3201/login`; local email:
-`http://127.0.0.1:56324`. Health should report `status=ok` and
-`database=connected`. Closing an application terminal stops that application.
+`http://127.0.0.1:56324`. Canonical `EP-H01` `GET /health` returns HTTP `200` with
+`status="ok"`, `version="1.5.1"`, ISO-8601 `time`, and `checks={ database: "ok", queue: "ok" }`
+(or HTTP `503` with `status="unavailable"` and `"error"` on the failing dependency).
+Closing an application terminal stops that application.
+
+### `EP-H01` `GET /health` Triage (`200` vs `503`)
+- **`checks.database = "error"` (`503`):** Verify local/target PostgreSQL reachability, `DATABASE_URL` credentials, connection pool headroom, and `2,000ms` query latency.
+- **`checks.queue = "error"` (`503`):** Verify `public.ai_requests` table accessibility (`010_ai_operations.sql` applied) and confirm `PostgresJobQueueConsumer` has both an active polling loop and at least one registered handler (`isReady() === true`, not stopped/destroyed).
+- **Recovery Smoke Isolation:** When booting a backend instance against a PITR-restored DB for `EP-H01` smoke verification, always use isolated non-shared Redis, `AI_EXECUTION_MODE=synthetic`, `TECH_UPDATE_SCHEDULER_ENABLED=false`, and zero live AI/email/SMS credentials so restored queued rows cannot replay against shared infrastructure (see [deployment.md §8](deployment.md#8-pitr-disaster-recovery-drill--read-only-catalog-smoke-r23-r32-recovery)).
+- Never bypass `/health` readiness gating or expose raw SQL/provider diagnostics in public health payloads; see [deployment.md](deployment.md) for staging/production operational ownership and rollback procedures.
 
 Foundation scripts execute npm through Node on Windows and select Python
 through PYTHON_BIN. NPM_CLI_JS can override the installed npm CLI JavaScript

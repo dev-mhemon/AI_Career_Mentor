@@ -502,3 +502,39 @@ Preserved unsaved input (`MultiStepFormWrapper` + `sessionStorage`), offline ban
 | AI content visibly attributed | AIRecommendationCard(26), AIExplanationCard(25), PracticeReviewCard(22) AI framing (`ai.*` tokens) |
 | Rating/report capability matrix | AIFeedbackComponent(29) |
 | Telemetry excludes content/PII | all interactive components (Spec §7) |
+
+---
+
+## 8. Implemented 29/29 SPEC Component Registry (`M14-B`)
+
+| # | SPEC Component | Module Path |
+|---|---|---|
+| 01 | `Header` | `frontend/src/components/ui/header.tsx` |
+| 02 | `Sidebar` | `frontend/src/components/ui/sidebar.tsx` |
+| 03 | `BottomNavigation` | `frontend/src/components/ui/bottom-navigation.tsx` |
+| 04 | `StepIndicator` | `frontend/src/components/ui/stepper.tsx` |
+| 05 | `Input` | `frontend/src/components/ui/input.tsx` |
+| 06 | `Select` | `frontend/src/components/ui/select.tsx` & `multi-select-combobox.tsx` |
+| 07 | `Checkbox` | `frontend/src/components/ui/checkbox.tsx` |
+| 08 | `ToggleSwitch` | `frontend/src/components/ui/toggle-switch.tsx` |
+| 09 | `MultiStepFormWrapper` | `frontend/src/components/ui/multi-step-form-wrapper.tsx` |
+| 10 | `Modal` | `frontend/src/components/ui/modal.tsx` |
+| 11 | `Toast` | `frontend/src/components/ui/toast.tsx` |
+| 12 | `Tabs` | `frontend/src/components/ui/tabs.tsx` & `segmented-tabs.tsx` |
+| 13 | `CareerCard` | `frontend/src/components/ui/career-card.tsx` |
+| 14 | `SkillCard` | `frontend/src/components/ui/skill-card.tsx` |
+| 15 | `SkillBadge` | `frontend/src/components/ui/skill-badge.tsx` |
+| 16 | `RoadmapPhaseCard` | `frontend/src/components/roadmap/roadmap-phase-card.tsx` |
+| 17 | `RoadmapDiffViewer` | `frontend/src/components/roadmap/roadmap-diff-viewer.tsx` |
+| 18 | `MilestoneCard` | `frontend/src/components/roadmap/milestone-card.tsx` |
+| 19 | `DailyTaskCard` | `frontend/src/components/learning/daily-task-card.tsx` |
+| 20 | `LearningResourceCard` | `frontend/src/components/learning/learning-resource-card.tsx` |
+| 21 | `QuizCard` | `frontend/src/components/quiz/quiz-card.tsx` |
+| 22 | `PracticeReviewCard` | `frontend/src/components/quiz/practice-review-card.tsx` |
+| 23 | `SkillProgressBadge` | `frontend/src/components/progress/skill-progress-badge.tsx` |
+| 24 | `ProgressHistoryCard` | `frontend/src/components/progress/progress-history-card.tsx` |
+| 25 | `AIExplanationCard` | `frontend/src/components/learning/ai-explanation-card.tsx` |
+| 26 | `AIRecommendationCard` | `frontend/src/components/ai/ai-recommendation-card.tsx` |
+| 27 | `AIChatMessage` | `frontend/src/components/mentor/ai-chat-message.tsx` |
+| 28 | `AILoadingState` | `frontend/src/components/ui/ai-loading-state.tsx` |
+| 29 | `AIFeedbackComponent` | `frontend/src/components/feedback/ai-feedback-component.tsx` |

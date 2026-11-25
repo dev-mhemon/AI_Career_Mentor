@@ -15,6 +15,7 @@ import {
   type QuizResultDTO,
 } from '@/lib/api/client';
 import { mapApiError, type MappedError } from '@/lib/api/error-mapper';
+import { trackEvent } from '@/lib/telemetry/telemetry';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/cn';
@@ -770,6 +771,11 @@ export function QuizSessionView({
         },
         idemKey,
       );
+      trackEvent({
+        event_name: 'quiz_submitted',
+        feature_key: 'quiz_practice',
+        screen_name: 'quiz',
+      });
       editableEpochRef.current += 1;
       submitIdemKeyRef.current = null;
       pendingPatchIdsRef.current.clear();

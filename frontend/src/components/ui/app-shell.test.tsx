@@ -811,4 +811,50 @@ describe('AppShell, Sidebar, and Header', () => {
       within(nav).queryByRole('link', { name: 'Dashboard' }),
     ).not.toBeInTheDocument();
   });
+
+  it('renders mobile BottomNavigation and Bangla/EN cue for active learners, omitting both on admin and suspended workspaces', () => {
+    mockPathname = '/today';
+    const { rerender } = render(
+      <AppShell
+        variant="authenticated"
+        todayReadyDot={true}
+        user={{ fullName: 'Mehedi Hasan' }}
+      >
+        <div>Learner Today</div>
+      </AppShell>,
+    );
+
+    const mobileNav = screen.getByRole('navigation', {
+      name: 'Primary Mobile Navigation',
+    });
+    expect(within(mobileNav).getAllByRole('link')).toHaveLength(5);
+    expect(
+      within(mobileNav).getByRole('link', { name: 'Today (ready)' }),
+    ).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('BN / EN')).toBeInTheDocument();
+
+    rerender(
+      <AppShell
+        variant="authenticated"
+        isSuspended={true}
+        user={{ fullName: 'Suspended Learner' }}
+      >
+        <div>Suspended</div>
+      </AppShell>,
+    );
+    expect(
+      screen.queryByRole('navigation', { name: 'Primary Mobile Navigation' }),
+    ).not.toBeInTheDocument();
+
+    mockPathname = '/admin';
+    rerender(
+      <AppShell variant="admin" user={{ fullName: 'Platform Admin' }}>
+        <div>Admin Console</div>
+      </AppShell>,
+    );
+    expect(
+      screen.queryByRole('navigation', { name: 'Primary Mobile Navigation' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('BN / EN')).not.toBeInTheDocument();
+  });
 });
