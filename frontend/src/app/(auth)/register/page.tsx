@@ -1,17 +1,19 @@
 import { redirect } from "next/navigation";
-import { hasAuthenticatedAppSession } from "@/lib/auth/user";
+import { getAuthenticatedHomeDestination } from "@/lib/auth/user";
 import { RegisterForm } from "@/components/auth/register-form";
 
 /**
  * Registration page — Server Component with route guard.
  *
  * Route protection:
- *  - Authenticated → /dashboard
+ *  - Authenticated active ADMIN → /admin
+ *  - Authenticated learner → /dashboard
  *  - Unauthenticated → show registration form
  */
 export default async function RegisterPage() {
-  if (await hasAuthenticatedAppSession()) {
-    redirect("/dashboard");
+  const homeDestination = await getAuthenticatedHomeDestination();
+  if (homeDestination) {
+    redirect(homeDestination);
   }
 
   return (

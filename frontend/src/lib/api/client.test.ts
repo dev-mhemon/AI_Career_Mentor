@@ -75,6 +75,14 @@ import {
   listTechnologyUpdates,
   getTechnologyUpdate,
   markTechnologyUpdateViewed,
+  listAdminUsers,
+  getAdminUser,
+  updateAdminUserStatus,
+  listAdminFeatures,
+  updateGlobalFeature,
+  updateUserFeatureOverride,
+  listAdminAuditLogs,
+  getAdminUsage,
   isJobAcceptedDTO,
   type DailyPlanResponseDTO,
   type JobKind,
@@ -2683,5 +2691,302 @@ describe('M11 Technology Intelligence API client (EP-T01..EP-T03)', () => {
       code: 'INVALID_RESPONSE',
       statusCode: 502,
     });
+  });
+});
+
+describe('M13 Admin API Client (EP-AD01..EP-AD08)', () => {
+  const TARGET_USER_ID = '22222222-2222-4222-8222-222222222222';
+  const ADMIN_USER_ID = '11111111-1111-4111-8111-111111111111';
+
+  const SAMPLE_USER_SUMMARY = {
+    id: TARGET_USER_ID,
+    email: 'learner@example.com',
+    phone: '+8801712345678',
+    contact_masked: 'l***@example.com / +8801****5678',
+    status: 'active' as const,
+    created_at: '2026-11-01T00:00:00.000Z',
+    last_active_at: '2026-11-24T12:00:00.000Z',
+    roadmap_count: 2,
+    technology_update_enabled: false,
+  };
+
+  const SAMPLE_USER_DETAIL = {
+    ...SAMPLE_USER_SUMMARY,
+    feature_access: [
+      {
+        feature_key: 'technology_update' as const,
+        global_enabled: true,
+        user_override: null,
+        effective: false,
+      },
+    ],
+    counts: {
+      roadmaps: 2,
+      quizzes_submitted: 5,
+      mentor_messages: 10,
+      ai_requests: 25,
+    },
+  };
+
+  const SAMPLE_FEATURE = {
+    feature_key: 'technology_update' as const,
+    enabled: true,
+    updated_at: '2026-11-24T00:00:00.000Z',
+    updated_by: ADMIN_USER_ID,
+  };
+
+  const SAMPLE_AUDIT = {
+    id: '33333333-3333-4333-8333-333333333333',
+    actor_id: ADMIN_USER_ID,
+    action: 'user.suspend',
+    target_type: 'user',
+    target_id: TARGET_USER_ID,
+    before: { status: 'active' },
+    after: { status: 'suspended' },
+    request_id: '44444444-4444-4444-8444-444444444444',
+    created_at: '2026-11-24T12:00:00.000Z',
+  };
+
+  const SAMPLE_USAGE = {
+    range: { from: '2026-11-24', to: '2026-11-25' },
+    series: {
+      group_by: 'day' as const,
+      buckets: [
+        {
+          key: '2026-11-24',
+          requests: 0,
+          estimated_cost_usd: 0,
+          failures: 0,
+          fallbacks_used: 0,
+          input_units: 0,
+          output_units: 0,
+        },
+        {
+          key: '2026-11-25',
+          requests: 10,
+          estimated_cost_usd: 0.02,
+          failures: 1,
+          fallbacks_used: 0,
+          input_units: 3000,
+          output_units: 1500,
+        },
+      ],
+    },
+    users: { total: 40, active_last_7_days: 22 },
+    counts: {
+      roadmaps_locked: 18,
+      quizzes_submitted: 65,
+      mentor_messages: 120,
+      technology_updates_generated: 9,
+    },
+    ai: {
+      requests: 10,
+      failures: 1,
+      fallbacks_used: 0,
+      usage_units: { input: 3000, output: 1500 },
+      estimated_cost_usd: 0.02,
+      by_day: [],
+      by_feature: [],
+      by_provider: [],
+    },
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('calls all 8 admin endpoints (EP-AD01..EP-AD08) with exact methods, query params, and validates envelopes', async () => {
+    // EP-AD01
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [SAMPLE_USER_SUMMARY],
+          meta: { limit: 10, next_cursor: 'cur-1' },
+        }),
+    });
+    const users = await listAdminUsers(MOCK_TOKEN, {
+      q: 'learner',
+      status: 'active',
+      limit: 10,
+    });
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      'http://localhost:3000/api/v1/admin/users?q=learner&status=active&limit=10',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${MOCK_TOKEN}`,
+        }),
+      }),
+    );
+    expect(users).toEqual({
+      items: [SAMPLE_USER_SUMMARY],
+      meta: { limit: 10, next_cursor: 'cur-1' },
+    });
+
+    // EP-AD02
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: SAMPLE_USER_DETAIL }),
+    });
+    const detail = await getAdminUser(MOCK_TOKEN, TARGET_USER_ID);
+    expect(detail.counts.mentor_messages).toBe(10);
+
+    // EP-AD03
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { ...SAMPLE_USER_DETAIL, status: 'suspended' },
+        }),
+    });
+    const suspended = await updateAdminUserStatus(MOCK_TOKEN, TARGET_USER_ID, {
+      status: 'suspended',
+      reason: 'Abuse detected',
+    });
+    expect(suspended.status).toBe('suspended');
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      `http://localhost:3000/api/v1/admin/users/${TARGET_USER_ID}`,
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+
+    // EP-AD04
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: [SAMPLE_FEATURE] }),
+    });
+    const features = await listAdminFeatures(MOCK_TOKEN);
+    expect(features).toEqual([SAMPLE_FEATURE]);
+
+    // EP-AD05
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { ...SAMPLE_FEATURE, enabled: false },
+        }),
+    });
+    const updatedFeature = await updateGlobalFeature(MOCK_TOKEN, {
+      feature_key: 'technology_update',
+      enabled: false,
+    });
+    expect(updatedFeature.enabled).toBe(false);
+
+    // EP-AD06 (null inherit)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: SAMPLE_USER_DETAIL }),
+    });
+    const updatedUserFeature = await updateUserFeatureOverride(
+      MOCK_TOKEN,
+      TARGET_USER_ID,
+      { feature_key: 'technology_update', enabled: null },
+    );
+    expect(updatedUserFeature.id).toBe(TARGET_USER_ID);
+
+    // EP-AD07
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [SAMPLE_AUDIT],
+          meta: { limit: 20, next_cursor: null },
+        }),
+    });
+    const logs = await listAdminAuditLogs(MOCK_TOKEN, {
+      action: 'user.suspend',
+      limit: 20,
+    });
+    expect(logs.items).toEqual([SAMPLE_AUDIT]);
+
+    // EP-AD08
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, data: SAMPLE_USAGE }),
+    });
+    const usage = await getAdminUsage(MOCK_TOKEN, {
+      from: '2026-11-24',
+      to: '2026-11-25',
+      group_by: 'day',
+    });
+    expect(usage.series.buckets).toHaveLength(2);
+  });
+
+  it('rejects malformed admin responses with ApiError(502, INVALID_RESPONSE)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [{ id: TARGET_USER_ID, status: 'bogus_status' }],
+        }),
+    });
+    await expect(listAdminUsers(MOCK_TOKEN)).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'INVALID_RESPONSE',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: { range: { from: '2026-11-24', to: '2026-11-25' } },
+        }),
+    });
+    await expect(getAdminUsage(MOCK_TOKEN)).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'INVALID_RESPONSE',
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: [{ feature_key: 'invalid_key', enabled: true }],
+        }),
+    });
+    await expect(listAdminFeatures(MOCK_TOKEN)).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'INVALID_RESPONSE',
+    });
+
+    // Rejects malformed entries inside ai.by_day, ai.by_feature, and ai.by_provider
+    for (const key of ['by_day', 'by_feature', 'by_provider'] as const) {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              ...SAMPLE_USAGE,
+              ai: {
+                ...SAMPLE_USAGE.ai,
+                [key]: [null],
+              },
+            },
+          }),
+      });
+      await expect(getAdminUsage(MOCK_TOKEN)).rejects.toMatchObject({
+        statusCode: 502,
+        code: 'INVALID_RESPONSE',
+      });
+    }
   });
 });

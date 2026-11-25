@@ -172,6 +172,7 @@ All new milestones are Proposed. M00 is an observed checkpoint to consume, not r
 
 ### M12 - Quality feedback and shared-content safety
 
+- Status: Tracked separately on unmerged branch `feat/m12-01-quality-feedback-and-shared-content-safety` (independent of M13).
 - Outcome: authorized target-specific ratings/reports, independent-user threshold hiding and safely evaluated regeneration.
 - Sources: C01 §24/32; C05 F01–02/R27/R34; C06 threshold; C08 §16; C09 feedback capabilities.
 - Entry/dependencies/areas: M06 draft/roadmap, M07 topics, M08 question/review exposure, M09 merge targets and M11 updates for full integration; feedback/visibility backend and producer UI. Start each target when its producer exists, before wider rollout.
@@ -181,12 +182,13 @@ All new milestones are Proposed. M00 is an observed checkpoint to consume, not r
 
 ### M13 - Admin, feature controls and usage operations
 
-- Outcome: server-authorized suspend/reactivate, global/per-user access/default-OFF tech enablement, content-free audit/usage series; Screens23–25.
+- Status: `IMPLEMENTED` / `EXECUTED` locally on branch `feat/m13-01-admin-feature-controls-and-usage-operations` (PR pending review/merge; separate reviewer and owner acceptance pending). See [M13-01](current-phase/M13-01.md).
+- Outcome: server-authorized suspend/reactivate, global/per-user access/default-OFF tech enablement, content-free audit/usage series; Screens23–25 + dedicated `/admin/audit-logs`.
 - Sources: C01 §7/50–51; C05 AD01–08/R10/R16/R26/R30; C06 access/admin/audit; C09 Screens23–25.
 - Entry/dependencies/areas: M00/M01 access/session; M04 actual metrics. Control API/UI may start on M01 and must integrate before live pilot; full regression uses later producers.
-- Documents: admin bootstrap/ownership operating notes, exact DTO/maps, query-window/privacy QA; no CMS/budget-management UI.
-- Exit/gates: no JWT-role trust/admin ownership bypass; CANNOT_MODIFY_ADMIN, audited/reasoned writes, inherit(null), global OFF priority, suspension exceptions, existing-data reads except tech; counts/cost-only inclusive UTC series, zero fill, 366-day bound and retained-window label; no private content/telemetry.
-- Decisions: named production admin/access owner; routine query/UI choices within contracts need no new product decision.
+- Documents: admin bootstrap/ownership operating notes (`supabase/seeds/admin_bootstrap.sql`), exact DTO/maps, query-window/privacy QA; no CMS/budget-management UI.
+- Exit/gates: no JWT-role trust/admin ownership bypass; CANNOT_MODIFY_ADMIN, admin exclusion in `EP-AD01`, audited/reasoned writes, inherit(null), global OFF priority, suspension exceptions, existing-data reads except tech; counts/cost-only inclusive UTC series, zero fill, 366-day bound and retained-window label; no private content/telemetry.
+- Decisions: named production admin/access owner; routine query/UI choices within contracts need no new product decision. **Adopted M13 UAT Architecture Decisions:** (1) Dedicated standalone platform admin account provisioned via idempotent SQL bootstrap (`supabase/seeds/admin_bootstrap.sql` supporting operator-supplied `app.admin_bootstrap_password`, refusing to promote pre-existing non-admin `auth.users` accounts, preserving rotated admin identities, and documenting SQL credential rotation + revocation scope across backend `AccessGuard` vs stateless direct PostgREST/Storage JWTs); (2) Strictly isolated Admin-only workspace & auth flow (active `ADMIN` accounts route exclusively to `/admin/**` post-login and on any learner/onboarding route visit, bypassing learner onboarding with zero learner workspace navigation, learner profile/settings links, or cross-workspace switching in `Sidebar`/`Header`, while suspended admins can still reach `/settings` and account deletion); (3) Verified `AZ-ADMIN` responses on `EP-AD01`/`EP-AD02`/`EP-AD03`/`EP-AD06` expose full learner `email`/`phone` alongside `contact_masked` with zero private learner content and zero PII/query/reason logging (`R11`).
 
 ### M14 - Complete UX, operational qualification and release acceptance
 

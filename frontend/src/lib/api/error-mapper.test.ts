@@ -627,6 +627,54 @@ describe("mapApiError", () => {
     expect(techNotFound.retryable).toBe(false);
     expect(techNotFound.message).toMatch(/technology update could not be found/i);
   });
+
+  it("maps M13 admin error codes cleanly without echoing raw server internals", () => {
+    const rawInternalLeak = "postgres admin_users detail stack trace";
+    const cases: Array<{
+      status: number;
+      code: string;
+      tone: "error" | "warning" | "info";
+      match: RegExp;
+    }> = [
+      {
+        status: 403,
+        code: "ADMIN_REQUIRED",
+        tone: "error",
+        match: /administrator access is required/i,
+      },
+      {
+        status: 403,
+        code: "CANNOT_MODIFY_ADMIN",
+        tone: "warning",
+        match: /administrator accounts cannot be suspended or modified/i,
+      },
+      {
+        status: 409,
+        code: "STATUS_UNCHANGED",
+        tone: "info",
+        match: /already in the requested status/i,
+      },
+      {
+        status: 422,
+        code: "UNKNOWN_FEATURE",
+        tone: "warning",
+        match: /feature key is not recognized/i,
+      },
+    ];
+
+    for (const c of cases) {
+      const mapped = mapApiError(
+        new ApiError(c.status, rawInternalLeak, c.code, "req-m13-1"),
+      );
+      expect(mapped.code).toBe(c.code);
+      expect(mapped.status).toBe(c.status);
+      expect(mapped.tone).toBe(c.tone);
+      expect(mapped.retryable).toBe(false);
+      expect(mapped.message).toMatch(c.match);
+      expect(mapped.message).not.toContain("postgres");
+      expect(mapped.message).not.toContain("stack trace");
+    }
+  });
 });
 
 describe("mapActionResult", () => {

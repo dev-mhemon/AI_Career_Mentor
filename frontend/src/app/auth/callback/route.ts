@@ -145,13 +145,15 @@ export async function GET(request: Request) {
         provider,
       );
       const destination =
-        approved.user.status === "suspended"
-          ? "/settings"
-          : approved.next_step === "add_verified_contact"
-            ? "/settings?prompt=verify_contact"
-            : approved.next_step === "profile_setup"
-              ? "/onboarding"
-              : "/dashboard";
+        approved.user.role === "ADMIN" && approved.user.status === "active"
+          ? "/admin"
+          : approved.user.status === "suspended"
+            ? "/settings"
+            : approved.next_step === "add_verified_contact"
+              ? "/settings?prompt=verify_contact"
+              : approved.next_step === "profile_setup"
+                ? "/onboarding"
+                : "/dashboard";
 
       const response = NextResponse.redirect(`${origin}${destination}`);
       response.cookies.delete("account_deleted");

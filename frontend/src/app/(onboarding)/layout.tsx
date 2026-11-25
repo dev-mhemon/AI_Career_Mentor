@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireFastSessionShell } from '@/lib/auth/shell-user';
 
 function BrandBadgeIcon() {
@@ -33,7 +34,10 @@ export default async function OnboardingLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireFastSessionShell();
+  const fastSession = await requireFastSessionShell();
+  if (fastSession.isAdmin) {
+    redirect('/admin');
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-canvas text-text-primary">

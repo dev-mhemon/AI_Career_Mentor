@@ -3542,3 +3542,646 @@ export async function markTechnologyUpdateViewed(
   }
   return data;
 }
+
+// ─── M13 Admin, Feature Controls & Usage API (C05 §14.14 / §15.11 / R30) ───
+
+export const DEFAULT_ADMIN_TIMEOUT_MS = 15_000;
+
+export type AdminUserStatus = 'active' | 'suspended';
+export type AdminUsageGroupBy = 'day' | 'feature' | 'provider';
+export type AdminFeatureKey =
+  | 'roadmap_generator'
+  | 'daily_plan'
+  | 'quiz_practice'
+  | 'ai_practice_review'
+  | 'progress_tracking'
+  | 'ai_mentor'
+  | 'technology_update';
+
+export type AdminCursorMetaDTO = {
+  limit: number;
+  next_cursor: string | null;
+};
+
+export type AdminUserSummaryDTO = {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  contact_masked: string;
+  status: AdminUserStatus;
+  created_at: string;
+  last_active_at: string | null;
+  roadmap_count: number;
+  technology_update_enabled: boolean;
+};
+
+export type AdminUserFeatureAccessDTO = {
+  feature_key: AdminFeatureKey;
+  global_enabled: boolean;
+  user_override: boolean | null;
+  effective: boolean;
+};
+
+export type AdminUserAggregateCountsDTO = {
+  roadmaps: number;
+  quizzes_submitted: number;
+  mentor_messages: number;
+  ai_requests: number;
+};
+
+export type AdminUserDetailDTO = AdminUserSummaryDTO & {
+  feature_access: AdminUserFeatureAccessDTO[];
+  counts: AdminUserAggregateCountsDTO;
+};
+
+export type AdminUserStatusDTO = {
+  status: AdminUserStatus;
+  reason: string;
+};
+
+export type FeatureControlDTO = {
+  feature_key: AdminFeatureKey;
+  enabled: boolean;
+  updated_at: string;
+  updated_by: string | null;
+};
+
+export type FeatureToggleDTO = {
+  feature_key: AdminFeatureKey;
+  enabled: boolean;
+};
+
+export type UserFeatureToggleDTO = {
+  feature_key: AdminFeatureKey;
+  enabled: boolean | null;
+};
+
+export type AuditLogDTO = {
+  id: string;
+  actor_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  request_id: string | null;
+  created_at: string;
+};
+
+export type UsageSeriesBucketDTO = {
+  key: string;
+  requests: number;
+  estimated_cost_usd: number;
+  failures: number | null;
+  fallbacks_used: number | null;
+  input_units: number | null;
+  output_units: number | null;
+};
+
+export type UsageByDayDTO = {
+  day: string;
+  requests: number;
+  failures: number;
+  fallbacks_used: number;
+  input_units: number;
+  output_units: number;
+  estimated_cost_usd: number;
+};
+
+export type UsageByFeatureDTO = {
+  feature_key: string;
+  requests: number;
+  estimated_cost_usd: number;
+};
+
+export type UsageByProviderDTO = {
+  provider_id: string;
+  requests: number;
+  estimated_cost_usd: number;
+};
+
+export type UsageSummaryDTO = {
+  range: {
+    from: string;
+    to: string;
+  };
+  series: {
+    group_by: AdminUsageGroupBy;
+    buckets: UsageSeriesBucketDTO[];
+  };
+  users: {
+    total: number;
+    active_last_7_days: number;
+  };
+  counts: {
+    roadmaps_locked: number;
+    quizzes_submitted: number;
+    mentor_messages: number;
+    technology_updates_generated: number;
+  };
+  ai: {
+    requests: number;
+    failures: number;
+    fallbacks_used: number;
+    usage_units: {
+      input: number;
+      output: number;
+    };
+    estimated_cost_usd: number;
+    by_day: UsageByDayDTO[];
+    by_feature: UsageByFeatureDTO[];
+    by_provider: UsageByProviderDTO[];
+  };
+};
+
+export type ListAdminUsersParams = {
+  q?: string;
+  status?: AdminUserStatus;
+  limit?: number;
+  cursor?: string;
+};
+
+export type PaginatedAdminUsersDTO = {
+  items: AdminUserSummaryDTO[];
+  meta: AdminCursorMetaDTO;
+};
+
+export type ListAdminAuditLogsParams = {
+  actor_id?: string;
+  target_user_id?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type PaginatedAdminAuditLogsDTO = {
+  items: AuditLogDTO[];
+  meta: AdminCursorMetaDTO;
+};
+
+export type GetAdminUsageParams = {
+  from?: string;
+  to?: string;
+  group_by?: AdminUsageGroupBy;
+};
+
+const VALID_ADMIN_USER_STATUSES: ReadonlySet<string> = new Set<AdminUserStatus>([
+  'active',
+  'suspended',
+]);
+
+const VALID_ADMIN_USAGE_GROUP_BY: ReadonlySet<string> =
+  new Set<AdminUsageGroupBy>(['day', 'feature', 'provider']);
+
+const VALID_ADMIN_FEATURE_KEYS: ReadonlySet<string> = new Set<AdminFeatureKey>([
+  'roadmap_generator',
+  'daily_plan',
+  'quiz_practice',
+  'ai_practice_review',
+  'progress_tracking',
+  'ai_mentor',
+  'technology_update',
+]);
+
+function throwInvalidAdminResponse(message: string): never {
+  throw new ApiError(502, message, 'INVALID_RESPONSE', undefined, [], true);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isValidAdminUserSummaryDTO(
+  value: unknown,
+): value is AdminUserSummaryDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    value.id.trim().length > 0 &&
+    (value.email === null || typeof value.email === 'string') &&
+    (value.phone === null || typeof value.phone === 'string') &&
+    typeof value.contact_masked === 'string' &&
+    typeof value.status === 'string' &&
+    VALID_ADMIN_USER_STATUSES.has(value.status) &&
+    typeof value.created_at === 'string' &&
+    value.created_at.trim().length > 0 &&
+    (value.last_active_at === null || typeof value.last_active_at === 'string') &&
+    isFiniteNumber(value.roadmap_count) &&
+    typeof value.technology_update_enabled === 'boolean'
+  );
+}
+
+function isValidAdminUserFeatureAccessDTO(
+  value: unknown,
+): value is AdminUserFeatureAccessDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.feature_key === 'string' &&
+    VALID_ADMIN_FEATURE_KEYS.has(value.feature_key) &&
+    typeof value.global_enabled === 'boolean' &&
+    (value.user_override === null || typeof value.user_override === 'boolean') &&
+    typeof value.effective === 'boolean'
+  );
+}
+
+function isValidAdminUserDetailDTO(
+  value: unknown,
+): value is AdminUserDetailDTO {
+  if (!isValidAdminUserSummaryDTO(value)) return false;
+  const rec = value as Record<string, unknown>;
+  if (
+    !Array.isArray(rec.feature_access) ||
+    !rec.feature_access.every(isValidAdminUserFeatureAccessDTO)
+  ) {
+    return false;
+  }
+  if (!isPlainRecord(rec.counts)) return false;
+  return (
+    isFiniteNumber(rec.counts.roadmaps) &&
+    isFiniteNumber(rec.counts.quizzes_submitted) &&
+    isFiniteNumber(rec.counts.mentor_messages) &&
+    isFiniteNumber(rec.counts.ai_requests)
+  );
+}
+
+function isValidFeatureControlDTO(value: unknown): value is FeatureControlDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.feature_key === 'string' &&
+    VALID_ADMIN_FEATURE_KEYS.has(value.feature_key) &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.updated_at === 'string' &&
+    value.updated_at.trim().length > 0 &&
+    (value.updated_by === null || typeof value.updated_by === 'string')
+  );
+}
+
+function isValidAuditLogDTO(value: unknown): value is AuditLogDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    value.id.trim().length > 0 &&
+    (value.actor_id === null || typeof value.actor_id === 'string') &&
+    typeof value.action === 'string' &&
+    value.action.trim().length > 0 &&
+    (value.target_type === null || typeof value.target_type === 'string') &&
+    (value.target_id === null || typeof value.target_id === 'string') &&
+    (value.before === null || isPlainRecord(value.before)) &&
+    (value.after === null || isPlainRecord(value.after)) &&
+    (value.request_id === null || typeof value.request_id === 'string') &&
+    typeof value.created_at === 'string' &&
+    value.created_at.trim().length > 0
+  );
+}
+
+function isValidUsageSeriesBucketDTO(
+  value: unknown,
+): value is UsageSeriesBucketDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.key === 'string' &&
+    value.key.trim().length > 0 &&
+    isFiniteNumber(value.requests) &&
+    isFiniteNumber(value.estimated_cost_usd) &&
+    isNullableFiniteNumber(value.failures) &&
+    isNullableFiniteNumber(value.fallbacks_used) &&
+    isNullableFiniteNumber(value.input_units) &&
+    isNullableFiniteNumber(value.output_units)
+  );
+}
+
+function isValidUsageByDayDTO(value: unknown): value is UsageByDayDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.day === 'string' &&
+    value.day.trim().length > 0 &&
+    isFiniteNumber(value.requests) &&
+    isFiniteNumber(value.failures) &&
+    isFiniteNumber(value.fallbacks_used) &&
+    isFiniteNumber(value.input_units) &&
+    isFiniteNumber(value.output_units) &&
+    isFiniteNumber(value.estimated_cost_usd)
+  );
+}
+
+function isValidUsageByFeatureDTO(value: unknown): value is UsageByFeatureDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.feature_key === 'string' &&
+    value.feature_key.trim().length > 0 &&
+    isFiniteNumber(value.requests) &&
+    isFiniteNumber(value.estimated_cost_usd)
+  );
+}
+
+function isValidUsageByProviderDTO(
+  value: unknown,
+): value is UsageByProviderDTO {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.provider_id === 'string' &&
+    value.provider_id.trim().length > 0 &&
+    isFiniteNumber(value.requests) &&
+    isFiniteNumber(value.estimated_cost_usd)
+  );
+}
+
+function isValidUsageSummaryDTO(value: unknown): value is UsageSummaryDTO {
+  if (!isPlainRecord(value)) return false;
+  const { range, series, users, counts, ai } = value;
+  if (
+    !isPlainRecord(range) ||
+    typeof range.from !== 'string' ||
+    typeof range.to !== 'string'
+  ) {
+    return false;
+  }
+  if (
+    !isPlainRecord(series) ||
+    typeof series.group_by !== 'string' ||
+    !VALID_ADMIN_USAGE_GROUP_BY.has(series.group_by) ||
+    !Array.isArray(series.buckets) ||
+    !series.buckets.every(isValidUsageSeriesBucketDTO)
+  ) {
+    return false;
+  }
+  if (
+    !isPlainRecord(users) ||
+    !isFiniteNumber(users.total) ||
+    !isFiniteNumber(users.active_last_7_days)
+  ) {
+    return false;
+  }
+  if (
+    !isPlainRecord(counts) ||
+    !isFiniteNumber(counts.roadmaps_locked) ||
+    !isFiniteNumber(counts.quizzes_submitted) ||
+    !isFiniteNumber(counts.mentor_messages) ||
+    !isFiniteNumber(counts.technology_updates_generated)
+  ) {
+    return false;
+  }
+  if (
+    !isPlainRecord(ai) ||
+    !isFiniteNumber(ai.requests) ||
+    !isFiniteNumber(ai.failures) ||
+    !isFiniteNumber(ai.fallbacks_used) ||
+    !isPlainRecord(ai.usage_units) ||
+    !isFiniteNumber(ai.usage_units.input) ||
+    !isFiniteNumber(ai.usage_units.output) ||
+    !isFiniteNumber(ai.estimated_cost_usd) ||
+    !Array.isArray(ai.by_day) ||
+    !ai.by_day.every(isValidUsageByDayDTO) ||
+    !Array.isArray(ai.by_feature) ||
+    !ai.by_feature.every(isValidUsageByFeatureDTO) ||
+    !Array.isArray(ai.by_provider) ||
+    !ai.by_provider.every(isValidUsageByProviderDTO)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function extractAdminPaginated<T>(
+  envelope: ApiEnvelopeResult<unknown>,
+  itemValidator: (item: unknown) => item is T,
+  defaultLimit: number,
+  errorLabel: string,
+): { items: T[]; meta: AdminCursorMetaDTO } {
+  const payload = envelope.data;
+  let itemsCandidate: unknown = payload;
+  let embeddedMeta: unknown;
+
+  if (isPlainRecord(payload) && Array.isArray(payload.items)) {
+    itemsCandidate = payload.items;
+    embeddedMeta = payload.meta;
+  }
+
+  if (!Array.isArray(itemsCandidate) || !itemsCandidate.every(itemValidator)) {
+    throwInvalidAdminResponse(errorLabel);
+  }
+
+  const parsedMeta = parsePageMeta(envelope.meta) ?? parsePageMeta(embeddedMeta);
+  return {
+    items: itemsCandidate,
+    meta: parsedMeta ?? { limit: defaultLimit, next_cursor: null },
+  };
+}
+
+/**
+ * GET /admin/users (EP-AD01, 200 OK, AZ-ADMIN)
+ */
+export async function listAdminUsers(
+  accessToken: string,
+  params?: ListAdminUsersParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedAdminUsersDTO> {
+  const search = new URLSearchParams();
+  if (params?.q?.trim()) search.set('q', params.q.trim());
+  if (params?.status) search.set('status', params.status);
+  const normalizedLimit = normalizePositiveLimit(params?.limit);
+  if (normalizedLimit !== undefined) search.set('limit', String(normalizedLimit));
+  if (params?.cursor?.trim()) search.set('cursor', params.cursor.trim());
+  const qs = search.toString();
+
+  const envelope = await apiFetchEnvelope<unknown>(
+    qs ? `/admin/users?${qs}` : '/admin/users',
+    accessToken,
+    {
+      timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  return extractAdminPaginated(
+    envelope,
+    isValidAdminUserSummaryDTO,
+    normalizedLimit ?? 20,
+    'Unexpected admin users list response format.',
+  );
+}
+
+/**
+ * GET /admin/users/:id (EP-AD02, 200 OK, AZ-ADMIN)
+ */
+export async function getAdminUser(
+  accessToken: string,
+  userId: string,
+  options?: AuthStateRequestOptions,
+): Promise<AdminUserDetailDTO> {
+  const data = await apiFetch<unknown>(
+    `/admin/users/${encodeURIComponent(userId.trim())}`,
+    accessToken,
+    {
+      timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (!isValidAdminUserDetailDTO(data)) {
+    throwInvalidAdminResponse('Unexpected admin user detail response format.');
+  }
+  return data;
+}
+
+/**
+ * PATCH /admin/users/:id (EP-AD03, 200 OK, AZ-ADMIN)
+ */
+export async function updateAdminUserStatus(
+  accessToken: string,
+  userId: string,
+  body: AdminUserStatusDTO,
+  options?: AuthStateRequestOptions,
+): Promise<AdminUserDetailDTO> {
+  const data = await apiFetch<unknown>(
+    `/admin/users/${encodeURIComponent(userId.trim())}`,
+    accessToken,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (!isValidAdminUserDetailDTO(data)) {
+    throwInvalidAdminResponse('Unexpected admin user status response format.');
+  }
+  return data;
+}
+
+/**
+ * GET /admin/features (EP-AD04, 200 OK, AZ-ADMIN)
+ */
+export async function listAdminFeatures(
+  accessToken: string,
+  options?: AuthStateRequestOptions,
+): Promise<FeatureControlDTO[]> {
+  const data = await apiFetch<unknown>('/admin/features', accessToken, {
+    timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  if (!Array.isArray(data) || !data.every(isValidFeatureControlDTO)) {
+    throwInvalidAdminResponse('Unexpected admin features list response format.');
+  }
+  return data;
+}
+
+/**
+ * PATCH /admin/features (EP-AD05, 200 OK, AZ-ADMIN)
+ */
+export async function updateGlobalFeature(
+  accessToken: string,
+  body: FeatureToggleDTO,
+  options?: AuthStateRequestOptions,
+): Promise<FeatureControlDTO> {
+  const data = await apiFetch<unknown>('/admin/features', accessToken, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+    timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
+  if (!isValidFeatureControlDTO(data)) {
+    throwInvalidAdminResponse('Unexpected global feature response format.');
+  }
+  return data;
+}
+
+/**
+ * PATCH /admin/users/:id/features (EP-AD06, 200 OK, AZ-ADMIN)
+ */
+export async function updateUserFeatureOverride(
+  accessToken: string,
+  userId: string,
+  body: UserFeatureToggleDTO,
+  options?: AuthStateRequestOptions,
+): Promise<AdminUserDetailDTO> {
+  const data = await apiFetch<unknown>(
+    `/admin/users/${encodeURIComponent(userId.trim())}/features`,
+    accessToken,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (!isValidAdminUserDetailDTO(data)) {
+    throwInvalidAdminResponse(
+      'Unexpected user feature override response format.',
+    );
+  }
+  return data;
+}
+
+/**
+ * GET /admin/audit-logs (EP-AD07, 200 OK, AZ-ADMIN)
+ */
+export async function listAdminAuditLogs(
+  accessToken: string,
+  params?: ListAdminAuditLogsParams,
+  options?: AuthStateRequestOptions,
+): Promise<PaginatedAdminAuditLogsDTO> {
+  const search = new URLSearchParams();
+  if (params?.actor_id?.trim()) search.set('actor_id', params.actor_id.trim());
+  if (params?.target_user_id?.trim()) {
+    search.set('target_user_id', params.target_user_id.trim());
+  }
+  if (params?.action?.trim()) search.set('action', params.action.trim());
+  if (params?.from?.trim()) search.set('from', params.from.trim());
+  if (params?.to?.trim()) search.set('to', params.to.trim());
+  const normalizedLimit = normalizePositiveLimit(params?.limit);
+  if (normalizedLimit !== undefined) search.set('limit', String(normalizedLimit));
+  if (params?.cursor?.trim()) search.set('cursor', params.cursor.trim());
+  const qs = search.toString();
+
+  const envelope = await apiFetchEnvelope<unknown>(
+    qs ? `/admin/audit-logs?${qs}` : '/admin/audit-logs',
+    accessToken,
+    {
+      timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  return extractAdminPaginated(
+    envelope,
+    isValidAuditLogDTO,
+    normalizedLimit ?? 20,
+    'Unexpected admin audit logs response format.',
+  );
+}
+
+/**
+ * GET /admin/usage (EP-AD08, 200 OK, AZ-ADMIN)
+ */
+export async function getAdminUsage(
+  accessToken: string,
+  params?: GetAdminUsageParams,
+  options?: AuthStateRequestOptions,
+): Promise<UsageSummaryDTO> {
+  const search = new URLSearchParams();
+  if (params?.from?.trim()) search.set('from', params.from.trim());
+  if (params?.to?.trim()) search.set('to', params.to.trim());
+  if (params?.group_by) search.set('group_by', params.group_by);
+  const qs = search.toString();
+
+  const data = await apiFetch<unknown>(
+    qs ? `/admin/usage?${qs}` : '/admin/usage',
+    accessToken,
+    {
+      timeoutMs: options?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    },
+  );
+  if (!isValidUsageSummaryDTO(data)) {
+    throwInvalidAdminResponse('Unexpected admin usage summary response format.');
+  }
+  return data;
+}

@@ -548,13 +548,13 @@ describe('AppShell, Sidebar, and Header', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('locks Dashboard/Profile/Career Goals when suspended, renders offline banner and admin badge', () => {
+  it('locks learner navigation when suspended, renders offline banner, and keeps Settings accessible', () => {
     render(
       <AppShell
-        variant="admin"
+        variant="authenticated"
         isSuspended={true}
         offline={true}
-        user={{ fullName: 'Admin User' }}
+        user={{ fullName: 'Suspended Learner' }}
       >
         <div>Suspended workspace</div>
       </AppShell>,
@@ -565,7 +565,6 @@ describe('AppShell, Sidebar, and Header', () => {
       'href',
       '/',
     );
-    expect(within(sidebar).getByText('Admin')).toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Dashboard' })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Today' })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole('link', { name: 'Daily Plan' })).not.toBeInTheDocument();
@@ -576,7 +575,7 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(within(sidebar).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
 
     // User dropdown omits Profile item when suspended
-    fireEvent.click(screen.getByRole('button', { name: /Admin User/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Suspended Learner/i }));
     const menu = screen.getByRole('menu', { name: 'User profile menu' });
     expect(within(menu).queryByRole('menuitem', { name: 'Profile' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: 'Account Settings' })).toBeInTheDocument();
@@ -584,6 +583,99 @@ describe('AppShell, Sidebar, and Header', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       'You are offline. Reconnect to continue learning.',
     );
+  });
+
+  it('renders strict Admin-only Sidebar and Header when variant="admin" with zero learner navigation or cross-workspace links', () => {
+    mockPathname = '/admin';
+    const signOutMock = vi.fn();
+
+    render(
+      <AppShell
+        variant="admin"
+        user={{
+          fullName: 'Platform Admin',
+          currentRole: 'Frontend Developer',
+          email: 'admin@mentor.com',
+        }}
+        signOutAction={signOutMock}
+      >
+        <div>Admin Console Body</div>
+      </AppShell>,
+    );
+
+    const sidebar = screen.getByRole('complementary', { name: 'Primary sidebar' });
+    const brandLink = within(sidebar).getByRole('link', {
+      name: /AI Career Mentor/i,
+    });
+    expect(brandLink).toHaveAttribute('href', '/admin');
+    // No truncated Admin pill badge next to brand title
+    expect(brandLink).toHaveTextContent('AI Career Mentor');
+    expect(brandLink).not.toHaveTextContent('Admin');
+    expect(within(sidebar).getByText('ADMINISTRATION')).toBeInTheDocument();
+
+    // Only the 4 admin routes exist in sidebar (Dashboard -> /admin, Users, Feature Controls, Audit Logs)
+    expect(within(sidebar).getByRole('link', { name: 'Dashboard' })).toHaveAttribute(
+      'href',
+      '/admin',
+    );
+    expect(within(sidebar).getByRole('link', { name: 'Users' })).toHaveAttribute(
+      'href',
+      '/admin/users',
+    );
+    expect(within(sidebar).getByRole('link', { name: 'Feature Controls' })).toHaveAttribute(
+      'href',
+      '/admin/features',
+    );
+    expect(within(sidebar).getByRole('link', { name: 'Audit Logs' })).toHaveAttribute(
+      'href',
+      '/admin/audit-logs',
+    );
+
+    // Zero learner sections or links
+    expect(within(sidebar).queryByText('MAIN')).not.toBeInTheDocument();
+    expect(within(sidebar).queryByText('ACCOUNT & WORKSPACE')).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Daily Plan' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Progress' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Roadmaps' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'AI Mentor' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Tech Updates' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Career Goals' })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+
+    // Header: NO Learner Workspace switcher, NO Notifications bell, Quick Search restricted to admin routes
+    expect(screen.queryByRole('link', { name: /Learner Workspace/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Admin Console/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Notifications' })).not.toBeInTheDocument();
+
+    const searchInput = screen.getByRole('searchbox', { name: 'Quick Search' });
+    fireEvent.focus(searchInput);
+    fireEvent.change(searchInput, { target: { value: 'dashboard' } });
+    const searchRegion = screen.getByRole('region', {
+      name: 'Quick search results',
+    });
+    expect(
+      within(searchRegion).getByRole('link', { name: /Admin Dashboard/i }),
+    ).toHaveAttribute('href', '/admin');
+    expect(
+      within(searchRegion).queryByRole('link', { name: /^Dashboard/i }),
+    ).not.toBeInTheDocument();
+
+    // Admin account chip shows AD + Admin ONLY (no personal name or Platform Admin subtitle) and ONLY Sign Out in dropdown
+    const trigger = screen.getByRole('button', { name: 'User menu (Admin)' });
+    expect(trigger).toHaveTextContent('AD');
+    expect(trigger).toHaveTextContent('Admin');
+    expect(trigger).not.toHaveTextContent('Platform Admin');
+    expect(trigger).not.toHaveTextContent('Frontend Developer');
+
+    fireEvent.click(trigger);
+    const menu = screen.getByRole('menu', { name: 'User profile menu' });
+    expect(within(menu).getByText('Admin')).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Profile' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Account Settings' })).not.toBeInTheDocument();
+    const signOutBtn = within(menu).getByRole('menuitem', { name: 'Sign Out' });
+    fireEvent.submit(signOutBtn.closest('form')!);
+    expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 
   it('keeps Sidebar and Header persistently mounted and preserves collapsed state across route changes', () => {

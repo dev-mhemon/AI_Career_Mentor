@@ -4,17 +4,21 @@ import Link from 'next/link';
 import type { ComponentType, RefObject, SVGProps } from 'react';
 import { cn } from './cn';
 import {
+  BarChartIcon,
   BotIcon,
   CalendarDaysIcon,
   CloseIcon,
   CompassIcon,
+  FileTextIcon,
   LayoutDashboardIcon,
   LockIcon,
   RadioIcon,
   SettingsIcon,
   SidebarToggleIcon,
+  SlidersIcon,
   TargetIcon,
   UserCheckIcon,
+  UsersIcon,
 } from './icons';
 import { useSafePathname } from '@/lib/navigation/use-safe-pathname';
 
@@ -24,6 +28,7 @@ export interface SidebarNavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   lockedWhenSuspended?: boolean;
   activePrefixes?: string[];
+  exact?: boolean;
 }
 
 export interface SidebarSection {
@@ -98,6 +103,37 @@ export const SIDEBAR_SECTIONS: SidebarSection[] = [
   },
 ];
 
+export const ADMIN_SIDEBAR_SECTION: SidebarSection = {
+  title: 'ADMINISTRATION',
+  items: [
+    {
+      href: '/admin',
+      label: 'Dashboard',
+      icon: BarChartIcon,
+      lockedWhenSuspended: true,
+      exact: true,
+    },
+    {
+      href: '/admin/users',
+      label: 'Users',
+      icon: UsersIcon,
+      lockedWhenSuspended: true,
+    },
+    {
+      href: '/admin/features',
+      label: 'Feature Controls',
+      icon: SlidersIcon,
+      lockedWhenSuspended: true,
+    },
+    {
+      href: '/admin/audit-logs',
+      label: 'Audit Logs',
+      icon: FileTextIcon,
+      lockedWhenSuspended: true,
+    },
+  ],
+};
+
 export interface SidebarProps {
   id?: string;
   isCollapsed: boolean;
@@ -132,16 +168,20 @@ function BrandBadgeIcon() {
   );
 }
 
-function matchesPrefix(pathname: string, prefix: string): boolean {
-  if (prefix === '/') {
-    return pathname === '/';
+function matchesPrefix(
+  pathname: string,
+  prefix: string,
+  exact = false,
+): boolean {
+  if (prefix === '/' || exact) {
+    return pathname === prefix;
   }
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
 function isRouteActive(pathname: string, item: SidebarNavItem): boolean {
   const prefixes = item.activePrefixes ?? [item.href];
-  return prefixes.some((prefix) => matchesPrefix(pathname, prefix));
+  return prefixes.some((prefix) => matchesPrefix(pathname, prefix, item.exact));
 }
 
 export function Sidebar({
@@ -157,6 +197,8 @@ export function Sidebar({
 }: SidebarProps) {
   const activeHookPathname = useSafePathname();
   const pathname = pathnameProp ?? activeHookPathname;
+  const sections =
+    variant === 'admin' ? [ADMIN_SIDEBAR_SECTION] : SIDEBAR_SECTIONS;
 
   return (
     <>
@@ -189,7 +231,7 @@ export function Sidebar({
           )}
         >
           <Link
-            href="/"
+            href={variant === 'admin' ? '/admin' : '/'}
             onClick={onCloseMobile}
             title={isCollapsed ? 'AI Career Mentor' : undefined}
             className="flex min-w-0 items-center gap-2.5 rounded-lg py-1 cursor-pointer"
@@ -210,11 +252,6 @@ export function Sidebar({
             >
               AI Career Mentor
             </span>
-            {variant === 'admin' && !isCollapsed && (
-              <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-800 dark:bg-teal-500/10 dark:text-teal-300">
-                Admin
-              </span>
-            )}
           </Link>
 
           <button
@@ -246,7 +283,7 @@ export function Sidebar({
           aria-label="Primary"
           className="flex flex-1 flex-col gap-6 overflow-y-auto py-5"
         >
-          {SIDEBAR_SECTIONS.map((section) => (
+          {sections.map((section) => (
             <div key={section.title}>
               <p
                 className={cn(
@@ -260,7 +297,11 @@ export function Sidebar({
                 {section.items.map((item) => {
                   const Icon = item.icon;
                   const active = isRouteActive(pathname, item);
-                  const isCurrentPage = matchesPrefix(pathname, item.href);
+                  const isCurrentPage = matchesPrefix(
+                    pathname,
+                    item.href,
+                    item.exact,
+                  );
                   const locked = isSuspended && Boolean(item.lockedWhenSuspended);
 
                   if (locked) {

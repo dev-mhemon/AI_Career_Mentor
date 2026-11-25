@@ -23,16 +23,28 @@ import {
 
 const PROTECTED_ROUTES = [
   "/dashboard",
+  "/today",
+  "/daily-plan",
+  "/progress",
+  "/roadmaps",
+  "/quiz",
   "/profile",
   "/career-profile",
+  "/career-goals",
   "/mentor",
   "/tech-updates",
   "/onboarding",
   "/settings",
+  "/admin",
 ];
 
 export async function proxy(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+  const pathname = request.nextUrl.pathname;
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-pathname", pathname);
+  let supabaseResponse = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -50,7 +62,11 @@ export async function proxy(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
-          supabaseResponse = NextResponse.next({ request });
+          const refreshedHeaders = new Headers(request.headers);
+          refreshedHeaders.set("x-pathname", pathname);
+          supabaseResponse = NextResponse.next({
+            request: { headers: refreshedHeaders },
+          });
           cookiesToSet.forEach(({ name, value, options }) => {
             supabaseResponse.cookies.set(
               name,
@@ -79,8 +95,6 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
 
   // Unauthenticated users trying to access protected routes → /login
   if (!user && PROTECTED_ROUTES.some((r) => pathname.startsWith(r))) {

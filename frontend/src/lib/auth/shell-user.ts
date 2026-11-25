@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import {
   DEFAULT_AUTH_STATE_TIMEOUT_MS,
+  getCurrentUserState,
   getProfile,
   type UserResponse,
 } from '@/lib/api/client';
@@ -131,11 +132,13 @@ export async function getAuthenticatedShellUser(
   };
 }
 
-export interface AuthenticatedFastShellSession {
+export type AuthenticatedFastShellSession = {
   unauthenticated: false;
   user: ShellUserInfo | null;
   variant: 'authenticated' | 'admin';
-}
+  role: 'USER' | 'ADMIN';
+  isAdmin: boolean;
+};
 
 export type FastShellSessionResult =
   | { unauthenticated: true }
@@ -143,14 +146,21 @@ export type FastShellSessionResult =
 
 /**
  * Fast cookie-session reader for the persistent `(app)` shell layout.
- * Bounds its optional `getProfile` role enrichment with `DEFAULT_AUTH_STATE_TIMEOUT_MS`
- * (covering headers and body consumption) and falls back cleanly to session metadata on timeout.
+ * Derives admin privileges STRICTLY from server-verified EP-A13 (`GET /api/v1/auth/me`)
+ * rather than JWT `app_metadata.role` (`PRD §50`), failing closed to `'USER'` on error.
+ * Bounds optional `getProfile` and `getCurrentUserState` calls with `DEFAULT_AUTH_STATE_TIMEOUT_MS`.
  */
 export async function getFastSessionShellUser(): Promise<FastShellSessionResult> {
   try {
     const supabase = await createSupabaseServerClient({ readOnly: true });
     if (typeof supabase.auth.getSession !== 'function') {
-      return { unauthenticated: false, user: null, variant: 'authenticated' };
+      return {
+        unauthenticated: false,
+        user: null,
+        variant: 'authenticated',
+        role: 'USER',
+        isAdmin: false,
+      };
     }
 
     const sessionRes = await supabase.auth.getSession();
@@ -164,22 +174,31 @@ export async function getFastSessionShellUser(): Promise<FastShellSessionResult>
       ? normalizeEmail(session.user.email)
       : (meta.contactEmail ?? null);
     const phone = session.user.phone?.trim() || meta.contactPhone || null;
-    const appRole = (session.user.app_metadata as Record<string, unknown> | undefined)
-      ?.role;
 
     let profileRole: string | null = null;
+    let isVerifiedAdmin = false;
     if (session.access_token) {
-      const profileRes = await getProfile(session.access_token, {
-        timeoutMs: DEFAULT_AUTH_STATE_TIMEOUT_MS,
-      }).catch(() => null);
+      const [profileRes, meRes] = await Promise.all([
+        getProfile(session.access_token, {
+          timeoutMs: DEFAULT_AUTH_STATE_TIMEOUT_MS,
+        }).catch(() => null),
+        getCurrentUserState(session.access_token, {
+          timeoutMs: DEFAULT_AUTH_STATE_TIMEOUT_MS,
+        }).catch(() => null),
+      ]);
       if (profileRes?.current_role?.trim()) {
         profileRole = profileRes.current_role.trim();
       }
+      isVerifiedAdmin = Boolean(
+        meRes && meRes.user.role === 'ADMIN' && meRes.user.status === 'active',
+      );
     }
 
     return {
       unauthenticated: false,
-      variant: appRole === 'ADMIN' ? 'admin' : 'authenticated',
+      variant: isVerifiedAdmin ? 'admin' : 'authenticated',
+      role: isVerifiedAdmin ? 'ADMIN' : 'USER',
+      isAdmin: isVerifiedAdmin,
       user: {
         fullName: meta.fullName ?? null,
         currentRole: profileRole || meta.currentRole || null,
@@ -188,7 +207,13 @@ export async function getFastSessionShellUser(): Promise<FastShellSessionResult>
       },
     };
   } catch {
-    return { unauthenticated: false, user: null, variant: 'authenticated' };
+    return {
+      unauthenticated: false,
+      user: null,
+      variant: 'authenticated',
+      role: 'USER',
+      isAdmin: false,
+    };
   }
 }
 

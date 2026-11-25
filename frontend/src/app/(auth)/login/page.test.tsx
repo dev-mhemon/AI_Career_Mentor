@@ -114,6 +114,36 @@ describe('LoginPage Server Component', () => {
     expect(mockLoginForm).not.toHaveBeenCalled();
   });
 
+  it('redirects already-authenticated active ADMIN users immediately to /admin (never /dashboard)', async () => {
+    mockGetSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'admin-token',
+          refresh_token: 'admin-refresh',
+        },
+      },
+    });
+    mockGetCurrentUserState.mockResolvedValue({
+      user: {
+        id: '99999999-9999-4999-8999-999999999999',
+        email: 'admin@mentor.com',
+        phone: null,
+        role: 'ADMIN',
+        status: 'active',
+        verified_contact: true,
+        linked_providers: ['email'],
+      },
+      profile_complete: false,
+      focus_roadmap_id: null,
+      effective_access: {},
+      can_delete_account: true,
+    });
+
+    await expect(LoginPage({})).rejects.toThrow('NEXT_REDIRECT:/admin');
+    expect(redirect).toHaveBeenCalledWith('/admin');
+    expect(mockLoginForm).not.toHaveBeenCalled();
+  });
+
   it('renders /login?error=sync_failed error message instead of redirecting even if a session exists', async () => {
     mockGetSession.mockResolvedValue({
       data: {

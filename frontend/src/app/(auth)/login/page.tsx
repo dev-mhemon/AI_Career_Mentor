@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { hasAuthenticatedAppSession } from "@/lib/auth/user";
+import { getAuthenticatedHomeDestination } from "@/lib/auth/user";
 import {
   LOGIN_HINT_COOKIE,
   OAUTH_HINT_COOKIE,
@@ -59,8 +59,9 @@ export default async function LoginPage({
   }
 
   if (!hasErrorParam && !isDeleted) {
-    if (await hasAuthenticatedAppSession()) {
-      redirect("/dashboard");
+    const homeDestination = await getAuthenticatedHomeDestination();
+    if (homeDestination) {
+      redirect(homeDestination);
     }
   }
   let initialError: string | undefined;
