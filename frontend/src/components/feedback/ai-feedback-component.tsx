@@ -349,6 +349,12 @@ function AIFeedbackInner({
       ''
     ).trim() || null;
 
+  if (isAlreadyReported && reportState.modalOpen) {
+    setReportState((prev) =>
+      prev.modalOpen ? { ...prev, modalOpen: false } : prev,
+    );
+  }
+
   const isReportModalOpen =
     hasReport && !isAlreadyReported && reportState.modalOpen;
   const reportCodePoints = Array.from(reportState.comment.trim()).length;

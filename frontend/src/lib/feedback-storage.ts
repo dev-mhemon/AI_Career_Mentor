@@ -230,7 +230,21 @@ function safeWriteRaw(key: string, raw: string): boolean {
   }
 }
 
+function isLocalStorageEvent(event: StorageEvent): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    return event.storageArea === window.localStorage;
+  } catch {
+    return false;
+  }
+}
+
 function handleGlobalOverlayStorageEvent(event: StorageEvent): void {
+  if (!isLocalStorageEvent(event)) {
+    return;
+  }
   if (memoryOverlay.size === 0) {
     detachOverlayStorageListenerIfIdle();
     return;
@@ -336,6 +350,9 @@ function subscribeKey(key: string | null, listener: () => void): () => void {
   listeners.add(listener);
 
   const onStorage = (event: StorageEvent) => {
+    if (!isLocalStorageEvent(event)) {
+      return;
+    }
     if (event.key === null) {
       deleteMemoryOverlay(key);
       snapshotCache.delete(key);

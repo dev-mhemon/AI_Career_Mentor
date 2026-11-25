@@ -97,6 +97,7 @@ export function StarRating({
     }
     if (nextStar !== null) {
       event.preventDefault();
+      setHoveredStar(null);
       handleSelect(nextStar);
       starButtonRefs.current[nextStar - 1]?.focus();
     }

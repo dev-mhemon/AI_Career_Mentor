@@ -1298,6 +1298,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
           new StorageEvent('storage', {
             key: storageKey,
             newValue: externalPayload,
+            storageArea: window.localStorage,
           }),
         );
       });
@@ -1365,6 +1366,15 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
     expect(star1).toHaveAttribute('aria-checked', 'true');
     expect(document.activeElement).toBe(star1);
+
+    // Arrow key clears stale hover preview so visible fill follows keyboard selection
+    fireEvent.mouseEnter(star2);
+    expect(star2.querySelector('svg')).toHaveAttribute('fill', 'currentColor');
+    expect(star3.querySelector('svg')).toHaveAttribute('fill', 'transparent');
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+    expect(star3).toHaveAttribute('aria-checked', 'true');
+    expect(star3.querySelector('svg')).toHaveAttribute('fill', 'currentColor');
   });
 
   it('preserves retryable report draft across same-account token refresh and uses refreshed token on retry while clearing on account switch', async () => {
@@ -1724,7 +1734,12 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     // Cross-tab storage clear -> NEITHER A nor B resurrects stale local scores (3 or 5)
     window.localStorage.clear();
     act(() => {
-      window.dispatchEvent(new StorageEvent('storage', { key: null }));
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: null,
+          storageArea: window.localStorage,
+        }),
+      );
     });
     expect(
       within(clrA).queryByTestId('ai-feedback-score'),
@@ -1836,14 +1851,36 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
       // Unmount so ZERO component subscriptions are mounted
       unmount();
 
-      // Another tab durably writes 5 stars while unmounted
-      setItemSpy.mockRestore();
+      // sessionStorage clear event MUST be ignored and leave failed-write overlay intact
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: null,
+          storageArea: window.sessionStorage,
+        }),
+      );
+
       const ratingKey = buildFeedbackStorageKey(
         'tok-unmounted-ov',
         'topic_content',
         'top-unmounted-overlay',
         'rating',
       )!;
+      const stillOverlaid = render(
+        <AIFeedbackComponent
+          accessToken="tok-unmounted-ov"
+          ratingTarget={{
+            type: 'topic_content',
+            id: 'top-unmounted-overlay',
+          }}
+        />,
+      );
+      expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(4)');
+      stillOverlaid.unmount();
+
+      // Another tab durably writes 5 stars and dispatches a localStorage event while unmounted,
+      // then durable storage is restored to original baseline (null) before remounting:
+      // proves the global storage listener itself cleared the stale overlay (otherwise baselineRaw === null would return 4).
+      setItemSpy.mockRestore();
       const newerPayload = JSON.stringify({
         rating: { score: 5, comment: 'Saved from another tab while unmounted' },
       });
@@ -1852,10 +1889,12 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
         new StorageEvent('storage', {
           key: ratingKey,
           newValue: newerPayload,
+          storageArea: window.localStorage,
         }),
       );
+      window.localStorage.removeItem(ratingKey);
 
-      // Remounting MUST see 5 stars from durable storage, NOT stale overlay 4
+      // Remounting MUST NOT return stale overlay 4 (global listener cleared it)
       const remounted = render(
         <AIFeedbackComponent
           accessToken="tok-unmounted-ov"
@@ -1865,10 +1904,7 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
           }}
         />,
       );
-      expect(screen.getByTestId('ai-feedback-score')).toHaveTextContent('(5)');
-      expect(screen.getByTestId('ai-feedback-review-preview')).toHaveTextContent(
-        'Saved from another tab while unmounted',
-      );
+      expect(screen.queryByTestId('ai-feedback-score')).not.toBeInTheDocument();
       remounted.unmount();
     } finally {
       setItemSpy.mockRestore();
@@ -1941,5 +1977,55 @@ describe('AIFeedbackComponent (Component 29 — EP-F01, EP-F02, R16, R34)', () =
     expect(screen.getByTestId('ai-feedback-report-preview')).toHaveTextContent(
       'Accepted report details from Tab A',
     );
+  });
+
+  it('does not reopen a report dialog that was dismissed by a shared report update when storage is later cleared', async () => {
+    render(
+      <AIFeedbackComponent
+        accessToken="tok-dismiss-reopen"
+        reportTarget={{ type: 'topic_content', id: 'top-dismiss-reopen' }}
+      />,
+    );
+
+    // Learner opens report dialog
+    fireEvent.click(screen.getByRole('button', { name: /report issue/i }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+
+    // Shared report arrives from another tab -> dismisses dialog and clears modalOpen
+    const reportKey = buildFeedbackStorageKey(
+      'tok-dismiss-reopen',
+      'topic_content',
+      'top-dismiss-reopen',
+      'report',
+    )!;
+    const reportedPayload = JSON.stringify({
+      report: { reported: true, reason: 'incorrect' },
+    });
+    window.localStorage.setItem(reportKey, reportedPayload);
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: reportKey,
+          newValue: reportedPayload,
+          storageArea: window.localStorage,
+        }),
+      );
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Storage is later cleared -> dialog MUST remain closed until learner explicitly clicks Report issue
+    window.localStorage.clear();
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: null,
+          storageArea: window.localStorage,
+        }),
+      );
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /report issue/i }),
+    ).toBeInTheDocument();
   });
 });

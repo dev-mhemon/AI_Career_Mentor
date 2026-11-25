@@ -320,12 +320,18 @@ export function TechUpdatesView({
   const ratingsByUpdateId =
     ratingsState.token === accessToken ? ratingsState.byUpdateId : {};
 
-  const handleUpdateRated = (updateId: string, score: number) => {
-    const currentToken = accessTokenRef.current;
+  const handleUpdateRated = (
+    updateId: string,
+    score: number,
+    originatingToken: string,
+  ) => {
+    if (originatingToken !== accessTokenRef.current) {
+      return;
+    }
     setRatingsState((prev) => ({
-      token: currentToken,
+      token: originatingToken,
       byUpdateId: {
-        ...(prev.token === currentToken ? prev.byUpdateId : {}),
+        ...(prev.token === originatingToken ? prev.byUpdateId : {}),
         [updateId]: score,
       },
     }));
@@ -915,7 +921,9 @@ export function TechUpdatesView({
                   update={update}
                   accessToken={accessToken}
                   currentRatingScore={ratingsByUpdateId[update.id]}
-                  onRated={(score) => handleUpdateRated(update.id, score)}
+                  onRated={(score) =>
+                    handleUpdateRated(update.id, score, accessToken)
+                  }
                   isTodayHighlight={
                     idx === 0 &&
                     activeFilter === 'all' &&
@@ -1092,7 +1100,11 @@ export function TechUpdatesView({
                   }}
                   currentScore={ratingsByUpdateId[activeDetailUpdate.id]}
                   onRated={(score) =>
-                    handleUpdateRated(activeDetailUpdate.id, score)
+                    handleUpdateRated(
+                      activeDetailUpdate.id,
+                      score,
+                      accessToken,
+                    )
                   }
                   compact
                 />
