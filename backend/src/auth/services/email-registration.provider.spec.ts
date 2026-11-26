@@ -961,6 +961,404 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       );
     });
 
+    describe('Google Apps Script webhook transport', () => {
+      const gasUrl =
+        'https://script.google.com/macros/s/AKfycbSyntheticDeploymentId/exec';
+      const gasEchoUrl =
+        'https://script.googleusercontent.com/macros/echo?user_content_key=synthetic';
+
+      const buildGasConfig = (secret?: string) =>
+        ({
+          get: vi.fn((key: string) => {
+            if (key === 'AUTH_OTP_HMAC_SECRET')
+              return 'secret-at-least-32-bytes-long-for-hmac!';
+            if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'service-role-key';
+            if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+            if (key === 'AUTH_EMAIL_WEBHOOK_URL') return gasUrl;
+            if (key === 'AUTH_EMAIL_TRANSPORT_KEY') return secret;
+            return undefined;
+          }),
+          getOrThrow: vi.fn((key: string) => {
+            if (key === 'SUPABASE_URL') return 'http://supabase.invalid';
+            throw new Error(`Missing ${key}`);
+          }),
+        }) as unknown as ConfigService;
+
+      it('sends secret in JSON body without Authorization header, follows single 302 to script.googleusercontent.com with shared signal, and succeeds on 200 {"ok":true}', async () => {
+        const mockFetch = vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: false,
+            status: 302,
+            headers: new Headers({ location: gasEchoUrl }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true }),
+          });
+        vi.stubGlobal('fetch', mockFetch);
+
+        const transport = createEmailTransportFromConfig(
+          buildGasConfig('gas-shared-secret-123456'),
+        );
+        expect(transport).toBeDefined();
+
+        const controller = new AbortController();
+        await transport!(
+          'learner@example.invalid',
+          '654321',
+          controller.signal,
+        );
+
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(mockFetch).toHaveBeenNthCalledWith(1, gasUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: 'learner@example.invalid',
+            otp: '654321',
+            subject: 'Your verification code',
+            secret: 'gas-shared-secret-123456',
+          }),
+          redirect: 'manual',
+          signal: controller.signal,
+        });
+        expect(mockFetch).toHaveBeenNthCalledWith(2, gasEchoUrl, {
+          method: 'GET',
+          redirect: 'error',
+          signal: controller.signal,
+        });
+        const secondInit = mockFetch.mock.calls[1][1] as {
+          headers?: Record<string, string>;
+        };
+        expect(secondInit.headers).toBeUndefined();
+      });
+
+      it('rejects 302 redirect to a disallowed host without following it and maps to 502 EMAIL_PROVIDER_ERROR', async () => {
+        const gasConfig = buildGasConfig('gas-shared-secret-123456');
+        const gasProvider = new EmailRegistrationProvider(
+          gasConfig,
+          database as unknown as DatabaseService,
+          otpStore as unknown as OtpSecretStore,
+        );
+        otpStore.storeOtp.mockResolvedValue({ expiresInSeconds: 600 });
+
+        const abuseStub = {
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+          reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+        } as unknown as AuthAbuseControl;
+        const registrationService = new EmailRegistrationService(
+          gasProvider,
+          abuseStub,
+          database as unknown as DatabaseService,
+          gasConfig,
+        );
+        const req = {
+          ip: '192.0.2.10',
+          ips: [],
+          headers: {},
+          socket: { remoteAddress: '192.0.2.10' },
+          app: { get: () => undefined },
+        } as unknown as Request;
+
+        database.query.mockImplementation(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) return [];
+          if (sql.includes('SELECT id FROM public.users WHERE email=$1'))
+            return [];
+          if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+            return [];
+          if (
+            sql.includes(
+              'SELECT verified_contact,email,phone FROM public.users',
+            )
+          )
+            return [{ verified_contact: false, email: null, phone: null }];
+          if (sql.includes('SELECT provider_subject,contact_value,verified_at'))
+            return [
+              {
+                provider_subject: userId,
+                contact_value: email,
+                verified_at: null,
+              },
+            ];
+          return [];
+        });
+
+        const mockFetch = vi.fn(async (input: string) => {
+          if (input.includes('/auth/v1/admin/users')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ id: userId, email }),
+            };
+          }
+          if (input === gasUrl) {
+            return {
+              ok: false,
+              status: 302,
+              headers: new Headers({
+                location: 'https://evil.example.com/steal',
+              }),
+            };
+          }
+          throw new Error(`Unexpected redirect followed to ${input}`);
+        });
+        vi.stubGlobal('fetch', mockFetch);
+
+        await expect(
+          registrationService.register(
+            {
+              email,
+              password: 'Password123!',
+              confirm_password: 'Password123!',
+              privacy_consent: true,
+            },
+            req,
+          ),
+        ).rejects.toMatchObject({
+          status: 502,
+          response: expect.objectContaining({ code: 'EMAIL_PROVIDER_ERROR' }),
+        });
+
+        expect(mockFetch).not.toHaveBeenCalledWith(
+          'https://evil.example.com/steal',
+          expect.anything(),
+        );
+      });
+
+      it('fails closed (502) on GAS 200 {"ok":false,"error":"UNAUTHORIZED"} and non-JSON HTML responses', async () => {
+        const gasConfig = buildGasConfig('gas-shared-secret-123456');
+        const gasProvider = new EmailRegistrationProvider(
+          gasConfig,
+          database as unknown as DatabaseService,
+          otpStore as unknown as OtpSecretStore,
+        );
+        otpStore.storeOtp.mockResolvedValue({ expiresInSeconds: 600 });
+
+        const abuseStub = {
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+          reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+        } as unknown as AuthAbuseControl;
+        const registrationService = new EmailRegistrationService(
+          gasProvider,
+          abuseStub,
+          database as unknown as DatabaseService,
+          gasConfig,
+        );
+        const req = {
+          ip: '192.0.2.10',
+          ips: [],
+          headers: {},
+          socket: { remoteAddress: '192.0.2.10' },
+          app: { get: () => undefined },
+        } as unknown as Request;
+
+        database.query.mockImplementation(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) return [];
+          if (sql.includes('SELECT id FROM public.users WHERE email=$1'))
+            return [];
+          if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+            return [];
+          if (
+            sql.includes(
+              'SELECT verified_contact,email,phone FROM public.users',
+            )
+          )
+            return [{ verified_contact: false, email: null, phone: null }];
+          if (sql.includes('SELECT provider_subject,contact_value,verified_at'))
+            return [
+              {
+                provider_subject: userId,
+                contact_value: email,
+                verified_at: null,
+              },
+            ];
+          return [];
+        });
+
+        // 1) GAS 200 {"ok":false,"error":"UNAUTHORIZED"}
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async (input: string) => {
+            if (input.includes('/auth/v1/admin/users')) {
+              return {
+                ok: true,
+                status: 200,
+                json: async () => ({ id: userId, email }),
+              };
+            }
+            if (input === gasUrl) {
+              return {
+                ok: false,
+                status: 302,
+                headers: new Headers({ location: gasEchoUrl }),
+              };
+            }
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ ok: false, error: 'UNAUTHORIZED' }),
+            };
+          }),
+        );
+
+        await expect(
+          registrationService.register(
+            {
+              email,
+              password: 'Password123!',
+              confirm_password: 'Password123!',
+              privacy_consent: true,
+            },
+            req,
+          ),
+        ).rejects.toMatchObject({
+          status: 502,
+          response: expect.objectContaining({ code: 'EMAIL_PROVIDER_ERROR' }),
+        });
+
+        // 2) GAS 200 non-JSON HTML response (e.g., Google auth page)
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async (input: string) => {
+            if (input.includes('/auth/v1/admin/users')) {
+              return {
+                ok: true,
+                status: 200,
+                json: async () => ({ id: userId, email }),
+              };
+            }
+            if (input === gasUrl) {
+              return {
+                ok: false,
+                status: 302,
+                headers: new Headers({ location: gasEchoUrl }),
+              };
+            }
+            return {
+              ok: true,
+              status: 200,
+              json: async () => {
+                throw new SyntaxError('Unexpected token < in JSON');
+              },
+            };
+          }),
+        );
+
+        await expect(
+          registrationService.register(
+            {
+              email,
+              password: 'Password123!',
+              confirm_password: 'Password123!',
+              privacy_consent: true,
+            },
+            req,
+          ),
+        ).rejects.toMatchObject({
+          status: 502,
+          response: expect.objectContaining({ code: 'EMAIL_PROVIDER_ERROR' }),
+        });
+      });
+
+      it('maps abort/timeout during redirected GET to 504 PROVIDER_TIMEOUT', async () => {
+        const gasConfig = buildGasConfig('gas-shared-secret-123456');
+        const gasProvider = new EmailRegistrationProvider(
+          gasConfig,
+          database as unknown as DatabaseService,
+          otpStore as unknown as OtpSecretStore,
+        );
+        otpStore.storeOtp.mockResolvedValue({ expiresInSeconds: 600 });
+
+        const abuseStub = {
+          enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+          reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+        } as unknown as AuthAbuseControl;
+        const registrationService = new EmailRegistrationService(
+          gasProvider,
+          abuseStub,
+          database as unknown as DatabaseService,
+          gasConfig,
+        );
+        const req = {
+          ip: '192.0.2.10',
+          ips: [],
+          headers: {},
+          socket: { remoteAddress: '192.0.2.10' },
+          app: { get: () => undefined },
+        } as unknown as Request;
+
+        database.query.mockImplementation(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) return [];
+          if (sql.includes('SELECT id FROM public.users WHERE email=$1'))
+            return [];
+          if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+            return [];
+          if (
+            sql.includes(
+              'SELECT verified_contact,email,phone FROM public.users',
+            )
+          )
+            return [{ verified_contact: false, email: null, phone: null }];
+          if (sql.includes('SELECT provider_subject,contact_value,verified_at'))
+            return [
+              {
+                provider_subject: userId,
+                contact_value: email,
+                verified_at: null,
+              },
+            ];
+          return [];
+        });
+
+        let firstSignal: AbortSignal | undefined;
+        let secondSignal: AbortSignal | undefined;
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async (input: string, init?: { signal?: AbortSignal }) => {
+            if (input.includes('/auth/v1/admin/users')) {
+              return {
+                ok: true,
+                status: 200,
+                json: async () => ({ id: userId, email }),
+              };
+            }
+            if (input === gasUrl) {
+              firstSignal = init?.signal;
+              return {
+                ok: false,
+                status: 302,
+                headers: new Headers({ location: gasEchoUrl }),
+              };
+            }
+            secondSignal = init?.signal;
+            const abortErr = new Error('The operation was aborted');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+          }),
+        );
+
+        await expect(
+          registrationService.register(
+            {
+              email,
+              password: 'Password123!',
+              confirm_password: 'Password123!',
+              privacy_consent: true,
+            },
+            req,
+          ),
+        ).rejects.toMatchObject({
+          status: 504,
+          response: expect.objectContaining({ code: 'PROVIDER_TIMEOUT' }),
+        });
+
+        expect(firstSignal).toBeDefined();
+        expect(secondSignal).toBe(firstSignal);
+      });
+    });
+
     it('throws error when RESEND_API_KEY is configured without AUTH_EMAIL_FROM', () => {
       const customConfig = {
         get: vi.fn((key: string) => {

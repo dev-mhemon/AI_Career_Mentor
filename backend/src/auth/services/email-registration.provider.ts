@@ -80,12 +80,26 @@ function extractSafeSmtpErrorCode(error: unknown): string {
   return 'UNKNOWN';
 }
 
+const GOOGLE_APPS_SCRIPT_HOST = 'script.google.com';
+const GOOGLE_APPS_SCRIPT_REDIRECT_HOST = 'script.googleusercontent.com';
+
+function isGoogleAppsScriptWebhookUrl(parsed: URL): boolean {
+  return (
+    parsed.protocol === 'https:' &&
+    parsed.hostname.toLowerCase() === GOOGLE_APPS_SCRIPT_HOST &&
+    parsed.pathname.startsWith('/macros/s/')
+  );
+}
+
 /**
  * Resolves and instantiates a runtime email dispatch transport from application configuration.
  * Precedence:
  * 1) Native Mailpit HTTP send API (MAILPIT_URL) posting `{ From: { Email }, To: [{ Email }], Subject, Text }`.
  * 2) Generic HTTP webhook (AUTH_EMAIL_WEBHOOK_URL / AUTH_EMAIL_TRANSPORT_URL / EMAIL_TRANSPORT_URL)
- *    posting `{ to, otp, subject }` with optional `Bearer ${AUTH_EMAIL_TRANSPORT_KEY}`.
+ *    posting `{ to, otp, subject }` with optional `Bearer ${AUTH_EMAIL_TRANSPORT_KEY}` (or for
+ *    Google Apps Script Web Apps on `https://script.google.com/macros/s/...`, passing optional
+ *    `secret` in the JSON body, allowing a single strict HTTPS redirect to `script.googleusercontent.com`,
+ *    and verifying HTTP 200 JSON `{ ok: true }`).
  * 3) Resend API (RESEND_API_KEY with required AUTH_EMAIL_FROM).
  * 4) SMTP via Nodemailer (SMTP_HOST, SMTP_USER, SMTP_PASS, and AUTH_EMAIL_FROM; optional SMTP_PORT
  *    defaulting to 465 and SMTP_SECURE defaulting to `port === 465`).
@@ -141,6 +155,92 @@ export function createEmailTransportFromConfig(
     config.get<string>('EMAIL_TRANSPORT_URL')?.trim();
   if (webhookUrl) {
     const apiKey = config.get<string>('AUTH_EMAIL_TRANSPORT_KEY')?.trim();
+    const parsedWebhookUrl = new URL(webhookUrl);
+    if (isGoogleAppsScriptWebhookUrl(parsedWebhookUrl)) {
+      return async (to: string, otp: string, signal?: AbortSignal) => {
+        const initialResponse = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            to,
+            otp,
+            subject: 'Your verification code',
+            ...(apiKey ? { secret: apiKey } : {}),
+          }),
+          redirect: 'manual',
+          signal,
+        });
+
+        let finalResponse = initialResponse;
+        if (initialResponse.status === 302 || initialResponse.status === 303) {
+          const location = initialResponse.headers?.get?.('location')?.trim();
+          if (!location) {
+            throw new Error(
+              'Google Apps Script webhook redirect missing Location header',
+            );
+          }
+          let redirectUrl: URL;
+          try {
+            redirectUrl = new URL(location, parsedWebhookUrl);
+          } catch {
+            throw new Error(
+              'Google Apps Script webhook redirect URL is malformed',
+            );
+          }
+          if (
+            redirectUrl.protocol !== 'https:' ||
+            redirectUrl.hostname.toLowerCase() !==
+              GOOGLE_APPS_SCRIPT_REDIRECT_HOST
+          ) {
+            throw new Error(
+              'Google Apps Script webhook redirected to a disallowed host',
+            );
+          }
+          finalResponse = await fetch(redirectUrl.toString(), {
+            method: 'GET',
+            redirect: 'error',
+            signal,
+          });
+        }
+
+        if (finalResponse.status !== 200) {
+          throw new Error(
+            `Google Apps Script webhook dispatch failed with status ${finalResponse.status}`,
+          );
+        }
+
+        let payload: unknown;
+        try {
+          payload = await finalResponse.json();
+        } catch {
+          throw new Error(
+            'Google Apps Script webhook returned non-JSON response',
+          );
+        }
+
+        if (
+          !payload ||
+          typeof payload !== 'object' ||
+          (payload as { ok?: unknown }).ok !== true
+        ) {
+          const rawCode =
+            payload && typeof payload === 'object'
+              ? (payload as { error?: unknown }).error
+              : undefined;
+          const safeCode =
+            typeof rawCode === 'string' &&
+            /^[A-Z0-9_]{2,32}$/.test(rawCode.trim())
+              ? rawCode.trim()
+              : 'REJECTED';
+          throw new Error(
+            `Google Apps Script webhook rejected dispatch (${safeCode})`,
+          );
+        }
+      };
+    }
+
     return async (to: string, otp: string, signal?: AbortSignal) => {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
