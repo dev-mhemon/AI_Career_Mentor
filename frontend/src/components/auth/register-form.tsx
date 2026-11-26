@@ -56,6 +56,21 @@ const REGISTER_DIVIDER = (
   </div>
 );
 
+const PRIVACY_CONSENT_LABEL = (
+  <>
+    I agree to the{" "}
+    <Link
+      href="/privacy-policy"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="font-medium text-text-link underline underline-offset-4 hover:text-text-link-hover"
+      onClick={(event) => event.stopPropagation()}
+    >
+      privacy policy
+    </Link>
+  </>
+);
+
 const SIGN_IN_FOOTER = (
   <p className="text-center text-body-sm text-text-secondary">
     Already have an account?{" "}
@@ -429,7 +444,7 @@ export function RegisterForm() {
           <MemoizedCheckbox
             id="privacy_consent"
             name="privacy_consent"
-            label="I agree to the privacy policy"
+            label={PRIVACY_CONSENT_LABEL}
             required
             checked={acceptedPrivacyPolicy}
             readOnly={isPending}

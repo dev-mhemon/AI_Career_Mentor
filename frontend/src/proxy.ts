@@ -21,6 +21,14 @@ import {
  *  - Replace NestJS guards
  */
 
+const PUBLIC_ROUTES = ["/privacy-policy"];
+
+function isPublicRoute(pathname: string): boolean {
+  return PUBLIC_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+}
+
 const PROTECTED_ROUTES = [
   "/dashboard",
   "/today",
@@ -45,6 +53,12 @@ export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request: { headers: requestHeaders },
   });
+
+  // Public static routes (e.g., Privacy Policy for OAuth review & crawlers)
+  // bypass Supabase session checks and never redirect unauthenticated visitors.
+  if (isPublicRoute(pathname)) {
+    return supabaseResponse;
+  }
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

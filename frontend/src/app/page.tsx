@@ -1371,7 +1371,15 @@ export default async function LandingPage() {
 
           <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-border-subtle pt-6 text-caption text-text-secondary sm:flex-row sm:items-center">
             <p>&copy; 2026 AI Career Mentor. All rights reserved.</p>
-            <p>English · বাংলা · Mixed Language · Mobile-Responsive PWA</p>
+            <div className="flex flex-wrap items-center gap-4">
+              <Link
+                href="/privacy-policy"
+                className="inline-flex min-h-11 items-center text-text-link underline underline-offset-4 hover:text-text-link-hover"
+              >
+                Privacy Policy
+              </Link>
+              <p>English · বাংলা · Mixed Language · Mobile-Responsive PWA</p>
+            </div>
           </div>
         </div>
       </footer>

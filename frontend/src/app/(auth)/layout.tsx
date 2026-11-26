@@ -48,6 +48,14 @@ export default function AuthLayout({
         >
           {children}
         </main>
+        <footer className="text-center text-caption text-text-secondary">
+          <Link
+            href="/privacy-policy"
+            className="inline-flex min-h-11 items-center px-2 text-text-link underline underline-offset-4 hover:text-text-link-hover"
+          >
+            Privacy Policy
+          </Link>
+        </footer>
       </div>
     </div>
   );
