@@ -1,5 +1,6 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import nodemailer, { type SendMailOptions } from 'nodemailer';
 import { fail } from '../../common/http.js';
 import {
   validateAuthEmailFrom,
@@ -42,14 +43,53 @@ const EMAIL_TRANSPORT_URL_KEYS = [
   'MAILPIT_URL',
 ] as const;
 
+const SMTP_DEFAULT_PORT = 465;
+const SMTP_TIMEOUT_MS = 10_000;
+const SMTP_TIMEOUT_ERROR_CODES = new Set([
+  'ETIMEDOUT',
+  'ESOCKETTIMEDOUT',
+  'TIMEOUT',
+  'ETIME',
+  'ABORT_ERR',
+]);
+
+type SmtpMailOptions = SendMailOptions & {
+  signal?: AbortSignal;
+};
+
+function isSmtpTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { name?: unknown; code?: unknown };
+  if (err.name === 'AbortError') return true;
+  if (typeof err.code === 'string') {
+    return SMTP_TIMEOUT_ERROR_CODES.has(err.code.trim().toUpperCase());
+  }
+  return false;
+}
+
+function extractSafeSmtpErrorCode(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const rawCode = (error as { code?: unknown }).code;
+    if (
+      typeof rawCode === 'string' &&
+      /^E[A-Z0-9_]{2,31}$/.test(rawCode.trim())
+    ) {
+      return rawCode.trim();
+    }
+  }
+  return 'UNKNOWN';
+}
+
 /**
  * Resolves and instantiates a runtime email dispatch transport from application configuration.
- * Supports:
+ * Precedence:
  * 1) Native Mailpit HTTP send API (MAILPIT_URL) posting `{ From: { Email }, To: [{ Email }], Subject, Text }`.
  * 2) Generic HTTP webhook (AUTH_EMAIL_WEBHOOK_URL / AUTH_EMAIL_TRANSPORT_URL / EMAIL_TRANSPORT_URL)
  *    posting `{ to, otp, subject }` with optional `Bearer ${AUTH_EMAIL_TRANSPORT_KEY}`.
  * 3) Resend API (RESEND_API_KEY with required AUTH_EMAIL_FROM).
- * Enforces https: for remote endpoints and allows http: only for explicit loopback addresses.
+ * 4) SMTP via Nodemailer (SMTP_HOST, SMTP_USER, SMTP_PASS, and AUTH_EMAIL_FROM; optional SMTP_PORT
+ *    defaulting to 465 and SMTP_SECURE defaulting to `port === 465`).
+ * Enforces https: for remote HTTP endpoints and allows http: only for explicit loopback addresses.
  * Returns undefined if no valid transport configuration is present, failing closed with 503 SERVICE_UNAVAILABLE in ready().
  */
 export function createEmailTransportFromConfig(
@@ -158,12 +198,107 @@ export function createEmailTransportFromConfig(
     };
   }
 
+  const smtpHost = config.get<string>('SMTP_HOST')?.trim();
+  const smtpUser = config.get<string>('SMTP_USER')?.trim();
+  const rawSmtpPass = config.get<string>('SMTP_PASS');
+  const hasSmtpPass =
+    typeof rawSmtpPass === 'string' && rawSmtpPass.trim().length > 0;
+  const smtpFrom = config.get<string>('AUTH_EMAIL_FROM')?.trim();
+  if (smtpHost && smtpUser && hasSmtpPass && smtpFrom) {
+    validateAuthEmailFrom(smtpFrom);
+
+    const rawPort = config.get<string | number>('SMTP_PORT');
+    let port = SMTP_DEFAULT_PORT;
+    if (
+      rawPort !== undefined &&
+      rawPort !== null &&
+      String(rawPort).trim() !== ''
+    ) {
+      const portStr = String(rawPort).trim();
+      const parsedPort = Number(portStr);
+      if (
+        !/^[1-9][0-9]*$/.test(portStr) ||
+        !Number.isInteger(parsedPort) ||
+        parsedPort < 1 ||
+        parsedPort > 65535
+      ) {
+        throw new Error(
+          'Invalid SMTP_PORT: expected an integer between 1 and 65535',
+        );
+      }
+      port = parsedPort;
+    }
+
+    const rawSecure = config.get<string | boolean>('SMTP_SECURE');
+    let secure = port === SMTP_DEFAULT_PORT;
+    if (
+      rawSecure !== undefined &&
+      rawSecure !== null &&
+      String(rawSecure).trim() !== ''
+    ) {
+      const normalizedSecure = String(rawSecure).trim().toLowerCase();
+      if (normalizedSecure === 'true' || normalizedSecure === '1') {
+        secure = true;
+      } else if (normalizedSecure === 'false' || normalizedSecure === '0') {
+        secure = false;
+      } else {
+        throw new Error('Invalid SMTP_SECURE: expected true or false');
+      }
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port,
+      secure,
+      requireTLS: !secure,
+      auth: {
+        user: smtpUser,
+        pass: rawSmtpPass,
+      },
+      connectionTimeout: SMTP_TIMEOUT_MS,
+      greetingTimeout: SMTP_TIMEOUT_MS,
+      socketTimeout: SMTP_TIMEOUT_MS,
+    });
+
+    return async (to: string, otp: string, signal?: AbortSignal) => {
+      const makeTimeoutError = () => {
+        const timeoutErr = new Error('SMTP email dispatch timed out');
+        timeoutErr.name = 'AbortError';
+        return timeoutErr;
+      };
+
+      if (signal?.aborted) {
+        throw makeTimeoutError();
+      }
+
+      try {
+        const mailOptions: SmtpMailOptions = {
+          from: smtpFrom,
+          to,
+          subject: 'Your verification code',
+          text: `Your verification code is: ${otp}`,
+          ...(signal ? { signal } : {}),
+        };
+        await transporter.sendMail(mailOptions);
+      } catch (error) {
+        if (signal?.aborted || isSmtpTimeoutError(error)) {
+          throw makeTimeoutError();
+        }
+        // eslint-disable-next-line preserve-caught-error -- intentionally drop raw SMTP error to prevent credential/PII leakage
+        throw new Error(
+          `SMTP email dispatch failed (${extractSafeSmtpErrorCode(error)})`,
+        );
+      }
+    };
+  }
+
   return undefined;
 }
 
 /** A provider implementation must reconcile ambiguous creation before returning an identity. */
 @Injectable()
 export class EmailRegistrationProvider {
+  private readonly logger = new Logger(EmailRegistrationProvider.name);
   private transport?: EmailDispatchTransport;
 
   /**
@@ -206,13 +341,16 @@ export class EmailRegistrationProvider {
     const hmacSecret = this.config?.get<string>('AUTH_OTP_HMAC_SECRET');
     const serviceRoleKey = this.getServiceRoleKey();
     const redisUrl = this.config?.get<string>('AUTH_REDIS_URL');
-    if (
-      !hmacSecret ||
-      !serviceRoleKey ||
-      !redisUrl ||
-      !this.otpStore ||
-      !this.transport
-    ) {
+    const missing: string[] = [];
+    if (!hmacSecret) missing.push('AUTH_OTP_HMAC_SECRET');
+    if (!serviceRoleKey) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+    if (!redisUrl) missing.push('AUTH_REDIS_URL');
+    if (!this.otpStore) missing.push('otpStore');
+    if (!this.transport) missing.push('emailTransport');
+    if (missing.length > 0) {
+      this.logger.warn(
+        `Email registration prerequisites unavailable (missing=[${missing.join(',')}])`,
+      );
       this.unavailable();
     }
   }

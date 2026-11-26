@@ -1,13 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
+import nodemailer from 'nodemailer';
 import { AuthAbuseControl } from '../abuse-control/abuse-control.service.js';
 import { readAbuseConfiguration } from '../abuse-control/config.js';
 import {
   EmailRegistrationProvider,
   createEmailTransportFromConfig,
 } from './email-registration.provider.js';
+import { EmailRegistrationService } from './email-registration.service.js';
 import type { DatabaseService } from './database.service.js';
 import type { OtpSecretStore } from './otp-secret-store.service.js';
+
+const mockSendMail = vi.fn();
+const mockCloseTransport = vi.fn();
+const mockCreateTransport = vi.fn(() => ({
+  sendMail: mockSendMail,
+  close: mockCloseTransport,
+}));
+
+vi.mock('nodemailer', () => ({
+  default: {
+    createTransport: (...args: unknown[]) =>
+      (mockCreateTransport as (...a: unknown[]) => unknown)(...args),
+  },
+}));
 
 describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
   const userId = '11111111-1111-4111-8111-111111111111';
@@ -25,6 +43,8 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
   let provider: EmailRegistrationProvider;
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    mockSendMail.mockResolvedValue({ messageId: 'synthetic-msg-id' });
     config = {
       get: vi.fn((key: string) => {
         if (key === 'AUTH_OTP_HMAC_SECRET')
@@ -105,6 +125,46 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       expect(() => provider.ready()).toThrow(
         expect.objectContaining({ status: 503 }),
       );
+    });
+
+    it('logs only missing prerequisite names without exposing secrets when ready() fails closed', () => {
+      const warnSpy = vi
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      try {
+        const noTransportProvider = new EmailRegistrationProvider(
+          config,
+          database as unknown as DatabaseService,
+          otpStore as unknown as OtpSecretStore,
+        );
+        expect(() => noTransportProvider.ready()).toThrow(
+          expect.objectContaining({ status: 503 }),
+        );
+        expect(warnSpy).toHaveBeenCalledWith(
+          'Email registration prerequisites unavailable (missing=[emailTransport])',
+        );
+        const logged = warnSpy.mock.calls.map((c) => String(c[0])).join(' ');
+        expect(logged).not.toContain('secret-at-least-32-bytes-long-for-hmac!');
+        expect(logged).not.toContain('service-role-key');
+        expect(logged).not.toContain('redis://localhost:6379');
+
+        warnSpy.mockClear();
+        vi.mocked(config.get).mockImplementation((key: string) => {
+          if (key === 'AUTH_OTP_HMAC_SECRET') return undefined;
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return undefined;
+          if (key === 'SERVICE_ROLE_KEY') return undefined;
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          return undefined;
+        });
+        expect(() => provider.ready()).toThrow(
+          expect.objectContaining({ status: 503 }),
+        );
+        expect(warnSpy).toHaveBeenCalledWith(
+          'Email registration prerequisites unavailable (missing=[AUTH_OTP_HMAC_SECRET,SUPABASE_SERVICE_ROLE_KEY])',
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 
@@ -1057,6 +1117,374 @@ describe('EmailRegistrationProvider (Option 2B GoTrue Admin + S1 OTP)', () => {
       const delivery = await autoWiredProvider.sendChallenge(identity);
       expect(delivery).toEqual({ expiresInSeconds: 580 });
       expect(otpStore.storeOtp).toHaveBeenCalledWith(userId, email, '123456');
+    });
+
+    it('creates SMTP transport with default port 465, secure=true, requireTLS=false, preserves untrimmed password, and dispatches OTP mail', async () => {
+      const smtpConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return '  synthetic-app-password  ';
+          if (key === 'AUTH_EMAIL_FROM')
+            return 'AI Career Mentor <sender@gmail.com>';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(smtpConfig);
+      expect(transport).toBeDefined();
+      expect(nodemailer.createTransport).toBeDefined();
+      expect(mockCreateTransport).toHaveBeenCalledWith({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        requireTLS: false,
+        auth: {
+          user: 'sender@gmail.com',
+          pass: '  synthetic-app-password  ',
+        },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 10_000,
+      });
+
+      const controller = new AbortController();
+      await transport!('learner@example.invalid', '654321', controller.signal);
+      expect(mockSendMail).toHaveBeenCalledWith({
+        from: 'AI Career Mentor <sender@gmail.com>',
+        to: 'learner@example.invalid',
+        subject: 'Your verification code',
+        text: 'Your verification code is: 654321',
+        signal: controller.signal,
+      });
+    });
+
+    it('defaults SMTP secure to false with requireTLS=true for port 587 and honors explicit SMTP_SECURE override', () => {
+      const port587Config = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_PORT') return '587';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'synthetic-app-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'sender@gmail.com';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      expect(createEmailTransportFromConfig(port587Config)).toBeDefined();
+      expect(mockCreateTransport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ port: 587, secure: false, requireTLS: true }),
+      );
+
+      const explicitSecureConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_PORT') return '587';
+          if (key === 'SMTP_SECURE') return 'true';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'synthetic-app-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'sender@gmail.com';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      expect(
+        createEmailTransportFromConfig(explicitSecureConfig),
+      ).toBeDefined();
+      expect(mockCreateTransport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ port: 587, secure: true, requireTLS: false }),
+      );
+    });
+
+    it('validates SMTP_PORT, SMTP_SECURE, AUTH_EMAIL_FROM and returns undefined on incomplete SMTP config', () => {
+      const partialSmtp = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'AUTH_EMAIL_FROM') return 'sender@gmail.com';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+      expect(createEmailTransportFromConfig(partialSmtp)).toBeUndefined();
+
+      const badPort = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_PORT') return '70000';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'synthetic-app-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'sender@gmail.com';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+      expect(() => createEmailTransportFromConfig(badPort)).toThrow(
+        'Invalid SMTP_PORT',
+      );
+
+      const badSecure = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_SECURE') return 'maybe';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'synthetic-app-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'sender@gmail.com';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+      expect(() => createEmailTransportFromConfig(badSecure)).toThrow(
+        'Invalid SMTP_SECURE',
+      );
+
+      const badFrom = {
+        get: vi.fn((key: string) => {
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'synthetic-app-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'invalid-from';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+      expect(() => createEmailTransportFromConfig(badFrom)).toThrow(
+        'AUTH_EMAIL_FROM must be an email address on a verified sender domain',
+      );
+    });
+
+    it('keeps Resend precedence over SMTP when both are configured', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const bothConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'RESEND_API_KEY') return 're_test_key_123';
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'synthetic-app-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'mentor@career.test';
+          return undefined;
+        }),
+      } as unknown as ConfigService;
+
+      const transport = createEmailTransportFromConfig(bothConfig);
+      expect(transport).toBeDefined();
+      await transport!('learner@example.invalid', '123456');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.resend.com/emails',
+        expect.any(Object),
+      );
+      expect(mockCreateTransport).not.toHaveBeenCalled();
+    });
+
+    it('sanitizes SMTP errors without leaking credentials/PII and maps failures to 502 and timeouts to 504', async () => {
+      const smtpConfig = {
+        get: vi.fn((key: string) => {
+          if (key === 'AUTH_OTP_HMAC_SECRET')
+            return 'secret-at-least-32-bytes-long-for-hmac!';
+          if (key === 'SUPABASE_SERVICE_ROLE_KEY') return 'service-role-key';
+          if (key === 'AUTH_REDIS_URL') return 'redis://localhost:6379';
+          if (key === 'SMTP_HOST') return 'smtp.gmail.com';
+          if (key === 'SMTP_USER') return 'sender@gmail.com';
+          if (key === 'SMTP_PASS') return 'super-secret-smtp-password';
+          if (key === 'AUTH_EMAIL_FROM') return 'sender@gmail.com';
+          return undefined;
+        }),
+        getOrThrow: vi.fn((key: string) => {
+          if (key === 'SUPABASE_URL') return 'http://supabase.invalid';
+          throw new Error(`Missing ${key}`);
+        }),
+      } as unknown as ConfigService;
+
+      const smtpProvider = new EmailRegistrationProvider(
+        smtpConfig,
+        database as unknown as DatabaseService,
+        otpStore as unknown as OtpSecretStore,
+      );
+      expect(() => smtpProvider.ready()).not.toThrow();
+
+      // 1) Credential-free sanitization on EAUTH error (even when message mentions "session timeout")
+      const rawAuthErr = Object.assign(
+        new Error(
+          '535 session timeout: invalid login for sender@gmail.com with pass super-secret-smtp-password to learner@example.invalid',
+        ),
+        { code: 'EAUTH' },
+      );
+      mockSendMail.mockRejectedValueOnce(rawAuthErr);
+      let caughtAuthErr: unknown;
+      try {
+        await smtpProvider.sendChallenge({
+          id: userId,
+          subject: userId,
+          email: 'learner@example.invalid',
+          verified: false,
+        });
+      } catch (err) {
+        caughtAuthErr = err;
+      }
+      expect(caughtAuthErr).toBeInstanceOf(Error);
+      expect((caughtAuthErr as Error).message).toBe(
+        'SMTP email dispatch failed (EAUTH)',
+      );
+      expect(
+        (caughtAuthErr as Error & { cause?: unknown }).cause,
+      ).toBeUndefined();
+
+      // 2) Sanitized AbortError on ETIMEDOUT and in-flight AbortSignal passed directly to sendMail
+      const rawTimeoutErr = Object.assign(
+        new Error(
+          'Connection timeout to smtp.gmail.com for super-secret-smtp-password',
+        ),
+        { code: 'ETIMEDOUT' },
+      );
+      mockSendMail.mockRejectedValueOnce(rawTimeoutErr);
+      await expect(
+        smtpProvider.sendChallenge({
+          id: userId,
+          subject: userId,
+          email: 'learner@example.invalid',
+          verified: false,
+        }),
+      ).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'SMTP email dispatch timed out',
+      });
+
+      const controller = new AbortController();
+      mockSendMail.mockImplementationOnce(
+        ({ signal }: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener(
+              'abort',
+              () => {
+                const abortErr = new Error('The operation was aborted');
+                abortErr.name = 'AbortError';
+                reject(abortErr);
+              },
+              { once: true },
+            );
+            queueMicrotask(() => controller.abort());
+          }),
+      );
+      const pendingPromise = smtpProvider.sendChallenge(
+        {
+          id: userId,
+          subject: userId,
+          email: 'learner@example.invalid',
+          verified: false,
+        },
+        controller.signal,
+      );
+      await expect(pendingPromise).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'SMTP email dispatch timed out',
+      });
+      expect(mockCloseTransport).not.toHaveBeenCalled();
+
+      // 3) End-to-end mapping in EmailRegistrationService: use 600s OTP fixture so success passes
+      otpStore.storeOtp.mockResolvedValue({ expiresInSeconds: 600 });
+      const abuseStub = {
+        enforceIpQuota: vi.fn().mockResolvedValue(undefined),
+        reserveSend: vi.fn().mockResolvedValue({ retryAfterSeconds: 60 }),
+      } as unknown as AuthAbuseControl;
+      const registrationService = new EmailRegistrationService(
+        smtpProvider,
+        abuseStub,
+        database as unknown as DatabaseService,
+        smtpConfig,
+      );
+      const req = {
+        ip: '192.0.2.10',
+        ips: [],
+        headers: {},
+        socket: { remoteAddress: '192.0.2.10' },
+        app: { get: () => undefined },
+      } as unknown as Request;
+
+      const stubRegistrationSuccessBeforeSend = () => {
+        database.query.mockImplementation(async (sql: string) => {
+          if (sql.includes('FROM auth.users u')) return [];
+          if (sql.includes('SELECT id FROM public.users WHERE email=$1'))
+            return [];
+          if (sql.includes('SELECT user_id FROM public.user_auth_providers'))
+            return [];
+          if (
+            sql.includes(
+              'SELECT verified_contact,email,phone FROM public.users',
+            )
+          )
+            return [{ verified_contact: false, email: null, phone: null }];
+          if (sql.includes('SELECT provider_subject,contact_value,verified_at'))
+            return [
+              {
+                provider_subject: userId,
+                contact_value: email,
+                verified_at: null,
+              },
+            ];
+          return [];
+        });
+        vi.stubGlobal(
+          'fetch',
+          vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ id: userId, email }),
+          }),
+        );
+      };
+
+      // Confirm SMTP success returns pending metadata (proves 502 below comes from SMTP rejection, not TTL mismatch)
+      stubRegistrationSuccessBeforeSend();
+      mockSendMail.mockResolvedValueOnce({ messageId: 'ok-msg-id' });
+      await expect(
+        registrationService.register(
+          {
+            email,
+            password: 'Password123!',
+            confirm_password: 'Password123!',
+            privacy_consent: true,
+          },
+          req,
+        ),
+      ).resolves.toMatchObject({
+        verification_channel: 'email',
+        expires_in_seconds: 600,
+      });
+
+      // EAUTH (even mentioning "session timeout") -> 502 EMAIL_PROVIDER_ERROR
+      stubRegistrationSuccessBeforeSend();
+      mockSendMail.mockRejectedValueOnce(rawAuthErr);
+      await expect(
+        registrationService.register(
+          {
+            email,
+            password: 'Password123!',
+            confirm_password: 'Password123!',
+            privacy_consent: true,
+          },
+          req,
+        ),
+      ).rejects.toMatchObject({
+        status: 502,
+        response: expect.objectContaining({ code: 'EMAIL_PROVIDER_ERROR' }),
+      });
+
+      // ETIMEDOUT -> 504 PROVIDER_TIMEOUT
+      stubRegistrationSuccessBeforeSend();
+      mockSendMail.mockRejectedValueOnce(rawTimeoutErr);
+      await expect(
+        registrationService.register(
+          {
+            email,
+            password: 'Password123!',
+            confirm_password: 'Password123!',
+            privacy_consent: true,
+          },
+          req,
+        ),
+      ).rejects.toMatchObject({
+        status: 504,
+        response: expect.objectContaining({ code: 'PROVIDER_TIMEOUT' }),
+      });
     });
 
     it('never treats Google or Facebook OAuth auth.users older than 15 minutes without public.users as abandoned orphans', async () => {
