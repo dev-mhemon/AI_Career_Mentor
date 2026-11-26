@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next';
 import { inter, geist, hindSiliguri, jetbrainsMono } from '@/fonts';
-import { SkipLink } from '@/components/ui/skip-link';
 import './globals.css';
 
 export const viewport: Viewport = {
@@ -34,7 +33,6 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       className={`${inter.variable} ${geist.variable} ${hindSiliguri.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col">
-        <SkipLink />
         <div className="flex flex-1 flex-col">{children}</div>
       </body>
     </html>

@@ -27,7 +27,6 @@ import {
   validateEmail,
   validateEmailLive,
   validateOtp,
-  validateOtpLive,
 } from '@/lib/validation/auth-schemas';
 import type { ActionErrorLike } from '@/lib/api/error-mapper';
 import {
@@ -88,6 +87,7 @@ function VerifyFormContent() {
     fields: Set<string>;
   } | null>(null);
   const identifierBlurredRef = useRef(false);
+  const hasSubmittedRef = useRef(false);
 
   const activeIdentifier = useMemo(() => {
     const normalizedReentered =
@@ -334,18 +334,15 @@ function VerifyFormContent() {
     [channelParam],
   );
 
-  const handleTokenChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      dismissServerField('token');
-      dismissServerField('code');
-      const check = validateOtpLive(e.target.value);
-      setCodeError(check.ok ? undefined : check.error);
-    },
-    [dismissServerField],
-  );
+  const handleTokenChange = useCallback(() => {
+    dismissServerField('token');
+    dismissServerField('code');
+    setCodeError(undefined);
+  }, [dismissServerField]);
 
   const handleTokenBlur = useCallback(
     (e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (!hasSubmittedRef.current) return;
       if (!e.target.value.trim()) return;
       const check = validateOtp(e.target.value);
       setCodeError(check.ok ? undefined : check.error);
@@ -384,6 +381,7 @@ function VerifyFormContent() {
         onFocusCapture={handleFormActivity}
         onChangeCapture={handleFormActivity}
         onSubmit={(e) => {
+          hasSubmittedRef.current = true;
           const form = e.currentTarget;
           let invalid = false;
           let invalidIdentifier = false;

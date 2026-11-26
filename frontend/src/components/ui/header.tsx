@@ -15,7 +15,6 @@ import {
   type RefObject,
 } from 'react';
 import { cn } from './cn';
-import { SkipLink } from './skip-link';
 import {
   BellIcon,
   CheckCircleIcon,
@@ -58,8 +57,6 @@ export interface HeaderProps {
   actions?: React.ReactNode;
   /** Force offline_banner state; defaults to browser connectivity. */
   offline?: boolean;
-  /** Render a SkipLink inside the header (layout already has one; off by default). */
-  includeSkipLink?: boolean;
   /** Mobile sidebar drawer trigger callback. */
   onOpenMobileMenu?: () => void;
   /** Mobile sidebar drawer open state for ARIA synchronization. */
@@ -287,19 +284,16 @@ const ReconnectedBanner = memo(function ReconnectedBanner() {
 const PublicHeader = memo(function PublicHeader({
   items,
   actions,
-  includeSkipLink,
   showOffline,
   showReconnected,
 }: {
   items: HeaderNavItem[];
   actions?: React.ReactNode;
-  includeSkipLink: boolean;
   showOffline: boolean;
   showReconnected: boolean;
 }) {
   return (
     <>
-      {includeSkipLink && <SkipLink />}
       <header
         className="sticky top-0 z-30 flex h-16 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-slate-200/80 bg-white/95 px-4 text-slate-900 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 dark:text-slate-100 lg:px-8"
       >
@@ -586,7 +580,6 @@ export const Header = memo(function Header({
   isSuspended = false,
   actions,
   offline,
-  includeSkipLink = false,
   onOpenMobileMenu,
   isMobileMenuOpen = false,
   sidebarId = 'app-sidebar',
@@ -834,7 +827,6 @@ export const Header = memo(function Header({
       <PublicHeader
         items={items}
         actions={actions}
-        includeSkipLink={includeSkipLink}
         showOffline={showOffline}
         showReconnected={showReconnected}
       />
@@ -843,7 +835,6 @@ export const Header = memo(function Header({
 
   return (
     <>
-      {includeSkipLink && <SkipLink />}
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-slate-200/80 bg-white/95 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:px-8">
         {/* Left Area: Mobile drawer trigger + Quick Search pill */}
         <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial sm:gap-3">

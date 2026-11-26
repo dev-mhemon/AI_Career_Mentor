@@ -826,7 +826,7 @@ describe('VerifyForm', () => {
     expect(submittedFormData?.get('token')).toBe('123456');
   });
 
-  it('keeps local 01712345678 visible in phone re-entry while submitting +8801712345678 and validates OTP live', async () => {
+  it('keeps local 01712345678 visible in phone re-entry while submitting +8801712345678 and validates OTP on submit', async () => {
     vi.mocked(useSearchParams).mockReturnValue(
       new URLSearchParams('?channel=phone'),
     );
@@ -850,12 +850,16 @@ describe('VerifyForm', () => {
 
     const otpInput = screen.getByLabelText(/enter the verification code/i);
     fireEvent.change(otpInput, { target: { value: '1234' } });
+    expect(screen.queryByText(/enter the 6-digit code/i)).not.toBeInTheDocument();
+
+    const submitBtn = screen.getByRole('button', { name: /verify code/i });
+    fireEvent.click(submitBtn);
     expect(screen.getByText(/enter the 6-digit code/i)).toBeInTheDocument();
+    expect(verifyOtpAction).not.toHaveBeenCalled();
 
     fireEvent.change(otpInput, { target: { value: '123456' } });
     expect(screen.queryByText(/enter the 6-digit code/i)).not.toBeInTheDocument();
 
-    const submitBtn = screen.getByRole('button', { name: /verify code/i });
     await act(async () => {
       fireEvent.click(submitBtn);
     });
@@ -863,6 +867,74 @@ describe('VerifyForm', () => {
     const submittedFormData = vi.mocked(verifyOtpAction).mock.calls[0]?.[1];
     expect(submittedFormData?.get('identifier')).toBe('+8801712345678');
     expect(phoneInput.value).toBe('01712345678');
+  });
+
+  it('does not show incomplete OTP error while typing across boxes before submit, shows on incomplete submit, and clears immediately when typing resumes', async () => {
+    saveVerificationDraft({
+      channel: 'email',
+      identifier: 'candidate@example.com',
+      contactMasked: 'c****@example.com',
+    });
+    vi.mocked(useSearchParams).mockReturnValue(
+      new URLSearchParams('?channel=email'),
+    );
+
+    render(<VerifyForm />);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/email address/i)).not.toBeInTheDocument();
+    });
+
+    const cells = [1, 2, 3, 4, 5, 6].map((n) =>
+      screen.getByLabelText(`Digit ${n} of 6`),
+    ) as HTMLInputElement[];
+    const submitBtn = screen.getByRole('button', { name: /verify code/i });
+
+    // Typing digits 1..4 across individual OTP boxes never triggers error or red borders
+    for (let i = 0; i < 4; i++) {
+      fireEvent.focus(cells[i]);
+      fireEvent.change(cells[i], { target: { value: String(i + 1) } });
+      expect(screen.queryByText('Enter the 6-digit code.')).not.toBeInTheDocument();
+      for (const cell of cells) {
+        expect(cell).not.toHaveAttribute('aria-invalid', 'true');
+        expect(cell.className).not.toContain('border-border-danger');
+      }
+    }
+
+    // Even blurring completely outside the OTP group before first submit must not show error
+    fireEvent.blur(cells[3], { relatedTarget: submitBtn });
+    expect(screen.queryByText('Enter the 6-digit code.')).not.toBeInTheDocument();
+
+    // Explicit submit with fewer than 6 digits shows the error and red borders
+    fireEvent.click(submitBtn);
+    expect(screen.getByText('Enter the 6-digit code.')).toBeInTheDocument();
+    for (const cell of cells) {
+      expect(cell).toHaveAttribute('aria-invalid', 'true');
+      expect(cell.className).toContain('border-border-danger');
+    }
+    expect(verifyOtpAction).not.toHaveBeenCalled();
+
+    // Typing the 5th digit immediately clears the error and red borders while finishing
+    fireEvent.focus(cells[4]);
+    fireEvent.change(cells[4], { target: { value: '5' } });
+    expect(screen.queryByText('Enter the 6-digit code.')).not.toBeInTheDocument();
+    for (const cell of cells) {
+      expect(cell).not.toHaveAttribute('aria-invalid', 'true');
+      expect(cell.className).not.toContain('border-border-danger');
+    }
+
+    // Moving focus between OTP boxes after prior submit still does not re-trigger error
+    fireEvent.blur(cells[4], { relatedTarget: cells[5] });
+    expect(screen.queryByText('Enter the 6-digit code.')).not.toBeInTheDocument();
+
+    // Blurring completely outside the OTP group after prior submit while incomplete re-shows error
+    fireEvent.blur(cells[5], { relatedTarget: submitBtn });
+    expect(screen.getByText('Enter the 6-digit code.')).toBeInTheDocument();
+
+    // Typing the 6th digit clears the error cleanly
+    fireEvent.focus(cells[5]);
+    fireEvent.change(cells[5], { target: { value: '6' } });
+    expect(screen.queryByText('Enter the 6-digit code.')).not.toBeInTheDocument();
   });
 
   it('starts single inline cooldown on 429 retryAfterSeconds from resendOtpAction without duplicate timer badge', async () => {

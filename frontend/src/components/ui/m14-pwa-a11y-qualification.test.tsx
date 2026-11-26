@@ -10,7 +10,6 @@ import { AppShell } from './app-shell';
 import { BottomNavigation } from './bottom-navigation';
 import { Header } from './header';
 import { SkillBadge } from './skill-badge';
-import { SkipLink } from './skip-link';
 import {
   clearTelemetryEvents,
   getTelemetryEvents,
@@ -189,22 +188,15 @@ describe('M14-C Cross-Screen PWA, Responsive (360/768/1024+), WCAG 2.1 AA, R16 &
   });
 
   describe('3. WCAG 2.1 AA Landmarks, Reduced Motion & Non-Color-Only Status (C01 §54, C09 §2/§8)', () => {
-    it('provides SkipLink -> #main-content, header, main, and mobile nav landmarks plus global prefers-reduced-motion CSS', () => {
+    it('provides header, #main-content main, and mobile nav landmarks plus global prefers-reduced-motion CSS', () => {
       render(
-        <>
-          <SkipLink />
-          <AppShell variant="learner" user={{ fullName: 'Mehedi Hasan' }}>
-            <main id="main-content" tabIndex={-1}>
-              <h1>Workspace</h1>
-            </main>
-          </AppShell>
-        </>,
+        <AppShell variant="learner" user={{ fullName: 'Mehedi Hasan' }}>
+          <main id="main-content" tabIndex={-1}>
+            <h1>Workspace</h1>
+          </main>
+        </AppShell>,
       );
 
-      const skipLink = screen.getByRole('link', {
-        name: /Skip to main content/i,
-      });
-      expect(skipLink).toHaveAttribute('href', '#main-content');
       expect(screen.getByRole('banner')).toBeInTheDocument();
       expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
       expect(
