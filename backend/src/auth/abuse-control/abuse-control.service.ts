@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger } from '@nestjs/common';
 import type { OnModuleDestroy } from '@nestjs/common';
 import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -18,6 +18,36 @@ import {
 
 export const AUTH_ABUSE_CONFIGURATION = Symbol('AUTH_ABUSE_CONFIGURATION');
 type ScriptResult = [number, number, string?];
+type AuthRedisClient = ReturnType<
+  typeof createClient<
+    Record<string, never>,
+    Record<string, never>,
+    Record<string, never>,
+    2
+  >
+>;
+const SAFE_REDIS_ERROR_PREFIXES = new Set([
+  'ERR',
+  'CROSSSLOT',
+  'NOAUTH',
+  'WRONGPASS',
+  'NOPERM',
+  'WRONGTYPE',
+  'NOSCRIPT',
+  'READONLY',
+  'CLUSTERDOWN',
+  'LOADING',
+  'BUSY',
+  'OOM',
+  'MOVED',
+  'ASK',
+  'TRYAGAIN',
+  'EXECABORT',
+  'UNBLOCKED',
+  'MISCONF',
+  'MASTERDOWN',
+  'MAXCLIENTS',
+]);
 export interface Contact {
   channel: 'email' | 'phone';
   /** Validated, lower-cased email or normalized +880 phone, supplied by the caller. */
@@ -37,7 +67,8 @@ export interface ContactAbuseSnapshot {
 
 @Injectable()
 export class AuthAbuseControl implements OnModuleDestroy {
-  private client?: ReturnType<typeof createClient>;
+  private readonly logger = new Logger(AuthAbuseControl.name);
+  private client?: AuthRedisClient;
   private connecting?: Promise<unknown>;
   private stopped = false;
 
@@ -98,13 +129,78 @@ export class AuthAbuseControl implements OnModuleDestroy {
     return this.digest('ip', canonical);
   }
 
-  private async getConnectedClient(): Promise<ReturnType<typeof createClient>> {
+  private extractSafeRedisErrorCode(error: unknown): string {
+    const inspectCode = (candidate: unknown): string | undefined => {
+      if (!candidate || typeof candidate !== 'object') return undefined;
+      const rawCode = (candidate as { code?: unknown }).code;
+      if (
+        typeof rawCode === 'string' &&
+        /^(?:E[A-Z0-9_]{2,31}|ERR_[A-Z0-9_]{2,40})$/.test(rawCode)
+      ) {
+        return rawCode;
+      }
+      return undefined;
+    };
+
+    const directCode = inspectCode(error);
+    if (directCode) return directCode;
+
+    if (error && typeof error === 'object') {
+      const causeCode = inspectCode((error as { cause?: unknown }).cause);
+      if (causeCode) return causeCode;
+
+      const subErrors = (error as { errors?: unknown }).errors;
+      if (Array.isArray(subErrors)) {
+        for (const sub of subErrors) {
+          const subCode = inspectCode(sub);
+          if (subCode) return subCode;
+        }
+      }
+    }
+
+    if (error instanceof Error && typeof error.message === 'string') {
+      if (error.message === 'Auth Redis deadline exceeded') {
+        return 'DEADLINE_EXCEEDED';
+      }
+      const prefix = /^([A-Z]{2,24})(?:\s|:|$)/.exec(error.message.trim())?.[1];
+      if (prefix && SAFE_REDIS_ERROR_PREFIXES.has(prefix)) {
+        return prefix;
+      }
+    }
+
+    return 'UNKNOWN';
+  }
+
+  private logRedisFailure(
+    operation: 'connect' | 'evaluate',
+    error: unknown,
+  ): void {
+    const rawName =
+      error instanceof Error
+        ? error.name
+        : error && typeof error === 'object' && 'name' in error
+          ? (error as { name?: unknown }).name
+          : undefined;
+    const errorName =
+      typeof rawName === 'string' &&
+      /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(rawName)
+        ? rawName
+        : 'UnknownError';
+    const code = this.extractSafeRedisErrorCode(error);
+    this.logger.warn(
+      `Auth Redis ${operation} failed (errorName=${errorName}, code=${code})`,
+    );
+  }
+
+  private async getConnectedClient(): Promise<AuthRedisClient> {
     if (!this.configuration || this.stopped) this.unavailable();
     const timeout = this.configuration.policy.AUTH_REDIS_TIMEOUT_MS;
     try {
       if (!this.client) {
         this.client = createClient({
           url: this.configuration.url,
+          RESP: 2,
+          maintNotifications: 'disabled',
           disableOfflineQueue: true,
           socket: { connectTimeout: timeout, reconnectStrategy: false },
         });
@@ -119,7 +215,8 @@ export class AuthAbuseControl implements OnModuleDestroy {
         await this.withDeadline(this.connecting, timeout);
       }
       return client;
-    } catch {
+    } catch (error) {
+      this.logRedisFailure('connect', error);
       if (this.client?.isOpen) this.client.destroy();
       this.client = undefined;
       this.unavailable();
@@ -158,6 +255,7 @@ export class AuthAbuseControl implements OnModuleDestroy {
       )) as ScriptResult;
     } catch (error) {
       if (error instanceof HttpException) throw error;
+      this.logRedisFailure('evaluate', error);
       // An ambiguous command is never replayed here. It may already have changed state.
       if (this.client?.isOpen) this.client.destroy();
       this.client = undefined;

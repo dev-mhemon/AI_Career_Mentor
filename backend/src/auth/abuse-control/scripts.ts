@@ -1,14 +1,24 @@
 /** All scripts target one standalone Redis authority; multi-key Redis Cluster is excluded. */
 /** Keep one policy active until all state created by its latest operation can expire. */
 export const policyGuard = `
-local policyKey = table.remove(KEYS)
-local fingerprint = table.remove(ARGV, 1)
-local lifetime = table.remove(ARGV, 1)
+local origKeys = KEYS
+local origArgv = ARGV
+local policyKey = origKeys[#origKeys]
+local fingerprint = origArgv[1]
+local lifetime = origArgv[2]
 local existing = redis.call('GET', policyKey)
 if existing and existing ~= fingerprint then
   return {6, math.max(1, redis.call('PTTL', policyKey))}
 end
 redis.call('SET', policyKey, fingerprint, 'PX', lifetime)
+local KEYS = {}
+for i = 1, #origKeys - 1 do
+  KEYS[i] = origKeys[i]
+end
+local ARGV = {}
+for i = 3, #origArgv do
+  ARGV[i - 2] = origArgv[i]
+end
 `;
 
 export const sendScript = `

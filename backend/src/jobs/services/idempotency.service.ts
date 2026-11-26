@@ -1029,6 +1029,8 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
     try {
       created = createClient({
         url: this.configuration.url,
+        RESP: 2,
+        maintNotifications: 'disabled',
         disableOfflineQueue: true,
         socket: { connectTimeout: timeout, reconnectStrategy: false },
       }) as unknown as IdempotencyRedisClient;
