@@ -4,9 +4,13 @@ import { getAuthenticatedHomeDestination } from "@/lib/auth/user";
 import {
   LOGIN_HINT_COOKIE,
   OAUTH_HINT_COOKIE,
+  POST_RESET_LOGIN_HINT_COOKIE,
   parseOAuthLoginCookieHint,
+  parsePostResetLoginCookieHint,
   parseRememberedLoginCookieHint,
+  type LoginChannel,
   type OAuthLoginHint,
+  type PostResetLoginHint,
   type RememberedLoginHint,
 } from "@/lib/auth/remember-login";
 import { LoginForm } from "@/components/auth/login-form";
@@ -28,11 +32,15 @@ export default async function LoginPage({
       : Array.isArray(errorCode) &&
         errorCode.some((value) => value.trim().length > 0);
   const resetSuccess = awaitedSearchParams?.reset === "success";
+  const rawChannel = awaitedSearchParams?.channel;
+  const channelParam: LoginChannel | undefined =
+    rawChannel === "email" || rawChannel === "phone" ? rawChannel : undefined;
   const isVerified = awaitedSearchParams?.verified === "true";
 
   let hasAccountDeletedCookie = false;
   let initialRememberedLogin: RememberedLoginHint | null | undefined = undefined;
   let initialOAuthHint: OAuthLoginHint | null | undefined = undefined;
+  let initialResetLogin: PostResetLoginHint | undefined = undefined;
   try {
     const cookieStore = await cookies();
     hasAccountDeletedCookie =
@@ -43,9 +51,18 @@ export default async function LoginPage({
     initialOAuthHint = parseOAuthLoginCookieHint(
       cookieStore.get(OAUTH_HINT_COOKIE)?.value,
     );
+    if (resetSuccess) {
+      const parsedReset = parsePostResetLoginCookieHint(
+        cookieStore.get(POST_RESET_LOGIN_HINT_COOKIE)?.value,
+      );
+      if (parsedReset && (!channelParam || parsedReset.channel === channelParam)) {
+        initialResetLogin = parsedReset;
+      }
+    }
   } catch {
     initialRememberedLogin = undefined;
     initialOAuthHint = undefined;
+    initialResetLogin = undefined;
   }
 
   const hasDeletedParam =
@@ -56,7 +73,13 @@ export default async function LoginPage({
   if (isDeleted) {
     initialRememberedLogin = null;
     initialOAuthHint = null;
+    initialResetLogin = undefined;
   }
+
+  const initialChannel: LoginChannel | undefined =
+    !isDeleted && resetSuccess
+      ? (initialResetLogin?.channel ?? channelParam)
+      : undefined;
 
   if (!hasErrorParam && !isDeleted) {
     const homeDestination = await getAuthenticatedHomeDestination();
@@ -95,6 +118,8 @@ export default async function LoginPage({
         toastMessage={toastMessage}
         initialRememberedLogin={initialRememberedLogin}
         initialOAuthHint={initialOAuthHint}
+        initialResetLogin={initialResetLogin}
+        initialChannel={initialChannel}
         clearSavedLogin={isDeleted}
       />
     </div>

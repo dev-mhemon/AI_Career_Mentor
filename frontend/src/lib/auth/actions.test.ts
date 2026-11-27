@@ -1839,7 +1839,7 @@ describe('Auth Actions', () => {
       });
     });
 
-    it('calls resetPassword, clears recovery cookie, and redirects to /login?reset=success', async () => {
+    it('calls resetPassword, clears recovery cookie, sets post-reset email hint cookie, and redirects to /login?reset=success&channel=email', async () => {
       const formData = new FormData();
       formData.set('identifier', 'user@example.com');
       formData.set('code', '123456');
@@ -1861,7 +1861,47 @@ describe('Auth Actions', () => {
         '',
         expect.objectContaining({ maxAge: 0 }),
       );
-      expect(redirect).toHaveBeenCalledWith('/login?reset=success');
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_post_reset_login_hint',
+        JSON.stringify({ channel: 'email', identifier: 'user@example.com' }),
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/login',
+          maxAge: 300,
+        }),
+      );
+      expect(redirect).toHaveBeenCalledWith('/login?reset=success&channel=email');
+    });
+
+    it('calls resetPassword for phone, sets normalized local phone post-reset hint cookie, and redirects to /login?reset=success&channel=phone', async () => {
+      const formData = new FormData();
+      formData.set('identifier', '+8801712345678');
+      formData.set('code', '654321');
+      formData.set('new_password', 'N3w!Passw0rd');
+      formData.set('confirm_new_password', 'N3w!Passw0rd');
+
+      vi.mocked(resetPassword).mockResolvedValueOnce({ password_reset: true });
+
+      await resetPasswordAction({}, formData);
+
+      expect(resetPassword).toHaveBeenCalledWith(
+        '+8801712345678',
+        '654321',
+        'N3w!Passw0rd',
+        'N3w!Passw0rd',
+      );
+      expect(mockCookieStore.set).toHaveBeenCalledWith(
+        'mentor_post_reset_login_hint',
+        JSON.stringify({ channel: 'phone', identifier: '01712345678' }),
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/login',
+          maxAge: 300,
+        }),
+      );
+      expect(redirect).toHaveBeenCalledWith('/login?reset=success&channel=phone');
     });
 
     it('preserves actionable invalid-OTP, expired-OTP, and password-policy error messages instead of collapsing to generic availability errors', async () => {

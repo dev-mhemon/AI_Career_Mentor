@@ -967,4 +967,154 @@ describe("LoginForm", () => {
     expect(window.localStorage.getItem(OAUTH_HINT_STORAGE_KEY)).toBeNull();
     expect(document.cookie).not.toContain(`${OAUTH_HINT_COOKIE}=`);
   });
+
+  it("selects Phone tab, pre-fills normalized phone, and leaves Email empty on phone password reset redirect (including refresh and over stale remembered email)", () => {
+    window.localStorage.setItem(
+      "mentor_remembered_login",
+      JSON.stringify({
+        channel: "email",
+        identifier: "previous@example.com",
+        rememberMe: true,
+      }),
+    );
+    saveVerificationDraft({
+      channel: "phone",
+      identifier: "+8801712345678",
+      context: "password_recovery",
+    });
+
+    const { unmount } = render(
+      <LoginForm
+        successMessage="Password reset successfully. Please sign in with your new password."
+        initialChannel="phone"
+        initialResetLogin={{ channel: "phone", identifier: "+8801712345678" }}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^phone$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const phoneInput = screen.getByLabelText(/^phone number$/i) as HTMLInputElement;
+    expect(phoneInput.value).toBe("01712345678");
+    expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /^Keep Signed In$/ }),
+    ).not.toBeChecked();
+    expect(mockClearVerificationDraft).toHaveBeenCalled();
+
+    // Switching to Email tab confirms the Email field is completely empty (no phone number or stale email)
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    const emailInput = screen.getByLabelText(/^email$/i) as HTMLInputElement;
+    expect(emailInput.value).toBe("");
+    expect(emailInput).toHaveAttribute("autoComplete", "email");
+
+    unmount();
+
+    // Refreshing /login?reset=success&channel=phone without server prop still restores Phone tab and phone from sessionStorage
+    window.sessionStorage.removeItem("mentor_verification_draft");
+    render(
+      <LoginForm
+        successMessage="Password reset successfully. Please sign in with your new password."
+        initialChannel="phone"
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /^phone$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText(/^phone number$/i)).toHaveValue("01712345678");
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+  });
+
+  it("selects Email tab, pre-fills email, and leaves Phone empty on email password reset redirect (and ignores mismatched cross-channel hints)", () => {
+    window.localStorage.setItem(
+      "mentor_remembered_login",
+      JSON.stringify({
+        channel: "phone",
+        identifier: "01712345678",
+        rememberMe: true,
+      }),
+    );
+
+    const { unmount } = render(
+      <LoginForm
+        successMessage="Password reset successfully. Please sign in with your new password."
+        initialChannel="email"
+        initialResetLogin={{ channel: "email", identifier: "ResetUser@Example.com" }}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^email$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("resetuser@example.com");
+    expect(screen.queryByLabelText(/^phone number$/i)).not.toBeInTheDocument();
+
+    // Switching to Phone tab confirms the Phone field is completely empty
+    fireEvent.click(screen.getByRole("tab", { name: /^phone$/i }));
+    expect(screen.getByLabelText(/^phone number$/i)).toHaveValue("");
+
+    unmount();
+
+    // Mismatched phone number passed under email channel must never appear in Email input
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    render(
+      <LoginForm
+        successMessage="Password reset successfully. Please sign in with your new password."
+        initialChannel="email"
+        initialResetLogin={{ channel: "email", identifier: "+8801712345678" }}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /^email$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+  });
+
+  it("persists validatedInitialResetLogin ahead of a differing stored recovery draft so remount without server hint restores the same address", () => {
+    saveVerificationDraft({
+      channel: "phone",
+      identifier: "+8801711111111",
+      context: "password_recovery",
+    });
+
+    const { unmount } = render(
+      <LoginForm
+        successMessage="Password reset successfully. Please sign in with your new password."
+        initialChannel="phone"
+        initialResetLogin={{ channel: "phone", identifier: "+8801822222222" }}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^phone$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText(/^phone number$/i)).toHaveValue("01822222222");
+    expect(mockClearVerificationDraft).toHaveBeenCalled();
+
+    unmount();
+
+    // Simulate page refresh / remount after recovery draft was cleared and without server prop
+    window.sessionStorage.removeItem("mentor_verification_draft");
+    render(
+      <LoginForm
+        successMessage="Password reset successfully. Please sign in with your new password."
+        initialChannel="phone"
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^phone$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText(/^phone number$/i)).toHaveValue("01822222222");
+    fireEvent.click(screen.getByRole("tab", { name: /^email$/i }));
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue("");
+  });
 });

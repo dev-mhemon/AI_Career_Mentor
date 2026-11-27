@@ -51,6 +51,8 @@ vi.mock('@/components/auth/login-form', () => ({
     toastMessage,
     initialRememberedLogin,
     initialOAuthHint,
+    initialResetLogin,
+    initialChannel,
     clearSavedLogin,
   }: {
     initialError?: string;
@@ -58,6 +60,8 @@ vi.mock('@/components/auth/login-form', () => ({
     toastMessage?: string;
     initialRememberedLogin?: unknown;
     initialOAuthHint?: unknown;
+    initialResetLogin?: unknown;
+    initialChannel?: string;
     clearSavedLogin?: boolean;
   }) => {
     mockLoginForm({
@@ -66,6 +70,8 @@ vi.mock('@/components/auth/login-form', () => ({
       toastMessage,
       initialRememberedLogin,
       initialOAuthHint,
+      initialResetLogin,
+      initialChannel,
       clearSavedLogin,
     });
     return (
@@ -376,6 +382,78 @@ describe('LoginPage Server Component', () => {
         initialOAuthHint: null,
         initialRememberedLogin: null,
         clearSavedLogin: true,
+      }),
+    );
+  });
+
+  it('forwards phone/email post-reset prefill and channel on reset=success while ignoring mismatched or non-reset cookies', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+
+    // Phone password reset redirect
+    mockCookieGet.mockImplementation((name: string) =>
+      name === 'mentor_post_reset_login_hint'
+        ? {
+            value: JSON.stringify({
+              channel: 'phone',
+              identifier: '+8801712345678',
+            }),
+          }
+        : undefined,
+    );
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ reset: 'success', channel: 'phone' }),
+      }),
+    );
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialResetLogin: { channel: 'phone', identifier: '01712345678' },
+        initialChannel: 'phone',
+      }),
+    );
+
+    // Mismatched channel query param drops the cookie so phone never leaks to email
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ reset: 'success', channel: 'email' }),
+      }),
+    );
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialResetLogin: undefined,
+        initialChannel: 'email',
+      }),
+    );
+
+    // Direct /login navigation without reset=success ignores post-reset cookie
+    render(await LoginPage({}));
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialResetLogin: undefined,
+        initialChannel: undefined,
+      }),
+    );
+
+    // Email password reset redirect
+    mockCookieGet.mockImplementation((name: string) =>
+      name === 'mentor_post_reset_login_hint'
+        ? {
+            value: JSON.stringify({
+              channel: 'email',
+              identifier: 'User@Example.com',
+            }),
+          }
+        : undefined,
+    );
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ reset: 'success', channel: 'email' }),
+      }),
+    );
+    expect(mockLoginForm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialResetLogin: { channel: 'email', identifier: 'user@example.com' },
+        initialChannel: 'email',
       }),
     );
   });

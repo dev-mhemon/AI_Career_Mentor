@@ -31,30 +31,40 @@ import { Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
 import { Toast } from "@/components/ui/toast";
 import {
+  getRawVerificationDraft,
   loadVerificationDraft,
+  MAX_VERIFICATION_DRAFT_TTL_SECONDS,
   saveVerificationDraft,
   clearVerificationDraft,
 } from "@/lib/auth/verification-draft";
 import {
   clearOAuthLoginHint,
   clearOAuthLoginHintCookie,
+  clearPostResetLoginHint,
   clearRememberedLogin,
   clearRememberedLoginCookie,
+  createPostResetLoginHint,
   getOAuthLoginHintClearedSnapshot,
   getOAuthLoginHintServerSnapshot,
   getOAuthLoginHintSnapshot,
+  getPostResetLoginHintServerSnapshot,
+  getPostResetLoginHintSnapshot,
   getRememberedLoginServerSnapshot,
   getRememberedLoginSnapshot,
   isOAuthLoginHintCleared,
   loadOAuthLoginHint,
   loadRememberedLogin,
   parseOAuthLoginHint,
+  parsePostResetLoginHint,
   parseRememberedLoginHint,
   saveOAuthLoginHint,
+  savePostResetLoginHint,
   saveRememberedLogin,
   subscribeOAuthLoginHint,
+  subscribePostResetLoginHint,
   subscribeRememberedLogin,
   type OAuthLoginHint,
+  type PostResetLoginHint,
   type RememberedLoginHint,
 } from "@/lib/auth/remember-login";
 import {
@@ -95,6 +105,26 @@ const SIGNUP_FOOTER = (
   </p>
 );
 
+function readValidRecoveryDraftHintSnapshot(): string | null {
+  const raw = getRawVerificationDraft();
+  if (!raw || raw.context !== "password_recovery") return null;
+  const expiresAtMs = Date.parse(raw.expires_at);
+  const nowMs = Date.now();
+  if (
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= nowMs ||
+    expiresAtMs - nowMs > MAX_VERIFICATION_DRAFT_TTL_SECONDS * 1000
+  ) {
+    return null;
+  }
+  const hint = createPostResetLoginHint(raw.channel, raw.normalized_identifier);
+  return hint ? JSON.stringify(hint) : null;
+}
+
+function getEffectivePostResetStorageSnapshot(): string | null {
+  return readValidRecoveryDraftHintSnapshot() ?? getPostResetLoginHintSnapshot();
+}
+
 /**
  * Screen 02: Login form component using useActionState for pending and error states.
  * Supports Email and Bangladesh Phone (+880) tabs, preserves email/phone inputs across tab
@@ -107,6 +137,8 @@ export function LoginForm({
   toastMessage,
   initialRememberedLogin,
   initialOAuthHint,
+  initialResetLogin,
+  initialChannel,
   clearSavedLogin = false,
 }: {
   initialError?: string;
@@ -114,6 +146,8 @@ export function LoginForm({
   toastMessage?: string;
   initialRememberedLogin?: RememberedLoginHint | null;
   initialOAuthHint?: OAuthLoginHint | null;
+  initialResetLogin?: PostResetLoginHint | null;
+  initialChannel?: Channel;
   clearSavedLogin?: boolean;
 }) {
   const router = useRouter();
@@ -176,11 +210,61 @@ export function LoginForm({
     getOAuthLoginHintClearedSnapshot,
     getOAuthLoginHintServerSnapshot,
   );
+  const storedPostResetRaw = useSyncExternalStore(
+    subscribePostResetLoginHint,
+    getEffectivePostResetStorageSnapshot,
+    getPostResetLoginHintServerSnapshot,
+  );
   const shouldClearSavedLogin =
     clearSavedLogin ||
     initialRememberedLogin === null ||
     initialOAuthHint === null ||
     urlDeletionState.hasDeletionParam;
+  const validatedInitialChannel: Channel | undefined =
+    initialChannel === "email" || initialChannel === "phone"
+      ? initialChannel
+      : undefined;
+  const validatedInitialResetLogin = useMemo(() => {
+    if (shouldClearSavedLogin || !initialResetLogin) return null;
+    const normalized = createPostResetLoginHint(
+      initialResetLogin.channel,
+      initialResetLogin.identifier,
+    );
+    if (
+      normalized &&
+      validatedInitialChannel &&
+      normalized.channel !== validatedInitialChannel
+    ) {
+      return null;
+    }
+    return normalized;
+  }, [initialResetLogin, shouldClearSavedLogin, validatedInitialChannel]);
+  const isPasswordResetFlow =
+    Boolean(validatedInitialResetLogin) ||
+    Boolean(successMessage && /password reset/i.test(successMessage));
+  const effectiveResetPrefill = useMemo(() => {
+    if (shouldClearSavedLogin || !isPasswordResetFlow) return null;
+    if (validatedInitialResetLogin) return validatedInitialResetLogin;
+    const parsedStored = parsePostResetLoginHint(storedPostResetRaw);
+    if (
+      parsedStored &&
+      validatedInitialChannel &&
+      parsedStored.channel !== validatedInitialChannel
+    ) {
+      return null;
+    }
+    return parsedStored;
+  }, [
+    isPasswordResetFlow,
+    shouldClearSavedLogin,
+    storedPostResetRaw,
+    validatedInitialChannel,
+    validatedInitialResetLogin,
+  ]);
+  const effectiveResetChannel: Channel | undefined = shouldClearSavedLogin
+    ? undefined
+    : (effectiveResetPrefill?.channel ??
+      (isPasswordResetFlow ? validatedInitialChannel : undefined));
   const effectiveHint = useMemo(() => {
     if (shouldClearSavedLogin || storageCleared) return null;
     return parseRememberedLoginHint(storedHintRaw) ?? initialRememberedLogin;
@@ -210,16 +294,48 @@ export function LoginForm({
   >(null);
   const [password, setPassword] = useState("");
 
-  const activeTab = tabOverride ?? effectiveHint?.channel ?? "email";
-  const emailValue =
-    emailOverride ??
-    (effectiveHint?.channel === "email" ? effectiveHint.identifier : "");
-  const phoneValue =
-    phoneOverride ??
-    (effectiveHint?.channel === "phone" ? effectiveHint.identifier : "");
+  const activeTab =
+    tabOverride ?? effectiveResetChannel ?? effectiveHint?.channel ?? "email";
+  const defaultEmailValue = effectiveResetPrefill
+    ? effectiveResetPrefill.channel === "email"
+      ? effectiveResetPrefill.identifier
+      : ""
+    : effectiveResetChannel
+      ? effectiveResetChannel === "email" && effectiveHint?.channel === "email"
+        ? effectiveHint.identifier
+        : ""
+      : effectiveHint?.channel === "email" &&
+          validateEmail(effectiveHint.identifier).ok
+        ? effectiveHint.identifier
+        : "";
+  const defaultPhoneValue = effectiveResetPrefill
+    ? effectiveResetPrefill.channel === "phone"
+      ? effectiveResetPrefill.identifier
+      : ""
+    : effectiveResetChannel
+      ? effectiveResetChannel === "phone" && effectiveHint?.channel === "phone"
+        ? sanitizeBdPhoneDisplay(effectiveHint.identifier)
+        : ""
+      : effectiveHint?.channel === "phone" &&
+          validateBdPhone(effectiveHint.identifier).ok
+        ? sanitizeBdPhoneDisplay(effectiveHint.identifier)
+        : "";
+  const emailValue = emailOverride ?? defaultEmailValue;
+  const phoneValue = phoneOverride ?? defaultPhoneValue;
   const identifier = activeTab === "email" ? emailValue : phoneValue;
+  const matchingRememberedHint =
+    effectiveResetPrefill &&
+    effectiveHint &&
+    (effectiveHint.channel !== effectiveResetPrefill.channel ||
+      effectiveHint.identifier !== effectiveResetPrefill.identifier)
+      ? null
+      : effectiveResetChannel &&
+          effectiveHint &&
+          effectiveHint.channel !== effectiveResetChannel
+        ? null
+        : effectiveHint;
   const keepSignedIn =
-    keepSignedInOverride ?? Boolean(effectiveHint?.rememberMe);
+    keepSignedInOverride ?? Boolean(matchingRememberedHint?.rememberMe);
 
   const identifierRef = useRef(identifier);
   useEffect(() => {
@@ -342,17 +458,59 @@ export function LoginForm({
   }, []);
 
   useEffect(() => {
-    if (successMessage) {
-      const { draft: loaded } = loadVerificationDraft(
-        null,
-        Date.now(),
-        "password_recovery",
-      );
+    if (shouldClearSavedLogin) {
+      clearPostResetLoginHint();
+      return;
+    }
+    if (!isPasswordResetFlow) {
+      clearPostResetLoginHint();
+      if (successMessage) {
+        const { draft: loaded } = loadVerificationDraft(
+          null,
+          Date.now(),
+          "password_recovery",
+        );
+        if (loaded?.context === "password_recovery") {
+          clearVerificationDraft();
+        }
+      }
+      return;
+    }
+
+    const { draft: loaded } = loadVerificationDraft(
+      null,
+      Date.now(),
+      "password_recovery",
+    );
+    if (validatedInitialResetLogin) {
+      savePostResetLoginHint(validatedInitialResetLogin);
       if (loaded?.context === "password_recovery") {
         clearVerificationDraft();
       }
+      return;
     }
-  }, [successMessage]);
+
+    if (loaded?.context === "password_recovery") {
+      const draftHint = createPostResetLoginHint(
+        loaded.channel,
+        loaded.normalized_identifier,
+      );
+      if (
+        draftHint &&
+        (!validatedInitialChannel ||
+          draftHint.channel === validatedInitialChannel)
+      ) {
+        savePostResetLoginHint(draftHint);
+      }
+      clearVerificationDraft();
+    }
+  }, [
+    isPasswordResetFlow,
+    shouldClearSavedLogin,
+    successMessage,
+    validatedInitialChannel,
+    validatedInitialResetLogin,
+  ]);
 
   useEffect(() => {
     if (state?.redirectTo) {
@@ -604,6 +762,7 @@ export function LoginForm({
               } else {
                 clearRememberedLogin();
               }
+              clearPostResetLoginHint();
             }
           }}
           className="flex flex-col gap-4"
@@ -615,7 +774,7 @@ export function LoginForm({
               name="identifier"
               variant="email"
               label="Email"
-              autoComplete="username"
+              autoComplete="email"
               required
               readOnly={isPending}
               value={emailValue}

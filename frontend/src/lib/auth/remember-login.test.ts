@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   clearOAuthLoginHint,
+  clearPostResetLoginHint,
   clearRememberedLogin,
+  createPostResetLoginHint,
   extractOAuthLoginHintFromUser,
   isOAuthLoginHintCleared,
   loadOAuthLoginHint,
+  loadPostResetLoginHint,
   loadRememberedLogin,
   LOGIN_HINT_COOKIE,
   OAUTH_HINT_CLEARED_STORAGE_KEY,
@@ -12,12 +15,16 @@ import {
   OAUTH_HINT_STORAGE_KEY,
   parseOAuthLoginCookieHint,
   parseOAuthLoginHint,
+  parsePostResetLoginCookieHint,
+  parsePostResetLoginHint,
   parseRememberedLoginCookieHint,
   parseRememberedLoginHint,
   REMEMBERED_LOGIN_STORAGE_KEY,
   saveOAuthLoginHint,
+  savePostResetLoginHint,
   saveRememberedLogin,
   serializeOAuthLoginHint,
+  serializePostResetLoginHint,
   serializeRememberedLoginHint,
   subscribeOAuthLoginHint,
   subscribeRememberedLogin,
@@ -262,5 +269,60 @@ describe('remember-login helper', () => {
         delete (document as unknown as Record<string, unknown>).cookie;
       }
     }
+  });
+
+  it('validates, normalizes, persists, and rejects cross-channel post-reset and remembered login hints', () => {
+    window.sessionStorage.clear();
+
+    const phoneHint = createPostResetLoginHint('phone', '+8801712345678');
+    expect(phoneHint).toEqual({ channel: 'phone', identifier: '01712345678' });
+    const serializedPhone = serializePostResetLoginHint('phone', '+8801712345678');
+    expect(parsePostResetLoginHint(serializedPhone)).toEqual(phoneHint);
+    expect(parsePostResetLoginCookieHint(encodeURIComponent(serializedPhone!))).toEqual(
+      phoneHint,
+    );
+
+    const emailHint = createPostResetLoginHint('email', 'User@Example.com');
+    expect(emailHint).toEqual({ channel: 'email', identifier: 'user@example.com' });
+    const serializedEmail = serializePostResetLoginHint('email', 'User@Example.com');
+    expect(parsePostResetLoginHint(serializedEmail)).toEqual(emailHint);
+
+    // Strictly rejects cross-channel contamination
+    expect(createPostResetLoginHint('email', '+8801712345678')).toBeNull();
+    expect(createPostResetLoginHint('email', '01712345678')).toBeNull();
+    expect(createPostResetLoginHint('phone', 'user@example.com')).toBeNull();
+    expect(
+      parsePostResetLoginHint(
+        JSON.stringify({ channel: 'email', identifier: '+8801712345678' }),
+      ),
+    ).toBeNull();
+    expect(
+      parsePostResetLoginHint(
+        JSON.stringify({ channel: 'phone', identifier: 'user@example.com' }),
+      ),
+    ).toBeNull();
+    expect(
+      parseRememberedLoginHint(
+        JSON.stringify({
+          channel: 'email',
+          identifier: '+8801712345678',
+          rememberMe: true,
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseRememberedLoginHint(
+        JSON.stringify({
+          channel: 'phone',
+          identifier: 'user@example.com',
+          rememberMe: true,
+        }),
+      ),
+    ).toBeNull();
+
+    savePostResetLoginHint(phoneHint!);
+    expect(loadPostResetLoginHint()).toEqual(phoneHint);
+    clearPostResetLoginHint();
+    expect(loadPostResetLoginHint()).toBeNull();
   });
 });

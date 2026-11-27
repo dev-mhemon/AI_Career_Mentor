@@ -624,10 +624,11 @@ function FieldInput({
           aria-label={showPw ? 'Hide password' : 'Show password'}
           aria-pressed={showPw}
           data-password-toggle="true"
+          size="compact"
           onClick={() => setShowPw((s) => !s)}
           onBlur={handlePasswordCompositeBlur}
           disabled={disabled}
-          className="absolute right-0 top-0"
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 focus-visible:outline-offset-0"
         >
           {showPw ? <EyeOffIcon /> : <EyeIcon />}
         </IconButton>

@@ -1,6 +1,8 @@
 import {
   normalizeEmail,
   sanitizeBdPhoneDisplay,
+  validateBdPhone,
+  validateEmail,
 } from '@/lib/validation/auth-schemas';
 import {
   isNonSyntheticEmail,
@@ -10,6 +12,9 @@ import {
 export const LOGIN_HINT_COOKIE = 'mentor_login_hint';
 export const REMEMBERED_LOGIN_COOKIE_NAME = LOGIN_HINT_COOKIE;
 export const REMEMBERED_LOGIN_STORAGE_KEY = 'mentor_remembered_login';
+export const POST_RESET_LOGIN_HINT_COOKIE = 'mentor_post_reset_login_hint';
+export const POST_RESET_LOGIN_HINT_STORAGE_KEY = 'mentor_post_reset_login_hint';
+export const POST_RESET_LOGIN_HINT_MAX_AGE = 300;
 export const OAUTH_HINT_COOKIE = 'mentor_oauth_hint';
 export const OAUTH_HINT_STORAGE_KEY = 'mentor_oauth_hint';
 export const OAUTH_HINT_CLEARED_STORAGE_KEY = 'mentor_oauth_hint_cleared';
@@ -24,6 +29,11 @@ export interface RememberedLoginHint {
   rememberMe: true;
 }
 
+export interface PostResetLoginHint {
+  channel: LoginChannel;
+  identifier: string;
+}
+
 export interface OAuthLoginHint {
   provider: OAuthProvider;
   displayName: string;
@@ -32,6 +42,7 @@ export interface OAuthLoginHint {
 }
 
 const ALLOWED_HINT_KEYS = new Set(['channel', 'identifier', 'rememberMe']);
+const ALLOWED_POST_RESET_HINT_KEYS = new Set(['channel', 'identifier']);
 const ALLOWED_OAUTH_HINT_KEYS = new Set([
   'provider',
   'displayName',
@@ -100,6 +111,8 @@ export function parseRememberedLoginHint(
     record.identifier,
   );
   if (!normalized || normalized.length > 254) return null;
+  if (record.channel === 'email' && !validateEmail(normalized).ok) return null;
+  if (record.channel === 'phone' && !validateBdPhone(normalized).ok) return null;
 
   return {
     channel: record.channel,
@@ -116,6 +129,150 @@ export function parseRememberedLoginCookieHint(
   raw: string | undefined | null,
 ): RememberedLoginHint | undefined {
   return parseRememberedLoginHint(raw) ?? undefined;
+}
+
+/**
+ * Validates and normalizes a post-reset login prefill hint strictly for its declared channel.
+ * Ensures a phone number can never be accepted for the email channel and an email can never be accepted for phone.
+ */
+export function createPostResetLoginHint(
+  channel: LoginChannel,
+  identifier: string,
+): PostResetLoginHint | null {
+  if (channel !== 'email' && channel !== 'phone') return null;
+  if (typeof identifier !== 'string') return null;
+  const trimmed = identifier.trim();
+  if (!trimmed || trimmed.length > 254) return null;
+  if (channel === 'email') {
+    const check = validateEmail(trimmed);
+    if (!check.ok) return null;
+    return { channel: 'email', identifier: check.value };
+  }
+  const check = validateBdPhone(trimmed);
+  if (!check.ok) return null;
+  const display = sanitizeBdPhoneDisplay(check.value);
+  if (!display) return null;
+  return { channel: 'phone', identifier: display };
+}
+
+export function serializePostResetLoginHint(
+  channel: LoginChannel,
+  identifier: string,
+): string | null {
+  const hint = createPostResetLoginHint(channel, identifier);
+  if (!hint) return null;
+  return JSON.stringify(hint satisfies PostResetLoginHint);
+}
+
+export function parsePostResetLoginHint(
+  raw: string | undefined | null,
+): PostResetLoginHint | null {
+  if (!raw || typeof raw !== 'string') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) return null;
+    try {
+      parsed = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      return null;
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!ALLOWED_POST_RESET_HINT_KEYS.has(key)) {
+      return null;
+    }
+  }
+
+  if (record.channel !== 'email' && record.channel !== 'phone') return null;
+  if (typeof record.identifier !== 'string') return null;
+
+  return createPostResetLoginHint(record.channel, record.identifier);
+}
+
+export function parsePostResetLoginCookieHint(
+  raw: string | undefined | null,
+): PostResetLoginHint | undefined {
+  return parsePostResetLoginHint(raw) ?? undefined;
+}
+
+const postResetListeners = new Set<() => void>();
+
+function notifyPostResetLoginHintListeners(): void {
+  postResetListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {
+      // Isolate listener errors so remaining subscribers still execute
+    }
+  });
+}
+
+export function subscribePostResetLoginHint(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  postResetListeners.add(listener);
+  return () => {
+    postResetListeners.delete(listener);
+  };
+}
+
+export function getPostResetLoginHintSnapshot(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage.getItem(POST_RESET_LOGIN_HINT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function getPostResetLoginHintServerSnapshot(): string | null {
+  return null;
+}
+
+export function savePostResetLoginHint(hint: PostResetLoginHint): void {
+  if (typeof window === 'undefined') return;
+  const serialized = serializePostResetLoginHint(hint.channel, hint.identifier);
+  if (!serialized) return;
+  try {
+    if (
+      window.sessionStorage.getItem(POST_RESET_LOGIN_HINT_STORAGE_KEY) !==
+      serialized
+    ) {
+      window.sessionStorage.setItem(
+        POST_RESET_LOGIN_HINT_STORAGE_KEY,
+        serialized,
+      );
+      notifyPostResetLoginHintListeners();
+    }
+  } catch {
+    // Ignore storage quota or private browsing write errors
+  }
+}
+
+export function loadPostResetLoginHint(): PostResetLoginHint | null {
+  return parsePostResetLoginHint(getPostResetLoginHintSnapshot());
+}
+
+export function clearPostResetLoginHint(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const existed =
+      window.sessionStorage.getItem(POST_RESET_LOGIN_HINT_STORAGE_KEY) !== null;
+    window.sessionStorage.removeItem(POST_RESET_LOGIN_HINT_STORAGE_KEY);
+    if (existed) {
+      notifyPostResetLoginHintListeners();
+    }
+  } catch {
+    // Ignore storage access errors
+  }
 }
 
 const listeners = new Set<() => void>();

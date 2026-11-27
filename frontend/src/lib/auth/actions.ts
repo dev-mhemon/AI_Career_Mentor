@@ -38,6 +38,9 @@ import type { VerificationDraftContext } from '@/lib/auth/verification-draft';
 import {
   LOGIN_HINT_COOKIE,
   OAUTH_HINT_COOKIE,
+  POST_RESET_LOGIN_HINT_COOKIE,
+  POST_RESET_LOGIN_HINT_MAX_AGE,
+  serializePostResetLoginHint,
   serializeRememberedLoginHint,
   type LoginChannel,
 } from '@/lib/auth/remember-login';
@@ -226,6 +229,24 @@ function clearOAuthLoginHintCookie(cookieStore: {
   delete: (name: string) => unknown;
 }): void {
   clearCookieByName(cookieStore, OAUTH_HINT_COOKIE);
+}
+
+function clearPostResetLoginHintCookie(cookieStore: {
+  set?: (name: string, value: string, options: Record<string, unknown>) => unknown;
+  delete: (name: string) => unknown;
+}): void {
+  try {
+    cookieStore.set?.(POST_RESET_LOGIN_HINT_COOKIE, '', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/login',
+      maxAge: 0,
+    });
+    cookieStore.delete(POST_RESET_LOGIN_HINT_COOKIE);
+  } catch {
+    // Ignore cookie cleanup errors outside request context
+  }
 }
 
 function persistRememberPreferenceCookies(
@@ -743,6 +764,7 @@ export async function loginAction(
     try {
       const cookieStore = await cookies();
       cookieStore.delete('account_deleted');
+      clearPostResetLoginHintCookie(cookieStore);
       persistRememberPreferenceCookies(cookieStore, rememberMe, {
         channel: idCheck.value.kind,
         identifier: rawIdentifier,
@@ -1408,6 +1430,19 @@ export async function resetPasswordAction(
           'Password was updated, but account setup is still finishing. Do not resubmit the reset code; wait a moment or contact support.',
       };
     }
+    const serializedPostResetHint = serializePostResetLoginHint(
+      idCheck.value.kind,
+      identifier,
+    );
+    if (serializedPostResetHint) {
+      store.set(POST_RESET_LOGIN_HINT_COOKIE, serializedPostResetHint, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/login',
+        maxAge: POST_RESET_LOGIN_HINT_MAX_AGE,
+      });
+    }
   } catch (err) {
     if (err instanceof NetworkError) {
       return { error: 'Unable to reach the server. Please try again later.' };
@@ -1439,7 +1474,7 @@ export async function resetPasswordAction(
     return { error: 'An unexpected error occurred while resetting password.' };
   }
 
-  redirect('/login?reset=success');
+  redirect(`/login?reset=success&channel=${idCheck.value.kind}`);
 }
 
 /**
@@ -1655,6 +1690,7 @@ export async function requestAccountDeletionAction(
         clearRememberMeCookies(cookieStore);
         clearLoginHintCookie(cookieStore);
         clearOAuthLoginHintCookie(cookieStore);
+        clearPostResetLoginHintCookie(cookieStore);
         cookieStore.set('account_deleted', 'true', {
           path: '/',
           maxAge: 15,
@@ -1669,6 +1705,7 @@ export async function requestAccountDeletionAction(
         const cookieStore = await cookies();
         clearLoginHintCookie(cookieStore);
         clearOAuthLoginHintCookie(cookieStore);
+        clearPostResetLoginHintCookie(cookieStore);
       } catch {
         // Best effort login hint cleanup
       }
@@ -1751,6 +1788,7 @@ export async function pollAccountDeletionStatusAction(
         clearRememberMeCookies(cookieStore);
         clearLoginHintCookie(cookieStore);
         clearOAuthLoginHintCookie(cookieStore);
+        clearPostResetLoginHintCookie(cookieStore);
         cookieStore.set('account_deleted', 'true', {
           path: '/',
           maxAge: 15,

@@ -269,4 +269,50 @@ describe('Input component (phone_bd & otp_6)', () => {
     }
     expect(toggleBtn).toHaveClass('cursor-pointer', 'disabled:cursor-not-allowed');
   });
+
+  it('constrains password visibility toggle strictly inside input bounds without clipping outer focus ring across default and error states', () => {
+    render(
+      <div>
+        <Input id="pw-default" name="password" variant="password" label="Password" />
+        <Input
+          id="pw-error"
+          name="confirm_password"
+          variant="password"
+          label="Confirm Password"
+          error="Passwords do not match."
+        />
+      </div>,
+    );
+
+    const inputs = [
+      screen.getByLabelText(/^password$/i),
+      screen.getByLabelText(/^confirm password$/i),
+    ];
+    const toggles = screen.getAllByRole('button', { name: /show password/i });
+
+    expect(toggles).toHaveLength(2);
+    for (let i = 0; i < inputs.length; i += 1) {
+      const input = inputs[i]!;
+      const toggle = toggles[i]!;
+      const wrapper = input.parentElement;
+
+      expect(wrapper).toHaveClass('relative');
+      expect(wrapper).not.toHaveClass('overflow-hidden');
+      expect(input).toHaveClass('min-h-11', 'pr-12');
+
+      expect(toggle).toHaveClass(
+        'absolute',
+        'right-1.5',
+        'top-1/2',
+        '-translate-y-1/2',
+        'h-8',
+        'w-8',
+        'rounded-md',
+        'focus-visible:outline-offset-0',
+      );
+      expect(toggle).not.toHaveClass('right-0', 'top-0', 'h-11', 'w-11');
+    }
+
+    expect(inputs[1]).toHaveClass('border-2', 'border-border-danger');
+  });
 });
